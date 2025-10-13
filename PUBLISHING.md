@@ -1,10 +1,40 @@
-# 发布到 Maven Central 指南
+# 发布到 Maven Central 指南 (2025 新方式)
 
-本文档说明如何将项目发布到 Maven Central。
+本文档说明如何使用新的 **Central Portal** 将项目发布到 Maven Central。
+
+> **⚠️ 重要**: OSSRH 已于 2025年6月30日关闭,必须使用新的 Central Portal!
 
 ## 前置要求
 
-已完成的配置：
+### 1. 注册 Central Portal 账号
+
+1. 访问 https://central.sonatype.com
+2. 使用 GitHub 账号登录
+3. 验证命名空间所有权 (io.github.cuihairu)
+
+### 2. 生成 User Token
+
+1. 登录 Central Portal
+2. 点击右上角头像 → **View Account**
+3. 点击 **Generate User Token**
+4. 保存 Username 和 Token (只显示一次!)
+
+### 3. 配置本地凭据
+
+编辑 `~/.gradle/gradle.properties`:
+
+```properties
+# Central Portal 凭据
+centralPortalUsername=YOUR_USERNAME_FROM_TOKEN
+centralPortalToken=YOUR_TOKEN_FROM_ABOVE
+
+# GPG 签名
+signing.keyId=YOUR_GPG_KEY_ID
+signing.password=YOUR_GPG_PASSWORD
+signing.secretKeyRingFile=/path/to/.gnupg/secring.gpg
+```
+
+### 已完成的配置：
 - ✅ Maven Central 账号（使用 GitHub 登录）
 - ✅ GPG 密钥生成和上传
 - ✅ 本地 `~/.gradle/gradle.properties` 配置
@@ -29,17 +59,24 @@
 ./gradlew :registry:publish
 ```
 
-### 在 Sonatype 完成发布
+### 在 Central Portal 完成发布
 
-1. 登录 https://s01.oss.sonatype.org/
-2. 点击左侧 "Staging Repositories"
-3. 找到你的仓库（搜索 `iogithubcuihairu`）
-4. 选中仓库，点击 "Close" 按钮
-   - 系统会验证 POM、签名、Javadoc 等
-   - 等待验证完成（约 1-2 分钟）
-5. 验证通过后，点击 "Release" 按钮
-6. 等待同步到 Maven Central（10-30 分钟）
-7. 检查发布状态：https://search.maven.org/search?q=g:io.github.cuihairu.redis-streaming
+**新方式 (2025)**:
+
+1. 登录 https://central.sonatype.com
+2. 点击左侧 **Publishing** → **Deployments**
+3. 找到你刚才上传的部署
+4. 检查状态:
+   - ✅ **VALIDATED**: 验证通过,可以发布
+   - ❌ **FAILED**: 查看错误信息
+5. 点击 **Publish** 按钮
+6. 等待同步到 Maven Central (约 10-30 分钟)
+7. 检查发布状态: https://search.maven.org/search?q=g:io.github.cuihairu.redis-streaming
+
+**旧方式 (已废弃)**:
+~~1. 登录 https://s01.oss.sonatype.org/~~
+~~2. 点击 "Staging Repositories"~~
+~~3. Close → Release~~
 
 ## GitHub Actions 自动发布
 
@@ -49,15 +86,11 @@
 
 **Settings → Secrets and variables → Actions → New repository secret**
 
-#### 1. OSSRH_USERNAME
-```
-PmSSD2
-```
+#### 1. CENTRAL_PORTAL_USERNAME
+从 Central Portal 生成的 User Token 中获取 Username
 
-#### 2. OSSRH_PASSWORD
-```
-qKhvRYsSVWvBI1JxQwmcOC2xdpAYHIyBQ
-```
+#### 2. CENTRAL_PORTAL_TOKEN
+从 Central Portal 生成的 User Token 中获取 Token
 
 #### 3. GPG_PRIVATE_KEY
 
@@ -71,9 +104,9 @@ gpg --export-secret-keys --armor 409493B079FD4B9025CBFFC6BA6C50DB52EAF08A
 复制完整输出（包括 `-----BEGIN PGP PRIVATE KEY BLOCK-----` 和 `-----END PGP PRIVATE KEY BLOCK-----`）到 GitHub Secret。
 
 #### 4. GPG_PASSWORD
-```
-kl055620363
-```
+GPG 密钥的密码
+
+> **⚠️ 安全提示**: 旧的 OSSRH 凭据应该删除或更新为 Central Portal 凭据!
 
 ### 触发自动发布
 
@@ -113,14 +146,20 @@ git push origin v0.1.0
 7. ✅ 生成 Release Notes
 8. ⚠️ **需要手动在 Sonatype 完成 Close 和 Release**
 
-### 手动操作步骤
+### 手动操作步骤 (新方式)
 
-即使使用 GitHub Actions，仍需在 Sonatype 完成最后步骤：
+使用 Central Portal 后,**不再需要**手动 Close 和 Release!
 
-1. 等待 GitHub Actions 完成（约 5-10 分钟）
-2. 登录 https://s01.oss.sonatype.org/
-3. 在 "Staging Repositories" 中找到刚才发布的仓库
-4. 执行 "Close" → "Release"
+1. 等待 GitHub Actions 完成 (约 5-10 分钟)
+2. 登录 https://central.sonatype.com
+3. 在 **Publishing** → **Deployments** 中查看状态
+4. 如果状态为 **VALIDATED**,点击 **Publish**
+5. 等待同步到 Maven Central (约 10-30 分钟)
+
+**对比旧方式**:
+~~1. 登录 https://s01.oss.sonatype.org/~~
+~~2. 在 "Staging Repositories" 中找到刚才发布的仓库~~
+~~3. 执行 "Close" → "Release"~~
 
 ## 版本管理
 
@@ -193,8 +232,9 @@ Could not sign publication
 ```
 
 **解决方案：**
-- 检查 `ossrhUsername` 和 `ossrhPassword` 是否正确
+- 检查是否使用了新的 `centralPortalUsername` 和 `centralPortalToken`
 - 在 https://central.sonatype.com 重新生成 User Token
+- ~~旧的 `ossrhUsername` 和 `ossrhPassword` 已不再有效~~
 
 ### 问题 3: POM 验证失败
 
@@ -222,7 +262,11 @@ Invalid POM
 
 ## 相关链接
 
-- Maven Central: https://search.maven.org/search?q=g:io.github.cuihairu.redis-streaming
-- Sonatype OSSRH: https://s01.oss.sonatype.org/
-- Central Portal: https://central.sonatype.com/
-- 项目主页: https://github.com/cuihairu/streaming
+- **Maven Central Portal**: https://central.sonatype.com (新平台)
+- **Maven Central Search**: https://search.maven.org/search?q=g:io.github.cuihairu.redis-streaming
+- **项目主页**: https://github.com/cuihairu/redis-streaming
+- **Wiki 文档**: https://github.com/cuihairu/redis-streaming/wiki
+
+**已废弃**:
+- ~~Sonatype OSSRH: https://s01.oss.sonatype.org/ (2025年6月30日关闭)~~
+- ~~JIRA 注册: https://issues.sonatype.org/ (不再需要)~~

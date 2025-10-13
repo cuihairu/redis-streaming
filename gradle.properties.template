@@ -7,12 +7,22 @@
 # 3. 如果使用 GitHub Actions，在 GitHub Secrets 中配置这些值
 
 # ===================================
-# Maven Central (OSSRH) 凭据
+# Maven Central Portal 凭据 (新方式 - 2025)
 # ===================================
-# Sonatype JIRA 用户名和密码
-# 注册地址: https://issues.sonatype.org/
-ossrhUsername=YOUR_JIRA_USERNAME
-ossrhPassword=YOUR_JIRA_PASSWORD
+# Central Portal 用户名和 Token
+# 获取方式:
+# 1. 登录 https://central.sonatype.com
+# 2. 点击右上角头像 → View Account
+# 3. Generate User Token
+centralPortalUsername=YOUR_CENTRAL_PORTAL_USERNAME
+centralPortalToken=YOUR_CENTRAL_PORTAL_TOKEN
+
+# ===================================
+# 旧方式 (OSSRH - 2025年6月30日已废弃)
+# ===================================
+# 如果仍有 SNAPSHOT 版本需要发布,可能还需要这些凭据
+# ossrhUsername=YOUR_JIRA_USERNAME
+# ossrhPassword=YOUR_JIRA_PASSWORD
 
 # ===================================
 # GPG 签名配置
