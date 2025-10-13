@@ -1,0 +1,41 @@
+rootProject.name = 'streaming'
+
+// =====================================
+// Tier 1: 核心抽象层
+// =====================================
+include 'core'
+include 'runtime'                  // 流处理运行时引擎
+
+// =====================================
+// Tier 2: 基础设施层
+// =====================================
+include 'mq'                       // 消息队列（从 core 分离）
+include 'registry'                 // 服务注册发现（从 core 分离）
+include 'config'                   // 配置中心（从 registry 分离）
+include 'state'                    // 状态管理
+include 'checkpoint'               // 检查点机制
+include 'watermark'                // 水位线机制
+
+// =====================================
+// Tier 3: 功能模块层
+// =====================================
+include 'window'                   // 窗口操作
+include 'aggregation'             // 聚合函数
+include 'table'                    // 流表二元性
+include 'join'                     // Join 操作
+include 'cdc'                      // CDC
+include 'sink'                     // 数据输出连接器
+include 'source'                   // 数据输入连接器
+
+// =====================================
+// Tier 4: 高级功能层
+// =====================================
+include 'reliability'              // 可靠性保证
+include 'cep'                      // 复杂事件处理
+
+// =====================================
+// Tier 5: 集成层
+// =====================================
+include 'metrics'                  // 监控指标
+include 'spring-boot-starter'      // Spring Boot 集成
+include 'examples'                 // 示例代码

@@ -1,0 +1,35 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+application {
+    mainClass = 'io.github.cuihairu.streaming.examples.registry.ServiceRegistryExample'
+}
+
+dependencies {
+    implementation project(':core')
+    implementation project(':registry')
+    implementation project(':mq')
+    implementation project(':aggregation')
+    implementation project(':cdc')
+    implementation project(':sink')
+    implementation project(':source')
+    implementation project(':metrics')
+    implementation project(':spring-boot-starter')
+    implementation project(':cep')
+    implementation project(':table')
+    implementation project(':reliability')
+
+    // Redis for examples
+    implementation 'org.redisson:redisson:3.52.0'
+
+    // Logging
+    implementation 'ch.qos.logback:logback-classic:1.5.13'
+
+    // Jackson for JSON processing
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.0'
+
+    compileOnly 'org.projectlombok:lombok:1.18.34'
+    annotationProcessor 'org.projectlombok:lombok:1.18.34'
+}

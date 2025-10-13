@@ -1,0 +1,175 @@
+plugins {
+    id 'java'
+    id 'maven-publish'
+    id 'signing'
+}
+
+allprojects {
+    group = 'io.github.cuihairu.redis-streaming'
+    version = '0.1.0'
+
+    repositories {
+        mavenCentral()
+    }
+}
+
+subprojects {
+    apply plugin: 'java'
+    apply plugin: 'maven-publish'
+    apply plugin: 'signing'
+
+    java {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+        withJavadocJar()
+        withSourcesJar()
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+    }
+
+    dependencies {
+        testImplementation 'org.junit.jupiter:junit-jupiter:5.9.2'
+        testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.2'
+        testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.9.2'
+    }
+
+    // Configure source sets for integration tests
+    sourceSets {
+        integrationTest {
+            java {
+                srcDir 'src/test/java'
+            }
+            resources {
+                srcDir 'src/test/resources'
+            }
+            compileClasspath += sourceSets.main.output + sourceSets.test.output
+            runtimeClasspath += sourceSets.main.output + sourceSets.test.output
+        }
+    }
+
+    // Configure integration test dependencies
+    configurations {
+        integrationTestImplementation.extendsFrom testImplementation
+        integrationTestRuntimeOnly.extendsFrom testRuntimeOnly
+        integrationTestCompileOnly.extendsFrom testCompileOnly
+        integrationTestAnnotationProcessor.extendsFrom testAnnotationProcessor
+    }
+
+    // Unit tests: exclude integration tests
+    tasks.named('test') {
+        useJUnitPlatform {
+            excludeTags 'integration'
+        }
+        description = 'Runs unit tests (excludes integration tests that require Redis)'
+        group = 'verification'
+    }
+
+    // Integration tests: only run integration tests
+    tasks.register('integrationTest', Test) {
+        useJUnitPlatform {
+            includeTags 'integration'
+        }
+        testClassesDirs = sourceSets.integrationTest.output.classesDirs
+        classpath = sourceSets.integrationTest.runtimeClasspath
+
+        description = 'Runs integration tests (requires Redis to be running)'
+        group = 'verification'
+
+        shouldRunAfter test
+
+        // Configure to show more output
+        testLogging {
+            events "passed", "skipped", "failed"
+            exceptionFormat "full"
+            showStandardStreams = false
+        }
+    }
+
+    // Add integrationTest to check task
+    tasks.named('check') {
+        dependsOn integrationTest
+    }
+
+    // Maven publishing configuration
+    publishing {
+        publications {
+            maven(MavenPublication) {
+                from components.java
+
+                pom {
+                    name = project.name
+                    description = "Streaming Processing Framework - ${project.name} module"
+                    url = 'https://github.com/cuihairu/redis-streaming'
+
+                    licenses {
+                        license {
+                            name = 'The Apache License, Version 2.0'
+                            url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+                        }
+                    }
+
+                    developers {
+                        developer {
+                            id = 'cuihairu'
+                            name = 'Cui Hairu'
+                            email = 'cuihairu@github.com'
+                        }
+                    }
+
+                    scm {
+                        connection = 'scm:git:git://github.com/cuihairu/redis-streaming.git'
+                        developerConnection = 'scm:git:ssh://github.com/cuihairu/redis-streaming.git'
+                        url = 'https://github.com/cuihairu/redis-streaming'
+                    }
+                }
+            }
+        }
+
+        repositories {
+            maven {
+                name = "OSSRH"
+                def releasesRepoUrl = "https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/"
+                def snapshotsRepoUrl = "https://s01.oss.sonatype.org/content/repositories/snapshots/"
+                url = version.endsWith('SNAPSHOT') ? snapshotsRepoUrl : releasesRepoUrl
+
+                credentials {
+                    username = project.findProperty("ossrhUsername") ?: System.getenv("OSSRH_USERNAME")
+                    password = project.findProperty("ossrhPassword") ?: System.getenv("OSSRH_PASSWORD")
+                }
+            }
+        }
+    }
+
+    // Signing configuration
+    signing {
+        // Only sign if publishing to Maven Central (not for local publishToMavenLocal)
+        required { gradle.taskGraph.hasTask("publish") }
+
+        // Use GPG keys from environment or gradle.properties
+        def signingKey = project.findProperty("signing.keyId") ?: System.getenv("GPG_KEY_ID")
+        def signingPassword = project.findProperty("signing.password") ?: System.getenv("GPG_PASSWORD")
+        def signingSecretKey = project.findProperty("signing.secretKeyRingFile") ?: System.getenv("GPG_SECRET_KEY")
+
+        if (signingKey && signingPassword) {
+            sign publishing.publications.maven
+        }
+    }
+
+    // Generate Javadoc
+    tasks.withType(Javadoc) {
+        options.encoding = 'UTF-8'
+        options.charSet = 'UTF-8'
+        options.author = true
+        options.version = true
+        options.links = [
+            'https://docs.oracle.com/en/java/javase/17/docs/api/'
+        ]
+        // Suppress warnings and errors for Lombok generated code
+        options.addStringOption('Xdoclint:none', '-quiet')
+        options.addBooleanOption('Xdoclint:none', true)
+        // Ignore errors to allow Lombok-generated code references
+        failOnError = false
+    }
+}

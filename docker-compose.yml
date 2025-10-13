@@ -1,0 +1,85 @@
+version: '3.8'
+
+services:
+  # Redis for testing
+  redis:
+    image: redis:7-alpine
+    container_name: streaming-redis-test
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --save 60 1
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - redis-data:/data
+
+  # MySQL for CDC testing
+  mysql:
+    image: mysql:8.0
+    container_name: streaming-mysql-test
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: test_password
+      MYSQL_DATABASE: test_db
+      MYSQL_USER: test_user
+      MYSQL_PASSWORD: test_password
+    command: --default-authentication-plugin=mysql_native_password --binlog-format=ROW --log-bin=mysql-bin --server-id=1
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-ptest_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  # PostgreSQL for testing (optional)
+  postgres:
+    image: postgres:15-alpine
+    container_name: streaming-postgres-test
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_DB: test_db
+    command: postgres -c wal_level=logical
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  # Elasticsearch for Sink testing (optional)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: streaming-elasticsearch-test
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+
+volumes:
+  redis-data:
+    driver: local
+  mysql-data:
+    driver: local
+  postgres-data:
+    driver: local
+  elasticsearch-data:
+    driver: local

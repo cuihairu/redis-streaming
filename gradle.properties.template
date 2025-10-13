@@ -1,0 +1,54 @@
+# gradle.properties 模板文件
+#
+# 使用方法：
+# 1. 复制此文件为 ~/.gradle/gradle.properties (用户级别)
+#    或 项目根目录下的 gradle.properties (项目级别，不要提交到 Git)
+# 2. 填写实际的凭据信息
+# 3. 如果使用 GitHub Actions，在 GitHub Secrets 中配置这些值
+
+# ===================================
+# Maven Central (OSSRH) 凭据
+# ===================================
+# Sonatype JIRA 用户名和密码
+# 注册地址: https://issues.sonatype.org/
+ossrhUsername=YOUR_JIRA_USERNAME
+ossrhPassword=YOUR_JIRA_PASSWORD
+
+# ===================================
+# GPG 签名配置
+# ===================================
+# GPG 密钥 ID (通过 gpg --list-keys 获取)
+# 使用完整的 40 字符 ID
+signing.keyId=YOUR_GPG_KEY_ID
+
+# GPG 密钥密码
+signing.password=YOUR_GPG_PASSWORD
+
+# GPG 密钥环文件路径
+# Linux/Mac: ~/.gnupg/secring.gpg
+# Windows: C:\\Users\\YourName\\AppData\\Roaming\\gnupg\\secring.gpg
+signing.secretKeyRingFile=/path/to/.gnupg/secring.gpg
+
+# ===================================
+# Gradle 性能优化 (可选)
+# ===================================
+# 启用 Gradle 守护进程
+org.gradle.daemon=true
+
+# 启用并行构建
+org.gradle.parallel=true
+
+# 启用构建缓存
+org.gradle.caching=true
+
+# 按需配置
+org.gradle.configureondemand=true
+
+# JVM 参数
+org.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8
+
+# ===================================
+# 其他配置 (可选)
+# ===================================
+# 系统属性
+systemProp.file.encoding=utf-8

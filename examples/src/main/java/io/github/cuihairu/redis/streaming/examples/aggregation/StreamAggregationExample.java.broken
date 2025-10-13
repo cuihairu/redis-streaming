@@ -1,0 +1,436 @@
+package io.github.cuihairu.streaming.examples.aggregation;
+
+import io.github.cuihairu.streaming.aggregation.*;
+import io.github.cuihairu.streaming.aggregation.functions.*;
+import io.github.cuihairu.streaming.aggregation.impl.*;
+import io.github.cuihairu.streaming.aggregation.window.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.Data;
+import lombok.extern.slf4j.Slf4j;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Stream Aggregation and Analytics Example
+ * Demonstrates real-time aggregation, windowing, and analytics operations
+ */
+@Slf4j
+public class StreamAggregationExample {
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final Random random = new Random();
+
+    public static void main(String[] args) throws Exception {
+        StreamAggregationExample example = new StreamAggregationExample();
+        example.runExample();
+    }
+
+    public void runExample() throws Exception {
+        log.info("Starting Stream Aggregation and Analytics Example");
+
+        // 1. Setup window aggregator
+        WindowAggregator aggregator = setupAggregator();
+
+        // 2. Setup real-time analytics
+        setupRealTimeAnalytics(aggregator);
+
+        // 3. Demonstrate sliding window aggregation
+        demonstrateSlidingWindowAggregation(aggregator);
+
+        // 4. Demonstrate tumbling window aggregation
+        demonstrateTumblingWindowAggregation(aggregator);
+
+        // 5. Demonstrate complex analytics
+        demonstrateComplexAnalytics(aggregator);
+
+        // 6. Performance analytics
+        performanceAnalytics(aggregator);
+
+        log.info("Stream Aggregation Example completed");
+    }
+
+    private WindowAggregator setupAggregator() throws Exception {
+        log.info("Setting up window aggregator");
+
+        WindowAggregatorConfiguration config = WindowAggregatorConfigurationBuilder
+                .create("analytics-aggregator")
+                .redisHost("localhost")
+                .redisPort(6379)
+                .windowCleanupInterval(Duration.ofMinutes(1))
+                .maxWindowsPerAggregation(100)
+                .build();
+
+        WindowAggregator aggregator = WindowAggregatorFactory.create(config);
+
+        // Add global event listener
+        aggregator.setEventListener(new WindowAggregatorEventListener() {
+            @Override
+            public void onWindowCompleted(String aggregationName, TimeWindow window, AggregationResult result) {
+                log.info("🔔 Window completed: {} = {} (window: {})",
+                    aggregationName, result.getValue(), formatWindow(window));
+            }
+
+            @Override
+            public void onAggregationError(String aggregationName, Throwable error) {
+                log.error("❌ Aggregation error in {}: {}", aggregationName, error.getMessage());
+            }
+        });
+
+        aggregator.start().join();
+        return aggregator;
+    }
+
+    private void setupRealTimeAnalytics(WindowAggregator aggregator) {
+        log.info("Setting up real-time analytics");
+
+        // 1-minute sliding window for real-time metrics
+        TimeWindow realTimeWindow = new SlidingTimeWindow(
+            Duration.ofMinutes(1),    // Window size
+            Duration.ofSeconds(10)    // Slide interval
+        );
+
+        // Page view counting
+        aggregator.addAggregation("page_views_realtime", realTimeWindow, new CountAggregationFunction());
+
+        // Average response time
+        aggregator.addAggregation("response_time_avg", realTimeWindow, new AverageAggregationFunction());
+
+        // Error rate calculation
+        aggregator.addAggregation("error_count", realTimeWindow, new CountAggregationFunction());
+
+        // Revenue tracking
+        aggregator.addAggregation("revenue_sum", realTimeWindow, new SumAggregationFunction());
+
+        // Top-K analysis
+        aggregator.addAggregation("top_pages", realTimeWindow, new TopKAggregationFunction(5));
+
+        log.info("Real-time analytics configured");
+    }
+
+    private void demonstrateSlidingWindowAggregation(WindowAggregator aggregator) throws Exception {
+        log.info("=== Demonstrating Sliding Window Aggregation ===");
+
+        CountDownLatch windowLatch = new CountDownLatch(5);
+
+        // Add listener for this demonstration
+        aggregator.setEventListener(new WindowAggregatorEventListener() {
+            @Override
+            public void onWindowCompleted(String aggregationName, TimeWindow window, AggregationResult result) {
+                if ("page_views_realtime".equals(aggregationName)) {
+                    log.info("Sliding window result: {} page views in window {}",
+                        result.getValue(), formatWindow(window));
+                    windowLatch.countDown();
+                }
+            }
+        });
+
+        // Simulate page view events
+        CompletableFuture<Void> simulationTask = CompletableFuture.runAsync(() -> {
+            try {
+                for (int i = 0; i < 100; i++) {
+                    PageViewEvent event = generatePageViewEvent();
+                    aggregator.addData("page_views_realtime", event, Instant.now());
+
+                    if ((i + 1) % 10 == 0) {
+                        log.info("Generated {} page view events", i + 1);
+                    }
+
+                    Thread.sleep(500); // Generate every 500ms
+                }
+            } catch (Exception e) {
+                log.error("Simulation error", e);
+            }
+        });
+
+        // Wait for some windows to complete
+        boolean windowsCompleted = windowLatch.await(60, TimeUnit.SECONDS);
+        log.info("Sliding window demonstration completed. Windows processed: {}", windowsCompleted);
+
+        simulationTask.cancel(true);
+    }
+
+    private void demonstrateTumblingWindowAggregation(WindowAggregator aggregator) throws Exception {
+        log.info("=== Demonstrating Tumbling Window Aggregation ===");
+
+        // 30-second tumbling window for batch analytics
+        TimeWindow tumblingWindow = new TumblingTimeWindow(Duration.ofSeconds(30));
+
+        aggregator.addAggregation("hourly_revenue", tumblingWindow, new SumAggregationFunction());
+        aggregator.addAggregation("hourly_transactions", tumblingWindow, new CountAggregationFunction());
+
+        CountDownLatch tumblingLatch = new CountDownLatch(3);
+
+        // Add specific listener for tumbling windows
+        aggregator.setEventListener(new WindowAggregatorEventListener() {
+            @Override
+            public void onWindowCompleted(String aggregationName, TimeWindow window, AggregationResult result) {
+                if (aggregationName.startsWith("hourly_")) {
+                    log.info("Tumbling window result: {} = {} for window {}",
+                        aggregationName, result.getValue(), formatWindow(window));
+                    tumblingLatch.countDown();
+                }
+            }
+        });
+
+        // Simulate transaction events
+        CompletableFuture<Void> transactionTask = CompletableFuture.runAsync(() -> {
+            try {
+                for (int i = 0; i < 60; i++) {
+                    TransactionEvent transaction = generateTransactionEvent();
+
+                    aggregator.addData("hourly_revenue", transaction.getAmount(), Instant.now());
+                    aggregator.addData("hourly_transactions", 1.0, Instant.now());
+
+                    if ((i + 1) % 10 == 0) {
+                        log.info("Generated {} transaction events", i + 1);
+                    }
+
+                    Thread.sleep(800); // Generate every 800ms
+                }
+            } catch (Exception e) {
+                log.error("Transaction simulation error", e);
+            }
+        });
+
+        // Wait for tumbling windows to complete
+        boolean tumblingCompleted = tumblingLatch.await(120, TimeUnit.SECONDS);
+        log.info("Tumbling window demonstration completed. Windows processed: {}", tumblingCompleted);
+
+        transactionTask.cancel(true);
+    }
+
+    private void demonstrateComplexAnalytics(WindowAggregator aggregator) throws Exception {
+        log.info("=== Demonstrating Complex Analytics ===");
+
+        // Setup complex aggregations
+        TimeWindow complexWindow = new SlidingTimeWindow(
+            Duration.ofMinutes(2),    // 2-minute window
+            Duration.ofSeconds(15)    // Slide every 15 seconds
+        );
+
+        // Multi-metric aggregations
+        aggregator.addAggregation("response_time_min", complexWindow, new MinAggregationFunction());
+        aggregator.addAggregation("response_time_max", complexWindow, new MaxAggregationFunction());
+        aggregator.addAggregation("response_time_avg", complexWindow, new AverageAggregationFunction());
+        aggregator.addAggregation("user_sessions", complexWindow, new CountUniqueAggregationFunction());
+
+        CountDownLatch complexLatch = new CountDownLatch(4);
+
+        // Analytics event listener
+        aggregator.setEventListener(new WindowAggregatorEventListener() {
+            @Override
+            public void onWindowCompleted(String aggregationName, TimeWindow window, AggregationResult result) {
+                if (aggregationName.startsWith("response_time") || aggregationName.equals("user_sessions")) {
+                    log.info("Complex analytics: {} = {} (window: {})",
+                        aggregationName, String.format("%.2f", result.getValue()), formatWindow(window));
+                    complexLatch.countDown();
+                }
+            }
+        });
+
+        // Simulate complex events
+        CompletableFuture<Void> complexTask = CompletableFuture.runAsync(() -> {
+            try {
+                for (int i = 0; i < 150; i++) {
+                    // Generate response time events
+                    double responseTime = 100 + random.nextGaussian() * 50; // Normal distribution around 100ms
+                    aggregator.addData("response_time_min", responseTime, Instant.now());
+                    aggregator.addData("response_time_max", responseTime, Instant.now());
+                    aggregator.addData("response_time_avg", responseTime, Instant.now());
+
+                    // Generate user session events
+                    String userId = "user-" + random.nextInt(20); // 20 different users
+                    aggregator.addData("user_sessions", userId.hashCode(), Instant.now());
+
+                    if ((i + 1) % 25 == 0) {
+                        log.info("Generated {} complex events", i + 1);
+                    }
+
+                    Thread.sleep(200); // Generate every 200ms
+                }
+            } catch (Exception e) {
+                log.error("Complex simulation error", e);
+            }
+        });
+
+        // Wait for complex analytics to complete
+        boolean complexCompleted = complexLatch.await(180, TimeUnit.SECONDS);
+        log.info("Complex analytics demonstration completed. Results processed: {}", complexCompleted);
+
+        complexTask.cancel(true);
+    }
+
+    private void performanceAnalytics(WindowAggregator aggregator) throws Exception {
+        log.info("=== Performance Analytics Test ===");
+
+        // High-frequency aggregation for performance testing
+        TimeWindow perfWindow = new SlidingTimeWindow(
+            Duration.ofSeconds(10),   // Small window
+            Duration.ofSeconds(2)     // Frequent slides
+        );
+
+        aggregator.addAggregation("high_freq_count", perfWindow, new CountAggregationFunction());
+
+        int eventCount = 10000;
+        CountDownLatch perfLatch = new CountDownLatch(1);
+        long startTime = System.currentTimeMillis();
+
+        // Performance event listener
+        aggregator.setEventListener(new WindowAggregatorEventListener() {
+            private int windowCount = 0;
+
+            @Override
+            public void onWindowCompleted(String aggregationName, TimeWindow window, AggregationResult result) {
+                if ("high_freq_count".equals(aggregationName)) {
+                    windowCount++;
+                    if (windowCount % 5 == 0) {
+                        log.info("Performance window {}: {} events processed", windowCount, result.getValue().intValue());
+                    }
+                    if (windowCount >= 10) {
+                        perfLatch.countDown();
+                    }
+                }
+            }
+        });
+
+        // High-frequency event generation
+        CompletableFuture<Void> perfTask = CompletableFuture.runAsync(() -> {
+            try {
+                for (int i = 0; i < eventCount; i++) {
+                    aggregator.addData("high_freq_count", 1.0, Instant.now());
+
+                    if ((i + 1) % 1000 == 0) {
+                        log.info("Generated {} high-frequency events", i + 1);
+                    }
+
+                    // No sleep - maximum throughput
+                }
+            } catch (Exception e) {
+                log.error("Performance simulation error", e);
+            }
+        });
+
+        // Wait for performance test completion
+        boolean perfCompleted = perfLatch.await(60, TimeUnit.SECONDS);
+        long endTime = System.currentTimeMillis();
+        long duration = endTime - startTime;
+
+        log.info("Performance analytics completed in {}ms", duration);
+        log.info("Throughput: {} events/second", (eventCount * 1000.0) / duration);
+        log.info("Performance test success: {}", perfCompleted);
+
+        perfTask.cancel(true);
+    }
+
+    private PageViewEvent generatePageViewEvent() {
+        String[] pages = {"/home", "/products", "/cart", "/checkout", "/profile", "/about", "/contact"};
+        String[] userAgents = {"Chrome", "Firefox", "Safari", "Edge"};
+        String[] countries = {"US", "UK", "CA", "DE", "FR", "JP", "AU"};
+
+        return new PageViewEvent(
+            "view-" + System.nanoTime(),
+            pages[random.nextInt(pages.length)],
+            "user-" + random.nextInt(100),
+            random.nextInt(5000) + 100, // 100-5100ms page load time
+            userAgents[random.nextInt(userAgents.length)],
+            countries[random.nextInt(countries.length)],
+            Instant.now()
+        );
+    }
+
+    private TransactionEvent generateTransactionEvent() {
+        String[] products = {"laptop", "smartphone", "tablet", "headphones", "camera"};
+        String[] currencies = {"USD", "EUR", "GBP", "JPY"};
+
+        return new TransactionEvent(
+            "txn-" + System.nanoTime(),
+            "user-" + random.nextInt(50),
+            products[random.nextInt(products.length)],
+            random.nextDouble() * 1000 + 10, // $10-$1010
+            currencies[random.nextInt(currencies.length)],
+            Instant.now()
+        );
+    }
+
+    private String formatWindow(TimeWindow window) {
+        return String.format("%s[%s]",
+            window.getClass().getSimpleName(),
+            window.getWindowSize());
+    }
+
+    // Event classes for demonstration
+    @Data
+    public static class PageViewEvent {
+        private String eventId;
+        private String page;
+        private String userId;
+        private Integer loadTimeMs;
+        private String userAgent;
+        private String country;
+        private Instant timestamp;
+
+        public PageViewEvent() {}
+
+        public PageViewEvent(String eventId, String page, String userId, Integer loadTimeMs,
+                           String userAgent, String country, Instant timestamp) {
+            this.eventId = eventId;
+            this.page = page;
+            this.userId = userId;
+            this.loadTimeMs = loadTimeMs;
+            this.userAgent = userAgent;
+            this.country = country;
+            this.timestamp = timestamp;
+        }
+    }
+
+    @Data
+    public static class TransactionEvent {
+        private String transactionId;
+        private String userId;
+        private String product;
+        private Double amount;
+        private String currency;
+        private Instant timestamp;
+
+        public TransactionEvent() {}
+
+        public TransactionEvent(String transactionId, String userId, String product,
+                              Double amount, String currency, Instant timestamp) {
+            this.transactionId = transactionId;
+            this.userId = userId;
+            this.product = product;
+            this.amount = amount;
+            this.currency = currency;
+            this.timestamp = timestamp;
+        }
+    }
+
+    @Data
+    public static class UserSessionEvent {
+        private String sessionId;
+        private String userId;
+        private String action;
+        private String page;
+        private Long duration;
+        private Instant timestamp;
+
+        public UserSessionEvent() {}
+
+        public UserSessionEvent(String sessionId, String userId, String action,
+                              String page, Long duration, Instant timestamp) {
+            this.sessionId = sessionId;
+            this.userId = userId;
+            this.action = action;
+            this.page = page;
+            this.duration = duration;
+            this.timestamp = timestamp;
+        }
+    }
+}

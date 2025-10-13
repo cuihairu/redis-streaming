@@ -1,0 +1,74 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    - cron: '0 2 * * *'  # 每天凌晨 2 点运行
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  integration-test:
+    runs-on: self-hosted
+    timeout-minutes: 60
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Verify Java version
+      run: |
+        java -version
+        echo "JAVA_HOME=$JAVA_HOME"
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+
+    - name: Verify services are running
+      run: |
+        echo "Checking required services..."
+        ./deploy/verify-services.sh
+
+    - name: Ensure services are started
+      run: |
+        echo "Starting all test services..."
+        sudo systemctl start redis-server mysql postgresql || true
+        sleep 10
+
+    - name: Verify test services
+      run: |
+        echo "=== Service Status ==="
+        redis-cli ping
+        mysql -h 127.0.0.1 -u test_user -ptest_password test_db -e "SELECT 1"
+        PGPASSWORD=test_password psql -h 127.0.0.1 -U test_user -d test_db -c "SELECT 1"
+
+    - name: Run integration tests
+      run: ./gradlew integrationTest --console=plain --stacktrace
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: integration-test-results
+        path: |
+          **/build/test-results/integrationTest/
+          **/build/reports/tests/integrationTest/
+        retention-days: 7
+
+    - name: Collect service logs on failure
+      if: failure()
+      run: |
+        mkdir -p build/service-logs
+        sudo journalctl -u redis-server -n 100 > build/service-logs/redis.log 2>&1 || true
+        sudo journalctl -u mysql -n 100 > build/service-logs/mysql.log 2>&1 || true
+        sudo journalctl -u postgresql -n 100 > build/service-logs/postgresql.log 2>&1 || true
+
+    - name: Upload service logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: service-logs
+        path: build/service-logs/
+        retention-days: 3

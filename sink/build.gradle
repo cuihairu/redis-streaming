@@ -1,0 +1,21 @@
+plugins {
+    id 'java-library'
+}
+
+dependencies {
+    api project(':core')
+
+    // Redis client for Redis Sink
+    implementation 'org.redisson:redisson:3.52.0'
+
+    // Kafka client for Kafka Sink (optional)
+    compileOnly 'org.apache.kafka:kafka-clients:3.6.1'
+
+    // Jackson for JSON serialization
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.0'
+
+    compileOnly 'org.projectlombok:lombok:1.18.34'
+    annotationProcessor 'org.projectlombok:lombok:1.18.34'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.9.2'
+}

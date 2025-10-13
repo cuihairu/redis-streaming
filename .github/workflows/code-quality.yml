@@ -1,0 +1,46 @@
+name: Code Quality Check
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  code-quality:
+    runs-on: self-hosted
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Verify Java version
+      run: |
+        java -version
+        echo "JAVA_HOME=$JAVA_HOME"
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+
+    - name: Check code style
+      run: ./gradlew checkstyleMain checkstyleTest --console=plain || true
+
+    - name: Run static analysis
+      run: ./gradlew check -x test -x integrationTest --console=plain || true
+
+    - name: Build all modules
+      run: ./gradlew build -x test -x integrationTest --console=plain
+
+    - name: List project structure
+      run: ./gradlew projects --console=plain
+
+    - name: Upload quality reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: quality-reports
+        path: |
+          **/build/reports/checkstyle/
+          **/build/reports/pmd/
+        retention-days: 7
