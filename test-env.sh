@@ -7,14 +7,25 @@ set -e
 
 COMPOSE_FILE="docker-compose.test.yml"
 
+# 检查是否需要使用 sudo
+DOCKER_CMD="docker"
+COMPOSE_CMD="docker-compose"
+
+# 检测 Docker 权限
+if ! docker ps >/dev/null 2>&1; then
+    echo "⚠️  Docker permission denied, using sudo..."
+    DOCKER_CMD="sudo docker"
+    COMPOSE_CMD="sudo docker-compose"
+fi
+
 function start_env() {
     echo "🚀 Starting test environment..."
 
     # 清理可能存在的容器
-    docker-compose -f $COMPOSE_FILE down -v --remove-orphans 2>/dev/null || true
+    $COMPOSE_CMD -f $COMPOSE_FILE down -v --remove-orphans 2>/dev/null || true
 
     # 启动服务
-    docker-compose -f $COMPOSE_FILE up -d
+    $COMPOSE_CMD -f $COMPOSE_FILE up -d
 
     echo "⏳ Waiting for services to be healthy..."
 
@@ -52,7 +63,7 @@ function start_env() {
 
 function stop_env() {
     echo "🛑 Stopping test environment..."
-    docker-compose -f $COMPOSE_FILE down -v --remove-orphans
+    $COMPOSE_CMD -f $COMPOSE_FILE down -v --remove-orphans
     echo "✅ Test environment stopped and cleaned up"
 }
 
@@ -64,17 +75,17 @@ function restart_env() {
 
 function show_status() {
     echo "📊 Test environment status:"
-    docker-compose -f $COMPOSE_FILE ps
+    $COMPOSE_CMD -f $COMPOSE_FILE ps
 }
 
 function show_logs() {
     local service=${2:-""}
     if [ -n "$service" ]; then
         echo "📋 Showing logs for $service..."
-        docker-compose -f $COMPOSE_FILE logs -f $service
+        $COMPOSE_CMD -f $COMPOSE_FILE logs -f $service
     else
         echo "📋 Showing logs for all services..."
-        docker-compose -f $COMPOSE_FILE logs -f
+        $COMPOSE_CMD -f $COMPOSE_FILE logs -f
     fi
 }
 
@@ -82,7 +93,7 @@ function run_tests() {
     echo "🧪 Running tests..."
 
     # 检查环境是否运行
-    if ! docker-compose -f $COMPOSE_FILE ps | grep -q "Up"; then
+    if ! $COMPOSE_CMD -f $COMPOSE_FILE ps | grep -q "Up"; then
         echo "❌ Test environment is not running. Starting it first..."
         start_env
     fi
@@ -113,6 +124,8 @@ function show_help() {
     echo "  $0 start"
     echo "  $0 logs redis"
     echo "  $0 test"
+    echo ""
+    echo "Note: If Docker permission denied, script will automatically use sudo"
 }
 
 # 主程序

@@ -33,12 +33,12 @@ jobs:
       - name: Start test environment
         run: |
           # 清理可能存在的容器和网络
-          docker-compose -f docker-compose.test.yml down -v --remove-orphans 2>/dev/null || true
-          docker system prune -f
+          sudo docker-compose -f docker-compose.test.yml down -v --remove-orphans 2>/dev/null || true
+          sudo docker system prune -f
 
           # 启动测试环境
           echo "Starting test environment..."
-          docker-compose -f docker-compose.test.yml up -d
+          sudo docker-compose -f docker-compose.test.yml up -d
 
           # 等待所有服务健康
           echo "Waiting for services to be healthy..."
@@ -46,7 +46,7 @@ jobs:
             services="redis mysql postgres elasticsearch"
             for service in $services; do
               echo "Waiting for $service..."
-              until docker-compose -f docker-compose.test.yml ps $service | grep -q "healthy\|Up"; do
+              until sudo docker-compose -f docker-compose.test.yml ps $service | grep -q "healthy\|Up"; do
                 sleep 2
               done
               echo "$service is ready"
@@ -99,8 +99,8 @@ jobs:
         if: always()
         run: |
           echo "Cleaning up test environment..."
-          docker-compose -f docker-compose.test.yml down -v --remove-orphans
-          docker system prune -f
+          sudo docker-compose -f docker-compose.test.yml down -v --remove-orphans
+          sudo docker system prune -f
 
       - name: Cleanup Gradle Cache
         if: always()
