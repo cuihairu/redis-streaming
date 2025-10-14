@@ -123,9 +123,32 @@ jobs:
           echo "Unit test files found: $UNIT_TESTS"
           echo "Integration test files found: $INTEGRATION_TESTS"
 
-          # Show failed tests if any
-          if find . -name "TEST-*.xml" -exec grep -l 'failures="[^0]"' {} \; | head -5; then
-            echo "❌ Some tests failed - check logs above"
+          # Check for failures in test XML files
+          FAILED_TESTS=$(find . -name "TEST-*.xml" -exec grep -l 'failures="[1-9]' {} \; 2>/dev/null | head -5)
+          ERROR_TESTS=$(find . -name "TEST-*.xml" -exec grep -l 'errors="[1-9]' {} \; 2>/dev/null | head -5)
+
+          if [ -n "$FAILED_TESTS" ] || [ -n "$ERROR_TESTS" ]; then
+            echo "❌ Test failures detected:"
+
+            if [ -n "$FAILED_TESTS" ]; then
+              echo "Files with failures:"
+              echo "$FAILED_TESTS"
+            fi
+
+            if [ -n "$ERROR_TESTS" ]; then
+              echo "Files with errors:"
+              echo "$ERROR_TESTS"
+            fi
+
+            # Show detailed failure info
+            echo ""
+            echo "Detailed failure information:"
+            find . -name "TEST-*.xml" -exec grep -l 'failures="[1-9]\|errors="[1-9]' {} \; | head -3 | while read file; do
+              echo "=== Failures in $file ==="
+              grep -A 5 -B 5 'failure\|error' "$file" || true
+              echo ""
+            done
+
             exit 1
           else
             echo "✅ All tests passed!"
