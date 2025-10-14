@@ -1,6 +1,12 @@
 name: Tests
 on: [push, pull_request]
 
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+  actions: read
+
 jobs:
   test:
     runs-on: self-hosted
@@ -105,13 +111,25 @@ jobs:
           POSTGRES_PASSWORD: test_password
 
       - name: Publish test results
-        uses: dorny/test-reporter@v1
         if: always()
-        with:
-          name: Test Results
-          path: '**/build/test-results/**/*.xml'
-          reporter: java-junit
-          fail-on-error: true
+        run: |
+          echo "📊 Test Results Summary:"
+          echo "=================================="
+
+          # Count test results
+          UNIT_TESTS=$(find . -name "TEST-*.xml" -path "*/test-results/test/*" | wc -l)
+          INTEGRATION_TESTS=$(find . -name "TEST-*.xml" -path "*/test-results/integrationTest/*" | wc -l)
+
+          echo "Unit test files found: $UNIT_TESTS"
+          echo "Integration test files found: $INTEGRATION_TESTS"
+
+          # Show failed tests if any
+          if find . -name "TEST-*.xml" -exec grep -l 'failures="[^0]"' {} \; | head -5; then
+            echo "❌ Some tests failed - check logs above"
+            exit 1
+          else
+            echo "✅ All tests passed!"
+          fi
 
       - name: Cleanup test environment
         if: always()
