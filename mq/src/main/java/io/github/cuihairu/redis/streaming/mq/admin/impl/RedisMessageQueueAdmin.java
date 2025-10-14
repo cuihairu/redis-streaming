@@ -200,6 +200,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             }
 
             // Redisson 的 listPending 返回 List<PendingEntry>
+            @SuppressWarnings("deprecation")
             List<PendingEntry> pendingEntries = stream.listPending(group,
                     StreamMessageId.MIN, StreamMessageId.MAX, limit);
 
@@ -262,6 +263,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
 
             // 读取最老的消息并删除
             long toDelete = originalSize - maxLen;
+            @SuppressWarnings("deprecation")
             Map<StreamMessageId, Map<String, Object>> oldMessages =
                     stream.range((int) toDelete, StreamMessageId.MIN, StreamMessageId.MAX);
 
@@ -296,6 +298,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             long minTimestamp = Instant.now().minus(maxAge).toEpochMilli();
 
             // 读取所有消息，删除过期的
+            @SuppressWarnings("deprecation")
             Map<StreamMessageId, Map<String, Object>> allMessages =
                     stream.range(Integer.MAX_VALUE, StreamMessageId.MIN, StreamMessageId.MAX);
 

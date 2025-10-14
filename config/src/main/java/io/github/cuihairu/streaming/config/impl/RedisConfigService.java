@@ -2,6 +2,8 @@ package io.github.cuihairu.streaming.config.impl;
 
 import io.github.cuihairu.streaming.config.*;
 import org.redisson.api.*;
+import org.redisson.codec.JsonJacksonCodec;
+import io.github.cuihairu.streaming.config.event.ConfigChangeEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,7 +26,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
     
     // 监听器管理
     private final Map<String, Set<ConfigChangeListener>> listeners = new ConcurrentHashMap<>();
-    private final Map<String, RPatternTopic> subscriptions = new ConcurrentHashMap<>();
+    private final Map<String, RTopic> subscriptions = new ConcurrentHashMap<>();
     
     // 配置历史保留数量
     private static final int MAX_HISTORY_SIZE = 10;
@@ -163,10 +165,10 @@ public class RedisConfigService implements ConfigService, ConfigManager {
         
         // 如果是第一个监听器，创建Redis订阅
         if (!subscriptions.containsKey(listenerKey)) {
-            RPatternTopic topic = redissonClient.getPatternTopic(
-                config.getConfigChangeChannelKey(group, dataId));
-            
-            topic.addListener(Map.class, (pattern, channel, message) -> {
+            RTopic topic = redissonClient.getTopic(
+                config.getConfigChangeChannelKey(group, dataId), new JsonJacksonCodec());
+
+            topic.addListener(ConfigChangeEvent.class, (channel, message) -> {
                 handleConfigChangeEvent(dataId, group, message);
             });
             
@@ -206,7 +208,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
             if (configListeners.isEmpty()) {
                 listeners.remove(listenerKey);
                 
-                RPatternTopic topic = subscriptions.remove(listenerKey);
+                RTopic topic = subscriptions.remove(listenerKey);
                 if (topic != null) {
                     topic.removeAllListeners();
                     logger.info("Removed config listener for: {}:{}", group, dataId);
@@ -263,7 +265,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
         running = false;
         
         // 清理所有订阅
-        for (Map.Entry<String, RPatternTopic> entry : subscriptions.entrySet()) {
+        for (Map.Entry<String, RTopic> entry : subscriptions.entrySet()) {
             try {
                 entry.getValue().removeAllListeners();
             } catch (Exception e) {
@@ -293,7 +295,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
      * 生成客户端ID
      */
     private String generateClientId() {
-        return "client-" + System.currentTimeMillis() + "-" + Thread.currentThread().getId();
+        return "client-" + System.currentTimeMillis() + "-" + java.util.UUID.randomUUID();
     }
     
     /**
@@ -340,16 +342,9 @@ public class RedisConfigService implements ConfigService, ConfigManager {
      */
     private void publishConfigChangeEvent(String dataId, String group, String content, String version) {
         try {
-            RTopic topic = redissonClient.getTopic(config.getConfigChangeChannelKey(group, dataId));
-            
-            Map<String, Object> changeEvent = new HashMap<>();
-            changeEvent.put("dataId", dataId);
-            changeEvent.put("group", group);
-            changeEvent.put("content", content);
-            changeEvent.put("version", version);
-            changeEvent.put("timestamp", System.currentTimeMillis());
-            
-            topic.publish(changeEvent);
+            RTopic topic = redissonClient.getTopic(config.getConfigChangeChannelKey(group, dataId), new JsonJacksonCodec());
+            ConfigChangeEvent evt = new ConfigChangeEvent(dataId, group, content, version, System.currentTimeMillis());
+            topic.publish(evt);
             
         } catch (Exception e) {
             logger.warn("Failed to publish config change event for {}:{}", group, dataId, e);
@@ -359,10 +354,10 @@ public class RedisConfigService implements ConfigService, ConfigManager {
     /**
      * 处理配置变更事件
      */
-    private void handleConfigChangeEvent(String dataId, String group, Map<String, Object> message) {
+    private void handleConfigChangeEvent(String dataId, String group, ConfigChangeEvent message) {
         try {
-            String content = (String) message.get("content");
-            String version = (String) message.get("version");
+            String content = message.getContent();
+            String version = message.getVersion();
             
             String listenerKey = group + ":" + dataId;
             Set<ConfigChangeListener> configListeners = listeners.get(listenerKey);

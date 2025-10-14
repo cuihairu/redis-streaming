@@ -35,7 +35,9 @@ public class DeadLetterQueueManager {
         RStream<String, Object> dlqStream = redissonClient.getStream(dlqTopic);
 
         try {
-            return dlqStream.range(limit, StreamMessageId.MIN, StreamMessageId.MAX);
+            @SuppressWarnings("deprecation")
+            Map<StreamMessageId, Map<String, Object>> result = dlqStream.range(limit, StreamMessageId.MIN, StreamMessageId.MAX);
+            return result;
         } catch (Exception e) {
             log.error("Failed to read messages from dead letter queue: {}", dlqTopic, e);
             return Map.of();
@@ -57,6 +59,7 @@ public class DeadLetterQueueManager {
             RStream<String, Object> originalStream = redissonClient.getStream(originalTopic);
 
             // Read the specific message from DLQ
+            @SuppressWarnings("deprecation")
             Map<StreamMessageId, Map<String, Object>> messages = dlqStream.range(1, messageId, messageId);
 
             if (messages.isEmpty()) {

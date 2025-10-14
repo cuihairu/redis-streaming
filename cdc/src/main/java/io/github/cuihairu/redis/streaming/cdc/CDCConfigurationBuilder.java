@@ -273,8 +273,12 @@ public class CDCConfigurationBuilder {
         @Override
         public List<String> getTableIncludes() {
             Object value = properties.get("table.includes");
-            if (value instanceof List) {
-                return (List<String>) value;
+            if (value instanceof List<?>) {
+                List<?> list = (List<?>) value;
+                return list.stream()
+                    .filter(item -> item instanceof String)
+                    .map(item -> (String) item)
+                    .collect(java.util.stream.Collectors.toList());
             }
             return java.util.Collections.emptyList();
         }
@@ -282,8 +286,12 @@ public class CDCConfigurationBuilder {
         @Override
         public List<String> getTableExcludes() {
             Object value = properties.get("table.excludes");
-            if (value instanceof List) {
-                return (List<String>) value;
+            if (value instanceof List<?>) {
+                List<?> list = (List<?>) value;
+                return list.stream()
+                    .filter(item -> item instanceof String)
+                    .map(item -> (String) item)
+                    .collect(java.util.stream.Collectors.toList());
             }
             return java.util.Collections.emptyList();
         }

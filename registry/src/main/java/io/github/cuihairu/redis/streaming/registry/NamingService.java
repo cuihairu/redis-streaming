@@ -49,8 +49,8 @@ public interface NamingService extends ServiceProvider, ServiceConsumer, Service
      *   <li>"field:!=": "value" - 不等于</li>
      *   <li>"field:>": "value" - 大于</li>
      *   <li>"field:>=": "value" - 大于等于</li>
-     *   <li>"field:<": "value" - 小于</li>
-     *   <li>"field:<=": "value" - 小于等于</li>
+     *   <li>"field:&lt;": "value" - 小于</li>
+     *   <li>"field:&lt;=": "value" - 小于等于</li>
      * </ul>
      *
      * <p>比较规则：</p>
@@ -64,7 +64,7 @@ public interface NamingService extends ServiceProvider, ServiceConsumer, Service
      * // ✅ 推荐：数值比较
      * Map&lt;String, String&gt; filters = new HashMap&lt;&gt;();
      * filters.put("weight:>=", "10");      // 权重 >= 10
-     * filters.put("cpu_usage:<", "80");    // CPU使用率 < 80
+     * filters.put("cpu_usage:&lt;", "80");    // CPU使用率 &lt; 80
      *
      * // ✅ 推荐：字符串相等
      * filters.put("region", "us-east-1");  // 精确匹配

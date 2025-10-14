@@ -54,8 +54,8 @@ public interface ServiceConsumer {
      *   <li>"field:!=": "value" - not equals</li>
      *   <li>"field:>": "value" - greater than</li>
      *   <li>"field:>=": "value" - greater than or equals</li>
-     *   <li>"field:<": "value" - less than</li>
-     *   <li>"field:<=": "value" - less than or equals</li>
+     *   <li>"field:&lt;": "value" - less than</li>
+     *   <li>"field:&lt;=": "value" - less than or equals</li>
      * </ul>
      *
      * <p>Comparison rules:</p>
@@ -69,7 +69,7 @@ public interface ServiceConsumer {
      * // ✅ Recommended: numeric comparison
      * Map&lt;String, String&gt; filters = new HashMap&lt;&gt;();
      * filters.put("weight:>=", "10");      // weight >= 10
-     * filters.put("cpu_usage:<", "80");    // CPU usage < 80
+     * filters.put("cpu_usage:&lt;", "80");    // CPU usage &lt; 80
      *
      * // ✅ Recommended: string equality
      * filters.put("region", "us-east-1");  // exact match

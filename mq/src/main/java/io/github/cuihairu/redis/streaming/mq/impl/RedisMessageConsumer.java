@@ -179,6 +179,7 @@ public class RedisMessageConsumer implements MessageConsumer {
                 RStream<String, Object> stream = redissonClient.getStream(topic);
 
                 // Get pending messages for this consumer
+                @SuppressWarnings("deprecation")
                 List<PendingEntry> pendingEntries = stream.listPending(context.consumerGroup, consumerName, StreamMessageId.MIN, StreamMessageId.MAX, 10);
 
                 for (PendingEntry pendingEntry : pendingEntries) {

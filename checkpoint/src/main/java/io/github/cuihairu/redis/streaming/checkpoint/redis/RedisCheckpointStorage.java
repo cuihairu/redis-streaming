@@ -56,6 +56,7 @@ public class RedisCheckpointStorage implements CheckpointStorage {
     @Override
     public List<Checkpoint> listCheckpoints(int limit) throws Exception {
         RKeys keys = redisson.getKeys();
+        @SuppressWarnings("deprecation")
         Iterable<String> allKeys = keys.getKeysByPattern(keyPrefix + "*");
 
         List<Checkpoint> checkpoints = new ArrayList<>();
