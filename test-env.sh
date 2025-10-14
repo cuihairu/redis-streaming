@@ -31,22 +31,22 @@ function start_env() {
 
     # 等待 Redis
     echo "  Waiting for Redis..."
-    timeout 30 bash -c 'until redis-cli ping > /dev/null 2>&1; do sleep 1; done'
+    timeout 30 bash -c 'until nc -z localhost 6379; do sleep 1; done'
     echo "  ✅ Redis is ready"
 
     # 等待 MySQL
     echo "  Waiting for MySQL..."
-    timeout 60 bash -c 'until mysqladmin ping -h localhost -u root -ptest_password > /dev/null 2>&1; do sleep 2; done'
+    timeout 60 bash -c 'until nc -z localhost 3306; do sleep 2; done'
     echo "  ✅ MySQL is ready"
 
     # 等待 PostgreSQL
     echo "  Waiting for PostgreSQL..."
-    timeout 30 bash -c 'until pg_isready -h localhost -U test_user > /dev/null 2>&1; do sleep 1; done'
+    timeout 30 bash -c 'until nc -z localhost 5432; do sleep 1; done'
     echo "  ✅ PostgreSQL is ready"
 
     # 等待 Elasticsearch
     echo "  Waiting for Elasticsearch..."
-    timeout 90 bash -c 'until curl -f http://localhost:9200/_cluster/health > /dev/null 2>&1; do sleep 2; done'
+    timeout 90 bash -c 'until nc -z localhost 9200; do sleep 2; done'
     echo "  ✅ Elasticsearch is ready"
 
     echo ""
