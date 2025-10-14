@@ -30,15 +30,34 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
+      - name: Setup Docker permissions
+        run: |
+          # 检查当前用户是否在 docker 组中
+          if ! groups $USER | grep -q docker; then
+            echo "❌ User $USER is not in docker group"
+            echo "Please run on your runner: sudo usermod -aG docker $USER"
+            echo "Then restart the runner service: sudo systemctl restart actions.runner.*"
+            exit 1
+          fi
+
+          # 验证 Docker 访问权限
+          if ! docker ps >/dev/null 2>&1; then
+            echo "❌ Cannot access Docker daemon"
+            echo "Please ensure Docker is running and user has proper permissions"
+            exit 1
+          fi
+
+          echo "✅ Docker permissions OK"
+
       - name: Start test environment
         run: |
           # 清理可能存在的容器和网络
-          sudo docker-compose -f docker-compose.test.yml down -v --remove-orphans 2>/dev/null || true
-          sudo docker system prune -f
+          docker-compose -f docker-compose.test.yml down -v --remove-orphans 2>/dev/null || true
+          docker system prune -f
 
           # 启动测试环境
           echo "Starting test environment..."
-          sudo docker-compose -f docker-compose.test.yml up -d
+          docker-compose -f docker-compose.test.yml up -d
 
           # 等待所有服务健康
           echo "Waiting for services to be healthy..."
@@ -46,7 +65,7 @@ jobs:
             services="redis mysql postgres elasticsearch"
             for service in $services; do
               echo "Waiting for $service..."
-              until sudo docker-compose -f docker-compose.test.yml ps $service | grep -q "healthy\|Up"; do
+              until docker-compose -f docker-compose.test.yml ps $service | grep -q "healthy\|Up"; do
                 sleep 2
               done
               echo "$service is ready"
@@ -99,8 +118,8 @@ jobs:
         if: always()
         run: |
           echo "Cleaning up test environment..."
-          sudo docker-compose -f docker-compose.test.yml down -v --remove-orphans
-          sudo docker system prune -f
+          docker-compose -f docker-compose.test.yml down -v --remove-orphans
+          docker system prune -f
 
       - name: Cleanup Gradle Cache
         if: always()

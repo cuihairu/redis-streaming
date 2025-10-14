@@ -300,6 +300,35 @@ docker-compose down -v
 
 ### CI/CD Testing Strategy
 
+#### Self-hosted Runner Setup (Linux)
+
+For Linux self-hosted runners, Docker permissions need to be configured:
+
+```bash
+# 1. Run the setup script on your Linux runner
+./setup-runner-docker.sh
+
+# 2. Restart the GitHub Actions runner service
+sudo systemctl restart actions.runner.*
+
+# 3. Verify Docker access
+docker ps
+```
+
+**Manual setup (alternative):**
+```bash
+# Add user to docker group
+sudo usermod -aG docker $USER
+
+# Restart runner service
+sudo systemctl restart actions.runner.*
+
+# Verify permissions
+docker ps
+```
+
+#### CI/CD Pipeline
+
 ```bash
 # 1. Fast feedback: Unit tests only
 ./gradlew test --parallel
