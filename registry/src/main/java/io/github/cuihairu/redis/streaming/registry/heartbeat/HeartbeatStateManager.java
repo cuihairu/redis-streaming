@@ -50,6 +50,11 @@ public class HeartbeatStateManager {
 
         // 并发控制
         private volatile boolean pendingHeartbeat = false;
+
+        // 最近一次已提交的 metrics 快照，用于阈值比较
+        private Map<String, Object> lastMetricsSnapshot = new HashMap<>();
+        // 最近一次已提交的 metadata 快照（预留）
+        private Map<String, Object> lastMetadataSnapshot = new HashMap<>();
     }
 
     // ==================== 新的分离方法 ====================
@@ -125,15 +130,14 @@ public class HeartbeatStateManager {
 
         // 1. 检查最小更新间隔（metadata 变化应该很少，需要更长的间隔）
         long timeSinceLastUpdate = now - state.lastMetadataUpdateTime;
-        if (timeSinceLastUpdate < config.getMetadataUpdateIntervalSeconds() * 1000L) {
+        long intervalMs = config.getMetadataUpdateIntervalSeconds() * 1000L;
+        if (intervalMs > 0 && timeSinceLastUpdate < intervalMs) {
             return UpdateDecision.NO_UPDATE;
         }
 
         // 2. 检查内容是否确实变化
         int currentHash = calculateHash(currentMetadata);
         if (currentHash != state.metadataHash) {
-            logger.info("Metadata changed for instance {}:{}, will update",
-                    serviceName, instanceId);
             return UpdateDecision.METADATA_UPDATE;
         }
 
@@ -170,6 +174,8 @@ public class HeartbeatStateManager {
             state.metricsHash = calculateHash(metrics);
             state.consecutiveHeartbeatOnlyCount = 0;
             state.pendingHeartbeat = false;
+            // 存储 metrics 快照用于之后的阈值判断（浅拷贝足够）
+            state.lastMetricsSnapshot = metrics != null ? new HashMap<>(metrics) : new HashMap<>();
         }
     }
 
@@ -185,6 +191,7 @@ public class HeartbeatStateManager {
             state.lastHeartbeatTime = state.lastMetadataUpdateTime;  // 更新时也算心跳
             state.metadataHash = calculateHash(metadata);
             state.pendingHeartbeat = false;
+            state.lastMetadataSnapshot = metadata != null ? new HashMap<>(metadata) : new HashMap<>();
         }
     }
 
@@ -201,36 +208,6 @@ public class HeartbeatStateManager {
         }
     }
 
-    // ==================== 旧的标记方法（向后兼容）====================
-
-    /**
-     * 标记操作开始，避免重复更新
-     *
-     * @deprecated 使用具体的标记方法替代
-     */
-    @Deprecated
-    public void markUpdatePending(String serviceName, String instanceId, UpdateDecision decision) {
-        String stateKey = buildStateKey(serviceName, instanceId);
-        InstanceState state = instanceStates.get(stateKey);
-        if (state != null && decision == UpdateDecision.HEARTBEAT_ONLY) {
-            state.pendingHeartbeat = true;
-        }
-    }
-
-    /**
-     * 操作完成后清除标记
-     *
-     * @deprecated 使用具体的 markXxxCompleted() 方法替代
-     */
-    @Deprecated
-    public void markUpdateCompleted(String serviceName, String instanceId, UpdateDecision decision) {
-        String stateKey = buildStateKey(serviceName, instanceId);
-        InstanceState state = instanceStates.get(stateKey);
-        if (state != null) {
-            state.pendingHeartbeat = false;
-        }
-    }
-
     // ==================== 辅助方法 ====================
 
     /**
@@ -239,16 +216,40 @@ public class HeartbeatStateManager {
     private boolean hasSignificantMetricsChange(int oldHash, int newHash,
                                                 Map<String, Object> currentMetrics,
                                                 InstanceState state) {
+        // 首次收集
         if (oldHash == 0) {
-            return true;  // 首次收集 metrics
-        }
-
-        if (oldHash != newHash) {
-            // Hash 不同，进一步检查具体字段的变化幅度
-            // 可以在这里实现更精细的阈值检查
             return true;
         }
 
+        // 没有任何变化
+        if (oldHash == newHash) {
+            return false;
+        }
+
+        // 若未配置阈值，hash 变化即认为需要更新
+        Map<String, ChangeThreshold> thresholds = config.getChangeThresholds();
+        if (thresholds == null || thresholds.isEmpty()) {
+            return true;
+        }
+
+        // 根据阈值逐项判断是否显著变化
+        for (Map.Entry<String, ChangeThreshold> entry : thresholds.entrySet()) {
+            String path = entry.getKey();
+            ChangeThreshold threshold = entry.getValue();
+
+            Object oldVal = getNestedValue(state.lastMetricsSnapshot, path);
+            Object newVal = getNestedValue(currentMetrics, path);
+
+            if (oldVal == null && newVal == null) {
+                continue;
+            }
+
+            if (threshold.isSignificant(oldVal, newVal)) {
+                return true;
+            }
+        }
+
+        // 没有任何一项达到阈值，认为不显著
         return false;
     }
 
@@ -298,53 +299,6 @@ public class HeartbeatStateManager {
      */
     private String buildStateKey(String serviceName, String instanceId) {
         return serviceName + ":" + instanceId;
-    }
-
-    // ==================== 以下是原有但未使用的方法，保留以防需要 ====================
-
-    private boolean shouldUpdateMetadataOld(InstanceState state, Map<String, Object> currentMetadata,
-                                            Boolean currentHealthy, long now) {
-        // 1. 定时metadata更新
-        if (now - state.lastMetadataUpdateTime >= config.getMetadataInterval().toMillis()) {
-            logger.debug("Metadata update triggered by interval");
-            return true;
-        }
-
-        // 2. 健康状态变化
-        if (config.isForceUpdateOnHealthChange() && !Objects.equals(currentHealthy, state.lastHealthy)) {
-            logger.debug("Metadata update triggered by health change: {} -> {}", state.lastHealthy, currentHealthy);
-            return true;
-        }
-
-        // 3. 关键指标变化超过阈值
-        if (hasSignificantMetadataChangeOld(state.metricsHash, currentMetadata)) {
-            logger.debug("Metadata update triggered by significant change");
-            return true;
-        }
-
-        return false;
-    }
-
-    private boolean hasSignificantMetadataChangeOld(int previousHash, Map<String, Object> currentMetadata) {
-        if (previousHash == 0) {
-            return !currentMetadata.isEmpty(); // 首次设置metadata
-        }
-
-        for (Map.Entry<String, ChangeThreshold> entry : config.getChangeThresholds().entrySet()) {
-            String key = entry.getKey();
-            ChangeThreshold threshold = entry.getValue();
-
-            Object currentValue = getNestedValue(currentMetadata, key);
-            // 注意：这里缺少 previousValue 的获取，原实现有问题
-            // Object previousValue = getNestedValue(previousMetadata, key);
-
-            // 暂时简化处理
-            if (currentValue != null) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private Object getNestedValue(Map<String, Object> map, String path) {

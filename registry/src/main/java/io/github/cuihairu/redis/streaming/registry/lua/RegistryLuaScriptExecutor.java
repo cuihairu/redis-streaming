@@ -27,6 +27,7 @@ public class RegistryLuaScriptExecutor {
     // 脚本 SHA-1 缓存（volatile 保证可见性）
     private volatile String heartbeatUpdateScriptSha;
     private volatile String cleanupExpiredInstancesScriptSha;
+    private volatile String cleanupExpiredInstancesWithSnapshotsScriptSha;
     private volatile String getActiveInstancesScriptSha;
     private volatile String registerInstanceScriptSha;
     private volatile String deregisterInstanceScriptSha;
@@ -42,6 +43,7 @@ public class RegistryLuaScriptExecutor {
             local update_mode = ARGV[3]      -- "heartbeat_only" | "metrics_update" | "metadata_update" | "full_update"
             local metadata_json = ARGV[4]    -- 可选，metadata JSON
             local metrics_json = ARGV[5]     -- 可选，metrics JSON
+            local ttl_seconds = ARGV[6]      -- 可选，实例Hash TTL（仅用于临时实例）
 
             -- 参数校验
             if not heartbeat_key or not instance_key or not instance_id or not heartbeat_time then
@@ -60,6 +62,18 @@ public class RegistryLuaScriptExecutor {
             end
             redis.call('ZADD', heartbeat_key, heartbeat_num, instance_id)
             redis.call('HSET', instance_key, 'lastHeartbeatTime', heartbeat_time)
+
+            -- 刷新实例Hash的TTL（仅对临时实例生效）。
+            -- 规则：ephemeral=true 或未设置表示临时实例，需要滑动过期；ephemeral=false 表示永久实例，不设置TTL。
+            if ttl_seconds and ttl_seconds ~= '' then
+                local ttl_num = tonumber(ttl_seconds)
+                if ttl_num and ttl_num > 0 then
+                    local ephemeral = redis.call('HGET', instance_key, 'ephemeral')
+                    if ephemeral == nil or ephemeral == 'true' then
+                        redis.call('EXPIRE', instance_key, ttl_num)
+                    end
+                end
+            end
 
             -- 根据不同模式执行对应的更新
             if update_mode == 'heartbeat_only' then
@@ -148,6 +162,53 @@ public class RegistryLuaScriptExecutor {
             return expired_instances
             """;
 
+    // 清理过期实例（携带实例快照）脚本：返回 [id1, json1, id2, json2, ...]
+    private static final String CLEANUP_EXPIRED_INSTANCES_WITH_SNAPSHOTS_SCRIPT = """
+            local heartbeat_key = KEYS[1]
+            local service_name = ARGV[1]
+            local current_time = ARGV[2]
+            local timeout_ms = ARGV[3]
+            local key_prefix = ARGV[4]
+
+            if not heartbeat_key or not service_name or not current_time or not timeout_ms or not key_prefix then
+                return redis.error_reply("Missing required parameters")
+            end
+
+            local current_time_num = tonumber(current_time)
+            local timeout_ms_num = tonumber(timeout_ms)
+            if not current_time_num or not timeout_ms_num then
+                return redis.error_reply("Invalid numeric parameters")
+            end
+
+            local expired_threshold = current_time_num - timeout_ms_num
+            local expired_candidates = redis.call('ZRANGEBYSCORE', heartbeat_key, 0, expired_threshold)
+            local result = {}
+
+            if #expired_candidates > 0 then
+                for i = 1, #expired_candidates do
+                    local instance_id = expired_candidates[i]
+                    local instance_key = key_prefix .. ':services:' .. service_name .. ':instance:' .. instance_id
+                    local ephemeral = redis.call('HGET', instance_key, 'ephemeral')
+
+                    if ephemeral == nil or ephemeral == 'true' then
+                        local flat = redis.call('HGETALL', instance_key)
+                        local snap = {}
+                        for j = 1, #flat, 2 do
+                            snap[flat[j]] = flat[j+1]
+                        end
+                        redis.call('ZREM', heartbeat_key, instance_id)
+                        redis.call('DEL', instance_key)
+                        table.insert(result, instance_id)
+                        table.insert(result, cjson.encode(snap))
+                    else
+                        redis.call('HSET', instance_key, 'healthy', 'false')
+                    end
+                end
+            end
+
+            return result
+            """;
+
     // 获取活跃实例脚本
     private static final String GET_ACTIVE_INSTANCES_SCRIPT = """
             -- 获取活跃实例脚本
@@ -230,11 +291,15 @@ public class RegistryLuaScriptExecutor {
             -- 添加心跳时间到Hash中（冗余存储）
             redis.call('HSET', instance_key, 'lastHeartbeatTime', heartbeat_time)
 
-            -- 设置TTL（ARGV参数需转换为整数）
+            -- 设置TTL（仅对临时实例生效；ARGV参数需转换为整数）
             if ttl_seconds and ttl_seconds ~= '' then
                 local ttl_num = tonumber(ttl_seconds)
                 if ttl_num and ttl_num > 0 then
-                    redis.call('EXPIRE', instance_key, ttl_num)
+                    -- 从提交的数据判断是否临时实例（默认临时）
+                    local ephemeral = instance_data['ephemeral']
+                    if ephemeral == nil or ephemeral == true or ephemeral == 'true' then
+                        redis.call('EXPIRE', instance_key, ttl_num)
+                    end
                 end
             end
 
@@ -469,13 +534,14 @@ public class RegistryLuaScriptExecutor {
         try {
             heartbeatUpdateScriptSha = script.scriptLoad(HEARTBEAT_UPDATE_SCRIPT);
             cleanupExpiredInstancesScriptSha = script.scriptLoad(CLEANUP_EXPIRED_INSTANCES_SCRIPT);
+            cleanupExpiredInstancesWithSnapshotsScriptSha = script.scriptLoad(CLEANUP_EXPIRED_INSTANCES_WITH_SNAPSHOTS_SCRIPT);
             getActiveInstancesScriptSha = script.scriptLoad(GET_ACTIVE_INSTANCES_SCRIPT);
             registerInstanceScriptSha = script.scriptLoad(REGISTER_INSTANCE_SCRIPT);
             deregisterInstanceScriptSha = script.scriptLoad(DEREGISTER_INSTANCE_SCRIPT);
             getInstancesByMetadataScriptSha = script.scriptLoad(GET_INSTANCES_BY_METADATA_SCRIPT);
 
-            logger.info("Lua scripts loaded successfully - heartbeat: {}, cleanup: {}, active: {}, register: {}, deregister: {}, metadata_filter: {}",
-                    heartbeatUpdateScriptSha, cleanupExpiredInstancesScriptSha,
+            logger.info("Lua scripts loaded successfully - heartbeat: {}, cleanup: {}, cleanup_snap: {}, active: {}, register: {}, deregister: {}, metadata_filter: {}",
+                    heartbeatUpdateScriptSha, cleanupExpiredInstancesScriptSha, cleanupExpiredInstancesWithSnapshotsScriptSha,
                     getActiveInstancesScriptSha, registerInstanceScriptSha,
                     deregisterInstanceScriptSha, getInstancesByMetadataScriptSha);
         } catch (Exception e) {
@@ -506,31 +572,36 @@ public class RegistryLuaScriptExecutor {
      * @param updateMode 更新模式："heartbeat_only", "metrics_update", "metadata_update", "full_update"
      * @param metadataJson metadata JSON（可为 null）
      * @param metricsJson metrics JSON（可为 null）
-     * @return 执行结果
+     * @param ttlSeconds TTL秒数（仅对临时实例生效）
      */
-    public String executeHeartbeatUpdate(String heartbeatKey, String instanceKey, String instanceId,
+    public void executeHeartbeatUpdate(String heartbeatKey, String instanceKey, String instanceId,
                                          long heartbeatTime, String updateMode,
-                                         String metadataJson, String metricsJson) {
+                                         String metadataJson, String metricsJson,
+                                         int ttlSeconds) {
         try {
             // 优先使用 evalSha（传输 40 字节 SHA vs ~800 字节脚本）
             if (heartbeatUpdateScriptSha != null) {
                 try {
-                    return script.evalSha(RScript.Mode.READ_WRITE, heartbeatUpdateScriptSha, RScript.ReturnType.VALUE,
+                    script.evalSha(RScript.Mode.READ_WRITE, heartbeatUpdateScriptSha, RScript.ReturnType.VALUE,
                             List.of(heartbeatKey, instanceKey),
                             instanceId, String.valueOf(heartbeatTime), updateMode,
                             metadataJson != null ? metadataJson : "",
-                            metricsJson != null ? metricsJson : "");
+                            metricsJson != null ? metricsJson : "",
+                            String.valueOf(ttlSeconds));
+                    return;
                 } catch (RedisException e) {
                     if (e.getMessage() != null && e.getMessage().contains("NOSCRIPT")) {
                         // Redis 重启或脚本被清理，重新加载
                         logger.warn("Script not found in Redis cache, reloading...");
                         heartbeatUpdateScriptSha = reloadScript(HEARTBEAT_UPDATE_SCRIPT);
                         // 重试一次
-                        return script.evalSha(RScript.Mode.READ_WRITE, heartbeatUpdateScriptSha, RScript.ReturnType.VALUE,
+                        script.evalSha(RScript.Mode.READ_WRITE, heartbeatUpdateScriptSha, RScript.ReturnType.VALUE,
                                 List.of(heartbeatKey, instanceKey),
                                 instanceId, String.valueOf(heartbeatTime), updateMode,
                                 metadataJson != null ? metadataJson : "",
-                                metricsJson != null ? metricsJson : "");
+                                metricsJson != null ? metricsJson : "",
+                                String.valueOf(ttlSeconds));
+                        return;
                     }
                     throw e;
                 }
@@ -538,11 +609,12 @@ public class RegistryLuaScriptExecutor {
 
             // 降级：直接使用 eval（初始化失败时）
             logger.debug("Using eval fallback for heartbeat update");
-            return script.eval(RScript.Mode.READ_WRITE, HEARTBEAT_UPDATE_SCRIPT, RScript.ReturnType.VALUE,
+            script.eval(RScript.Mode.READ_WRITE, HEARTBEAT_UPDATE_SCRIPT, RScript.ReturnType.VALUE,
                     List.of(heartbeatKey, instanceKey),
                     instanceId, String.valueOf(heartbeatTime), updateMode,
                     metadataJson != null ? metadataJson : "",
-                    metricsJson != null ? metricsJson : "");
+                    metricsJson != null ? metricsJson : "",
+                    String.valueOf(ttlSeconds));
         } catch (Exception e) {
             logger.error("Failed to execute heartbeat update script", e);
             throw new RuntimeException("Heartbeat update failed", e);
@@ -579,6 +651,39 @@ public class RegistryLuaScriptExecutor {
         } catch (Exception e) {
             logger.error("Failed to execute cleanup expired instances script", e);
             throw new RuntimeException("Cleanup expired instances failed", e);
+        }
+    }
+
+    /**
+     * 执行清理过期实例（返回 [id,json] 对序列）
+     */
+    @SuppressWarnings("unchecked")
+    public List<Object> executeCleanupExpiredInstancesWithSnapshots(String heartbeatKey, String serviceName,
+                                                                    long currentTime, long timeoutMs, String keyPrefix) {
+        try {
+            if (cleanupExpiredInstancesWithSnapshotsScriptSha != null) {
+                try {
+                    return (List<Object>) script.evalSha(RScript.Mode.READ_WRITE, cleanupExpiredInstancesWithSnapshotsScriptSha, RScript.ReturnType.MULTI,
+                            List.of(heartbeatKey),
+                            serviceName, String.valueOf(currentTime), String.valueOf(timeoutMs), keyPrefix);
+                } catch (RedisException e) {
+                    if (e.getMessage() != null && e.getMessage().contains("NOSCRIPT")) {
+                        logger.warn("Cleanup-with-snapshots script not found, reloading...");
+                        cleanupExpiredInstancesWithSnapshotsScriptSha = reloadScript(CLEANUP_EXPIRED_INSTANCES_WITH_SNAPSHOTS_SCRIPT);
+                        return (List<Object>) script.evalSha(RScript.Mode.READ_WRITE, cleanupExpiredInstancesWithSnapshotsScriptSha, RScript.ReturnType.MULTI,
+                                List.of(heartbeatKey),
+                                serviceName, String.valueOf(currentTime), String.valueOf(timeoutMs), keyPrefix);
+                    }
+                    throw e;
+                }
+            }
+
+            return (List<Object>) script.eval(RScript.Mode.READ_WRITE, CLEANUP_EXPIRED_INSTANCES_WITH_SNAPSHOTS_SCRIPT, RScript.ReturnType.MULTI,
+                    List.of(heartbeatKey),
+                    serviceName, String.valueOf(currentTime), String.valueOf(timeoutMs), keyPrefix);
+        } catch (Exception e) {
+            logger.error("Failed to execute cleanup expired instances with snapshots", e);
+            throw new RuntimeException("Cleanup expired instances with snapshots failed", e);
         }
     }
 
