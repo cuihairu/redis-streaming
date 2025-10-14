@@ -14,10 +14,10 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 11
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '11'
+          java-version: '17'
           distribution: 'temurin'
 
       - name: Cache Gradle packages
@@ -52,20 +52,20 @@ jobs:
       - name: Start test environment
         run: |
           # 清理可能存在的容器和网络
-          docker-compose -f docker-compose.test.yml down -v --remove-orphans 2>/dev/null || true
+          docker compose -f docker-compose.minimal.yml down -v --remove-orphans 2>/dev/null || true
           docker system prune -f
 
           # 启动测试环境
           echo "Starting test environment..."
-          docker-compose -f docker-compose.test.yml up -d
+          docker compose -f docker-compose.minimal.yml up -d
 
           # 等待所有服务健康
           echo "Waiting for services to be healthy..."
           timeout 300 bash -c '
-            services="redis mysql postgres elasticsearch"
+            services="redis mysql postgres"
             for service in $services; do
               echo "Waiting for $service..."
-              until docker-compose -f docker-compose.test.yml ps $service | grep -q "healthy\|Up"; do
+              until docker compose -f docker-compose.minimal.yml ps $service | grep -q "healthy\|Up"; do
                 sleep 2
               done
               echo "$service is ready"
@@ -86,13 +86,6 @@ jobs:
           echo "Checking PostgreSQL (5432)..."
           timeout 30 bash -c 'until nc -z localhost 5432; do sleep 1; done'
 
-          echo "Checking Elasticsearch (9200)..."
-          timeout 60 bash -c 'until nc -z localhost 9200; do sleep 2; done'
-
-          # 验证服务实际可用
-          echo "Testing service responses..."
-          curl -f http://localhost:9200/_cluster/health || echo "Elasticsearch not ready yet, but port is open"
-
           echo "All service ports are accessible!"
 
       - name: Run unit tests
@@ -110,7 +103,6 @@ jobs:
           POSTGRES_URL: jdbc:postgresql://localhost:5432/test_db
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
-          ELASTICSEARCH_URL: http://localhost:9200
 
       - name: Publish test results
         uses: dorny/test-reporter@v1
@@ -125,7 +117,7 @@ jobs:
         if: always()
         run: |
           echo "Cleaning up test environment..."
-          docker-compose -f docker-compose.test.yml down -v --remove-orphans
+          docker compose -f docker-compose.minimal.yml down -v --remove-orphans
           docker system prune -f
 
       - name: Cleanup Gradle Cache

@@ -51,21 +51,3 @@ services:
       retries: 5
     tmpfs:
       - /var/lib/postgresql/data
-
-  elasticsearch:
-    image: elasticsearch:8.11.0
-    container_name: streaming-elasticsearch-test
-    ports:
-      - "9200:9200"
-      - "9300:9300"
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-    tmpfs:
-      - /usr/share/elasticsearch/data

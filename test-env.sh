@@ -9,13 +9,13 @@ COMPOSE_FILE="docker-compose.test.yml"
 
 # 检查是否需要使用 sudo
 DOCKER_CMD="docker"
-COMPOSE_CMD="docker-compose"
+COMPOSE_CMD="docker compose"
 
 # 检测 Docker 权限
 if ! docker ps >/dev/null 2>&1; then
     echo "⚠️  Docker permission denied, using sudo..."
     DOCKER_CMD="sudo docker"
-    COMPOSE_CMD="sudo docker-compose"
+    COMPOSE_CMD="sudo docker compose"
 fi
 
 function start_env() {
