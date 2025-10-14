@@ -149,6 +149,7 @@ public class RedisKTable<K, V> implements KTable<K, V> {
     @Override
     public <VR> KTable<K, VR> mapValues(Function<V, VR> mapper) {
         String newTableName = tableName + ":mapValues:" + System.currentTimeMillis();
+        @SuppressWarnings("unchecked")
         RedisKTable<K, VR> result = new RedisKTable<>(
             redissonClient, newTableName, keyClass, (Class<VR>) Object.class
         );
@@ -170,6 +171,7 @@ public class RedisKTable<K, V> implements KTable<K, V> {
     @Override
     public <VR> KTable<K, VR> mapValues(BiFunction<K, V, VR> mapper) {
         String newTableName = tableName + ":mapValues:" + System.currentTimeMillis();
+        @SuppressWarnings("unchecked")
         RedisKTable<K, VR> result = new RedisKTable<>(
             redissonClient, newTableName, keyClass, (Class<VR>) Object.class
         );
@@ -218,6 +220,7 @@ public class RedisKTable<K, V> implements KTable<K, V> {
 
         RedisKTable<K, VO> otherTable = (RedisKTable<K, VO>) other;
         String newTableName = tableName + ":join:" + System.currentTimeMillis();
+        @SuppressWarnings("unchecked")
         RedisKTable<K, VR> result = new RedisKTable<>(
             redissonClient, newTableName, keyClass, (Class<VR>) Object.class
         );
@@ -247,6 +250,7 @@ public class RedisKTable<K, V> implements KTable<K, V> {
 
         RedisKTable<K, VO> otherTable = (RedisKTable<K, VO>) other;
         String newTableName = tableName + ":leftJoin:" + System.currentTimeMillis();
+        @SuppressWarnings("unchecked")
         RedisKTable<K, VR> result = new RedisKTable<>(
             redissonClient, newTableName, keyClass, (Class<VR>) Object.class
         );

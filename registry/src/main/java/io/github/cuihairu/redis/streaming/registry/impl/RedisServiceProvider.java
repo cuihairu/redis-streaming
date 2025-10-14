@@ -1,8 +1,11 @@
 package io.github.cuihairu.redis.streaming.registry.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 import io.github.cuihairu.redis.streaming.registry.DefaultServiceInstance;
 import io.github.cuihairu.redis.streaming.registry.ServiceChangeAction;
+import io.github.cuihairu.redis.streaming.registry.Protocol;
+import io.github.cuihairu.redis.streaming.registry.StandardProtocol;
 import io.github.cuihairu.redis.streaming.registry.ServiceInstance;
 import io.github.cuihairu.redis.streaming.registry.ServiceProvider;
 import io.github.cuihairu.redis.streaming.registry.ServiceRegistry;
@@ -13,7 +16,13 @@ import io.github.cuihairu.redis.streaming.registry.heartbeat.UpdateDecision;
 import io.github.cuihairu.redis.streaming.registry.keys.RegistryKeys;
 import io.github.cuihairu.redis.streaming.registry.lua.RegistryLuaScriptExecutor;
 import io.github.cuihairu.redis.streaming.registry.metrics.MetricsCollectionManager;
+import io.github.cuihairu.redis.streaming.registry.metrics.MetricsConfig;
+import io.github.cuihairu.redis.streaming.registry.metrics.CpuMetricCollector;
+import io.github.cuihairu.redis.streaming.registry.metrics.MemoryMetricCollector;
+import io.github.cuihairu.redis.streaming.registry.metrics.ApplicationMetricCollector;
 import org.redisson.api.*;
+import org.redisson.codec.JsonJacksonCodec;
+import io.github.cuihairu.redis.streaming.registry.event.ServiceChangeEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -64,7 +73,24 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
         this.config = config != null ? config : new ServiceProviderConfig();
         this.heartbeatConfig = heartbeatConfig != null ? heartbeatConfig : new HeartbeatConfig();
         this.stateManager = new HeartbeatStateManager(this.heartbeatConfig);
-        this.metricsManager = metricsManager;
+        // default metrics manager if none provided
+        if (metricsManager == null) {
+            java.util.List<io.github.cuihairu.redis.streaming.registry.metrics.MetricCollector> collectors = new java.util.ArrayList<>();
+            collectors.add(new CpuMetricCollector());
+            collectors.add(new MemoryMetricCollector());
+            collectors.add(new ApplicationMetricCollector());
+            // disk collector (low cost)
+            collectors.add(new io.github.cuihairu.redis.streaming.registry.metrics.DiskMetricCollector());
+            // optional network collector if available (Linux /proc)
+            try {
+                Class<?> nc = Class.forName("io.github.cuihairu.redis.streaming.registry.metrics.NetworkMetricCollector");
+                collectors.add((io.github.cuihairu.redis.streaming.registry.metrics.MetricCollector) nc.getDeclaredConstructor().newInstance());
+            } catch (Throwable ignore) {}
+            MetricsConfig mc = io.github.cuihairu.redis.streaming.registry.metrics.MetricsGlobal.getOrDefault();
+            this.metricsManager = new MetricsCollectionManager(collectors, mc);
+        } else {
+            this.metricsManager = metricsManager;
+        }
         this.luaExecutor = new RegistryLuaScriptExecutor(redissonClient);
         this.objectMapper = new ObjectMapper();
         this.registryKeys = this.config.getRegistryKeys();
@@ -112,16 +138,35 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
             String heartbeatKey = registryKeys.getServiceHeartbeatsKey(serviceName);
             String instanceKey = registryKeys.getServiceInstanceKey(serviceName, instanceId);
 
+            // 判断是否已存在，决定事件类型（ADDED 或 UPDATED）
+            boolean existed = false;
+            try {
+                RMap<String, String> imap = redissonClient.getMap(instanceKey);
+                existed = imap.isExists();
+            } catch (Exception ignore) {
+                // 非关键路径，存在异常则回退到 ADDED
+            }
+
             luaExecutor.executeRegisterInstance(
                     servicesKey, heartbeatKey, instanceKey,
                     serviceName, instanceId, currentTime,
                     objectMapper.writeValueAsString(instanceData), config.getHeartbeatTimeoutSeconds()
             );
 
-            // 通知服务变更
-            notifyServiceChange(serviceName, ServiceChangeAction.ADDED, instance);
+            // 通知服务变更（首次为 ADDED，重复注册视为 UPDATED）
+            notifyServiceChange(serviceName, existed ? ServiceChangeAction.UPDATED : ServiceChangeAction.ADDED, instance);
 
-            logger.info("Service instance registered: {}:{}", serviceName, instanceId);
+            // 初始化心跳状态管理器中的metadata hash，确保后续的变更检测能正常工作
+            if (stateManager != null) {
+                stateManager.markMetadataUpdateCompleted(safeServiceName, safeInstanceId,
+                    new HashMap<>(instance.getMetadata()));
+            }
+
+            if (existed) {
+                logger.info("Service instance re-registered (updated): {}:{}", serviceName, instanceId);
+            } else {
+                logger.info("Service instance registered: {}:{}", serviceName, instanceId);
+            }
 
         } catch (Exception e) {
             logger.error("Failed to register service instance: {}:{}",
@@ -392,10 +437,11 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
                     return;  // NO_UPDATE
             }
 
-            // ========== 执行更新脚本 ==========
+            // ========== 执行更新脚本（并刷新TTL，仅对临时实例） ==========
             luaExecutor.executeHeartbeatUpdate(
                     heartbeatKey, instanceKey, safeInstanceId,
-                    currentTime, updateMode, metadataJson, metricsJson
+                    currentTime, updateMode, metadataJson, metricsJson,
+                    config.getHeartbeatTimeoutSeconds()
             );
 
             // ========== 更新本地状态 ==========
@@ -417,6 +463,11 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
 
             logger.debug("Heartbeat processed for {}:{} with mode: {}",
                     safeServiceName, safeInstanceId, updateMode);
+
+            // 发送 UPDATED 事件，便于消费者感知实例属性变化
+            if (!"heartbeat_only".equals(updateMode)) {
+                notifyServiceChange(safeServiceName, ServiceChangeAction.UPDATED, instance);
+            }
 
         } catch (Exception e) {
             logger.error("Failed to execute update for {}:{}",
@@ -454,27 +505,89 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
             String heartbeatKey = registryKeys.getServiceHeartbeatsKey(serviceName);
             String keyPrefix = config.getKeyPrefix() != null ? config.getKeyPrefix() : "registry";
 
-            List<String> expiredInstances = luaExecutor.executeCleanupExpiredInstances(
+            // 调用带快照的清理脚本，结果为 [id1, json1, id2, json2, ...]
+            List<Object> result = luaExecutor.executeCleanupExpiredInstancesWithSnapshots(
                     heartbeatKey, serviceName, currentTime, timeoutMs, keyPrefix
             );
 
-            if (!expiredInstances.isEmpty()) {
-                // 清理本地状态
-                for (String instanceId : expiredInstances) {
+            if (!result.isEmpty()) {
+                int cleaned = 0;
+                for (int i = 0; i + 1 < result.size(); i += 2) {
+                    String instanceId = String.valueOf(result.get(i));
+                    String json = String.valueOf(result.get(i + 1));
+                    cleaned++;
+
+                    // 清理本地状态
                     stateManager.removeInstanceState(serviceName, instanceId);
+
+                    // 将 JSON 快照转换为 ServiceInstance，用于通知
+                    ServiceInstance snapshot = buildInstanceFromSnapshot(serviceName, instanceId, json);
+                    if (snapshot != null) {
+                        notifyServiceChange(serviceName, ServiceChangeAction.REMOVED, snapshot);
+                    } else {
+                        // 回退：仅用ID通知
+                        notifyServiceChangeById(serviceName, ServiceChangeAction.REMOVED, instanceId);
+                    }
                 }
 
-                // 通知服务变更
-                for (String instanceId : expiredInstances) {
-                    notifyServiceChangeById(serviceName, ServiceChangeAction.REMOVED, instanceId);
-                }
+                // 若心跳集为空则从服务索引移除（避免残留）
+                try {
+                    RScoredSortedSet<String> set = redissonClient.getScoredSortedSet(heartbeatKey);
+                    if (set.size() == 0) {
+                        RSet<String> servicesSet = redissonClient.getSet(registryKeys.getServicesIndexKey());
+                        servicesSet.remove(serviceName);
+                    }
+                } catch (Exception ignore) {}
 
-                logger.info("Cleaned up {} expired instances for service: {}",
-                        expiredInstances.size(), serviceName);
+                logger.info("Cleaned up {} expired instances for service: {}", cleaned, serviceName);
             }
 
         } catch (Exception e) {
             logger.error("Failed to cleanup expired instances for service: {}", serviceName, e);
+        }
+    }
+
+    /**
+     * 根据 Lua 返回的实例 Hash JSON 构建 ServiceInstance 快照
+     */
+    private ServiceInstance buildInstanceFromSnapshot(String serviceName, String instanceId, String json) {
+        try {
+            Map<String, Object> map = objectMapper.readValue(json, new TypeReference<Map<String, Object>>(){});
+            String host = (String) map.get("host");
+            int port = map.get("port") != null ? Integer.parseInt(map.get("port").toString()) : 0;
+            String protocolName = (String) map.get("protocol");
+            Protocol protocol = protocolName != null ? StandardProtocol.fromName(protocolName) : StandardProtocol.HTTP;
+            boolean enabled = map.get("enabled") == null || Boolean.parseBoolean(map.get("enabled").toString());
+            boolean healthy = map.get("healthy") == null || Boolean.parseBoolean(map.get("healthy").toString());
+            int weight = map.get("weight") != null ? Integer.parseInt(map.get("weight").toString()) : 1;
+
+            Map<String, String> metadata = new HashMap<>();
+            Object metadataJson = map.get("metadata");
+            if (metadataJson instanceof String) {
+                try {
+                    Map<String, Object> md = objectMapper.readValue((String) metadataJson, new TypeReference<Map<String, Object>>(){});
+                    for (Map.Entry<String, Object> e : md.entrySet()) {
+                        if (e.getValue() != null) {
+                            metadata.put(e.getKey(), e.getValue().toString());
+                        }
+                    }
+                } catch (Exception ignore) {}
+            }
+
+            return DefaultServiceInstance.builder()
+                    .serviceName(serviceName)
+                    .instanceId(instanceId)
+                    .host(host)
+                    .port(port)
+                    .protocol(protocol)
+                    .enabled(enabled)
+                    .healthy(healthy)
+                    .weight(weight)
+                    .metadata(metadata)
+                    .build();
+        } catch (Exception e) {
+            logger.warn("Failed to build snapshot instance for {}:{}", serviceName, instanceId, e);
+            return null;
         }
     }
 
@@ -502,29 +615,22 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
      */
     private void notifyServiceChange(String serviceName, ServiceChangeAction action, ServiceInstance instance) {
         try {
-            RTopic topic = redissonClient.getTopic(
-                    config.getServiceChangeChannelKey(serviceName));
+            RTopic topic = redissonClient.getTopic(config.getServiceChangeChannelKey(serviceName), new JsonJacksonCodec());
 
-            Map<String, Object> changeEvent = new HashMap<>();
-            changeEvent.put("action", action.getValue());
-            changeEvent.put("instanceId", instance.getInstanceId());
-            changeEvent.put("timestamp", System.currentTimeMillis());
+            ServiceChangeEvent.InstanceSnapshot snap = new ServiceChangeEvent.InstanceSnapshot();
+            snap.setServiceName(instance.getServiceName());
+            snap.setInstanceId(instance.getInstanceId());
+            snap.setHost(instance.getHost());
+            snap.setPort(instance.getPort());
+            snap.setProtocol(instance.getProtocol().getName());
+            snap.setEnabled(instance.isEnabled());
+            snap.setHealthy(instance.isHealthy());
+            snap.setWeight(instance.getWeight());
+            snap.setMetadata(instance.getMetadata());
 
-            // 包含实例详细信息
-            Map<String, Object> instanceData = new HashMap<>();
-            instanceData.put("serviceName", instance.getServiceName());
-            instanceData.put("instanceId", instance.getInstanceId());
-            instanceData.put("host", instance.getHost());
-            instanceData.put("port", instance.getPort());
-            instanceData.put("protocol", instance.getProtocol().getName());
-            instanceData.put("enabled", instance.isEnabled());
-            instanceData.put("healthy", instance.isHealthy());
-            instanceData.put("weight", instance.getWeight());
-            instanceData.put("metadata", instance.getMetadata());
+            ServiceChangeEvent evt = new ServiceChangeEvent(serviceName, action, instance.getInstanceId(), System.currentTimeMillis(), snap);
 
-            changeEvent.put("instance", instanceData);
-
-            topic.publish(changeEvent);
+            topic.publish(evt);
 
         } catch (Exception e) {
             logger.warn("Failed to notify service change: {} {} {}",
@@ -537,15 +643,9 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
      */
     private void notifyServiceChangeById(String serviceName, ServiceChangeAction action, String instanceId) {
         try {
-            RTopic topic = redissonClient.getTopic(
-                    config.getServiceChangeChannelKey(serviceName));
-
-            Map<String, Object> changeEvent = new HashMap<>();
-            changeEvent.put("action", action.getValue());
-            changeEvent.put("instanceId", instanceId);
-            changeEvent.put("timestamp", System.currentTimeMillis());
-
-            topic.publish(changeEvent);
+            RTopic topic = redissonClient.getTopic(config.getServiceChangeChannelKey(serviceName), new JsonJacksonCodec());
+            ServiceChangeEvent evt = new ServiceChangeEvent(serviceName, action, instanceId, System.currentTimeMillis(), null);
+            topic.publish(evt);
 
         } catch (Exception e) {
             logger.warn("Failed to notify service change: {} {} {}", serviceName, action, instanceId, e);

@@ -25,7 +25,9 @@ public class InMemoryKGroupedTable<K, V> implements KGroupedTable<K, V> {
             InMemoryKTable<KS, V> sourceTable,
             Function<KTable.KeyValue<KS, V>, K> keySelector) {
         this.sourceTable = sourceTable;
-        this.keySelector = (Function) keySelector;
+        @SuppressWarnings("unchecked")
+        Function<KTable.KeyValue<?, V>, K> castedKeySelector = (Function) keySelector;
+        this.keySelector = castedKeySelector;
     }
 
     @Override

@@ -41,7 +41,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
 
     // 监听器管理
     private final Map<String, Set<ServiceChangeListener>> listeners = new ConcurrentHashMap<>();
-    private final Map<String, RPatternTopic> subscriptions = new ConcurrentHashMap<>();
+    private final Map<String, RTopic> subscriptions = new ConcurrentHashMap<>();
 
     /**
      * -- GETTER --
@@ -245,10 +245,10 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
 
         // 如果是第一个监听器，创建Redis订阅
         if (!subscriptions.containsKey(serviceName)) {
-            RPatternTopic topic = redissonClient.getPatternTopic(
-                config.getServiceChangeChannelKey(serviceName));
+            RTopic topic = redissonClient.getTopic(
+                config.getServiceChangeChannelKey(serviceName), new org.redisson.codec.JsonJacksonCodec());
 
-            topic.addListener(Map.class, (pattern, channel, message) -> {
+            topic.addListener(io.github.cuihairu.redis.streaming.registry.event.ServiceChangeEvent.class, (channel, message) -> {
                 handleServiceChangeEvent(serviceName, message);
             });
 
@@ -280,7 +280,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
             if (serviceListeners.isEmpty()) {
                 listeners.remove(serviceName);
 
-                RPatternTopic topic = subscriptions.remove(serviceName);
+                RTopic topic = subscriptions.remove(serviceName);
                 if (topic != null) {
                     topic.removeAllListeners();
                     logger.info("Unsubscribed from service changes for: {}", serviceName);
@@ -332,7 +332,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
         }
 
         // 清理所有订阅
-        for (Map.Entry<String, RPatternTopic> entry : subscriptions.entrySet()) {
+        for (Map.Entry<String, RTopic> entry : subscriptions.entrySet()) {
             try {
                 entry.getValue().removeAllListeners();
             } catch (Exception e) {
@@ -355,9 +355,9 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
     /**
      * 处理服务变更事件
      */
-    private void handleServiceChangeEvent(String serviceName, Map<String, Object> message) {
+    private void handleServiceChangeEvent(String serviceName, io.github.cuihairu.redis.streaming.registry.event.ServiceChangeEvent message) {
         try {
-            String instanceId = (String) message.get("instanceId");
+            String instanceId = message.getInstanceId();
 
             Set<ServiceChangeListener> serviceListeners = listeners.get(serviceName);
             if (serviceListeners == null || serviceListeners.isEmpty()) {
@@ -371,8 +371,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
             }
 
             // 解析action
-            String actionStr = (String) message.get("action");
-            ServiceChangeAction action = ServiceChangeAction.fromValue(actionStr);
+            ServiceChangeAction action = message.getAction();
 
             // 获取当前所有健康的实例列表
             List<ServiceInstance> allInstances = discoverHealthy(serviceName);
@@ -380,16 +379,25 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
             // 构建变更的实例
             ServiceInstance changedInstance = null;
             if (action == ServiceChangeAction.REMOVED) {
-                // 对于删除事件，从消息中构建实例信息
-                @SuppressWarnings("unchecked")
-                Map<String, Object> instanceData = (Map<String, Object>) message.get("instance");
-                if (instanceData != null) {
-                    // 将 Map<String, Object> 转换为 Map<String, String>
-                    Map<String, String> stringInstanceData = new HashMap<>();
-                    for (Map.Entry<String, Object> entry : instanceData.entrySet()) {
-                        stringInstanceData.put(entry.getKey(), entry.getValue() != null ? entry.getValue().toString() : null);
+                // 对于删除事件，从消息快照构建实例信息
+                var snap = message.getInstance();
+                if (snap != null) {
+                    Map<String,String> data = new java.util.HashMap<>();
+                    data.put("host", snap.getHost());
+                    data.put("port", String.valueOf(snap.getPort()));
+                    data.put("protocol", snap.getProtocol());
+                    data.put("enabled", String.valueOf(snap.isEnabled()));
+                    data.put("healthy", String.valueOf(snap.isHealthy()));
+                    data.put("weight", String.valueOf(snap.getWeight()));
+                    if (snap.getMetadata() != null) {
+                        // serialize to JSON string for buildServiceInstance which expects metadata as map later
+                        // but buildServiceInstance already expects map fields in string map; we'll populate after
                     }
-                    changedInstance = buildServiceInstance(serviceName, instanceId, stringInstanceData);
+                    changedInstance = buildServiceInstance(serviceName, instanceId, data);
+                    // inject metadata after building (since build uses protocol/host/port first)
+                    if (changedInstance instanceof DefaultServiceInstance && snap.getMetadata() != null) {
+                        ((DefaultServiceInstance) changedInstance).setMetadata(new java.util.HashMap<>(snap.getMetadata()));
+                    }
                 }
             } else {
                 // 对于添加和更新事件，从当前实例列表中查找
@@ -536,14 +544,13 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
         if (protocolName == null) {
             return StandardProtocol.HTTP;
         }
-
-        return switch (protocolName.toUpperCase()) {
-            case "HTTP" -> StandardProtocol.HTTP;
-            case "HTTPS" -> StandardProtocol.HTTPS;
-            case "TCP" -> StandardProtocol.TCP;
-            case "GRPC" -> StandardProtocol.GRPC;
-            default -> StandardProtocol.HTTP;
-        };
+        try {
+            // 尝试按标准协议解析（与写入端一致）
+            return StandardProtocol.fromName(protocolName);
+        } catch (IllegalArgumentException e) {
+            // 兜底为 HTTP，避免因为未知协议导致发现失败
+            return StandardProtocol.HTTP;
+        }
     }
     
     /**
@@ -640,8 +647,8 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
      *   <li>"field:!=": "value" - 不等于</li>
      *   <li>"field:>": "value" - 大于</li>
      *   <li>"field:>=": "value" - 大于等于</li>
-     *   <li>"field:<": "value" - 小于</li>
-     *   <li>"field:<=": "value" - 小于等于</li>
+     *   <li>"field:&lt;": "value" - 小于</li>
+     *   <li>"field:&lt;=": "value" - 小于等于</li>
      * </ul>
      *
      * <p>比较规则：</p>
@@ -655,7 +662,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
      * // ✅ 推荐：数值比较
      * Map&lt;String, String&gt; filters = new HashMap&lt;&gt;();
      * filters.put("weight:>=", "10");      // 权重 >= 10
-     * filters.put("cpu_usage:<", "80");    // CPU使用率 < 80
+     * filters.put("cpu_usage:&lt;", "80");    // CPU使用率 &lt; 80
      *
      * // ✅ 推荐：字符串相等
      * filters.put("region", "us-east-1");  // 精确匹配
@@ -690,13 +697,15 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
             long currentTime = System.currentTimeMillis();
             long heartbeatTimeoutMs = config.getHeartbeatTimeoutSeconds() * 1000L;
 
-            List<String> matchedInstanceIds = luaExecutor.executeGetInstancesByMetadata(
+            // 使用新接口（metadata-only），metricsFilters 传 null
+            List<String> matchedInstanceIds = luaExecutor.executeGetInstancesByFilters(
                     heartbeatsKey,
                     config.getRegistryKeys().getKeyPrefix(),
                     serviceName,
                     currentTime,
                     heartbeatTimeoutMs,
-                    metadataFiltersJson
+                    metadataFiltersJson,
+                    null
             );
 
             // 根据实例ID加载完整的实例信息
@@ -757,6 +766,74 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                 .collect(Collectors.toList());
     }
 
+    // ==================== 扩展：支持 metrics 过滤 ====================
+
+    /**
+     * 使用 metadata 与 metrics 组合进行服务端过滤
+     */
+    public List<ServiceInstance> discoverByFilters(String serviceName,
+                                                   Map<String, String> metadataFilters,
+                                                   Map<String, String> metricsFilters) {
+        if (!running) {
+            throw new IllegalStateException("ServiceDiscovery is not running");
+        }
+
+        try {
+            String metadataJson = metadataFilters != null ? objectMapper.writeValueAsString(metadataFilters) : null;
+            String metricsJson = metricsFilters != null ? objectMapper.writeValueAsString(metricsFilters) : null;
+
+            String heartbeatsKey = config.getHeartbeatKey(serviceName);
+            long currentTime = System.currentTimeMillis();
+            long heartbeatTimeoutMs = config.getHeartbeatTimeoutSeconds() * 1000L;
+
+            List<String> matchedInstanceIds = luaExecutor.executeGetInstancesByFilters(
+                    heartbeatsKey,
+                    config.getRegistryKeys().getKeyPrefix(),
+                    serviceName,
+                    currentTime,
+                    heartbeatTimeoutMs,
+                    metadataJson,
+                    metricsJson
+            );
+
+            List<ServiceInstance> instances = new ArrayList<>();
+            for (String instanceId : matchedInstanceIds) {
+                try {
+                    String instanceKey = config.getServiceInstanceKey(serviceName, instanceId);
+                    RMap<String, String> instanceMap = redissonClient.getMap(instanceKey, StringCodec.INSTANCE);
+                    Map<String, String> instanceData = instanceMap.readAllMap();
+                    if (!instanceData.isEmpty()) {
+                        ServiceInstance instance = buildServiceInstance(serviceName, instanceId, instanceData);
+                        if (instance != null) {
+                            instances.add(instance);
+                            discoveredInstances.put(instanceId, instance);
+                            if (config.isEnableHealthCheck() && healthCheckManager != null) {
+                                healthCheckManager.registerServiceInstance(instance);
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    logger.warn("Failed to load instance {} for service {}", instanceId, serviceName, e);
+                }
+            }
+
+            return instances;
+
+        } catch (Exception e) {
+            logger.error("Failed to discover instances by filters for service: {}", serviceName, e);
+            return Collections.emptyList();
+        }
+    }
+
+    public List<ServiceInstance> discoverHealthyByFilters(String serviceName,
+                                                          Map<String, String> metadataFilters,
+                                                          Map<String, String> metricsFilters) {
+        List<ServiceInstance> all = discoverByFilters(serviceName, metadataFilters, metricsFilters);
+        return all.stream()
+                .filter(instance -> instance.isEnabled() && instance.isHealthy())
+                .filter(this::isInstanceHeartbeatValid)
+                .collect(Collectors.toList());
+    }
     // ==================== ServiceConsumer 接口实现（委托方法） ====================
 
     /**

@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URL;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -87,7 +88,8 @@ public class HttpApiSource<T> implements AutoCloseable {
      */
     public T fetch() {
         try {
-            URL url = new URL(apiUrl);
+            URI uri = URI.create(apiUrl);
+            URL url = uri.toURL();
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(5000);
@@ -114,7 +116,9 @@ public class HttpApiSource<T> implements AutoCloseable {
                 log.debug("Fetched from {}: {} bytes", apiUrl, jsonResponse.length());
 
                 if (valueClass == String.class) {
-                    return (T) jsonResponse;
+                    @SuppressWarnings("unchecked")
+                    T result = (T) jsonResponse;
+                    return result;
                 }
 
                 return objectMapper.readValue(jsonResponse, valueClass);
@@ -137,7 +141,8 @@ public class HttpApiSource<T> implements AutoCloseable {
      */
     public List<T> fetchList() {
         try {
-            URL url = new URL(apiUrl);
+            URI uri = URI.create(apiUrl);
+            URL url = uri.toURL();
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(5000);

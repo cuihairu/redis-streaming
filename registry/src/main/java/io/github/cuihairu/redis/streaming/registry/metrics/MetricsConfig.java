@@ -2,6 +2,7 @@ package io.github.cuihairu.redis.streaming.registry.metrics;
 
 import java.time.Duration;
 import java.util.*;
+import io.github.cuihairu.redis.streaming.registry.metrics.ChangeThresholdType;
 
 /**
  * 指标收集配置
@@ -21,9 +22,9 @@ public class MetricsConfig {
 
     // 指标变化阈值
     private Map<String, ChangeThreshold> changeThresholds = Map.of(
-            MetricKeys.MEMORY_HEAP_USAGE_PERCENT, new ChangeThreshold(10.0, "absolute"),
-            MetricKeys.CPU_PROCESS_LOAD, new ChangeThreshold(20.0, "absolute"),
-            MetricKeys.DISK_USAGE_PERCENT, new ChangeThreshold(5.0, "absolute")
+            MetricKeys.MEMORY_HEAP_USAGE_PERCENT, new ChangeThreshold(10.0, ChangeThresholdType.ABSOLUTE),
+            MetricKeys.CPU_PROCESS_LOAD, new ChangeThreshold(20.0, ChangeThresholdType.ABSOLUTE),
+            MetricKeys.DISK_USAGE_PERCENT, new ChangeThreshold(5.0, ChangeThresholdType.ABSOLUTE)
     );
 
     // 默认收集间隔

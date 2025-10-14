@@ -43,6 +43,16 @@ public class RedisStreamingProperties {
     private ConfigProperties config = new ConfigProperties();
 
     /**
+     * 负载均衡配置（starter级）
+     */
+    private LoadBalancerProperties loadBalancer = new LoadBalancerProperties();
+
+    /**
+     * 客户端调用配置（重试/熔断等）
+     */
+    private InvokerProperties invoker = new InvokerProperties();
+
+    /**
      * Redis单机配置（简化版）
      *
      * 仅支持单机模式，适合快速开发和测试。
@@ -112,6 +122,11 @@ public class RedisStreamingProperties {
          * 服务实例配置
          */
         private InstanceProperties instance = new InstanceProperties();
+
+        /**
+         * Provider metrics configuration
+         */
+        private MetricsProperties metrics = new MetricsProperties();
     }
 
     @Data
@@ -208,5 +223,68 @@ public class RedisStreamingProperties {
          * 配置历史保留数量
          */
         private int historySize = 10;
+    }
+
+    @Data
+    public static class LoadBalancerProperties {
+        /**
+         * 策略：scored | wrr | weighted-random | consistent-hash
+         */
+        private String strategy = "scored";
+
+        // scored 配置
+        private String preferredRegion;
+        private String preferredZone;
+        private double cpuWeight = 1.0;
+        private double latencyWeight = 1.0;
+        private double memoryWeight = 0.0;
+        private double inflightWeight = 0.0;
+        private double queueWeight = 0.0;
+        private double errorRateWeight = 0.0;
+        private double targetLatencyMs = 50.0;
+        private double maxCpuPercent = -1;
+        private double maxLatencyMs = -1;
+        private double maxMemoryPercent = -1;
+        private double maxInflight = -1;
+        private double maxQueue = -1;
+        private double maxErrorRatePercent = -1;
+    }
+
+    @Data
+    public static class InvokerProperties {
+        // retry
+        private int maxAttempts = 3;
+        private long initialDelayMs = 20;
+        private double backoffFactor = 2.0;
+        private long maxDelayMs = 200;
+        private long jitterMs = 20;
+    }
+
+    @Data
+    public static class MetricsProperties {
+        /**
+         * 启用的指标类型，如 [memory, cpu, application, disk, network]
+         */
+        private java.util.Set<String> enabled = new java.util.HashSet<>(java.util.Set.of("memory","cpu","application","disk","network"));
+
+        /**
+         * 指标收集间隔（键为指标类型），例如：memory: 30s, cpu: 60s
+         */
+        private java.util.Map<String, java.time.Duration> intervals = new java.util.HashMap<>();
+
+        /**
+         * 默认收集间隔
+         */
+        private java.time.Duration defaultInterval = java.time.Duration.ofMinutes(1);
+
+        /**
+         * 显著变化时是否立即更新
+         */
+        private boolean immediateUpdateOnSignificantChange = true;
+
+        /**
+         * 收集超时时间
+         */
+        private java.time.Duration timeout = java.time.Duration.ofSeconds(5);
     }
 }

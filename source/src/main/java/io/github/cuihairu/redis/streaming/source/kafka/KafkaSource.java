@@ -250,7 +250,9 @@ public class KafkaSource<T> implements AutoCloseable {
             }
 
             if (valueClass == String.class) {
-                return (T) value;
+                @SuppressWarnings("unchecked")
+                T result = (T) value;
+                return result;
             }
 
             return objectMapper.readValue(value, valueClass);

@@ -182,8 +182,8 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
      *   <li>"field:!=": "value" - 不等于</li>
      *   <li>"field:>": "value" - 大于</li>
      *   <li>"field:>=": "value" - 大于等于</li>
-     *   <li>"field:<": "value" - 小于</li>
-     *   <li>"field:<=": "value" - 小于等于</li>
+     *   <li>"field:&lt;": "value" - 小于</li>
+     *   <li>"field:&lt;=": "value" - 小于等于</li>
      * </ul>
      *
      * <p>比较规则：</p>
@@ -197,7 +197,7 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
      * // ✅ 推荐：数值比较
      * Map&lt;String, String&gt; filters = new HashMap&lt;&gt;();
      * filters.put("weight:>=", "10");      // 权重 >= 10
-     * filters.put("cpu_usage:<", "80");    // CPU使用率 < 80
+     * filters.put("cpu_usage:&lt;", "80");    // CPU使用率 &lt; 80
      *
      * // ✅ 推荐：字符串相等
      * filters.put("region", "us-east-1");  // 精确匹配
@@ -247,6 +247,53 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
     @Override
     public List<ServiceInstance> discoverHealthyByMetadata(String serviceName, java.util.Map<String, String> metadataFilters) {
         return getHealthyInstancesByMetadata(serviceName, metadataFilters);
+    }
+
+    // ==================== 扩展：支持 metrics 过滤 ====================
+
+    /**
+     * Convenience methods to use combined metadata/metrics filters
+     */
+    public java.util.List<ServiceInstance> getInstancesByFilters(String serviceName,
+                                                                 java.util.Map<String, String> metadataFilters,
+                                                                 java.util.Map<String, String> metricsFilters) {
+        if (!running) {
+            throw new IllegalStateException("NamingService is not running");
+        }
+        java.util.List<ServiceInstance> instances = serviceConsumer.discoverByFilters(serviceName, metadataFilters, metricsFilters);
+        logger.debug("Retrieved {} instances for service: {} with filters (metadata={}, metrics={})",
+                instances.size(), serviceName, metadataFilters, metricsFilters);
+        return instances;
+    }
+
+    public java.util.List<ServiceInstance> getHealthyInstancesByFilters(String serviceName,
+                                                                        java.util.Map<String, String> metadataFilters,
+                                                                        java.util.Map<String, String> metricsFilters) {
+        if (!running) {
+            throw new IllegalStateException("NamingService is not running");
+        }
+        java.util.List<ServiceInstance> instances = serviceConsumer.discoverHealthyByFilters(serviceName, metadataFilters, metricsFilters);
+        logger.debug("Retrieved {} healthy instances for service: {} with filters (metadata={}, metrics={})",
+                instances.size(), serviceName, metadataFilters, metricsFilters);
+        return instances;
+    }
+
+    // ==================== Convenience: choose with load balancer ====================
+
+    public ServiceInstance chooseHealthyInstance(String serviceName,
+                                                 io.github.cuihairu.redis.streaming.registry.loadbalancer.LoadBalancer lb,
+                                                 java.util.Map<String, Object> context) {
+        java.util.List<ServiceInstance> instances = getHealthyInstances(serviceName);
+        return lb.choose(serviceName, instances, context);
+    }
+
+    public ServiceInstance chooseHealthyInstanceByFilters(String serviceName,
+                                                          java.util.Map<String, String> metadataFilters,
+                                                          java.util.Map<String, String> metricsFilters,
+                                                          io.github.cuihairu.redis.streaming.registry.loadbalancer.LoadBalancer lb,
+                                                          java.util.Map<String, Object> context) {
+        java.util.List<ServiceInstance> instances = getHealthyInstancesByFilters(serviceName, metadataFilters, metricsFilters);
+        return lb.choose(serviceName, instances, context);
     }
 
     // ==================== ServiceRegistry 接口实现 ====================

@@ -105,7 +105,138 @@ filters.put("status:!=", "maintenance");  // 排除维护状态
 
 List<ServiceInstance> filteredInstances =
     namingService.getInstancesByMetadata("order-service", filters);
+
+## ⚖️ 客户端负载均衡（新）
+
+推荐做法：先服务端过滤缩小候选集，然后在客户端根据 metadata/metrics 做“选优”。
+
+### 1) 构建过滤条件（可选）
+
+```java
+import io.github.cuihairu.redis.streaming.registry.filter.FilterBuilder;
+
+Map<String, String> md = FilterBuilder.create()
+  .metaEq("region", "us-east-1")
+  .metaGte("weight", 10)
+  .buildMetadata();
+
+Map<String, String> mt = FilterBuilder.create()
+  .metricLt("cpu", 70)
+  .metricLte("latency", 50)
+  .buildMetrics();
+
+List<ServiceInstance> candidates = namingService.getHealthyInstancesByFilters("order-service", md, mt);
 ```
+
+### 2) 选择策略
+
+```java
+import io.github.cuihairu.redis.streaming.registry.loadbalancer.*;
+
+// 加权轮询（平滑）：权重来自 metadata.weight 或实例 weight
+LoadBalancer wrr = new WeightedRoundRobinLoadBalancer();
+ServiceInstance chosen1 = wrr.choose("order-service", candidates, Map.of());
+
+// 一致性哈希：按用户ID等做粘滞路由
+LoadBalancer ch = new ConsistentHashLoadBalancer(128);
+ServiceInstance chosen2 = ch.choose("order-service", candidates, Map.of("hashKey", userId));
+
+// 评分选优（按权重×地域偏好×CPU/延迟等指标）
+LoadBalancerConfig cfg = new LoadBalancerConfig();
+cfg.setPreferredRegion("us-east-1");
+cfg.setCpuWeight(1.0);
+cfg.setLatencyWeight(1.0);
+
+// 需要从 Redis Hash 拉取 metrics（本地短缓存）
+MetricsProvider mp = new RedisMetricsProvider(redissonClient, serviceConsumer.getConfig());
+LoadBalancer scored = new ScoredLoadBalancer(cfg, mp);
+ServiceInstance chosen3 = scored.choose("order-service", candidates, Map.of());
+```
+
+也可以一步到位：
+
+```java
+ServiceInstance chosen = ((RedisNamingService)namingService)
+  .chooseHealthyInstanceByFilters("order-service", md, mt, scored, Map.of());
+```
+
+提示：如果过滤结果为空，可以回退到放宽条件或全量健康实例再做负载均衡。
+
+### ClientSelector 一站式选择（含降级回退）
+
+```java
+import io.github.cuihairu.redis.streaming.registry.client.*;
+import io.github.cuihairu.redis.streaming.registry.loadbalancer.*;
+
+ClientSelector selector = new ClientSelector(namingService, new ClientSelectorConfig());
+
+// 严格过滤 (metadata+metrics) 失败 -> 自动回退：去除 metrics 过滤 -> 去除 metadata 过滤 -> 使用全量健康实例
+ServiceInstance picked = selector.select(
+  "order-service",
+  md, mt,
+  new WeightedRoundRobinLoadBalancer(),
+  Map.of()
+);
+```
+```
+
+## ☎️ 客户端调用封装（熔断 + 重试 + 指标上报）
+
+```java
+import io.github.cuihairu.redis.streaming.registry.client.*;
+import io.github.cuihairu.redis.streaming.registry.client.metrics.RedisClientMetricsReporter;
+import io.github.cuihairu.redis.streaming.registry.loadbalancer.*;
+
+// 1) 选择策略与重试
+LoadBalancer lb = new ScoredLoadBalancer(new LoadBalancerConfig(), new RedisMetricsProvider(redissonClient, serviceConsumer.getConfig()));
+RetryPolicy retry = new RetryPolicy(3, 20, 2.0, 200, 20);
+RedisClientMetricsReporter reporter = new RedisClientMetricsReporter(redissonClient, serviceConsumer.getConfig());
+
+ClientInvoker invoker = new ClientInvoker(namingService, lb, retry, reporter);
+
+// 2) 发起调用（示例：用 ServiceInstance 信息拼接 URL 发 HTTP 请求）
+Map<String,String> md = Map.of("region","us-east-1");
+Map<String,String> mt = Map.of("cpu:<","80");
+String body = invoker.invoke("order-service", md, mt, Map.of(), ins -> {
+  String url = ins.getScheme()+"://"+ins.getHost()+":"+ins.getPort()+"/api/orders";
+  // do HTTP call (略)；抛异常会触发重试/熔断
+  return "ok";
+});
+```
+
+说明：
+- 重试：指数回退 + 抖动；失败会进行下一次选择；每次调用都会记录 clientInflight/clientLatencyMs/clientErrorRate。
+- 熔断：单实例级别的 CB；失败率超阈值则打开一段时间，自动半开探测。
+
+### 观测接口
+
+```java
+// 获取 ClientInvoker 指标快照（total + per service）
+Map<String, Map<String, Long>> stats = invoker.getMetricsSnapshot();
+// keys: attempts, successes, failures, retries, cbOpenSkips
+```
+
+## 🛠️ 生产建议配置
+
+- 目标与阈值
+  - ScoredLoadBalancer 建议设置 `targetLatencyMs`（如 50~100ms）
+  - 硬阈值（超出即剔除）：`maxCpuPercent`、`maxLatencyMs`、`maxMemoryPercent`、`maxInflight`、`maxQueue`、`maxErrorRatePercent`
+  - 示例：`maxCpuPercent=80`、`maxLatencyMs=200`、`maxErrorRatePercent=5`
+
+- 地域与分区偏好
+  - `preferredRegion` / `preferredZone` 配合 `regionBoost`/`zoneBoost`（如 1.1/1.05）
+  - metadata 中维护 `region`/`zone`，与部署拓扑一致
+
+- 指标选择
+  - metrics JSON 中建议提供：`cpu`（0..100）/`latency`（ms）/`memory`（0..100）/`inflight`（当前并发）/`queue`（排队长度）/`errorRate`（0..100），以及可选 `rxBytes`/`txBytes`（网络字节累计）
+  - 根据业务场景启用权重：`cpuWeight`、`latencyWeight`、`memoryWeight`、`inflightWeight`、`queueWeight`、`errorRateWeight`
+
+- 回退策略
+  - 使用 `ClientSelector` 统一“严格过滤 → 放宽 → 全量健康”，保证在高峰/抖动时平滑退化
+
+- 观测与告警
+  - 建议在业务侧打点记录：候选数量、被阈值剔除数量、最终选择实例与得分、回退发生次数
+  - 对于频繁回退或大规模剔除，第一时间告警（可能是容量不足或异常扩容）
 
 ### 5. 监听服务变更
 

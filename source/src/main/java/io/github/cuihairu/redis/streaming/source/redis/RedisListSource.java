@@ -319,7 +319,9 @@ public class RedisListSource<T> implements AutoCloseable {
     private T deserialize(String value) {
         try {
             if (valueClass == String.class) {
-                return (T) value;
+                @SuppressWarnings("unchecked")
+                T result = (T) value;
+                return result;
             }
             return objectMapper.readValue(value, valueClass);
         } catch (Exception e) {

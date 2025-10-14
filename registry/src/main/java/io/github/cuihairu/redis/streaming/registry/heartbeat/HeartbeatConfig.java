@@ -31,10 +31,8 @@ public class HeartbeatConfig {
 
     /**
      * Metrics 更新间隔（心跳 + metrics）
-     * 注意：这个字段名保持为 metadataInterval 以保持向后兼容
-     * @deprecated 语义不准确，实际控制的是 metrics 更新频率，未来版本可能重命名
      */
-    private Duration metadataInterval = Duration.ofSeconds(60);
+    private Duration metricsInterval = Duration.ofSeconds(60);
 
     // ========== Metrics 相关配置 ==========
 
@@ -87,26 +85,10 @@ public class HeartbeatConfig {
     // ========== 辅助方法 ==========
 
     /**
-     * 获取 metadata 更新间隔的毫秒数
-     */
-    public long getMetadataUpdateIntervalMs() {
-        return metadataInterval.toMillis();
-    }
-
-    /**
-     * 获取 metadata 更新间隔（向后兼容）
-     * @deprecated 使用 getMetricsUpdateIntervalMs() 更准确
-     */
-    @Deprecated
-    public long getMetadataIntervalMs() {
-        return metadataInterval.toMillis();
-    }
-
-    /**
      * 获取 metrics 更新间隔的毫秒数
      */
     public long getMetricsUpdateIntervalMs() {
-        return metadataInterval.toMillis();  // 使用同一个配置
+        return metricsInterval.toMillis();
     }
 
     /**

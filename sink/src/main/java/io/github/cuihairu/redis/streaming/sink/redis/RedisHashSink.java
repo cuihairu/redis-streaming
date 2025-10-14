@@ -175,9 +175,13 @@ public class RedisHashSink<K, V> {
             }
 
             try {
-                return objectMapper.readValue(removed, (Class<V>) Object.class);
+                @SuppressWarnings("unchecked")
+                V result = (V) objectMapper.readValue(removed, Object.class);
+                return result;
             } catch (Exception e) {
-                return (V) removed;
+                @SuppressWarnings("unchecked")
+                V result = (V) removed;
+                return result;
             }
         } catch (Exception e) {
             log.error("Failed to delete from Redis Hash", e);
