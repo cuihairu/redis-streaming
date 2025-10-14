@@ -176,57 +176,108 @@ docker-compose up -d
 # 2. Verify Redis is running
 docker-compose ps
 
+#### Integration Tests (Full Environment Required)
+```bash
+# Option 1: Use the test environment script (Recommended)
+./test-env.sh start    # Start all test services
+./test-env.sh test     # Run all tests
+./test-env.sh stop     # Stop and cleanup
+
+# Option 2: Manual Docker Compose
+# 1. Start test environment (Redis, MySQL, PostgreSQL, Elasticsearch)
+docker-compose -f docker-compose.test.yml up -d
+
+# 2. Wait for services to be ready
+./test-env.sh status
+
 # 3. Run integration tests
 ./gradlew integrationTest
 
 # 4. Run integration tests for specific module
-./gradlew :core:integrationTest
-./gradlew :aggregation:integrationTest
+./gradlew :registry:integrationTest
+./gradlew :cdc:integrationTest
+./gradlew :sink:integrationTest
 
-# 5. Stop Redis when done
-docker-compose down
+# 5. Stop test environment when done
+docker-compose -f docker-compose.test.yml down -v
 ```
 
 #### Complete Test Suite
 ```bash
-# Start Redis
-docker-compose up -d
+# Quick start - All in one command
+./test-env.sh test
 
-# Run all tests (unit + integration)
+# Or step by step
+./test-env.sh start
 ./gradlew clean test integrationTest
+./test-env.sh stop
 
-# Or run check task (includes both)
-./gradlew check
-
-# Stop Redis
-docker-compose down
+# Or using Docker Compose directly
+docker-compose -f docker-compose.test.yml up -d
+./gradlew clean test integrationTest
+docker-compose -f docker-compose.test.yml down -v
 ```
 
 ### Test Environment Configuration
 
-Integration tests support environment variable for Redis URL:
+Integration tests support environment variables for all services:
 ```bash
-# Default: redis://127.0.0.1:6379
-# Custom Redis URL
-export REDIS_URL=redis://custom-host:6379
+# Service URLs (defaults)
+export REDIS_URL=redis://localhost:6379
+export MYSQL_URL=jdbc:mysql://localhost:3306/test_db
+export MYSQL_USER=test_user
+export MYSQL_PASSWORD=test_password
+export POSTGRES_URL=jdbc:postgresql://localhost:5432/test_db
+export POSTGRES_USER=test_user
+export POSTGRES_PASSWORD=test_password
+export ELASTICSEARCH_URL=http://localhost:9200
+
+# Run tests with custom configuration
 ./gradlew integrationTest
 ```
 
-### Docker Compose Test Environment
+### Test Environment Management
 
-The project includes `docker-compose.yml` for test infrastructure:
+The project includes comprehensive test infrastructure:
+
+#### Docker Compose Test Environment
+- `docker-compose.test.yml` - Clean test environment (data in memory, no persistence)
+- `docker-compose.yml` - Development environment (with data persistence)
+
+#### Test Environment Script (`./test-env.sh`)
 ```bash
 # Start services
-docker-compose up -d
+./test-env.sh start
+
+# Show status
+./test-env.sh status
 
 # View logs
-docker-compose logs -f redis
+./test-env.sh logs          # All services
+./test-env.sh logs redis    # Specific service
 
-# Check health
-docker exec streaming-redis-test redis-cli ping
+# Run tests (auto-starts environment if needed)
+./test-env.sh test
 
-# Stop services
-docker-compose down
+# Restart environment
+./test-env.sh restart
+
+# Stop and cleanup
+./test-env.sh stop
+```
+
+#### Service Details
+- **Redis** (6379): Core service registry and message queuing
+- **MySQL** (3306): CDC (Change Data Capture) testing with binlog enabled
+- **PostgreSQL** (5432): Alternative database testing with logical replication
+- **Elasticsearch** (9200/9300): Sink connector testing
+
+#### Key Features
+- ✅ **No data persistence** - All data stored in memory (`tmpfs`)
+- ✅ **Health checks** - Automatic service readiness detection
+- ✅ **Clean isolation** - Each test run starts with fresh environment
+- ✅ **Parallel testing** - Safe concurrent test execution
+- ✅ **Auto-cleanup** - Containers removed after tests
 
 # Clean volumes
 docker-compose down -v

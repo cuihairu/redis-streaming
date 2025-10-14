@@ -22,6 +22,7 @@ public class RegistryAdminService {
 
     private final RedissonClient redissonClient;
     private final BaseRedisConfig config;
+    private final io.github.cuihairu.redis.streaming.registry.keys.RegistryKeys registryKeys;
     private final RegistryLuaScriptExecutor luaExecutor;
     private final ObjectMapper objectMapper;
 
@@ -30,6 +31,7 @@ public class RegistryAdminService {
         this.config = config != null ? config : new BaseRedisConfig();
         this.luaExecutor = new RegistryLuaScriptExecutor(redissonClient);
         this.objectMapper = new ObjectMapper();
+        this.registryKeys = this.config.getRegistryKeys();
     }
 
     /**
@@ -37,7 +39,7 @@ public class RegistryAdminService {
      */
     public Set<String> getAllServices() {
         try {
-            RSet<String> servicesSet = redissonClient.getSet(getServicesKey());
+            RSet<String> servicesSet = redissonClient.getSet(registryKeys.getServicesIndexKey(), org.redisson.client.codec.StringCodec.INSTANCE);
             return new HashSet<>(servicesSet.readAll());
         } catch (Exception e) {
             logger.error("Failed to get all services", e);
@@ -87,7 +89,7 @@ public class RegistryAdminService {
             long currentTime = System.currentTimeMillis();
             long timeoutMs = timeout.toMillis();
 
-            String heartbeatKey = getHeartbeatKey(serviceName);
+            String heartbeatKey = registryKeys.getServiceHeartbeatsKey(serviceName);
 
             // 获取活跃实例ID和心跳时间
             List<Object> activeData = luaExecutor.executeGetActiveInstances(heartbeatKey, currentTime, timeoutMs);
@@ -97,12 +99,24 @@ public class RegistryAdminService {
             // 解析结果并获取实例详情
             for (int i = 0; i < activeData.size(); i += 2) {
                 String instanceId = (String) activeData.get(i);
-                Double heartbeatTime = (Double) activeData.get(i + 1);
+                Object heartbeatTimeObj = activeData.get(i + 1);
+
+                // 兼容 String 和 Number 类型的心跳时间
+                long heartbeatTime;
+                if (heartbeatTimeObj instanceof String) {
+                    heartbeatTime = Long.parseLong((String) heartbeatTimeObj);
+                } else if (heartbeatTimeObj instanceof Number) {
+                    heartbeatTime = ((Number) heartbeatTimeObj).longValue();
+                } else {
+                    logger.warn("Unexpected heartbeat time type: {} for instance {}:{}",
+                            heartbeatTimeObj.getClass(), serviceName, instanceId);
+                    continue;
+                }
 
                 try {
                     InstanceDetails instance = getInstanceDetails(serviceName, instanceId);
                     if (instance != null) {
-                        instance.setLastHeartbeatTime(heartbeatTime.longValue());
+                        instance.setLastHeartbeatTime(heartbeatTime);
                         instances.add(instance);
                     }
                 } catch (Exception e) {
@@ -123,8 +137,8 @@ public class RegistryAdminService {
      */
     public InstanceDetails getInstanceDetails(String serviceName, String instanceId) {
         try {
-            String instanceKey = getInstanceKey(serviceName, instanceId);
-            RMap<String, String> instanceMap = redissonClient.getMap(instanceKey);
+            String instanceKey = registryKeys.getServiceInstanceKey(serviceName, instanceId);
+            RMap<String, String> instanceMap = redissonClient.getMap(instanceKey, org.redisson.client.codec.StringCodec.INSTANCE);
 
             if (!instanceMap.isExists()) {
                 return null;
@@ -208,7 +222,7 @@ public class RegistryAdminService {
 
             for (String serviceName : services) {
                 try {
-                    String heartbeatKey = getHeartbeatKey(serviceName);
+                    String heartbeatKey = config.getRegistryKeys().getServiceHeartbeatsKey(serviceName);
                     List<String> expiredInstances = luaExecutor.executeCleanupExpiredInstances(
                             heartbeatKey, serviceName, currentTime, timeoutMs, keyPrefix
                     );
@@ -247,7 +261,7 @@ public class RegistryAdminService {
             instance.setHealthy(parseBooleanSafely(data.get("healthy"), true));
             instance.setWeight(parseIntSafely(data.get("weight"), 1));
             instance.setRegistrationTime(parseLongSafely(data.get("registrationTime"), 0));
-            instance.setLastHeartbeatTime(parseLongSafely(data.get("heartbeat"), 0));
+            instance.setLastHeartbeatTime(parseLongSafely(data.get("lastHeartbeatTime"), 0));
             instance.setLastMetadataUpdate(parseLongSafely(data.get("lastMetadataUpdate"), 0));
 
             // 解析metadata
@@ -262,19 +276,15 @@ public class RegistryAdminService {
                 }
             }
 
-            // 解析metrics（从metadata字段中提取）
-            Map<String, Object> metrics = new HashMap<>();
-            for (Map.Entry<String, String> entry : data.entrySet()) {
-                if (entry.getKey().startsWith("metadata_")) {
-                    String metricKey = entry.getKey().substring("metadata_".length());
-                    try {
-                        // 尝试解析为JSON对象
-                        Object value = objectMapper.readValue(entry.getValue(), Object.class);
-                        metrics.put(metricKey, value);
-                    } catch (Exception e) {
-                        // 如果不是JSON，则作为字符串处理
-                        metrics.put(metricKey, entry.getValue());
-                    }
+            // 解析 metrics（独立 JSON 字段）
+            Map<String, Object> metrics = Collections.emptyMap();
+            String metricsStr = data.get("metrics");
+            if (metricsStr != null && !metricsStr.isEmpty()) {
+                try {
+                    metrics = objectMapper.readValue(metricsStr, new TypeReference<>() {});
+                } catch (Exception e) {
+                    logger.warn("Failed to parse metrics for {}:{}", serviceName, instanceId, e);
+                    metrics = Collections.emptyMap();
                 }
             }
             instance.setMetrics(metrics);
@@ -372,21 +382,5 @@ public class RegistryAdminService {
         return value != null ? Boolean.parseBoolean(value) : defaultValue;
     }
 
-    // Key生成方法
-    private String getServicesKey() {
-        return config.isEnableKeyPrefix() ?
-                config.getKeyPrefix() + ":registry:services" : "registry:services";
-    }
-
-    private String getHeartbeatKey(String serviceName) {
-        return config.isEnableKeyPrefix() ?
-                config.getKeyPrefix() + ":registry:services:" + serviceName + ":heartbeats" :
-                "registry:services:" + serviceName + ":heartbeats";
-    }
-
-    private String getInstanceKey(String serviceName, String instanceId) {
-        return config.isEnableKeyPrefix() ?
-                config.getKeyPrefix() + ":registry:services:" + serviceName + ":instance:" + instanceId :
-                "registry:services:" + serviceName + ":instance:" + instanceId;
-    }
+    // Key生成方法统一走 RegistryKeys，避免与主实现不一致
 }

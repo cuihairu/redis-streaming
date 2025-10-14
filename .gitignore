@@ -50,3 +50,18 @@ secring.gpg
 
 # GitHub release notes
 release-notes.md
+
+# Docker volumes and test data (if any)
+docker-data/
+test-data/
+
+# Test environment debug files
+docker-compose.override.yml
+.env.local
+
+# Temporary test files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
