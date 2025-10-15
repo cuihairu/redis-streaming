@@ -82,3 +82,13 @@ Application Layer -> Integration Layer -> Advanced Features Layer -> Functional 
 - [[Detailed Design|Design-en]]
 - [[Registry Design|Registry-Design-en]]
 - [[MQ Design|MQ-Design-en]]
+
+## Redis Commands vs Kafka (Quick Map)
+- Produce: `XADD stream:topic:{t}:p:{i}` ≈ Kafka produce to partition
+- Groups & consume: `XGROUP CREATE`, `XREADGROUP` ≈ create group / fetch
+- Commit: `XACK` ≈ commit offsets
+- In-flight: `XPENDING` ≈ in-flight (no direct Kafka command)
+- Rebalance & reclaim: leases (`SET NX EX`/`EXPIRE`) + `XAUTOCLAIM`/`XCLAIM` ≈ coordinator/rebalance
+- Delayed retry: `ZADD/ZRANGEBYSCORE/ZREM` + `EVAL` (Lua mover) ≈ retry topics
+- DLQ: `XADD stream:topic:{t}:dlq` ≈ DLQ topic; replay `XRANGE + XADD`
+- Retention: `XTRIM MAXLEN/MINID` ≈ retention.bytes/retention.ms

@@ -53,6 +53,11 @@ public class RedisStreamingProperties {
     private InvokerProperties invoker = new InvokerProperties();
 
     /**
+     * 消息队列（MQ）配置
+     */
+    private MqProperties mq = new MqProperties();
+
+    /**
      * Redis单机配置（简化版）
      *
      * 仅支持单机模式，适合快速开发和测试。
@@ -258,6 +263,66 @@ public class RedisStreamingProperties {
         private double backoffFactor = 2.0;
         private long maxDelayMs = 200;
         private long jitterMs = 20;
+    }
+
+    @Data
+    public static class MqProperties {
+        /** 是否启用 MQ 模块（仅影响自动装配） */
+        private boolean enabled = true;
+
+        /** 默认分区数（topic 首次写入时使用） */
+        private int defaultPartitionCount = 1;
+
+        /** 消费线程池大小 */
+        private int workerThreads = 8;
+
+        /** 调度线程池大小（续约/再均衡/搬运） */
+        private int schedulerThreads = 2;
+
+        /** 每次拉取最大条数 */
+        private int consumerBatchCount = 10;
+
+        /** 拉取超时（毫秒） */
+        private long consumerPollTimeoutMs = 1000;
+
+        /** 租约 TTL（秒） */
+        private int leaseTtlSeconds = 15;
+
+        /** 再均衡间隔（秒） */
+        private int rebalanceIntervalSec = 5;
+
+        /** 续约间隔（秒） */
+        private int renewIntervalSec = 3;
+
+        /** pending 扫描间隔（秒） */
+        private int pendingScanIntervalSec = 30;
+
+        /** 认定孤儿 pending 的 idle 阈值（毫秒） */
+        private long claimIdleMs = 300000;
+
+        /** claim 批大小 */
+        private int claimBatchSize = 50;
+
+        /** 最大重试次数 */
+        private int retryMaxAttempts = 5;
+
+        /** 重试基准退避（毫秒） */
+        private long retryBaseBackoffMs = 1000;
+
+        /** 重试最大退避（毫秒） */
+        private long retryMaxBackoffMs = 60000;
+
+        /** 重试搬运批大小 */
+        private int retryMoverBatch = 100;
+
+        /** 重试搬运周期（秒） */
+        private int retryMoverIntervalSec = 1;
+
+        /** 重试搬运锁等待（毫秒） */
+        private long retryLockWaitMs = 100;
+
+        /** 重试搬运锁租期（毫秒） */
+        private long retryLockLeaseMs = 500;
     }
 
     @Data

@@ -4,6 +4,7 @@ import io.github.cuihairu.redis.streaming.mq.admin.model.*;
 
 import java.time.Duration;
 import java.util.List;
+import io.github.cuihairu.redis.streaming.mq.admin.model.PendingSort;
 
 /**
  * 消息队列管理接口
@@ -77,6 +78,18 @@ public interface MessageQueueAdmin {
     List<PendingMessage> getPendingMessages(String topic, String group, int limit);
 
     /**
+     * 获取待处理消息列表（带排序与过滤）
+     *
+     * @param topic 队列名称
+     * @param group 消费者组名称
+     * @param limit 最大返回数量
+     * @param sort 排序字段（空闲时长/投递次数/ID）
+     * @param desc 是否倒序
+     * @param minIdleMs 最小空闲时间（毫秒），小于该值的记录将被过滤
+     */
+    List<PendingMessage> getPendingMessages(String topic, String group, int limit, PendingSort sort, boolean desc, long minIdleMs);
+
+    /**
      * 获取待处理消息数量
      *
      * @param topic 队列名称
@@ -131,4 +144,13 @@ public interface MessageQueueAdmin {
      * @return 是否成功重置
      */
     boolean resetConsumerGroupOffset(String topic, String group, String messageId);
+
+    /**
+     * 更新 topic 的分区数（仅允许增加）。
+     *
+     * @param topic 队列名称
+     * @param newPartitionCount 新分区数（必须 > 当前分区数）
+     * @return 是否更新成功
+     */
+    boolean updatePartitionCount(String topic, int newPartitionCount);
 }

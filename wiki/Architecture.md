@@ -1,84 +1,53 @@
-# Streaming 框架架构设计
+# 架构总览
 
-[中文](Architecture) | [English](Architecture-en)
+该文档概述系统整体架构，并突出 MQ（Redis Streams）子系统的角色与交互。详细设计见 `docs/redis-mq-design.md` 与 `wiki/MQ-Design.md`。
 
----
+## 模块
+- core, mq, registry, runtime, state/window/aggregation/join/cdc/sink/source, metrics, spring-boot-starter, examples。
 
-## 架构概览
-
-### 整体架构 (5层设计)
-
+## 逻辑架构
+```mermaid
+flowchart TB
+  subgraph 应用
+    PD[Producer]
+    CS[Consumer]
+  end
+  subgraph Redis
+    PART[Partition Streams]
+    DLQ[DLQ Streams]
+    META[Topic Meta]
+    REG[Topic Registry]
+    LEASE[Lease Keys]
+    RETRY[Retry ZSET]
+  end
+  PD-->PART
+  CS-->PART
+  CS-->DLQ
+  PD---META
+  CS---META
+  META---REG
+  CS---LEASE
+  CS---RETRY
 ```
-应用层 -> 集成层 -> 高级功能层 -> 功能模块层 -> 基础设施层 -> Redis
-```
 
-### 设计原则
+## 运行时线程模型
+- 每个被分配的分区一个串行 Worker；独立调度池负责租约续约、XAUTOCLAIM、指标与延迟重试搬运。
 
-1. **分层解耦**: 5 层架构,职责清晰
-2. **接口抽象**: API 与实现分离
-3. **Redis 中心**: 所有状态基于 Redis
-4. **轻量化**: 无需额外组件
-5. **可扩展**: 支持自定义扩展
+## 故障处理
+- 实例宕机：租约过期，其他实例竞争获取；对孤儿 pending 执行 XAUTOCLAIM。
+- 处理失败：按策略重试或入 DLQ；DLQ 可回放。
 
-## 核心模块
+## 取舍
+- 无协调器、低运维，但再均衡是最终一致；通过短 TTL 与幂等性降低风险。
 
-### Tier 1: Core (核心抽象)
-- DataStream API
-- KeyedStream API
-- WindowedStream API
-- State 抽象
-
-### Tier 2: Infrastructure (基础设施)
-- **MQ**: Redis Streams 消息队列
-- **Registry**: 服务注册发现
-- **State**: 分布式状态管理
-- **Checkpoint**: 检查点机制
-
-### Tier 3: Functional (功能模块)
-- **Aggregation**: 窗口聚合
-- **Table**: 流表二元性
-- **Join**: 流式 Join
-- **CDC**: 变更数据捕获
-- **Sink/Source**: 连接器
-
-### Tier 4: Advanced (高级功能)
-- **Reliability**: 可靠性保证
-- **CEP**: 复杂事件处理
-
-### Tier 5: Integration (集成)
-- **Metrics**: Prometheus 监控
-- **Spring Boot**: 自动配置
-
-## 技术选型
-
-### Redis 数据结构映射
-
-| 功能 | Redis 结构 |
-|------|-----------|
-| 消息队列 | Streams |
-| 服务注册 | Hash + Pub/Sub |
-| ValueState | String |
-| MapState | Hash |
-| ListState | List |
-| SetState | Set |
-| PV计数 | String (INCR) |
-| UV计数 | HyperLogLog |
-| Top-K | Sorted Set |
-| KTable | Hash |
-
-## 扩展点
-
-- 自定义 Source/Sink
-- 自定义聚合函数
-- 自定义 CEP 模式
-- 自定义监控指标
-
----
-
-**版本**: 0.1.0
-**最后更新**: 2025-10-13
-
-🔗 相关文档:
-- [[详细设计|Design]]
-- [[Registry 设计|Registry-Design]]
-- [[MQ 设计|MQ-Design]]
+## 核心命令与 Kafka 映射（速览）
+- 生产写入：`XADD stream:topic:{t}:p:{i}` ≈ Kafka Producer 发送到分区
+- 组创建：`XGROUP CREATE` ≈ Kafka 创建消费组
+- 组读取：`XREADGROUP GROUP <g> <c>` ≈ Kafka 拉取（含批量与阻塞）
+- 提交位点：`XACK` ≈ Kafka commit
+- 待处理查询：`XPENDING` ≈ in-flight（Kafka 无直接命令）
+- 孤儿接管：`XAUTOCLAIM`/`XCLAIM` ≈ 再均衡后接管未确认记录
+- 分区独占：`SET NX EX` + `EXPIRE`（租约）≈ 组协调器分配分区
+- 延迟重试：`ZADD/ZRANGEBYSCORE/ZREM` + `EVAL`（Lua搬运）≈ 重试主题/延迟回放
+- 保留/裁剪：`XTRIM MAXLEN/MINID` ≈ retention.bytes/retention.ms
+- 死信：`XADD stream:topic:{t}:dlq` ≈ DLQ 主题；回放 `XRANGE + XADD`

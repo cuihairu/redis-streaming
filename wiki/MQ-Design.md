@@ -1,280 +1,167 @@
-# MQ 模块设计
+# MQ 设计（分区、重试/DLQ、管理与指标）
 
-[中文](MQ-Design) | [English](MQ-Design-en)
+本文是 redis-streaming 的消息队列（基于 Redis Streams）设计文档，覆盖：分区、消费组与再均衡、重试与死信、管理与观测。每处均给出设计原因、参考与优缺点，并含有架构图。
 
----
-
-## 模块目标
-
-封装 Redis Stream 的原生能力,提供一个轻量级、易于使用的消息队列抽象,支持生产者/消费者模型、消费者组、消息确认 (ACK) 和死信队列 (DLQ) 机制。
+## 目标
+- 高吞吐、低延迟；可水平扩展（分区 + 消费组）。
+- 语义：至少一次（At-Least-Once），可配置重试与死信。
+- 鲁棒：自动接管孤儿 pending（XAUTOCLAIM）、租约再均衡、优雅停机。
+- 可运维：统一 Topic 注册与元数据、聚合统计、指标与告警。
 
 ## 核心概念
+- Topic：逻辑主题（对外只有一个名字，如 `orders`）。
+- 分区：用于并行的物理 Redis Stream，命名 `stream:topic:{orders}:p:{0..P-1}`。
+- 消费组：同一组内分摊负载；不同组互不影响。
+- 消费者实例：一个进程可同时消费多个分区。
+- 租约：用 Redis 键 + TTL 实现分区独占（同组内同一时刻仅一个实例消费该分区）。
+- DLQ：每个 Topic 一个死信流 `stream:topic:{orders}:dlq`。
 
-- **Stream (流)**: Redis 中的数据结构,用于存储消息序列。每个 Stream 对应一个 Topic
-- **Message (消息)**: Stream 中的一条记录,包含 ID 和键值对数据
-- **Producer (生产者)**: 负责向 Stream 发送消息
-- **Consumer (消费者)**: 负责从 Stream 读取和处理消息
-- **Consumer Group (消费者组)**: 允许多个消费者共同消费一个 Stream,每个消息只会被组内一个消费者处理
-- **Pending Entry List (PEL)**: 消费者组中,已被消费者读取但尚未 ACK 的消息列表
-- **Dead Letter Queue (DLQ)**: 用于存放处理失败、达到最大重试次数的消息
-
-## 核心组件设计
-
-### 1. MessageProducer (消息生产者)
-
-**职责**: 将消息发送到指定的 Redis Stream
-
-**核心方法**:
-```java
-public interface MessageProducer {
-    // 同步发送消息
-    String send(Message message);
-
-    // 异步发送消息
-    CompletableFuture<String> sendAsync(Message message);
-
-    // 批量发送消息
-    List<String> sendBatch(List<Message> messages);
-}
+## 架构图
+```mermaid
+flowchart LR
+  subgraph 生产者
+    P1(Producer 1)
+    P2(Producer 2)
+  end
+  subgraph Redis
+    direction TB
+    META(Topic Meta/Registry)
+    P0[stream:topic:{t}:p:0]
+    P1s[stream:topic:{t}:p:1]
+    PNs[stream:topic:{t}:p:N-1]
+    DLQ[stream:topic:{t}:dlq]
+    LEASE[Lease Keys]
+    RETRY[Retry ZSET]
+  end
+  subgraph 消费者组 g
+    C1(Consumer A)
+    C2(Consumer B)
+  end
+  P1 -->|hash(key)->分区| P0
+  P2 -->|hash(key)->分区| P1s
+  C1 -->|XREADGROUP| P0
+  C2 -->|XREADGROUP| P1s
+  C1 -.XAUTOCLAIM.-> P0
+  C2 -.XAUTOCLAIM.-> P1s
+  C1 -.失败-> DLQ
+  C2 -.失败-> DLQ
+  C1 <-.租约.-> LEASE
+  C2 <-.租约.-> LEASE
+  META --- P0
+  META --- P1s
+  META --- PNs
 ```
 
-**内部实现**:
-- 使用 Redisson 的 `RStream` 接口进行 `XADD` 操作
-- 支持消息序列化（默认 Jackson JSON）
-- 自动注册 Topic 到 TopicRegistry
+## 为什么要分区
+- 并行度：P 个分区可由多个实例并行处理，总吞吐≈单分区吞吐×P。
+- 热点隔离：热点 key 只堵在其分区，不拖慢其他分区。
+- Redis Cluster 友好：分区键分散到不同槽位。
+- 参考：Kafka 分区设计；Redis Streams 多流消费。
+- 代价：扩分区会改变 key→分区映射；更多 worker；再均衡是最终一致。
 
-### 2. MessageConsumer (消息消费者)
+## 分区元数据与注册表
+- `streaming:mq:topics:registry`（Set）：全量 Topic。
+- `streaming:mq:topic:{t}:meta`（Hash）：`partitionCount` 等。
+- `streaming:mq:topic:{t}:partitions`（Set）：分区流集合。
+- 原因：避免 SCAN；便于聚合统计与治理。
 
-**职责**: 从指定的 Redis Stream 消费消息,支持消费者组模式
+## 生产者
+- 路由：`partition = hash(key) % P`；headers 写入 `partitionId`；可插拔 Partitioner（RR/一致性哈希）。
+- 写入：首次写入确保 meta/registry；XADD 到分区；可选 XTRIM 保留策略。
 
-**核心方法**:
-```java
-public interface MessageConsumer {
-    // 订阅消息
-    void subscribe(MessageHandler handler);
+## 消费组与再均衡
+- 语义：同组内“一个分区只被一个实例独占消费”；一个实例可消费多个分区。
+- 租约：`streaming:mq:lease:{t}:{g}:{i}` 用 `SET NX EX` 获取，周期 EXPIRE 续约；过期即失效。
+- 接管：所有权变化时，对孤儿 pending 用 `XAUTOCLAIM` 以 idle 阈值接回。
+- Worker：每分区一个串行 Worker；独立调度线程池做续约、XAUTOCLAIM、指标采集、延迟重试回放。
 
-    // 确认消息
-    void ack(String messageId);
+## 重试与 DLQ
+- 至少一次：失败可重试；超过阈值入 DLQ。
+- 策略：`RetryPolicy`（最大次数、退避策略、是否重投/延迟、最大延迟）；`DeadLetterPolicy`（字段规范与回放）。
+- 实现（默认）：ACK 原消息 + 以 `retryCount+1` 重新 XADD（新 ID），并通过 ZSET 延迟回放到原分区；终止失败发到 `stream:topic:{t}:dlq`。
+- 优点：行为确定、可观测；避免热循环；
+- 缺点：重试生成新 ID；需要回放任务。
 
-    // 移动到死信队列
-    void moveToDLQ(String messageId, String reason);
+## 管理与观测
+- 统计：按 topic 跨分区聚合（length 求和、first/lastId 聚合、lag≈Σ(lastId−groupLastDeliveredId)）。
+- Pending 明细：跨分区合并分页；支持按 idle/次数排序。
+- 维护：XTRIM 长度清理；按时间基于 ID 边界删除；再均衡视图（分区→所有者）。
+- 指标：计数器（produce/consume/ack/retry/DLQ）、仪表（topicLength/pending/inflight/partitionsOwned）、计时（处理/ack 延迟）；标签包含 topic、partitionId、group、consumerId、result。
 
-    // 重试消息
-    void retry(String messageId);
-}
-```
+## 与 Kafka 的关系
+- 语义等价：分区/组独占/再均衡/lag 聚合；只是协调机制换成 Redis 键 + XAUTOCLAIM。
+- 优点：无需外部协调器；易于部署。
+- 局限：最终一致的租约；Redis 内存与网络开销。
 
-**内部实现**:
-- 使用 Redisson 的 `RStream` 接口进行 `XREADGROUP` 操作
-- 自动创建消费者组（如果不存在）
-- 循环拉取消息,每次拉取一定数量
-- 配置最大重试次数
-- PEL 检查: 定期检查 PEL 中长时间未 ACK 的消息
-- Auto-trim: 可配置 Stream 的最大长度
+## 参考
+- Redis Streams：XADD/XREADGROUP/XACK/XPENDING/XAUTOCLAIM/XTRIM。
+- Kafka：分区与消费组设计。
+- 退避：指数退避 + 抖动（AWS 架构博客）。
 
-### 3. MessageHandler 接口
+更多序列图、优缺点与取舍细节见 `docs/redis-mq-design.md`。
 
-```java
-public interface MessageHandler {
-    /**
-     * 处理从 Redis Stream 接收到的消息
-     * @param message 消息对象
-     * @return true 表示处理成功, false 表示处理失败
-     */
-    boolean handle(Message message);
-}
-```
+## Redis 命令与 Kafka 语义对照
 
-### 4. MessageQueueAdmin (管理接口)
+以下列出 MQ 方案中使用到的核心 Redis 命令、用途说明，以及与 Kafka 功能的对应关系（便于迁移或理解语义）：
 
-**职责**: 提供消息队列的管理和监控能力
+- 生产写入（Kafka Producer → 发送到分区）
+  - `XADD stream:topic:{t}:p:{i} * field value …`
+    - 作用：往指定分区流追加一条消息，返回自增的消息 ID（`timestamp-seq`）。
+    - Kafka 映射：Producer 发送到某个 Topic 的 Partition（Kafka 由 broker 分配 offset；Redis 由流生成 messageId）。
 
-**核心方法**:
-```java
-public interface MessageQueueAdmin {
-    // 队列信息
-    QueueInfo getQueueInfo(String topic);
-    List<String> listAllTopics();
+- 消费与消费组（Kafka Consumer/Group → 拉取/提交）
+  - `XGROUP CREATE <stream> <group> [ID|$|0] [MKSTREAM]`
+    - 作用：在流上创建消费者组；`MKSTREAM` 在流不存在时自动创建。
+    - Kafka 映射：`--group` 创建消费组（协调器维护组元数据）。
+  - `XREADGROUP GROUP <group> <consumer> COUNT n BLOCK ms STREAMS <stream> >`
+    - 作用：组内消费未投递过的消息（或用具体 ID 读取 pending）；支持批量与阻塞超时。
+    - Kafka 映射：`FetchRequest` 拉取消息；`COUNT/BLOCK` 对应 `max.poll.records/poll timeout`。
+  - `XACK <stream> <group> <id ...>`
+    - 作用：确认（提交）已处理消息，从 Pending 列表移除。
+    - Kafka 映射：提交位点（`commitSync/commitAsync`）。
+  - `XPENDING <stream> <group> [start end count [consumer]]`
+    - 作用：查询 Pending（未 ack）消息（队列/消费者维度），含空闲时长、投递次数等。
+    - Kafka 映射：相当于“组内未提交的 in-flight 记录”查询（Kafka 没有等价命令，但在监控/位点上可见）。
 
-    // 消费者组管理
-    List<ConsumerGroupInfo> getConsumerGroups(String topic);
-    boolean createConsumerGroup(String topic, String group);
-    boolean deleteConsumerGroup(String topic, String group);
+- 故障恢复与再均衡（Kafka Rebalance/Coordinator → 分区独占与接管孤儿）
+  - `SET key value NX EX ttl` / `EXPIRE key ttl`
+    - 作用：以租约（Lease）实现分区独占；同组内一个分区只被一个消费者持有；周期续约。
+    - Kafka 映射：组协调器分配分区给消费者实例；`heartbeat` 维持会话。
+  - `XAUTOCLAIM <stream> <group> <consumer> <min-idle-time> <start> [COUNT n]`（部分环境用 `XCLAIM` 替代）
+    - 作用：自动认领空闲超时的 Pending（孤儿）消息，迁移到当前消费者并返回条目；我们的实现用 `listPending + claim` 兼容。
+    - Kafka 映射：再均衡后接管分区，继续从最新/指定位点消费（这里接管的是未确认的消息）。
 
-    // 消息管理
-    List<PendingMessage> getPendingMessages(String topic, String group, int limit);
-    List<Message> getMessages(String topic, int limit);
+- 重试与延迟（Kafka 重试主题/退避 → Redis 延迟桶 + 回放）
+  - `ZADD streaming:mq:retry:{t} score member`
+    - 作用：将待重试条目按到期时间投放到有序集合（score=dueAt）。
+    - Kafka 映射：将失败消息发到重试主题并按延迟分桶（常见的延迟重试实现）。
+  - `ZRANGEBYSCORE ... / ZREM ...`
+    - 作用：批量拉取到期重试条目并从桶中移除。
+  - `HSET streaming:mq:retry:item:{t}:{id} field value ...`（配合 Lua 原子搬运）
+    - 作用：将重试 envelope（topic/partitionId/payload/headers/retryCount/...）放入 Hash，Lua 一次性读取并回放。
+  - `EVAL <lua> ...`
+    - 作用：Lua 脚本原子执行“取到期→XADD 回分区→ZREM→DEL Hash”的搬运过程，减少丢失窗口，保障至少一次。
+    - Kafka 映射：重试主题消费端把消息再投回主主题（延迟重试），常用调度器或流式处理框架实现。
 
-    // 队列操作
-    long trimQueue(String topic, long maxLen);
-    boolean deleteTopic(String topic);
-    boolean resetConsumerGroupOffset(String topic, String group, String messageId);
-}
-```
+- 死信（Kafka DLQ → Redis DLQ 流）
+  - `XADD stream:topic:{t}:dlq * field value ...`
+    - 作用：将超出重试上限或标记 DEAD 的消息写入 DLQ 流，包含 originalTopic/partitionId/originalMessageId 等。
+    - Kafka 映射：每个 Topic 一个死信 Topic；DLQ 消费端可人工介入或自动回放。
+  - 回放：`XRANGE <dlq> <id> <id>` + `XADD stream:topic:{t}:p:{pid}`
+    - 作用：按 DLQ 记录的 partitionId 回放到原分区（或指定分区）。
+    - Kafka 映射：DLQ 消息回放到原 Topic/Partition。
 
-**管理功能**:
-- 查看队列长度、消息数
-- 查看消费者组信息
-- 查看 PEL 中的待确认消息
-- 修剪队列、删除 Topic
-- 重置消费者组偏移量
+- 主题治理（Kafka Topic 管理/保留/删除 → Redis 管理）
+  - `XINFO STREAM <stream>` / `XINFO GROUPS <stream>`
+    - 作用：查询流信息（长度、last id、组数…）与组统计（消费者数、pending、last-delivered-id）。
+    - Kafka 映射：Topic 元数据、各分区 lag/consumer 数量等。
+  - `XTRIM <stream> MAXLEN ~ N` / `XTRIM <stream> MINID <id>`
+    - 作用：按长度或时间（基于 id）裁剪历史，控制内存与保留窗口。
+    - Kafka 映射：基于大小/时间的保留策略（retention.bytes/retention.ms）。
+  - `DEL <key ...>`
+    - 作用：删除整个流（慎用，会丢数据）。
+    - Kafka 映射：删除 Topic。
 
-### 5. TopicRegistry (Topic 注册表)
-
-**职责**: 维护所有 Topic 的索引,避免使用 `keys` 或 `scan` 命令
-
-**实现方式**:
-```redis
-# 使用 Redis SET 存储所有 Topic
-SADD streaming:mq:topics:registry "order_events"
-SADD streaming:mq:topics:registry "payment_events"
-```
-
-**核心方法**:
-```java
-public class TopicRegistry {
-    // 注册 Topic
-    boolean registerTopic(String topic);
-
-    // 注销 Topic
-    boolean unregisterTopic(String topic);
-
-    // 获取所有 Topic
-    Set<String> getAllTopics();
-
-    // 检查 Topic 是否存在
-    boolean topicExists(String topic);
-}
-```
-
-## 死信队列 (DLQ) 机制
-
-### DLQ Stream
-
-为每个主 Topic 创建一个对应的 DLQ Stream (例如 `topic_dlq`)
-
-### 消息结构
-
-DLQ 消息中包含:
-- 原始消息内容
-- 失败原因
-- 失败时间
-- 重试次数
-- 原始 Topic 名称
-
-### 处理流程
-
-1. 消费者处理消息失败
-2. 消息进入重试机制
-3. 达到最大重试次数后,消费者将消息发送到 DLQ Stream
-4. DLQ 消费者可以手动或自动处理这些死信消息
-
-## 示例代码
-
-### 生产者示例
-
-```java
-// 创建生产者
-MessageProducer producer = new RedisMessageProducer(redissonClient, "order_events");
-
-// 发送消息
-Message message = Message.builder()
-    .topic("order_events")
-    .data(Map.of("orderId", "12345", "status", "created"))
-    .build();
-
-CompletableFuture<String> future = producer.sendAsync(message);
-```
-
-### 消费者示例
-
-```java
-// 创建消费者
-MessageConsumer consumer = new RedisMessageConsumer(
-    redissonClient,
-    "order_events",
-    "payment_group",
-    "consumer-1"
-);
-
-// 订阅消息
-consumer.subscribe(message -> {
-    try {
-        // 处理消息
-        processOrder(message);
-        return true; // 处理成功
-    } catch (Exception e) {
-        log.error("Failed to process message", e);
-        return false; // 处理失败,将重试
-    }
-});
-```
-
-### Admin 示例
-
-```java
-// 创建 Admin
-MessageQueueAdmin admin = new RedisMessageQueueAdmin(redissonClient);
-
-// 查看所有 Topic
-List<String> topics = admin.listAllTopics();
-
-// 查看队列信息
-QueueInfo info = admin.getQueueInfo("order_events");
-System.out.println("Queue length: " + info.getLength());
-System.out.println("Consumer groups: " + info.getConsumerGroups());
-
-// 查看 PEL
-List<PendingMessage> pending = admin.getPendingMessages("order_events", "payment_group", 10);
-```
-
-## 配置
-
-```yaml
-streaming:
-  mq:
-    # 消费者配置
-    consumer:
-      batch-size: 10              # 每次拉取消息数量
-      poll-timeout: 5000          # 拉取超时时间(ms)
-      max-retry: 3                # 最大重试次数
-      retry-delay: 1000           # 重试间隔(ms)
-
-    # 生产者配置
-    producer:
-      max-len: 10000              # Stream 最大长度
-      auto-trim: true             # 自动修剪
-
-    # DLQ 配置
-    dlq:
-      enabled: true               # 启用死信队列
-      suffix: "_dlq"              # DLQ Topic 后缀
-```
-
-## 性能优化
-
-### 1. 批量操作
-- 批量发送消息
-- 批量确认消息
-
-### 2. Lua 脚本
-- 使用 Lua 脚本实现原子操作
-- 减少网络往返次数
-
-### 3. 连接池
-- 使用 Redisson 的连接池
-- 复用 Redis 连接
-
-### 4. 自动修剪
-- 定期修剪 Stream
-- 控制内存使用
-
----
-
-**版本**: 0.1.0
-**最后更新**: 2025-10-13
-
-🔗 相关文档:
-- [[整体架构|Architecture]]
-- [[详细设计|Design]]
-- [[Spring Boot 集成|Spring-Boot-Starter]]
+提示
+- Redisson 的 API 封装了 `XINFO/XPENDING/...` 等原生命令；文档列出的是底层 Redis 命令，便于对照 Kafka 语义理解。
+- 如果 Redis 版本不支持 `XAUTOCLAIM`，可用 `XPENDING + XCLAIM` 组合完成孤儿接管（效率略低）。

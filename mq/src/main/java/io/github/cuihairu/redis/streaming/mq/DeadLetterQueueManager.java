@@ -1,5 +1,6 @@
 package io.github.cuihairu.redis.streaming.mq;
 
+import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
@@ -31,15 +32,15 @@ public class DeadLetterQueueManager {
      * @return list of dead letter messages
      */
     public Map<StreamMessageId, Map<String, Object>> getDeadLetterMessages(String originalTopic, int limit) {
-        String dlqTopic = originalTopic + ".dlq";
-        RStream<String, Object> dlqStream = redissonClient.getStream(dlqTopic);
+        String dlqKey = StreamKeys.dlq(originalTopic);
+        RStream<String, Object> dlqStream = redissonClient.getStream(dlqKey);
 
         try {
             @SuppressWarnings("deprecation")
             Map<StreamMessageId, Map<String, Object>> result = dlqStream.range(limit, StreamMessageId.MIN, StreamMessageId.MAX);
             return result;
         } catch (Exception e) {
-            log.error("Failed to read messages from dead letter queue: {}", dlqTopic, e);
+            log.error("Failed to read messages from dead letter queue: {}", dlqKey, e);
             return Map.of();
         }
     }
@@ -52,13 +53,11 @@ public class DeadLetterQueueManager {
      * @return true if successfully replayed, false otherwise
      */
     public boolean replayMessage(String originalTopic, StreamMessageId messageId) {
-        String dlqTopic = originalTopic + ".dlq";
+        String dlqTopic = StreamKeys.dlq(originalTopic);
 
         try {
             RStream<String, Object> dlqStream = redissonClient.getStream(dlqTopic);
-            RStream<String, Object> originalStream = redissonClient.getStream(originalTopic);
 
-            // Read the specific message from DLQ
             @SuppressWarnings("deprecation")
             Map<StreamMessageId, Map<String, Object>> messages = dlqStream.range(1, messageId, messageId);
 
@@ -69,7 +68,16 @@ public class DeadLetterQueueManager {
 
             Map<String, Object> messageData = messages.get(messageId);
 
-            // Create new message data for replay
+            int pid = 0;
+            Object pidVal = messageData.get("partitionId");
+            if (pidVal instanceof Number) pid = ((Number) pidVal).intValue();
+            else if (pidVal != null) {
+                try { pid = Integer.parseInt(pidVal.toString()); } catch (Exception ignore) {}
+            }
+
+            String streamKey = StreamKeys.partitionStream(originalTopic, pid);
+            RStream<String, Object> originalStream = redissonClient.getStream(streamKey);
+
             Map<String, Object> replayData = Map.of(
                     "payload", messageData.get("payload"),
                     "timestamp", Instant.now().toString(),
@@ -78,14 +86,15 @@ public class DeadLetterQueueManager {
                     "key", messageData.getOrDefault("key", ""),
                     "headers", messageData.getOrDefault("headers", Map.of()),
                     "replayedFrom", dlqTopic,
-                    "originalMessageId", messageId.toString()
+                    "originalMessageId", messageId.toString(),
+                    "partitionId", pid,
+                    "topic", originalTopic
             );
 
-            // Send to original topic
             StreamMessageId newMessageId = originalStream.add(StreamAddArgs.entries(replayData));
 
-            log.info("Message {} replayed from DLQ {} to topic {} with new ID: {}",
-                    messageId, dlqTopic, originalTopic, newMessageId);
+            log.info("Message {} replayed from DLQ {} to topic {} partition {} with new ID: {}",
+                    messageId, dlqTopic, originalTopic, pid, newMessageId);
 
             return true;
 
@@ -104,7 +113,7 @@ public class DeadLetterQueueManager {
      * @return true if successfully deleted, false otherwise
      */
     public boolean deleteMessage(String originalTopic, StreamMessageId messageId) {
-        String dlqTopic = originalTopic + ".dlq";
+        String dlqTopic = StreamKeys.dlq(originalTopic);
 
         try {
             RStream<String, Object> dlqStream = redissonClient.getStream(dlqTopic);
@@ -132,11 +141,18 @@ public class DeadLetterQueueManager {
      * @return number of messages in the dead letter queue
      */
     public long getDeadLetterQueueSize(String originalTopic) {
-        String dlqTopic = originalTopic + ".dlq";
+        String dlqTopic = StreamKeys.dlq(originalTopic);
 
         try {
             RStream<String, Object> dlqStream = redissonClient.getStream(dlqTopic);
-            return dlqStream.size();
+            long sz = dlqStream.size();
+            if (sz == 0) {
+                // Fallback in case size() lags; try fetching a single entry
+                @SuppressWarnings("deprecation")
+                Map<StreamMessageId, Map<String, Object>> any = dlqStream.range(1, StreamMessageId.MIN, StreamMessageId.MAX);
+                return any.isEmpty() ? 0 : any.size();
+            }
+            return sz;
         } catch (Exception e) {
             log.error("Failed to get size of dead letter queue: {}", dlqTopic, e);
             return 0;
@@ -150,7 +166,7 @@ public class DeadLetterQueueManager {
      * @return number of messages deleted
      */
     public long clearDeadLetterQueue(String originalTopic) {
-        String dlqTopic = originalTopic + ".dlq";
+        String dlqTopic = StreamKeys.dlq(originalTopic);
 
         try {
             RStream<String, Object> dlqStream = redissonClient.getStream(dlqTopic);

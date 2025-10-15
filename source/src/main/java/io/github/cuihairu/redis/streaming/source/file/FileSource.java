@@ -10,9 +10,7 @@ import java.nio.file.Path;
 /**
  * A source that reads lines from a text file.
  *
- * Each line in the file is emitted as a separate element.
- *
- * @param <T> The type of elements (usually String)
+ * Each line in the file is emitted as a separate element of type {@code String}.
  */
 public class FileSource implements StreamSource<String> {
 

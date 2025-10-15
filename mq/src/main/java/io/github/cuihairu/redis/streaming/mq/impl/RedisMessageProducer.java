@@ -3,6 +3,11 @@ package io.github.cuihairu.redis.streaming.mq.impl;
 import io.github.cuihairu.redis.streaming.mq.Message;
 import io.github.cuihairu.redis.streaming.mq.MessageProducer;
 import io.github.cuihairu.redis.streaming.mq.admin.TopicRegistry;
+import io.github.cuihairu.redis.streaming.mq.partition.Partitioner;
+import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
+import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
+import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
+import io.github.cuihairu.redis.streaming.mq.metrics.MqMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
@@ -22,11 +27,20 @@ public class RedisMessageProducer implements MessageProducer {
 
     private final RedissonClient redissonClient;
     private final TopicRegistry topicRegistry;
+    private final TopicPartitionRegistry partitionRegistry;
+    private final Partitioner partitioner;
+    private final MqOptions options;
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
-    public RedisMessageProducer(RedissonClient redissonClient) {
+    public RedisMessageProducer(RedissonClient redissonClient,
+                                Partitioner partitioner,
+                                TopicPartitionRegistry partitionRegistry,
+                                MqOptions options) {
         this.redissonClient = redissonClient;
-        this.topicRegistry = new TopicRegistry(redissonClient);
+        this.partitioner = partitioner;
+        this.partitionRegistry = partitionRegistry;
+        this.options = options;
+        this.topicRegistry = new TopicRegistry(redissonClient, this.options.getKeyPrefix());
     }
 
     @Override
@@ -37,16 +51,22 @@ public class RedisMessageProducer implements MessageProducer {
 
         return CompletableFuture.supplyAsync(() -> {
             try {
-                // Register topic in registry
+                // Ensure topic is registered and meta exists (default to 1 partition)
                 topicRegistry.registerTopic(message.getTopic());
+                partitionRegistry.ensureTopic(message.getTopic(), options.getDefaultPartitionCount());
 
-                RStream<String, Object> stream = redissonClient.getStream(message.getTopic());
+                int partitions = partitionRegistry.getPartitionCount(message.getTopic());
+                int partitionId = partitioner.partition(message.getKey(), partitions);
+                String streamKey = StreamKeys.partitionStream(message.getTopic(), partitionId);
+                RStream<String, Object> stream = redissonClient.getStream(streamKey);
 
                 Map<String, Object> data = new HashMap<>();
                 data.put("payload", message.getPayload());
                 data.put("timestamp", message.getTimestamp().toString());
                 data.put("retryCount", message.getRetryCount());
                 data.put("maxRetries", message.getMaxRetries());
+                data.put("topic", message.getTopic());
+                data.put("partitionId", partitionId);
 
                 if (message.getKey() != null) {
                     data.put("key", message.getKey());
@@ -56,13 +76,15 @@ public class RedisMessageProducer implements MessageProducer {
                     data.put("headers", message.getHeaders());
                 }
 
-                // Add message to stream
+                // Add message to the selected partition stream
                 StreamMessageId messageId = stream.add(StreamAddArgs.entries(data));
 
                 String id = messageId.toString();
                 message.setId(id);
 
-                log.debug("Message sent to topic '{}' with ID: {}", message.getTopic(), id);
+                // metrics
+                MqMetrics.get().incProduced(message.getTopic(), partitionId);
+                log.debug("Message sent to topic '{}' partition {} with ID: {}", message.getTopic(), partitionId, id);
                 return id;
 
             } catch (Exception e) {

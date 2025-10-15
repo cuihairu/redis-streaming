@@ -9,6 +9,11 @@ import io.github.cuihairu.redis.streaming.starter.properties.RedisStreamingPrope
 import io.github.cuihairu.redis.streaming.registry.loadbalancer.*;
 import io.github.cuihairu.redis.streaming.registry.client.*;
 import io.github.cuihairu.redis.streaming.registry.client.metrics.RedisClientMetricsReporter;
+import io.github.cuihairu.redis.streaming.mq.MessageQueueFactory;
+import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
+import io.github.cuihairu.redis.streaming.mq.admin.MessageQueueAdmin;
+import io.github.cuihairu.redis.streaming.mq.admin.impl.RedisMessageQueueAdmin;
+import io.github.cuihairu.redis.streaming.mq.DeadLetterQueueManager;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
@@ -219,6 +224,87 @@ public class RedisStreamingAutoConfiguration {
             ConfigService configService = new RedisConfigService(redissonClient);
             configService.start();
             return configService;
+        }
+    }
+
+    /**
+     * MQ 自动配置
+     */
+    @Configuration
+    @ConditionalOnProperty(prefix = "redis-streaming.mq", name = "enabled", havingValue = "true", matchIfMissing = true)
+    static class MqConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean
+        public MqOptions mqOptions(RedisStreamingProperties props) {
+            var p = props.getMq();
+            return MqOptions.builder()
+                    .defaultPartitionCount(p.getDefaultPartitionCount())
+                    .workerThreads(p.getWorkerThreads())
+                    .schedulerThreads(p.getSchedulerThreads())
+                    .consumerBatchCount(p.getConsumerBatchCount())
+                    .consumerPollTimeoutMs(p.getConsumerPollTimeoutMs())
+                    .leaseTtlSeconds(p.getLeaseTtlSeconds())
+                    .rebalanceIntervalSec(p.getRebalanceIntervalSec())
+                    .renewIntervalSec(p.getRenewIntervalSec())
+                    .pendingScanIntervalSec(p.getPendingScanIntervalSec())
+                    .claimIdleMs(p.getClaimIdleMs())
+                    .claimBatchSize(p.getClaimBatchSize())
+                    .retryMaxAttempts(p.getRetryMaxAttempts())
+                    .retryBaseBackoffMs(p.getRetryBaseBackoffMs())
+                    .retryMaxBackoffMs(p.getRetryMaxBackoffMs())
+                    .retryMoverBatch(p.getRetryMoverBatch())
+                    .retryMoverIntervalSec(p.getRetryMoverIntervalSec())
+                    .retryLockWaitMs(p.getRetryLockWaitMs())
+                    .retryLockLeaseMs(p.getRetryLockLeaseMs())
+                    .build();
+        }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public MessageQueueFactory messageQueueFactory(RedissonClient redissonClient, MqOptions mqOptions) {
+            return new MessageQueueFactory(redissonClient, mqOptions);
+        }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public MessageQueueAdmin messageQueueAdmin(RedissonClient redissonClient) {
+            return new RedisMessageQueueAdmin(redissonClient);
+        }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public DeadLetterQueueManager deadLetterQueueManager(RedissonClient redissonClient) {
+            return new DeadLetterQueueManager(redissonClient);
+        }
+
+        @Bean
+        @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
+        public io.github.cuihairu.redis.streaming.starter.metrics.MqMetricsBinder mqMetricsBinder(
+                MessageQueueAdmin admin,
+                DeadLetterQueueManager dlq) {
+            return new io.github.cuihairu.redis.streaming.starter.metrics.MqMetricsBinder(admin, dlq);
+        }
+
+        @Bean
+        @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
+        public io.github.cuihairu.redis.streaming.starter.metrics.MqMicrometerCollector mqMicrometerCollector(
+                io.micrometer.core.instrument.MeterRegistry registry) {
+            return new io.github.cuihairu.redis.streaming.starter.metrics.MqMicrometerCollector(registry);
+        }
+
+        @Bean
+        @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
+        public Object installMqCollector(io.github.cuihairu.redis.streaming.starter.metrics.MqMicrometerCollector collector) {
+            // Bridge mq module metrics to Micrometer
+            io.github.cuihairu.redis.streaming.mq.metrics.MqMetrics.setCollector(collector);
+            return new Object();
+        }
+
+        @Bean
+        @ConditionalOnClass(name = "org.springframework.boot.actuate.health.HealthIndicator")
+        public io.github.cuihairu.redis.streaming.starter.health.MqHealthIndicator mqHealthIndicator(MessageQueueAdmin admin) {
+            return new io.github.cuihairu.redis.streaming.starter.health.MqHealthIndicator(admin);
         }
     }
 }

@@ -4,6 +4,9 @@ import io.github.cuihairu.redis.streaming.mq.admin.MessageQueueAdmin;
 import io.github.cuihairu.redis.streaming.mq.admin.impl.RedisMessageQueueAdmin;
 import io.github.cuihairu.redis.streaming.mq.impl.RedisMessageConsumer;
 import io.github.cuihairu.redis.streaming.mq.impl.RedisMessageProducer;
+import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
+import io.github.cuihairu.redis.streaming.mq.partition.HashPartitioner;
+import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RedissonClient;
 
@@ -16,9 +19,16 @@ import java.util.UUID;
 public class MessageQueueFactory {
 
     private final RedissonClient redissonClient;
+    private final MqOptions options;
 
     public MessageQueueFactory(RedissonClient redissonClient) {
         this.redissonClient = redissonClient;
+        this.options = MqOptions.builder().build();
+    }
+
+    public MessageQueueFactory(RedissonClient redissonClient, MqOptions options) {
+        this.redissonClient = redissonClient;
+        this.options = options == null ? MqOptions.builder().build() : options;
     }
 
     /**
@@ -27,7 +37,9 @@ public class MessageQueueFactory {
      * @return message producer instance
      */
     public MessageProducer createProducer() {
-        return new RedisMessageProducer(redissonClient);
+        // Default: hash partitioner with dynamic partition metadata registry
+        return new RedisMessageProducer(redissonClient,
+                new HashPartitioner(), new TopicPartitionRegistry(redissonClient), options);
     }
 
     /**
@@ -37,7 +49,8 @@ public class MessageQueueFactory {
      */
     public MessageConsumer createConsumer() {
         String consumerName = generateConsumerName();
-        return new RedisMessageConsumer(redissonClient, consumerName);
+        return new RedisMessageConsumer(redissonClient, consumerName,
+                new TopicPartitionRegistry(redissonClient), options);
     }
 
     /**
@@ -47,7 +60,8 @@ public class MessageQueueFactory {
      * @return message consumer instance
      */
     public MessageConsumer createConsumer(String consumerName) {
-        return new RedisMessageConsumer(redissonClient, consumerName);
+        return new RedisMessageConsumer(redissonClient, consumerName,
+                new TopicPartitionRegistry(redissonClient), options);
     }
 
     /**
@@ -59,7 +73,7 @@ public class MessageQueueFactory {
     public MessageConsumer createDeadLetterConsumer(String originalTopic) {
         String dlqTopic = originalTopic + ".dlq";
         String consumerName = generateConsumerName() + "-dlq";
-        return new RedisMessageConsumer(redissonClient, consumerName);
+        return new io.github.cuihairu.redis.streaming.mq.impl.RedisDeadLetterConsumer(redissonClient, consumerName);
     }
 
     /**
@@ -70,7 +84,7 @@ public class MessageQueueFactory {
      * @return message consumer for dead letter queue
      */
     public MessageConsumer createDeadLetterConsumer(String originalTopic, String consumerName) {
-        return new RedisMessageConsumer(redissonClient, consumerName + "-dlq");
+        return new io.github.cuihairu.redis.streaming.mq.impl.RedisDeadLetterConsumer(redissonClient, consumerName + "-dlq");
     }
 
     /**
@@ -79,7 +93,7 @@ public class MessageQueueFactory {
      * @return message queue admin instance
      */
     public MessageQueueAdmin createAdmin() {
-        return new RedisMessageQueueAdmin(redissonClient);
+        return new RedisMessageQueueAdmin(redissonClient, options);
     }
 
     private String generateConsumerName() {

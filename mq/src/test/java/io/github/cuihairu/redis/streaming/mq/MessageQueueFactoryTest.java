@@ -53,7 +53,8 @@ class MessageQueueFactoryTest {
         MessageConsumer dlqConsumer = factory.createDeadLetterConsumer(originalTopic);
 
         assertNotNull(dlqConsumer);
-        assertTrue(dlqConsumer instanceof io.github.cuihairu.redis.streaming.mq.impl.RedisMessageConsumer);
+        // DLQ consumer is a dedicated implementation
+        assertTrue(dlqConsumer instanceof io.github.cuihairu.redis.streaming.mq.impl.RedisDeadLetterConsumer);
     }
 
     @Test
@@ -63,6 +64,6 @@ class MessageQueueFactoryTest {
         MessageConsumer dlqConsumer = factory.createDeadLetterConsumer(originalTopic, consumerName);
 
         assertNotNull(dlqConsumer);
-        assertTrue(dlqConsumer instanceof io.github.cuihairu.redis.streaming.mq.impl.RedisMessageConsumer);
+        assertTrue(dlqConsumer instanceof io.github.cuihairu.redis.streaming.mq.impl.RedisDeadLetterConsumer);
     }
 }

@@ -15,12 +15,30 @@ import java.util.Set;
 @Slf4j
 public class TopicRegistry {
 
-    private static final String REGISTRY_KEY = "streaming:mq:topics:registry";
+    // Default keyspace prefix (can be overridden via constructor)
+    public static final String DEFAULT_PREFIX = "streaming:mq";
 
     private final RedissonClient redissonClient;
+    private final String keyPrefix;
 
+    /**
+     * Use default key prefix: streaming:mq
+     */
     public TopicRegistry(RedissonClient redissonClient) {
+        this(redissonClient, DEFAULT_PREFIX);
+    }
+
+    /**
+     * Allow customizing the key prefix to avoid collisions in shared Redis.
+     * Example final registry set key: {prefix}:topics:registry
+     */
+    public TopicRegistry(RedissonClient redissonClient, String keyPrefix) {
         this.redissonClient = redissonClient;
+        this.keyPrefix = (keyPrefix == null || keyPrefix.isBlank()) ? DEFAULT_PREFIX : keyPrefix;
+    }
+
+    private String registryKey() {
+        return keyPrefix + ":topics:registry";
     }
 
     /**
@@ -31,7 +49,7 @@ public class TopicRegistry {
      */
     public boolean registerTopic(String topic) {
         try {
-            RSet<String> registry = redissonClient.getSet(REGISTRY_KEY);
+            RSet<String> registry = redissonClient.getSet(registryKey());
             boolean added = registry.add(topic);
 
             if (added) {
@@ -53,7 +71,7 @@ public class TopicRegistry {
      */
     public boolean unregisterTopic(String topic) {
         try {
-            RSet<String> registry = redissonClient.getSet(REGISTRY_KEY);
+            RSet<String> registry = redissonClient.getSet(registryKey());
             boolean removed = registry.remove(topic);
 
             if (removed) {
@@ -75,7 +93,7 @@ public class TopicRegistry {
      */
     public boolean isTopicRegistered(String topic) {
         try {
-            RSet<String> registry = redissonClient.getSet(REGISTRY_KEY);
+            RSet<String> registry = redissonClient.getSet(registryKey());
             return registry.contains(topic);
         } catch (Exception e) {
             log.error("Failed to check topic registration: {}", topic, e);
@@ -90,7 +108,7 @@ public class TopicRegistry {
      */
     public Set<String> getAllTopics() {
         try {
-            RSet<String> registry = redissonClient.getSet(REGISTRY_KEY);
+            RSet<String> registry = redissonClient.getSet(registryKey());
             return registry.readAll();
         } catch (Exception e) {
             log.error("Failed to get all topics", e);
@@ -105,7 +123,7 @@ public class TopicRegistry {
      */
     public int getTopicCount() {
         try {
-            RSet<String> registry = redissonClient.getSet(REGISTRY_KEY);
+            RSet<String> registry = redissonClient.getSet(registryKey());
             return registry.size();
         } catch (Exception e) {
             log.error("Failed to get topic count", e);
@@ -118,7 +136,7 @@ public class TopicRegistry {
      */
     public void clearRegistry() {
         try {
-            RSet<String> registry = redissonClient.getSet(REGISTRY_KEY);
+            RSet<String> registry = redissonClient.getSet(registryKey());
             registry.delete();
             log.info("Topic registry cleared");
         } catch (Exception e) {

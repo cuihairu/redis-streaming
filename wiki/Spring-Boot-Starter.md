@@ -389,6 +389,36 @@ streaming:
     address: redis://prod-redis:6379
 ```
 
+## 💬 消息队列自动装配（新）
+
+> 说明：从当前版本起，MQ 配置前缀为 `redis-streaming.mq`（与旧文档中的 `streaming.mq` 有所不同），请按下列示例配置。
+
+```yaml
+redis-streaming:
+  mq:
+    enabled: true
+    default-partition-count: 4
+    worker-threads: 16
+    scheduler-threads: 2
+    consumer-batch-count: 32
+    consumer-poll-timeout-ms: 500
+    lease-ttl-seconds: 15
+    rebalance-interval-sec: 5
+    renew-interval-sec: 3
+    pending-scan-interval-sec: 30
+    claim-idle-ms: 300000
+    claim-batch-size: 100
+    retry-max-attempts: 5
+    retry-base-backoff-ms: 1000
+    retry-max-backoff-ms: 60000
+    retry-mover-batch: 100
+    retry-mover-interval-sec: 1
+```
+
+- 暴露 Bean：`MessageQueueFactory`、`MessageQueueAdmin`、`DeadLetterQueueManager`
+- 指标：Micrometer 细粒度 Counter/Timer（带 `topic/partition` 标签）与聚合 Gauge
+- 健康检查：`HealthIndicator`（topics 计数）；可扩展为租约/搬运积压探测
+
 ---
 
 **版本**: 0.1.0

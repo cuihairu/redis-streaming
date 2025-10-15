@@ -17,6 +17,7 @@
 - [[详细设计|Design]]
 - [[Registry 设计|Registry-Design]]
 - [[MQ 设计|MQ-Design]]
+  - [[MQ 与 Redis 交互|MQ-Broker-Interaction]]
 
 ## 👨‍💻 开发指南
 - [[开发者指南|Developer-Guide]]

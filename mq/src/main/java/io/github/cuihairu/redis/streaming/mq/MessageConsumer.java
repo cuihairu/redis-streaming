@@ -23,6 +23,14 @@ public interface MessageConsumer {
     void subscribe(String topic, String consumerGroup, MessageHandler handler);
 
     /**
+     * Subscribe with per-subscription options (overrides defaults from MqOptions where applicable).
+     */
+    default void subscribe(String topic, String consumerGroup, MessageHandler handler, SubscriptionOptions options) {
+        // default impl delegates to basic subscribe; implementations may override to support options
+        subscribe(topic, consumerGroup, handler);
+    }
+
+    /**
      * Unsubscribe from a topic
      *
      * @param topic the topic to unsubscribe from

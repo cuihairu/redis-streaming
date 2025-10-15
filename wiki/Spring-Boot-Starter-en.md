@@ -74,6 +74,36 @@ server:
   port: 8080
 ```
 
+## MQ Auto-Configuration (New)
+
+> Note: the new configuration prefix is `redis-streaming.mq` (replacing older `streaming.mq`).
+
+```yaml
+redis-streaming:
+  mq:
+    enabled: true
+    default-partition-count: 4
+    worker-threads: 16
+    scheduler-threads: 2
+    consumer-batch-count: 32
+    consumer-poll-timeout-ms: 500
+    lease-ttl-seconds: 15
+    rebalance-interval-sec: 5
+    renew-interval-sec: 3
+    pending-scan-interval-sec: 30
+    claim-idle-ms: 300000
+    claim-batch-size: 100
+    retry-max-attempts: 5
+    retry-base-backoff-ms: 1000
+    retry-max-backoff-ms: 60000
+    retry-mover-batch: 100
+    retry-mover-interval-sec: 1
+```
+
+- Beans: `MessageQueueFactory`, `MessageQueueAdmin`, `DeadLetterQueueManager`
+- Metrics: Micrometer counters/timers (tags: `topic`, `partition`) and aggregate gauges
+- Health: HealthIndicator (topic count); can be extended for lease/mover backlog
+
 ## 📋 Feature Modules
 
 ### Service Registration & Discovery

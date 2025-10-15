@@ -6,8 +6,12 @@ dependencies {
     api project(':core')
     api project(':registry')
     api project(':config')
+    api project(':mq')
     api 'org.springframework.boot:spring-boot-starter:3.2.0'
     api 'org.springframework.boot:spring-boot-configuration-processor:3.2.0'
+    // For HealthIndicator compile-time visibility (do not force runtime)
+    compileOnly 'org.springframework.boot:spring-boot-actuator:3.2.0'
+    compileOnly 'org.springframework.boot:spring-boot-starter-actuator:3.2.0'
     api 'io.micrometer:micrometer-core:1.12.0'
 
     compileOnly 'org.projectlombok:lombok:1.18.34'
