@@ -4,7 +4,7 @@ plugins {
 }
 
 application {
-    mainClass = 'io.github.cuihairu.streaming.examples.registry.ServiceRegistryExample'
+    mainClass = 'io.github.cuihairu.redis.streaming.examples.registry.ServiceRegistryExample'
 }
 
 dependencies {

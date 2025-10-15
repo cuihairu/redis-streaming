@@ -1,9 +1,9 @@
-package io.github.cuihairu.streaming.examples.aggregation;
+package io.github.cuihairu.redis.streaming.examples.aggregation;
 
-import io.github.cuihairu.streaming.aggregation.*;
-import io.github.cuihairu.streaming.aggregation.functions.*;
-import io.github.cuihairu.streaming.aggregation.impl.*;
-import io.github.cuihairu.streaming.aggregation.window.*;
+import io.github.cuihairu.redis.streaming.aggregation.*;
+import io.github.cuihairu.redis.streaming.aggregation.functions.*;
+// NOTE: example uses conceptual impl/window APIs; actual API differs.
+// Kept as .broken to avoid build impact; package/imports aligned to redis namespace.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
