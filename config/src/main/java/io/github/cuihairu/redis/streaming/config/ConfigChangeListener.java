@@ -1,4 +1,4 @@
-package io.github.cuihairu.streaming.config;
+package io.github.cuihairu.redis.streaming.config;
 
 /**
  * 配置变更监听器

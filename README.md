@@ -451,7 +451,7 @@ namingService.subscribe("order-service", (serviceName, action, instance, allInst
 
 #### 配置中心
 ```java
-import io.github.cuihairu.streaming.config.*;
+import io.github.cuihairu.redis.streaming.config.*;
 
 // 创建配置服务
 ConfigService configService = new RedisConfigService(redissonClient);

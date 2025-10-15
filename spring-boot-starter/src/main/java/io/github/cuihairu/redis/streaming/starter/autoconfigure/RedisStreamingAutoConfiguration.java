@@ -1,8 +1,8 @@
 package io.github.cuihairu.redis.streaming.starter.autoconfigure;
 
 import io.github.cuihairu.redis.streaming.registry.*;
-import io.github.cuihairu.streaming.config.ConfigService;
-import io.github.cuihairu.streaming.config.impl.RedisConfigService;
+import io.github.cuihairu.redis.streaming.config.ConfigService;
+import io.github.cuihairu.redis.streaming.config.impl.RedisConfigService;
 import io.github.cuihairu.redis.streaming.registry.impl.RedisNamingService;
 import io.github.cuihairu.redis.streaming.starter.processor.ServiceChangeListenerProcessor;
 import io.github.cuihairu.redis.streaming.starter.properties.RedisStreamingProperties;
@@ -221,7 +221,12 @@ public class RedisStreamingAutoConfiguration {
             log.info("Initializing ConfigService with default group: {}",
                     properties.getConfig().getDefaultGroup());
 
-            ConfigService configService = new RedisConfigService(redissonClient);
+            var cfgProps = properties.getConfig();
+            io.github.cuihairu.redis.streaming.config.ConfigServiceConfig cfg =
+                    new io.github.cuihairu.redis.streaming.config.ConfigServiceConfig(
+                            cfgProps.getKeyPrefix(), cfgProps.isEnableKeyPrefix());
+            cfg.setHistorySize(cfgProps.getHistorySize());
+            ConfigService configService = new RedisConfigService(redissonClient, cfg);
             configService.start();
             return configService;
         }
@@ -257,6 +262,12 @@ public class RedisStreamingAutoConfiguration {
                     .retryMoverIntervalSec(p.getRetryMoverIntervalSec())
                     .retryLockWaitMs(p.getRetryLockWaitMs())
                     .retryLockLeaseMs(p.getRetryLockLeaseMs())
+                    .keyPrefix(p.getKeyPrefix())
+                    .streamKeyPrefix(p.getStreamKeyPrefix())
+                    .consumerNamePrefix(p.getConsumerNamePrefix())
+                    .dlqConsumerSuffix(p.getDlqConsumerSuffix())
+                    .defaultConsumerGroup(p.getDefaultConsumerGroup())
+                    .defaultDlqGroup(p.getDefaultDlqGroup())
                     .build();
         }
 

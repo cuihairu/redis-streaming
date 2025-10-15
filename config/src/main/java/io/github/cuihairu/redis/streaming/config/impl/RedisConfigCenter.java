@@ -1,8 +1,8 @@
-package io.github.cuihairu.streaming.config.impl;
+package io.github.cuihairu.redis.streaming.config.impl;
 
-import io.github.cuihairu.streaming.config.ConfigCenter;
-import io.github.cuihairu.streaming.config.ConfigChangeListener;
-import io.github.cuihairu.streaming.config.ConfigHistory;
+import io.github.cuihairu.redis.streaming.config.ConfigCenter;
+import io.github.cuihairu.redis.streaming.config.ConfigChangeListener;
+import io.github.cuihairu.redis.streaming.config.ConfigHistory;
 import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

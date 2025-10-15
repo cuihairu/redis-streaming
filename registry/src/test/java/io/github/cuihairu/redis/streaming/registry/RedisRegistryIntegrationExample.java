@@ -1,8 +1,8 @@
 package io.github.cuihairu.redis.streaming.registry;
 
-import io.github.cuihairu.streaming.config.ConfigChangeListener;
-import io.github.cuihairu.streaming.config.ConfigService;
-import io.github.cuihairu.streaming.config.impl.RedisConfigService;
+import io.github.cuihairu.redis.streaming.config.ConfigChangeListener;
+import io.github.cuihairu.redis.streaming.config.ConfigService;
+import io.github.cuihairu.redis.streaming.config.impl.RedisConfigService;
 import io.github.cuihairu.redis.streaming.registry.impl.RedisServiceConsumer;
 import io.github.cuihairu.redis.streaming.registry.impl.RedisServiceProvider;
 import io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListener;

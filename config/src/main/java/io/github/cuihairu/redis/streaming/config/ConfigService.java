@@ -1,4 +1,4 @@
-package io.github.cuihairu.streaming.config;
+package io.github.cuihairu.redis.streaming.config;
 
 import java.util.List;
 
@@ -89,6 +89,18 @@ public interface ConfigService extends ConfigManager {
      * @return 配置历史列表
      */
     List<ConfigHistory> getConfigHistory(String dataId, String group, int size);
+
+    /**
+     * Trim history to keep at most maxSize newest records.
+     * @return removed count
+     */
+    default int trimHistoryBySize(String dataId, String group, int maxSize) { return 0; }
+
+    /**
+     * Trim history records older than maxAge.
+     * @return removed count
+     */
+    default int trimHistoryByAge(String dataId, String group, java.time.Duration maxAge) { return 0; }
     
     /**
      * 启动配置服务

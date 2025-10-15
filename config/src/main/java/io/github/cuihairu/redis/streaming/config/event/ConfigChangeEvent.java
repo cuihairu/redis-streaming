@@ -1,4 +1,4 @@
-package io.github.cuihairu.streaming.config.event;
+package io.github.cuihairu.redis.streaming.config.event;
 
 /**
  * Strongly typed config change event payload for Pub/Sub.
@@ -32,4 +32,3 @@ public class ConfigChangeEvent {
     public void setVersion(String version) { this.version = version; }
     public void setTimestamp(long timestamp) { this.timestamp = timestamp; }
 }
-

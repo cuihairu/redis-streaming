@@ -317,7 +317,7 @@ public class MetadataFilteringExample {
 ### 5. 配置中心使用
 
 ```java
-import io.github.cuihairu.streaming.config.*;
+import io.github.cuihairu.redis.streaming.config.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -617,4 +617,3 @@ A: 检查 Redis 是否启动，地址配置是否正确
 **版本**: 0.1.0
 **最后更新**: 2025-01-12
 **新增**: Metadata 比较运算符过滤、配置中心示例
-

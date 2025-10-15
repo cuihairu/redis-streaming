@@ -228,6 +228,16 @@ public class RedisStreamingProperties {
          * 配置历史保留数量
          */
         private int historySize = 10;
+
+        /**
+         * Redis key prefix for config center (controls BaseRedisConfig)
+         */
+        private String keyPrefix = io.github.cuihairu.redis.streaming.config.BaseRedisConfig.DEFAULT_KEY_PREFIX;
+
+        /**
+         * Whether to enable key prefix
+         */
+        private boolean enableKeyPrefix = true;
     }
 
     @Data
@@ -323,6 +333,16 @@ public class RedisStreamingProperties {
 
         /** 重试搬运锁租期（毫秒） */
         private long retryLockLeaseMs = 500;
+
+        /** Key prefixes (MQ control keys & stream keys) */
+        private String keyPrefix = "streaming:mq";
+        private String streamKeyPrefix = "stream:topic";
+
+        /** Naming conventions */
+        private String consumerNamePrefix = "consumer-";
+        private String dlqConsumerSuffix = "-dlq";
+        private String defaultConsumerGroup = "default-group";
+        private String defaultDlqGroup = "dlq-group";
     }
 
     @Data

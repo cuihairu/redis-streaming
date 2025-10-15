@@ -30,7 +30,7 @@ dependencies {
 ### 2. 创建 ConfigService
 
 ```java
-import io.github.cuihairu.streaming.config.*;
+import io.github.cuihairu.redis.streaming.config.*;
 import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;

@@ -10,8 +10,9 @@ dependencies {
     compileOnly 'org.projectlombok:lombok:1.18.34'
     annotationProcessor 'org.projectlombok:lombok:1.18.34'
 
-    implementation 'org.slf4j:slf4j-api:1.7.36'
-    testRuntimeOnly 'org.slf4j:slf4j-simple:1.7.36'
+    // Use SLF4J 2.x which is required by Redisson 3.52.0 to avoid binding incompatibilities in tests
+    implementation 'org.slf4j:slf4j-api:2.0.17'
+    testRuntimeOnly 'org.slf4j:slf4j-simple:2.0.17'
 
     testImplementation 'org.junit.jupiter:junit-jupiter:5.9.2'
     testImplementation 'org.mockito:mockito-core:4.6.1'
