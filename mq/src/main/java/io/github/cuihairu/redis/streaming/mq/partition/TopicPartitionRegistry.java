@@ -14,8 +14,6 @@ import java.util.Map;
  */
 @Slf4j
 public class TopicPartitionRegistry {
-
-    public static final String REGISTRY_KEY = "streaming:mq:topics:registry";
     private static final String FIELD_PARTITION_COUNT = "partitionCount";
 
     private final RedissonClient redissonClient;
@@ -27,8 +25,8 @@ public class TopicPartitionRegistry {
     /** Ensure topic meta exists; if absent, initialize with given partitionCount. */
     public void ensureTopic(String topic, int partitionCount) {
         try {
-            // Register topic name
-            redissonClient.getSet(REGISTRY_KEY).add(topic);
+            // Register topic name using configured control prefix
+            redissonClient.getSet(StreamKeys.topicsRegistry()).add(topic);
 
             RMap<String, String> meta = redissonClient.getMap(StreamKeys.topicMeta(topic));
             if (!meta.containsKey(FIELD_PARTITION_COUNT)) {

@@ -27,7 +27,7 @@ public class RedisDeadLetterConsumerBranchesTest {
             MessageQueueFactory factory = new MessageQueueFactory(client);
 
             // Create DLQ consumer: first RETRY, then FAIL
-            MessageConsumer dlqConsumer = factory.createDeadLetterConsumer(topic, "c");
+            MessageConsumer dlqConsumer = factory.createDeadLetterConsumer("c-dlq");
             final int[] count = {0};
             dlqConsumer.subscribe(topic, "g-dlq", m -> {
                 int i = ++count[0];

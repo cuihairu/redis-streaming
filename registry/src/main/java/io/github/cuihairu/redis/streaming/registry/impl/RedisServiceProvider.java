@@ -125,7 +125,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
             long currentTime = System.currentTimeMillis();
 
             // 准备实例数据
-            Map<String, Object> instanceData = prepareInstanceData(instance, currentTime);
+            Map<String, Object> instanceData = InstanceEntryCodec.buildInstanceData(instance, currentTime);
 
             // 收集初始指标
             if (metricsManager != null) {
@@ -591,24 +591,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
         }
     }
 
-    /**
-     * 准备实例数据
-     */
-    private Map<String, Object> prepareInstanceData(ServiceInstance instance, long currentTime) {
-        Map<String, Object> instanceData = new HashMap<>();
-        instanceData.put("host", instance.getHost());
-        instanceData.put("port", instance.getPort());
-        instanceData.put("protocol", instance.getProtocol().getName());
-        instanceData.put("enabled", instance.isEnabled());
-        instanceData.put("healthy", instance.isHealthy());
-        instanceData.put("weight", instance.getWeight());
-        instanceData.put("ephemeral", instance.isEphemeral());  // 添加临时/永久标识
-        instanceData.put("metadata", instance.getMetadata());
-        instanceData.put("registrationTime", currentTime);
-        instanceData.put("lastHeartbeatTime", currentTime);
-        instanceData.put("lastMetadataUpdate", currentTime);
-        return instanceData;
-    }
+    // prepareInstanceData migrated to InstanceEntryCodec
 
     /**
      * 通知服务变更

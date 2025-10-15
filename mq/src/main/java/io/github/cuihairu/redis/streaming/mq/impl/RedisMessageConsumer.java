@@ -65,7 +65,7 @@ public class RedisMessageConsumer implements MessageConsumer {
 
     @Override
     public void subscribe(String topic, MessageHandler handler) {
-        subscribe(topic, "default-group", handler);
+        subscribe(topic, options.getDefaultConsumerGroup(), handler);
     }
 
     @Override
@@ -208,7 +208,7 @@ public class RedisMessageConsumer implements MessageConsumer {
                     StreamMessageId messageId = entry.getKey();
                     Map<String, Object> data = entry.getValue();
 
-                    Message message = createMessageFromData(topic, messageId.toString(), data);
+                    Message message = StreamEntryCodec.parsePartitionEntry(topic, messageId.toString(), data);
                     // include partitionId if present (support both numeric and string forms)
                     Object pid = data.get("partitionId");
                     int pidInt = partitionId;
@@ -270,7 +270,7 @@ public class RedisMessageConsumer implements MessageConsumer {
                             for (Map.Entry<StreamMessageId, Map<String, Object>> entry : claimed.entrySet()) {
                                 StreamMessageId claimedId = entry.getKey();
                                 Map<String, Object> data = entry.getValue();
-                                Message message = createMessageFromData(pk.topic, claimedId.toString(), data);
+                        Message message = StreamEntryCodec.parsePartitionEntry(pk.topic, claimedId.toString(), data);
                                 try {
                                     MessageHandleResult result = worker.handler.handle(message);
                                     handleResult(stream, pk.group, claimedId, pk.partitionId, message, result);
@@ -323,81 +323,15 @@ public class RedisMessageConsumer implements MessageConsumer {
         try {
             String dlqKey = StreamKeys.dlq(message.getTopic());
             RStream<String, Object> dlqStream = redissonClient.getStream(dlqKey);
-
-            Map<String, Object> dlqData = new HashMap<>();
-            dlqData.put("originalTopic", message.getTopic());
-            dlqData.put("payload", message.getPayload());
-            dlqData.put("timestamp", message.getTimestamp().toString());
-            dlqData.put("failedAt", Instant.now().toString());
-            dlqData.put("retryCount", message.getRetryCount());
-            dlqData.put("partitionId", 0); // best effort, actual partition available via worker context
-            if (message.getHeaders() != null) {
-                Object pid = message.getHeaders().get("partitionId");
-                if (pid != null) {
-                    try { dlqData.put("partitionId", Integer.parseInt(pid.toString())); } catch (Exception ignore) {}
-                }
-            }
-            if (message.getKey() != null) dlqData.put("key", message.getKey());
-            if (message.getHeaders() != null && !message.getHeaders().isEmpty()) dlqData.put("headers", message.getHeaders());
-            if (message.getId() != null) dlqData.put("originalMessageId", message.getId());
-
-            StreamAddArgs<String, Object> addArgs = StreamAddArgs.entries(dlqData);
-            dlqStream.add(addArgs);
+            Map<String, Object> dlqData = StreamEntryCodec.buildDlqEntry(message);
+            dlqStream.add(StreamAddArgs.entries(dlqData));
             log.warn("Message sent to dead letter queue: {}", dlqKey);
         } catch (Exception e) {
             log.error("Failed to send message to dead letter queue", e);
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private Message createMessageFromData(String topic, String messageId, Map<String, Object> data) {
-        Message message = new Message();
-        message.setId(messageId);
-        message.setTopic(topic);
-        message.setPayload(data.get("payload"));
-
-        String timestampStr = (String) data.get("timestamp");
-        if (timestampStr != null) {
-            message.setTimestamp(Instant.parse(timestampStr));
-        } else {
-            message.setTimestamp(Instant.now());
-        }
-
-        Object rcVal = data.get("retryCount");
-        if (rcVal instanceof Number) {
-            message.setRetryCount(((Number) rcVal).intValue());
-        } else if (rcVal instanceof String) {
-            try { message.setRetryCount(Integer.parseInt((String) rcVal)); } catch (Exception ignore) {}
-        }
-
-        Object mrVal = data.get("maxRetries");
-        if (mrVal instanceof Number) {
-            message.setMaxRetries(((Number) mrVal).intValue());
-        } else if (mrVal instanceof String) {
-            try { message.setMaxRetries(Integer.parseInt((String) mrVal)); } catch (Exception ignore) {}
-        }
-
-        String key = (String) data.get("key");
-        if (key != null) {
-            message.setKey(key);
-        }
-
-        Object headersVal = data.get("headers");
-        if (headersVal instanceof Map) {
-            message.setHeaders((Map<String, String>) headersVal);
-        } else if (headersVal instanceof String) {
-            try {
-                Map<String, String> h = objectMapper.readValue((String) headersVal, Map.class);
-                message.setHeaders(h);
-            } catch (Exception e) {
-                message.setHeaders(new HashMap<>());
-            }
-        } else {
-            message.setHeaders(new HashMap<>());
-        }
-
-        return message;
-    }
+    // createMessageFromData migrated to StreamEntryCodec
 
     private void requeueOrDeadLetter(RStream<String, Object> stream,
                                      String consumerGroup,
@@ -504,18 +438,18 @@ public class RedisMessageConsumer implements MessageConsumer {
                 locked = lock.tryLock(options.getRetryLockWaitMs(), options.getRetryLockLeaseMs(), TimeUnit.MILLISECONDS);
                 if (!locked) return;
                 String bucketKey = StreamKeys.retryBucket(topic);
-                String lua = "local z=KEYS[1]; local now=tonumber(ARGV[1]); local limit=tonumber(ARGV[2]); local ts=ARGV[3]; "
+                String lua = "local z=KEYS[1]; local now=tonumber(ARGV[1]); local limit=tonumber(ARGV[2]); local ts=ARGV[3]; local sp=ARGV[4]; "
                         + "local ids=redis.call('ZRANGEBYSCORE', z, '-inf', now, 'LIMIT', 0, limit); local moved={}; "
                         + "for i=1,#ids do local id=ids[i]; local t=redis.call('HGET', id, 'topic'); local pid=tonumber(redis.call('HGET', id, 'partitionId')) or 0; "
                         + "local payload=redis.call('HGET', id, 'payload'); local retry=redis.call('HGET', id, 'retryCount') or '0'; local maxr=redis.call('HGET', id, 'maxRetries') or '0'; "
                         + "local k=redis.call('HGET', id, 'key') or ''; local hdr=redis.call('HGET', id, 'headers') or ''; local orig=redis.call('HGET', id, 'originalMessageId') or ''; "
-                        + "local sk='stream:topic:'..t..':p:'..pid; local args={'payload',payload,'timestamp',ts,'retryCount',retry,'maxRetries',maxr,'topic',t,'partitionId',tostring(pid)}; "
+                        + "local sk=sp..':'..t..':p:'..pid; local args={'payload',payload,'timestamp',ts,'retryCount',retry,'maxRetries',maxr,'topic',t,'partitionId',tostring(pid)}; "
                         + "if k~='' then table.insert(args,'key'); table.insert(args,k); end; if hdr~='' then table.insert(args,'headers'); table.insert(args,hdr); end; "
                         + "if orig~='' then table.insert(args,'originalMessageId'); table.insert(args,orig); end; "
                         + "redis.call('XADD', sk, '*', unpack(args)); redis.call('ZREM', z, id); redis.call('DEL', id); table.insert(moved, id); end; return moved;";
                 RScript script = redissonClient.getScript();
                 List<Object> moved = script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.MULTI, java.util.Collections.singletonList(bucketKey),
-                        System.currentTimeMillis(), options.getRetryMoverBatch(), Instant.now().toString());
+                        System.currentTimeMillis(), options.getRetryMoverBatch(), Instant.now().toString(), StreamKeys.streamPrefix());
                 if (moved != null && !moved.isEmpty()) {
                     log.debug("Moved {} retry items for topic {}", moved.size(), topic);
                 }

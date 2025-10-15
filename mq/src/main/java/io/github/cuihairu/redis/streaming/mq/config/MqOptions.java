@@ -40,8 +40,15 @@ public class MqOptions {
     private long retryLockWaitMs = 100;
     private long retryLockLeaseMs = 500;
 
-    // Keyspace prefix for Redis keys owned by MQ (to avoid collisions in shared Redis)
-    private String keyPrefix = "streaming:mq";
+    // Keyspace prefixes for Redis keys owned by MQ (to avoid collisions in shared Redis)
+    private String keyPrefix = "streaming:mq";      // control keys (meta/lease/retry)
+    private String streamKeyPrefix = "stream:topic"; // data streams (partitions/DLQ)
+
+    // Naming conventions
+    private String consumerNamePrefix = "consumer-";
+    private String dlqConsumerSuffix = "-dlq";
+    private String defaultConsumerGroup = "default-group";
+    private String defaultDlqGroup = "dlq-group";
 
     public static Builder builder() { return new Builder(); }
 
@@ -66,6 +73,11 @@ public class MqOptions {
         public Builder retryLockWaitMs(long v){ o.retryLockWaitMs = Math.max(0, v); return this; }
         public Builder retryLockLeaseMs(long v){ o.retryLockLeaseMs = Math.max(0, v); return this; }
         public Builder keyPrefix(String v){ if (v != null && !v.isBlank()) o.keyPrefix = v; return this; }
+        public Builder streamKeyPrefix(String v){ if (v != null && !v.isBlank()) o.streamKeyPrefix = v; return this; }
+        public Builder consumerNamePrefix(String v){ if (v != null && !v.isBlank()) o.consumerNamePrefix = v; return this; }
+        public Builder dlqConsumerSuffix(String v){ if (v != null) o.dlqConsumerSuffix = v; return this; }
+        public Builder defaultConsumerGroup(String v){ if (v != null && !v.isBlank()) o.defaultConsumerGroup = v; return this; }
+        public Builder defaultDlqGroup(String v){ if (v != null && !v.isBlank()) o.defaultDlqGroup = v; return this; }
         public MqOptions build(){ return o; }
     }
 

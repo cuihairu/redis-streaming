@@ -4,6 +4,7 @@ import io.github.cuihairu.redis.streaming.mq.Message;
 import io.github.cuihairu.redis.streaming.mq.MessageConsumer;
 import io.github.cuihairu.redis.streaming.mq.MessageHandleResult;
 import io.github.cuihairu.redis.streaming.mq.MessageHandler;
+import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
 import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RStream;
@@ -25,13 +26,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Dead Letter Queue consumer for a logical topic. Reads from single DLQ stream: stream:topic:{t}:dlq
+ * Dead Letter Queue consumer for a logical topic. Reads from single DLQ stream (prefix configurable).
  */
 @Slf4j
 public class RedisDeadLetterConsumer implements MessageConsumer {
 
     private final RedissonClient redissonClient;
     private final String consumerName;
+    private final MqOptions options;
     private final ScheduledExecutorService executor;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean closed = new AtomicBoolean(false);
@@ -40,14 +42,19 @@ public class RedisDeadLetterConsumer implements MessageConsumer {
     private final Map<String, StreamMessageId> lastIds = new ConcurrentHashMap<>();
 
     public RedisDeadLetterConsumer(RedissonClient redissonClient, String consumerName) {
+        this(redissonClient, consumerName, MqOptions.builder().build());
+    }
+
+    public RedisDeadLetterConsumer(RedissonClient redissonClient, String consumerName, MqOptions options) {
         this.redissonClient = redissonClient;
         this.consumerName = consumerName;
+        this.options = options == null ? MqOptions.builder().build() : options;
         this.executor = Executors.newSingleThreadScheduledExecutor();
     }
 
     @Override
     public void subscribe(String topic, MessageHandler handler) {
-        subscribe(topic, "dlq-group", handler);
+        subscribe(topic, options.getDefaultDlqGroup(), handler);
     }
 
     @Override
@@ -115,7 +122,7 @@ public class RedisDeadLetterConsumer implements MessageConsumer {
                         for (Map.Entry<StreamMessageId, Map<String, Object>> e : polled.entrySet()) {
                             StreamMessageId id = e.getKey();
                             Map<String, Object> data = e.getValue();
-                            Message m = fromDlqData(id.toString(), data);
+                            Message m = StreamEntryCodec.parseDlqEntry(id.toString(), data);
                             try {
                                 MessageHandleResult r = s.handler.handle(m);
                                 // Remove the entry after processing to avoid reprocessing
@@ -164,7 +171,7 @@ public class RedisDeadLetterConsumer implements MessageConsumer {
                     for (Map.Entry<StreamMessageId, Map<String, Object>> e : messages.entrySet()) {
                         StreamMessageId id = e.getKey();
                         Map<String, Object> data = e.getValue();
-                        Message m = fromDlqData(id.toString(), data);
+                        Message m = StreamEntryCodec.parseDlqEntry(id.toString(), data);
                         try {
                             MessageHandleResult r = s.handler.handle(m);
                             handleResult(stream, s.group, id, m, r);
@@ -197,13 +204,11 @@ public class RedisDeadLetterConsumer implements MessageConsumer {
                     }
                     String skey = StreamKeys.partitionStream(topic, pid);
                     RStream<String, Object> s = redissonClient.getStream(skey);
-                    Map<String, Object> d = new HashMap<>();
-                    d.put("payload", m.getPayload());
-                    d.put("timestamp", Instant.now().toString());
-                    d.put("retryCount", 0);
-                    d.put("maxRetries", m.getMaxRetries());
-                    d.put("topic", topic);
-                    d.put("partitionId", pid);
+                    Map<String, Object> d = StreamEntryCodec.buildPartitionEntryFromDlq(new java.util.HashMap<String, Object>() {{
+                        put("payload", m.getPayload());
+                        put("headers", m.getHeaders());
+                        put("maxRetries", m.getMaxRetries());
+                    }}, topic, pid);
                     s.add(StreamAddArgs.entries(d));
                 } catch (Exception ex) {
                     log.error("DLQ replay failed", ex);
@@ -219,26 +224,7 @@ public class RedisDeadLetterConsumer implements MessageConsumer {
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private Message fromDlqData(String id, Map<String, Object> data) {
-        Message m = new Message();
-        m.setId(id);
-        String topic = (String) data.getOrDefault("originalTopic", "");
-        m.setTopic(topic);
-        m.setPayload(data.get("payload"));
-        String ts = (String) data.get("timestamp");
-        m.setTimestamp(ts != null ? Instant.parse(ts) : Instant.now());
-        Object rc = data.get("retryCount");
-        if (rc instanceof Number) m.setRetryCount(((Number) rc).intValue());
-        Object pid = data.get("partitionId");
-        Map<String, String> headers = new HashMap<>();
-        headers.put("originalTopic", topic);
-        if (pid instanceof Number) headers.put("partitionId", Integer.toString(((Number) pid).intValue()));
-        String key = (String) data.get("key"); if (key != null) headers.put("key", key);
-        Object hdr = data.get("headers"); if (hdr instanceof Map) headers.putAll((Map<String, String>) hdr);
-        m.setHeaders(headers);
-        return m;
-    }
+    // fromDlqData migrated to StreamEntryCodec
 
     private static class Sub {
         final String topic; // original topic

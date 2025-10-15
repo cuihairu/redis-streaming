@@ -49,8 +49,7 @@ class MessageQueueFactoryTest {
 
     @Test
     void testCreateDeadLetterConsumer() {
-        String originalTopic = "test-topic";
-        MessageConsumer dlqConsumer = factory.createDeadLetterConsumer(originalTopic);
+        MessageConsumer dlqConsumer = factory.createDeadLetterConsumer();
 
         assertNotNull(dlqConsumer);
         // DLQ consumer is a dedicated implementation
@@ -59,9 +58,8 @@ class MessageQueueFactoryTest {
 
     @Test
     void testCreateDeadLetterConsumerWithName() {
-        String originalTopic = "test-topic";
         String consumerName = "custom-consumer";
-        MessageConsumer dlqConsumer = factory.createDeadLetterConsumer(originalTopic, consumerName);
+        MessageConsumer dlqConsumer = factory.createDeadLetterConsumer(consumerName);
 
         assertNotNull(dlqConsumer);
         assertTrue(dlqConsumer instanceof io.github.cuihairu.redis.streaming.mq.impl.RedisDeadLetterConsumer);

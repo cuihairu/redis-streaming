@@ -432,8 +432,10 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             // Fallback: if meta not initialized (pc==1), also scan for any existing partition streams
             if (pc <= 1) {
                 try {
+                    String pat = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.streamPrefix()
+                            + ":" + topic + ":p:*";
                     @SuppressWarnings("deprecation")
-                    Iterable<String> scan = redissonClient.getKeys().getKeysByPattern("stream:topic:" + topic + ":p:*");
+                    Iterable<String> scan = redissonClient.getKeys().getKeysByPattern(pat);
                     for (String k : scan) {
                         keys.add(k);
                     }

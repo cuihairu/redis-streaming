@@ -24,11 +24,16 @@ public class MessageQueueFactory {
     public MessageQueueFactory(RedissonClient redissonClient) {
         this.redissonClient = redissonClient;
         this.options = MqOptions.builder().build();
+        // Configure key prefixes once per factory instance
+        io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.configure(
+                this.options.getKeyPrefix(), this.options.getStreamKeyPrefix());
     }
 
     public MessageQueueFactory(RedissonClient redissonClient, MqOptions options) {
         this.redissonClient = redissonClient;
         this.options = options == null ? MqOptions.builder().build() : options;
+        io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.configure(
+                this.options.getKeyPrefix(), this.options.getStreamKeyPrefix());
     }
 
     /**
@@ -65,27 +70,24 @@ public class MessageQueueFactory {
     }
 
     /**
-     * Create a dead letter queue consumer for processing failed messages
-     *
-     * @param originalTopic the original topic name
-     * @return message consumer for dead letter queue
+     * Create a dead letter queue consumer. Topic binding happens on subscribe().
      */
-    public MessageConsumer createDeadLetterConsumer(String originalTopic) {
-        String dlqTopic = originalTopic + ".dlq";
-        String consumerName = generateConsumerName() + "-dlq";
-        return new io.github.cuihairu.redis.streaming.mq.impl.RedisDeadLetterConsumer(redissonClient, consumerName);
+    public MessageConsumer createDeadLetterConsumer() {
+        String consumerName = generateConsumerName() + options.getDlqConsumerSuffix();
+        return new io.github.cuihairu.redis.streaming.mq.impl.RedisDeadLetterConsumer(redissonClient, consumerName, options);
     }
 
     /**
-     * Create a dead letter queue consumer with specified consumer name
-     *
-     * @param originalTopic the original topic name
-     * @param consumerName the consumer name
-     * @return message consumer for dead letter queue
+     * Create a dead letter queue consumer with specified consumer name.
      */
-    public MessageConsumer createDeadLetterConsumer(String originalTopic, String consumerName) {
-        return new io.github.cuihairu.redis.streaming.mq.impl.RedisDeadLetterConsumer(redissonClient, consumerName + "-dlq");
+    public MessageConsumer createDeadLetterConsumer(String consumerName) {
+        String name = (consumerName == null || consumerName.isBlank())
+                ? generateConsumerName() + options.getDlqConsumerSuffix()
+                : (consumerName.endsWith(options.getDlqConsumerSuffix()) ? consumerName : consumerName + options.getDlqConsumerSuffix());
+        return new io.github.cuihairu.redis.streaming.mq.impl.RedisDeadLetterConsumer(redissonClient, name, options);
     }
+
+    // Removed legacy overloads that took originalTopic; users should call subscribe(topic, ...) on the returned consumer.
 
     /**
      * Create a message queue admin for monitoring and management
@@ -96,7 +98,25 @@ public class MessageQueueFactory {
         return new RedisMessageQueueAdmin(redissonClient, options);
     }
 
+    /**
+     * Convenience: create a DLQ consumer bound to a topic and handler, and start it.
+     * This method has side-effects (starts the consumer).
+     */
+    public MessageConsumer createDeadLetterConsumerForTopic(String topic,
+                                                           String group,
+                                                           String consumerName,
+                                                           MessageHandler handler) {
+        String name = (consumerName == null || consumerName.isBlank())
+                ? generateConsumerName() + options.getDlqConsumerSuffix()
+                : (consumerName.endsWith(options.getDlqConsumerSuffix()) ? consumerName : consumerName + options.getDlqConsumerSuffix());
+        String g = (group == null || group.isBlank()) ? options.getDefaultDlqGroup() : group;
+        MessageConsumer c = new io.github.cuihairu.redis.streaming.mq.impl.RedisDeadLetterConsumer(redissonClient, name, options);
+        c.subscribe(topic, g, handler);
+        c.start();
+        return c;
+    }
+
     private String generateConsumerName() {
-        return "consumer-" + UUID.randomUUID().toString().substring(0, 8);
+        return options.getConsumerNamePrefix() + UUID.randomUUID().toString().substring(0, 8);
     }
 }

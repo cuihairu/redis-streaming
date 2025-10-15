@@ -60,21 +60,7 @@ public class RedisMessageProducer implements MessageProducer {
                 String streamKey = StreamKeys.partitionStream(message.getTopic(), partitionId);
                 RStream<String, Object> stream = redissonClient.getStream(streamKey);
 
-                Map<String, Object> data = new HashMap<>();
-                data.put("payload", message.getPayload());
-                data.put("timestamp", message.getTimestamp().toString());
-                data.put("retryCount", message.getRetryCount());
-                data.put("maxRetries", message.getMaxRetries());
-                data.put("topic", message.getTopic());
-                data.put("partitionId", partitionId);
-
-                if (message.getKey() != null) {
-                    data.put("key", message.getKey());
-                }
-
-                if (message.getHeaders() != null && !message.getHeaders().isEmpty()) {
-                    data.put("headers", message.getHeaders());
-                }
+                Map<String, Object> data = StreamEntryCodec.buildPartitionEntry(message, partitionId);
 
                 // Add message to the selected partition stream
                 StreamMessageId messageId = stream.add(StreamAddArgs.entries(data));

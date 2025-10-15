@@ -427,114 +427,11 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
      * 构建服务实例对象
      */
     private ServiceInstance buildServiceInstance(String serviceName, String instanceId, Map<String, String> data) {
-        try {
-            String host = data.get("host");
-            String portStr = data.get("port");
-            String protocolName = data.get("protocol");
-            String enabledStr = data.get("enabled");
-            String healthyStr = data.get("healthy");
-            String weightStr = data.get("weight");
-            String ephemeralStr = data.get("ephemeral");
-            String registrationTimeStr = data.get("registrationTime");
-            String lastHeartbeatTimeStr = data.get("lastHeartbeatTime");
-
-            if (host == null || portStr == null) {
-                logger.warn("Invalid instance data for {}:{}, missing host or port", serviceName, instanceId);
-                return null;
-            }
-
-            int port = Integer.parseInt(portStr);
-            Protocol protocol = parseProtocol(protocolName);
-            boolean enabled = enabledStr != null ? Boolean.parseBoolean(enabledStr) : true;
-            boolean healthy = healthyStr != null ? Boolean.parseBoolean(healthyStr) : true;
-            int weight = weightStr != null ? Integer.parseInt(weightStr) : 1;
-            boolean ephemeral = ephemeralStr != null ? Boolean.parseBoolean(ephemeralStr) : true;
-
-            LocalDateTime registrationTime = null;
-            if (registrationTimeStr != null) {
-                registrationTime = LocalDateTime.ofInstant(
-                    java.time.Instant.ofEpochMilli(Long.parseLong(registrationTimeStr)), ZoneId.systemDefault());
-            }
-
-            LocalDateTime lastHeartbeatTime = null;
-            if (lastHeartbeatTimeStr != null) {
-                lastHeartbeatTime = LocalDateTime.ofInstant(
-                    java.time.Instant.ofEpochMilli(Long.parseLong(lastHeartbeatTimeStr)), ZoneId.systemDefault());
-            }
-
-            // ========== 提取 metadata（兼容新旧格式）==========
-            Map<String, String> metadata = new HashMap<>();
-
-            // 1. 优先尝试新格式：metadata 作为 JSON 字符串存储
-            String metadataJson = data.get("metadata");
-            if (metadataJson != null && !metadataJson.isEmpty()) {
-                try {
-                    // 解析 JSON 字符串
-                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> parsedMetadata = mapper.readValue(metadataJson,
-                            new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
-
-                    // 转换为 Map<String, String>
-                    for (Map.Entry<String, Object> entry : parsedMetadata.entrySet()) {
-                        if (entry.getValue() != null) {
-                            metadata.put(entry.getKey(), entry.getValue().toString());
-                        }
-                    }
-
-                    logger.debug("Parsed metadata from JSON for {}:{}", serviceName, instanceId);
-                } catch (Exception e) {
-                    logger.warn("Failed to parse metadata JSON for {}:{}, will try legacy format", serviceName, instanceId, e);
-                    // 解析失败，继续尝试旧格式
-                    metadataJson = null;
-                }
-            }
-
-            // 2. 降级：使用旧格式（metadata_ 前缀的独立字段）
-            if (metadataJson == null) {
-                for (Map.Entry<String, String> entry : data.entrySet()) {
-                    String key = entry.getKey();
-                    if (key.startsWith("metadata_")) {
-                        // 去掉 metadata_ 前缀
-                        String metaKey = key.substring("metadata_".length());
-                        metadata.put(metaKey, entry.getValue());
-                    }
-                }
-            }
-
-            // ========== 处理 metrics（新格式，可选）==========
-            // metrics 字段现在独立存储，不再嵌入 metadata 中
-            String metricsJson = data.get("metrics");
-            if (metricsJson != null && !metricsJson.isEmpty()) {
-                try {
-                    // 可以将 metrics 添加到 metadata 中，保持向后兼容
-                    // 或者扩展 ServiceInstance 接口支持独立的 metrics 字段
-                    // 这里暂时不处理，因为 ServiceInstance 接口没有 metrics 字段
-                    logger.trace("Instance {}:{} has metrics data", serviceName, instanceId);
-                } catch (Exception e) {
-                    logger.debug("Metrics data exists but not processed for {}:{}", serviceName, instanceId);
-                }
-            }
-
-            return DefaultServiceInstance.builder()
-                    .serviceName(serviceName)
-                    .instanceId(instanceId)
-                    .host(host)
-                    .port(port)
-                    .protocol(protocol)
-                    .enabled(enabled)
-                    .healthy(healthy)
-                    .weight(weight)
-                    .ephemeral(ephemeral)
-                    .metadata(metadata)
-                    .registrationTime(registrationTime != null ? registrationTime : LocalDateTime.now())
-                    .lastHeartbeatTime(lastHeartbeatTime)
-                    .build();
-
-        } catch (Exception e) {
-            logger.error("Failed to build service instance {}:{}", serviceName, instanceId, e);
-            return null;
+        ServiceInstance si = InstanceEntryCodec.parseInstance(serviceName, instanceId, data);
+        if (si == null) {
+            logger.warn("Invalid instance data for {}:{}", serviceName, instanceId);
         }
+        return si;
     }
     
     /**

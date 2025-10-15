@@ -49,7 +49,7 @@ public class RetryAndDlqIntegrationTest {
             DeadLetterQueueManager dlq = new DeadLetterQueueManager(client);
 
             // Also attach a lightweight DLQ consumer to robustly detect the DLQ entry arrival
-            MessageConsumer dlqConsumer = factory.createDeadLetterConsumer(topic, "c-retry");
+            MessageConsumer dlqConsumer = factory.createDeadLetterConsumer("c-retry-dlq");
             CountDownLatch dlqSeen = new CountDownLatch(1);
             dlqConsumer.subscribe(topic, "g-dlq", m -> {
                 dlqSeen.countDown();

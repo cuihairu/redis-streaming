@@ -78,18 +78,8 @@ public class DeadLetterQueueManager {
             String streamKey = StreamKeys.partitionStream(originalTopic, pid);
             RStream<String, Object> originalStream = redissonClient.getStream(streamKey);
 
-            Map<String, Object> replayData = Map.of(
-                    "payload", messageData.get("payload"),
-                    "timestamp", Instant.now().toString(),
-                    "retryCount", 0,
-                    "maxRetries", 3,
-                    "key", messageData.getOrDefault("key", ""),
-                    "headers", messageData.getOrDefault("headers", Map.of()),
-                    "replayedFrom", dlqTopic,
-                    "originalMessageId", messageId.toString(),
-                    "partitionId", pid,
-                    "topic", originalTopic
-            );
+            Map<String, Object> replayData = io.github.cuihairu.redis.streaming.mq.impl.StreamEntryCodec
+                    .buildPartitionEntryFromDlq(messageData, originalTopic, pid);
 
             StreamMessageId newMessageId = originalStream.add(StreamAddArgs.entries(replayData));
 
