@@ -143,8 +143,8 @@ env:
 # 1. 本地测试
 ./gradlew publishToMavenLocal
 
-# 2. 发布到 Central Portal
-./gradlew publish
+# 2. 发布到 Central Portal（推荐使用插件任务）
+./gradlew -Pversion=0.1.0 publishAllPublicationsToMavenCentralRepository
 
 # 3. 在 Central Portal 查看
 # 访问 https://central.sonatype.com
@@ -155,7 +155,7 @@ env:
 
 ### 旧流程 (OSSRH)
 
-1. `./gradlew publish` 上传到 Staging Repository
+1. 使用 `./gradlew -Pversion=0.1.0 publishAllPublicationsToMavenCentralRepository` 上传
 2. 登录 https://s01.oss.sonatype.org
 3. 在 Staging Repositories 中找到仓库
 4. 手动点击 **Close** 按钮
@@ -165,7 +165,7 @@ env:
 
 ### 新流程 (Central Portal)
 
-1. `./gradlew publish` 上传到 Central Portal
+1. 使用 `./gradlew -Pversion=0.1.0 publishAllPublicationsToMavenCentralRepository` 上传
 2. 登录 https://central.sonatype.com
 3. 在 **Publishing** → **Deployments** 查看状态
 4. 状态为 **VALIDATED** 后,点击 **Publish** 按钮
@@ -221,7 +221,7 @@ A: 命名空间迁移后立即可以发布,无需等待。
 ### 3. 测试远程发布
 
 ```bash
-./gradlew publish
+./gradlew -Pversion=0.1.0 publishAllPublicationsToMavenCentralRepository
 ```
 
 检查输出中是否包含:

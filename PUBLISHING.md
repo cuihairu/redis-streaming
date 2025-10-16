@@ -52,15 +52,14 @@ signing.secretKeyRingFile=/path/to/.gnupg/secring.gpg
 ./gradlew publishToMavenLocal
 ```
 
-### 发布到 Maven Central
+### 发布到 Maven Central（Vanniktech 插件任务）
 
 ```bash
-# 发布所有模块
-./gradlew publish
+# 发布所有模块到 Central Portal（推荐）
+./gradlew -Pversion=0.1.0 publishAllPublicationsToMavenCentralRepository
 
-# 发布单个模块
-./gradlew :core:publish
-./gradlew :registry:publish
+# 仅发布单个模块（例如 core）
+./gradlew :core:publishMavenPublicationToMavenCentralRepository
 ```
 
 ### 在 Central Portal 完成发布
@@ -142,11 +141,11 @@ git push origin v0.1.0
 ### 自动发布流程
 
 1. ✅ Checkout 代码
-2. ✅ 更新 `build.gradle` 中的版本号
+2. ✅ 更新 `build.gradle` 中的版本号（或用 `-Pversion=...` 覆盖）
 3. ✅ 导入 GPG 私钥
 4. ✅ 创建临时 `gradle.properties`
 5. ✅ 编译和测试（排除集成测试）
-6. ✅ 发布到 Maven Central Staging
+6. ✅ 通过 `publishAllPublicationsToMavenCentralRepository` 上传到 Central Portal
 7. ✅ 生成 Release Notes
 8. ⚠️ **需要手动在 Sonatype 完成 Close 和 Release**
 
