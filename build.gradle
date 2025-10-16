@@ -25,7 +25,8 @@ subprojects {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
         withSourcesJar()
-        withJavadocJar()
+        // Do not explicitly call withJavadocJar() to avoid duplicate 'javadoc' artifacts when
+        // using Vanniktech's maven-publish. The plugin wires javadocJar for Java projects.
     }
 
     tasks.withType(JavaCompile).configureEach {
