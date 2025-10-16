@@ -24,9 +24,13 @@
 编辑 `~/.gradle/gradle.properties`:
 
 ```properties
-# Central Portal 凭据
+# Central Portal 凭据（User Token 作为 password 传递）
 centralPortalUsername=YOUR_USERNAME_FROM_TOKEN
-centralPortalToken=YOUR_TOKEN_FROM_ABOVE
+centralPortalPassword=YOUR_TOKEN_FROM_ABOVE
+
+# 或使用 mavenCentral* 命名（Vanniktech 也支持）：
+mavenCentralUsername=YOUR_USERNAME_FROM_TOKEN
+mavenCentralPassword=YOUR_TOKEN_FROM_ABOVE
 
 # GPG 签名
 signing.keyId=YOUR_GPG_KEY_ID
@@ -90,7 +94,7 @@ signing.secretKeyRingFile=/path/to/.gnupg/secring.gpg
 从 Central Portal 生成的 User Token 中获取 Username
 
 #### 2. CENTRAL_PORTAL_TOKEN
-从 Central Portal 生成的 User Token 中获取 Token
+从 Central Portal 生成的 User Token 中获取 Token（在 CI 中映射为 `CENTRAL_PORTAL_PASSWORD` 或 `ORG_GRADLE_PROJECT_mavenCentralPassword`）
 
 #### 3. GPG_PRIVATE_KEY
 

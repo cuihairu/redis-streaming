@@ -72,9 +72,9 @@ ossrhPassword=...
 
 **添加新配置**:
 ```properties
-# ✅ 添加这些
-centralPortalUsername=YOUR_USERNAME_FROM_TOKEN
-centralPortalToken=YOUR_TOKEN_FROM_ABOVE
+# ✅ 添加这些（注意：Central Portal 使用 password 字段传递 User Token）
+centralPortalUsername=YOUR_USERNAME_FROM_TOKEN_PAGE
+centralPortalPassword=YOUR_USER_TOKEN_STRING
 ```
 
 ### 步骤 5: 更新 build.gradle
@@ -101,7 +101,7 @@ repositories {
         url = "https://central.sonatype.com/api/v1/publisher/upload"
         credentials {
             username = project.findProperty("centralPortalUsername")
-            password = project.findProperty("centralPortalToken")
+            password = project.findProperty("centralPortalPassword")
         }
     }
 }
@@ -116,8 +116,8 @@ repositories {
 - ❌ `OSSRH_PASSWORD`
 
 **添加新 Secrets**:
-- ✅ `CENTRAL_PORTAL_USERNAME`
-- ✅ `CENTRAL_PORTAL_TOKEN`
+- ✅ `CENTRAL_PORTAL_USERNAME`（用户名）
+- ✅ `CENTRAL_PORTAL_TOKEN`（User Token；在工作流中映射为 PASSWORD）
 
 ### 步骤 7: 更新 GitHub Actions 工作流
 
@@ -132,8 +132,10 @@ env:
 ```yaml
 env:
   CENTRAL_PORTAL_USERNAME: ${{ secrets.CENTRAL_PORTAL_USERNAME }}
-  CENTRAL_PORTAL_TOKEN: ${{ secrets.CENTRAL_PORTAL_TOKEN }}
+  CENTRAL_PORTAL_PASSWORD: ${{ secrets.CENTRAL_PORTAL_TOKEN }}
 ```
+
+> 说明：Vanniktech 官方插件在 CENTRAL_PORTAL 模式读取的是 `CENTRAL_PORTAL_USERNAME` 与 `CENTRAL_PORTAL_PASSWORD`（或 Gradle 属性 `centralPortalUsername` / `centralPortalPassword`）。User Token 作为“密码”传递，变量名不要写成 `CENTRAL_PORTAL_TOKEN`，否则会导致 404。
 
 ### 步骤 8: 测试发布
 

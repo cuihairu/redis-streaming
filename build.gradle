@@ -178,3 +178,23 @@ subprojects {
         failOnError = false
     }
 }
+
+// Helper task: sanity-check presence of Central Portal credentials (does not print secrets)
+tasks.register('checkCentralPortalCreds') {
+    group = 'publishing'
+    description = 'Prints whether Central Portal credentials are detectable via env or Gradle properties.'
+    doLast {
+        def envUser = System.getenv('CENTRAL_PORTAL_USERNAME') != null
+        def envPass = System.getenv('CENTRAL_PORTAL_PASSWORD') != null
+        def propUser = providers.gradleProperty('centralPortalUsername').getOrNull() != null
+        def propPass = providers.gradleProperty('centralPortalPassword').getOrNull() != null
+        def propMcUser = providers.gradleProperty('mavenCentralUsername').getOrNull() != null
+        def propMcPass = providers.gradleProperty('mavenCentralPassword').getOrNull() != null
+        println("CENTRAL_PORTAL_USERNAME present (env): ${envUser}")
+        println("CENTRAL_PORTAL_PASSWORD present (env): ${envPass}")
+        println("centralPortalUsername present (gradle.properties/-P): ${propUser}")
+        println("centralPortalPassword present (gradle.properties/-P): ${propPass}")
+        println("mavenCentralUsername present (gradle.properties/-P): ${propMcUser}")
+        println("mavenCentralPassword present (gradle.properties/-P): ${propMcPass}")
+    }
+}

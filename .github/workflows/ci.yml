@@ -65,9 +65,13 @@ jobs:
           # Vanniktech Maven Publish (Central Portal) expects Gradle properties below
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.CENTRAL_PORTAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.CENTRAL_PORTAL_TOKEN }}
+          # Also expose centralPortal* for newer plugin variants
+          ORG_GRADLE_PROJECT_centralPortalUsername: ${{ secrets.CENTRAL_PORTAL_USERNAME }}
+          ORG_GRADLE_PROJECT_centralPortalPassword: ${{ secrets.CENTRAL_PORTAL_TOKEN }}
           # In-memory GPG signing (multi-line ASCII armored private key)
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.GPG_PASSWORD }}
         run: |
           set -euo pipefail
+          ./gradlew -q checkCentralPortalCreds || true
           ./gradlew publishAllPublicationsToMavenCentralRepository --warning-mode=all --stacktrace

@@ -31,5 +31,5 @@
 - PRs should include: clear description, linked issues, test coverage for changes, and docs updates when behavior or APIs change. Add screenshots/log snippets when relevant.
 
 ## Security & Configuration
-- Publishing uses Central Portal; set `CENTRAL_PORTAL_USERNAME`/`CENTRAL_PORTAL_TOKEN`. GPG signing keys are read from env (`GPG_KEY_ID`, `GPG_PASSWORD`, `GPG_SECRET_KEY`).
+- Publishing uses Central Portal; set `CENTRAL_PORTAL_USERNAME` and map your User Token as `CENTRAL_PORTAL_PASSWORD` (or Gradle properties `mavenCentralUsername`/`mavenCentralPassword`). GPG signing keys are read from env (`GPG_PRIVATE_KEY`, `GPG_PASSWORD`).
 - Local tests only need Docker; no secrets required.
