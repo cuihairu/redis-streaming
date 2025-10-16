@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ published ]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: self-hosted
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Verify Java
+        run: |
+          set -euo pipefail
+          java -version
+          javac -version
+
+      - name: Start Redis with Docker
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yml up -d redis || docker compose up -d redis
+          # wait up to ~20s
+          for i in {1..40}; do
+            if docker ps --format '{{.Names}}' | grep -q redis; then
+              break
+            fi
+            sleep 0.5
+          done
+
+      - name: Build & Test (unit + integration)
+        run: |
+          set -euo pipefail
+          ./gradlew clean check --warning-mode=all
+        env:
+          REDIS_URL: redis://127.0.0.1:6379
+
+      - name: Shutdown Redis
+        if: always()
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yml down -v || true
+
+      - name: Publish to Maven Central (on release)
+        if: ${{ github.event_name == 'release' && github.event.action == 'published' }}
+        env:
+          CENTRAL_PORTAL_USERNAME: ${{ secrets.CENTRAL_PORTAL_USERNAME }}
+          CENTRAL_PORTAL_TOKEN: ${{ secrets.CENTRAL_PORTAL_TOKEN }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+          GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}
+          GPG_SECRET_KEY: ${{ secrets.GPG_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          ./gradlew publish --warning-mode=all --stacktrace
+
