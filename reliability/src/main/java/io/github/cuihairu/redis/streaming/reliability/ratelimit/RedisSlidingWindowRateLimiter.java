@@ -2,6 +2,7 @@ package io.github.cuihairu.redis.streaming.reliability.ratelimit;
 
 import org.redisson.api.RScript;
 import org.redisson.api.RedissonClient;
+import org.redisson.client.codec.StringCodec;
 
 import java.util.Arrays;
 import java.util.List;
@@ -21,6 +22,7 @@ public class RedisSlidingWindowRateLimiter implements RateLimiter {
     private final String keyPrefix;
     private final long windowMs;
     private final int limit;
+    private final RScript stringScript;
 
     private static final String LUA =
             "local key=KEYS[1];" +
@@ -50,6 +52,7 @@ public class RedisSlidingWindowRateLimiter implements RateLimiter {
         this.keyPrefix = keyPrefix;
         this.windowMs = windowMs;
         this.limit = limit;
+        this.stringScript = redisson.getScript(StringCodec.INSTANCE);
     }
 
     @Override
@@ -58,8 +61,13 @@ public class RedisSlidingWindowRateLimiter implements RateLimiter {
         String k = formatKey(key);
         String seq = k + ":seq";
         List<Object> keys = Arrays.asList(k, seq);
-        List<Object> args = Arrays.asList(windowMs, limit, nowMillis);
-        Boolean ok = redisson.getScript().eval(RScript.Mode.READ_WRITE, LUA, RScript.ReturnType.BOOLEAN, keys, args.toArray());
+        // pass arguments as strings to Lua to avoid codec-dependent binary
+        Object[] args = new Object[]{
+                String.valueOf(windowMs),
+                String.valueOf(limit),
+                String.valueOf(nowMillis)
+        };
+        Boolean ok = stringScript.eval(RScript.Mode.READ_WRITE, LUA, RScript.ReturnType.BOOLEAN, keys, args);
         return ok != null && ok;
     }
 

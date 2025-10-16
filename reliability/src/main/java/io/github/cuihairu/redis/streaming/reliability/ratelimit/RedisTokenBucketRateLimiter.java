@@ -2,6 +2,7 @@ package io.github.cuihairu.redis.streaming.reliability.ratelimit;
 
 import org.redisson.api.RScript;
 import org.redisson.api.RedissonClient;
+import org.redisson.client.codec.StringCodec;
 
 import java.util.Arrays;
 import java.util.List;
@@ -23,6 +24,7 @@ public class RedisTokenBucketRateLimiter implements RateLimiter {
     private final double capacity;
     private final double ratePerMs; // tokens per ms
     private final long expireMs;    // key TTL in ms
+    private final RScript stringScript;
 
     private static final String LUA =
             // KEYS[1] = hash key
@@ -64,6 +66,7 @@ public class RedisTokenBucketRateLimiter implements RateLimiter {
         // expire after roughly time to refill full bucket twice (safeguard against orphan keys)
         long msForFull = (long)Math.ceil((capacity / ratePerSecond) * 1000.0);
         this.expireMs = Math.max(2000L, msForFull * 2);
+        this.stringScript = redisson.getScript(StringCodec.INSTANCE);
     }
 
     @Override
@@ -71,9 +74,13 @@ public class RedisTokenBucketRateLimiter implements RateLimiter {
         Objects.requireNonNull(key, "key");
         String k = keyPrefix + ":{" + key + "}:tb";
         List<Object> keys = Arrays.asList(k);
-        List<Object> args = Arrays.asList(capacity, ratePerMs, nowMillis, expireMs);
-        Boolean ok = redisson.getScript().eval(RScript.Mode.READ_WRITE, LUA, RScript.ReturnType.BOOLEAN, keys, args.toArray());
+        Object[] args = new Object[]{
+                String.valueOf(capacity),
+                String.valueOf(ratePerMs),
+                String.valueOf(nowMillis),
+                String.valueOf(expireMs)
+        };
+        Boolean ok = stringScript.eval(RScript.Mode.READ_WRITE, LUA, RScript.ReturnType.BOOLEAN, keys, args);
         return ok != null && ok;
     }
 }
-
