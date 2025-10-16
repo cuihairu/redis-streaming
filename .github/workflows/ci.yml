@@ -62,12 +62,12 @@ jobs:
       - name: Publish to Maven Central (on release)
         if: ${{ github.event_name == 'release' && github.event.action == 'published' }}
         env:
-          CENTRAL_PORTAL_USERNAME: ${{ secrets.CENTRAL_PORTAL_USERNAME }}
-          CENTRAL_PORTAL_TOKEN: ${{ secrets.CENTRAL_PORTAL_TOKEN }}
-          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
-          GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}
-          GPG_SECRET_KEY: ${{ secrets.GPG_SECRET_KEY }}
+          # Vanniktech Maven Publish (Central Portal) expects Gradle properties below
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.CENTRAL_PORTAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.CENTRAL_PORTAL_TOKEN }}
+          # In-memory GPG signing (multi-line ASCII armored private key)
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.GPG_PASSWORD }}
         run: |
           set -euo pipefail
-          ./gradlew publish --warning-mode=all --stacktrace
-
+          ./gradlew publishAllPublicationsToMavenCentralRepository --warning-mode=all --stacktrace

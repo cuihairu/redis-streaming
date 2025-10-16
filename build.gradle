@@ -1,7 +1,7 @@
 plugins {
     id 'java'
-    id 'maven-publish'
     id 'signing'
+    id 'com.vanniktech.maven.publish' version '0.29.0' apply false
 }
 
 allprojects {
@@ -15,14 +15,17 @@ allprojects {
 
 subprojects {
     apply plugin: 'java'
-    apply plugin: 'maven-publish'
     apply plugin: 'signing'
+    // Only publish real modules; exclude example module from publishing
+    if (project.name != 'examples') {
+        apply plugin: 'com.vanniktech.maven.publish'
+    }
 
     java {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-        withJavadocJar()
         withSourcesJar()
+        withJavadocJar()
     }
 
     tasks.withType(JavaCompile).configureEach {
@@ -106,72 +109,58 @@ subprojects {
         dependsOn integrationTest
     }
 
-    // Maven publishing configuration
-    publishing {
-        publications {
-            maven(MavenPublication) {
-                from components.java
+    // javadocJar is enabled to satisfy Central Portal best practices
 
-                pom {
-                    name = project.name
-                    description = "Streaming Processing Framework - ${project.name} module"
-                    url = 'https://github.com/cuihairu/redis-streaming'
+    // Maven Central publishing via Vanniktech (Central Portal)
+    if (plugins.hasPlugin('com.vanniktech.maven.publish')) {
+    mavenPublishing {
+        publishToMavenCentral(com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL)
+        signAllPublications()
+        coordinates(group, project.name, version)
+        pom {
+            // Default name/description; will be overridden for key modules below
+            name.set(project.name)
+            description.set("Streaming Processing Framework - ${project.name} module")
 
-                    licenses {
-                        license {
-                            name = 'The Apache License, Version 2.0'
-                            url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
-                        }
-                    }
-
-                    developers {
-                        developer {
-                            id = 'cuihairu'
-                            name = 'Cui Hairu'
-                            email = 'cuihairu@github.com'
-                        }
-                    }
-
-                    scm {
-                        connection = 'scm:git:git://github.com/cuihairu/redis-streaming.git'
-                        developerConnection = 'scm:git:ssh://github.com/cuihairu/redis-streaming.git'
-                        url = 'https://github.com/cuihairu/redis-streaming'
-                    }
+            // Friendlier names/descriptions for key modules (display-only; artifactId remains project.name)
+            if (project.name == 'core') {
+                name.set('redis-streaming core')
+                description.set('Core abstractions and API')
+            } else if (project.name == 'runtime') {
+                name.set('redis-streaming runtime')
+                description.set('Stream processing engine runtime')
+            } else if (project.name == 'spring-boot-starter') {
+                name.set('redis-streaming spring-boot-starter')
+                description.set('Spring Boot starter for redis-streaming')
+            }
+            url.set('https://github.com/cuihairu/redis-streaming')
+            licenses {
+                license {
+                    name.set('The Apache License, Version 2.0')
+                    url.set('https://www.apache.org/licenses/LICENSE-2.0.txt')
                 }
             }
-        }
-
-        repositories {
-            maven {
-                name = "CentralPortal"
-                // 新的 Central Portal 发布地址
-                def releasesRepoUrl = "https://central.sonatype.com/api/v1/publisher/upload"
-                def snapshotsRepoUrl = "https://s01.oss.sonatype.org/content/repositories/snapshots/"
-                url = version.endsWith('SNAPSHOT') ? snapshotsRepoUrl : releasesRepoUrl
-
-                credentials {
-                    // 使用新的 Central Portal 凭据
-                    username = project.findProperty("centralPortalUsername") ?: System.getenv("CENTRAL_PORTAL_USERNAME")
-                    password = project.findProperty("centralPortalToken") ?: System.getenv("CENTRAL_PORTAL_TOKEN")
+            scm {
+                connection.set('scm:git:https://github.com/cuihairu/redis-streaming.git')
+                developerConnection.set('scm:git:ssh://git@github.com/cuihairu/redis-streaming.git')
+                url.set('https://github.com/cuihairu/redis-streaming')
+            }
+            developers {
+                developer {
+                    id.set('cuihairu')
+                    name.set('Cui Hairu')
+                    email.set('chuihairu@gmail.com')
                 }
+            }
+            issueManagement {
+                system.set('GitHub Issues')
+                url.set('https://github.com/cuihairu/redis-streaming/issues')
             }
         }
     }
-
-    // Signing configuration
-    signing {
-        // Only sign if publishing to Maven Central (not for local publishToMavenLocal)
-        required { gradle.taskGraph.hasTask("publish") }
-
-        // Use GPG keys from environment or gradle.properties
-        def signingKey = project.findProperty("signing.keyId") ?: System.getenv("GPG_KEY_ID")
-        def signingPassword = project.findProperty("signing.password") ?: System.getenv("GPG_PASSWORD")
-        def signingSecretKey = project.findProperty("signing.secretKeyRingFile") ?: System.getenv("GPG_SECRET_KEY")
-
-        if (signingKey && signingPassword) {
-            sign publishing.publications.maven
-        }
     }
+
+    // Signing handled by Vanniktech via signAllPublications()
 
     // Generate Javadoc
     tasks.withType(Javadoc) {
