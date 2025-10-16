@@ -4,7 +4,7 @@
 
 ## 工作流概览
 
-### 1. 基础构建和测试 (`build.yml`)
+### 1. 基础构建（`build.yml`）
 
 **触发条件：**
 - Push 到 `main` 或 `develop` 分支
@@ -12,29 +12,34 @@
 
 **执行内容：**
 - ✅ 检出代码
-- ✅ 设置 Java 17 环境
-- ✅ 构建所有模块（跳过测试）
-- ✅ 运行单元测试（不需要外部服务）
-- ✅ 上传测试结果和构建产物
+- ✅ 使用自托管 runner 已安装的 Java 17（校验并断言主版本=17）
+- ✅ 启用 Gradle 缓存（wrapper + caches）
+- ✅ 仅构建产物（`./gradlew assemble`，不运行测试）
+- ✅ 上传构建产物（`**/build/libs/*.jar`）
+
+**并发控制：**
+- `concurrency: { group: build-${{ github.ref }}, cancel-in-progress: true }`
 
 **运行时间：** ~5-10 分钟
 
 ---
 
-### 2. 集成测试 (`integration-test.yml`)
+### 2. 测试（单元 + 全量集成，`test.yml`）
 
 **触发条件：**
-- Push 到 `main` 或 `develop` 分支
-- Pull Request 到 `main` 或 `develop` 分支
-- 每天凌晨 2 点自动运行
-- 手动触发
+- Push/PR 到任意分支（可按需收敛）
 
 **执行内容：**
-- ✅ 检查服务状态（Redis、MySQL、PostgreSQL）
-- ✅ 自动启动 Docker Compose（如果直接安装的服务不可用）
-- ✅ 运行集成测试
-- ✅ 收集测试结果和 Docker 日志
-- ✅ 清理 Docker 容器
+- ✅ 启用 Gradle 缓存（wrapper + caches）
+- ✅ 启动 Redis + MySQL + PostgreSQL（`docker-compose.minimal.yml`）
+- ✅ 健康检查：等待服务 `healthy/Up`
+- ✅ 单元测试：`./gradlew test --parallel --continue`
+- ✅ 集成测试（全量）：`./gradlew integrationTest --info --stacktrace`
+- ✅ 上传单元/集成测试报告与 Docker 日志（失败排查更友好）
+- ✅ 仅清理当前 compose 资源（避免 `docker system prune` 的全局副作用）
+
+**并发控制：**
+- `concurrency: { group: tests-${{ github.ref }}, cancel-in-progress: true }`
 
 **运行时间：** ~15-30 分钟
 
@@ -44,38 +49,24 @@
 
 ---
 
-### 3. 完整测试套件 (`full-test.yml`)
-
-**触发条件：**
-- 每周日凌晨 3 点自动运行
-- 手动触发
-
-**执行内容：**
-- ✅ 完全清理并重建
-- ✅ 强制使用 Docker Compose 服务
-- ✅ 运行所有测试（单元测试 + 集成测试）
-- ✅ 生成完整测试报告
-- ✅ 收集所有日志（Docker + 系统服务）
-
-**运行时间：** ~30-60 分钟
-
-**特性：**
-- 最严格的测试流程
-- 完整的日志收集和归档（保留 14 天）
+> 说明：当前未启用单独的 `full-test.yml`。如需每周强制全量测试，可新增工作流并复用 `test.yml` 中的步骤模板。
 
 ---
 
-### 4. 代码质量检查 (`code-quality.yml`)
+### 3. 代码质量检查（`code-quality.yml`）
 
 **触发条件：**
 - Push 到 `main` 或 `develop` 分支
 - Pull Request 到 `main` 或 `develop` 分支
 
 **执行内容：**
+- ✅ 启用 Gradle 缓存
 - ✅ 代码风格检查（Checkstyle）
-- ✅ 静态分析
-- ✅ 构建验证
+- ✅ 静态分析与构建验证（不运行测试）
 - ✅ 项目结构检查
+
+**并发控制：**
+- `concurrency: { group: code-quality-${{ github.ref }}, cancel-in-progress: true }`
 
 **运行时间：** ~5-10 分钟
 
@@ -147,9 +138,8 @@ sudo apt install -y redis-server mysql-server postgresql
 
 | 工作流 | 频率 | 时长 | 需要服务 | 失败影响 |
 |--------|------|------|----------|----------|
-| Build | 每次提交 | 5-10分钟 | 无 | 🔴 阻止合并 |
-| Integration Test | 每次提交 + 每日 | 15-30分钟 | Redis, MySQL | 🔴 阻止合并 |
-| Full Test | 每周 | 30-60分钟 | 全部 | 🟡 警告 |
+| Build | 每次提交 | 2-5分钟 | 无 | 🔴 阻止合并 |
+| Tests | 每次提交 | 15-30分钟 | Redis, MySQL, PostgreSQL | 🔴 阻止合并 |
 | Code Quality | 每次提交 | 5-10分钟 | 无 | 🟡 警告 |
 
 ---
@@ -180,15 +170,29 @@ export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 echo 'export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64' >> ~/.bashrc
 ```
 
-工作流会在运行时验证 Java 版本：
+工作流会在运行时验证并断言 Java 版本：
 ```yaml
 - name: Verify Java version
   run: |
     java -version
     echo "JAVA_HOME=$JAVA_HOME"
+
+- name: Assert Java 17
+  run: |
+    MAJOR=$(java -version 2>&1 | awk -F[".] '/version/ {print $2}')
+    if [ "$MAJOR" != "17" ]; then
+      echo "Expected Java 17 but found: $(java -version 2>&1 | head -n 1)"
+      exit 1
+    fi
 ```
 
 如果需要恢复使用 `actions/setup-java`（例如在 GitHub 托管的 runner 上运行），可以取消注释相关配置。
+
+### Java 版本策略（JDK 21 本地兼容 + CI 用 JDK 17）
+
+- 源码与目标兼容性均为 Java 17；构建时使用 `javac --release 17`，即便本地 JDK 是 21 也会针对 17 API 编译。
+- CI（自托管 runner）要求并断言 Java 17（在工作流中有断言步骤）。
+- 本地开发可使用 JDK 21 或更高版本，Gradle 会通过 `options.release = 17` 保证编译目标为 17。
 
 ---
 

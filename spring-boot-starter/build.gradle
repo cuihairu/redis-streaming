@@ -7,6 +7,7 @@ dependencies {
     api project(':registry')
     api project(':config')
     api project(':mq')
+    api project(':reliability')
     api 'org.springframework.boot:spring-boot-starter:3.2.0'
     api 'org.springframework.boot:spring-boot-configuration-processor:3.2.0'
     // For HealthIndicator compile-time visibility (do not force runtime)

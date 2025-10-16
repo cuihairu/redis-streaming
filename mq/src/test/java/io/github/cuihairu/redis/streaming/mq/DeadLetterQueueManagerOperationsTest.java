@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.*;
 public class DeadLetterQueueManagerOperationsTest {
 
     @Test
+    @SuppressWarnings("deprecation")
     void testDeleteAndClearAndInvalidId() {
         String topic = "dlqop-" + UUID.randomUUID().toString().substring(0, 8);
         RedissonClient client = createClient();
@@ -54,4 +55,3 @@ public class DeadLetterQueueManagerOperationsTest {
         return Redisson.create(config);
     }
 }
-

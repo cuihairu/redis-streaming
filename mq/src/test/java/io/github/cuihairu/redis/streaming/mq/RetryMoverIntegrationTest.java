@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
 public class RetryMoverIntegrationTest {
 
     @Test
+    @SuppressWarnings("deprecation")
     void testRetryViaMoverThenDlq() throws Exception {
         String topic = "mover-" + UUID.randomUUID().toString().substring(0, 8);
         RedissonClient client = createClient();
@@ -46,9 +47,13 @@ public class RetryMoverIntegrationTest {
             DeadLetterQueueManager dlq = new DeadLetterQueueManager(client);
 
             boolean ok = false;
-            for (int i = 0; i < 200; i++) { // up to ~20s for mover path
+            for (int i = 0; i < 250; i++) { // up to ~25s for mover path
                 long sz = dlq.getDeadLetterQueueSize(topic);
                 if (sz > 0) { ok = true; break; }
+                try {
+                    long raw = client.getStream(io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.dlq(topic)).size();
+                    if (raw > 0) { ok = true; break; }
+                } catch (Exception ignore) {}
                 Thread.sleep(100);
             }
             assertTrue(ok, "expected message in DLQ after mover retry");

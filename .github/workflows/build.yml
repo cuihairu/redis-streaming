@@ -10,6 +10,9 @@ jobs:
   build:
     runs-on: self-hosted
     timeout-minutes: 30
+    concurrency:
+      group: build-${{ github.ref }}
+      cancel-in-progress: true
 
     steps:
     - name: Checkout code
@@ -20,14 +23,30 @@ jobs:
         java -version
         echo "JAVA_HOME=$JAVA_HOME"
 
+    - name: Assert Java 17
+      run: |
+        MAJOR=$(java -version 2>&1 | awk -F[".] '/version/ {print $2}')
+        echo "Detected Java major: $MAJOR"
+        if [ "$MAJOR" != "17" ]; then
+          echo "❌ Expected Java 17 but found: $(java -version 2>&1 | head -n 1)"
+          exit 1
+        fi
+
+    - name: Cache Gradle
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-
+
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
-    - name: Build with Gradle
-      run: ./gradlew build -x test -x integrationTest --console=plain
-
-    - name: Run unit tests
-      run: ./gradlew test --console=plain
+    - name: Build (assemble only)
+      run: ./gradlew assemble --console=plain
 
     - name: Upload test results
       if: always()

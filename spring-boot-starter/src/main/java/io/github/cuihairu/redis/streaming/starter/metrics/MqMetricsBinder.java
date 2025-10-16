@@ -1,10 +1,10 @@
 package io.github.cuihairu.redis.streaming.starter.metrics;
 
-import io.github.cuihairu.redis.streaming.mq.DeadLetterQueueManager;
 import io.github.cuihairu.redis.streaming.mq.admin.MessageQueueAdmin;
 import io.github.cuihairu.redis.streaming.mq.admin.model.QueueInfo;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.github.cuihairu.redis.streaming.reliability.dlq.DeadLetterService;
 
 import java.util.List;
 
@@ -18,11 +18,11 @@ import java.util.List;
 public class MqMetricsBinder implements io.micrometer.core.instrument.binder.MeterBinder {
 
     private final MessageQueueAdmin admin;
-    private final DeadLetterQueueManager dlq;
+    private final DeadLetterService dlqService;
 
-    public MqMetricsBinder(MessageQueueAdmin admin, DeadLetterQueueManager dlq) {
+    public MqMetricsBinder(MessageQueueAdmin admin, DeadLetterService dlqService) {
         this.admin = admin;
-        this.dlq = dlq;
+        this.dlqService = dlqService;
     }
 
     @Override
@@ -48,7 +48,7 @@ public class MqMetricsBinder implements io.micrometer.core.instrument.binder.Met
         Gauge.builder("redis_streaming_mq_dlq_total", () -> {
                     long sum = 0;
                     for (String t : admin.listAllTopics()) {
-                        sum += dlq.getDeadLetterQueueSize(t);
+                        sum += dlqService.size(t);
                     }
                     return (double) sum;
                 })

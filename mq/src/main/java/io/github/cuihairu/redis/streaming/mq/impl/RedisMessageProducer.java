@@ -56,7 +56,20 @@ public class RedisMessageProducer implements MessageProducer {
                 partitionRegistry.ensureTopic(message.getTopic(), options.getDefaultPartitionCount());
 
                 int partitions = partitionRegistry.getPartitionCount(message.getTopic());
-                int partitionId = partitioner.partition(message.getKey(), partitions);
+                int partitionId;
+                // Allow callers (e.g. DLQ replay) to force a specific partition via header
+                try {
+                    String forced = message.getHeaders() != null ? message.getHeaders().getOrDefault("x-force-partition-id", null) : null;
+                    if (forced != null) {
+                        int fp = Integer.parseInt(forced);
+                        partitionId = (fp >= 0 && partitions > 0) ? (fp % partitions) : 0;
+                        if (partitionId < 0) partitionId += partitions;
+                    } else {
+                        partitionId = partitioner.partition(message.getKey(), partitions);
+                    }
+                } catch (Exception ignore) {
+                    partitionId = partitioner.partition(message.getKey(), partitions);
+                }
                 String streamKey = StreamKeys.partitionStream(message.getTopic(), partitionId);
                 RStream<String, Object> stream = redissonClient.getStream(streamKey);
 

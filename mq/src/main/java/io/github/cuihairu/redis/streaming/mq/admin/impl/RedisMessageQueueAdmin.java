@@ -434,11 +434,13 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
                 try {
                     String pat = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.streamPrefix()
                             + ":" + topic + ":p:*";
-                    @SuppressWarnings("deprecation")
-                    Iterable<String> scan = redissonClient.getKeys().getKeysByPattern(pat);
-                    for (String k : scan) {
-                        keys.add(k);
-                    }
+                    try {
+                        for (String k : redissonClient.getKeys().getKeys()) {
+                            if (k != null && k.startsWith(io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.streamPrefix() + ":" + topic + ":p:")) {
+                                keys.add(k);
+                            }
+                        }
+                    } catch (Exception ignore) {}
                 } catch (Exception ignore) {}
             }
             for (String key : keys) {

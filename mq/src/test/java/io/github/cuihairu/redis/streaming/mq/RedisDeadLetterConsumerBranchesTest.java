@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
 public class RedisDeadLetterConsumerBranchesTest {
 
     @Test
+    @SuppressWarnings("deprecation")
     void testRetryAndFailBranches() throws Exception {
         String topic = "dlq-branch-" + UUID.randomUUID().toString().substring(0, 8);
         RedissonClient client = createClient();

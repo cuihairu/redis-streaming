@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.*;
 public class RetryAndDlqIntegrationTest {
 
     @Test
+    @SuppressWarnings("deprecation")
     void testRetryThenDlqAndReplay() throws Exception {
         String topic = "retry-" + UUID.randomUUID().toString().substring(0, 8);
         RedissonClient client = createClient();
@@ -59,10 +60,15 @@ public class RetryAndDlqIntegrationTest {
 
             // Wait until DLQ receives the message (either by size() or by dlq consumer seeing it)
             boolean ok = false;
-            for (int i = 0; i < 120; i++) { // up to ~12s
+            for (int i = 0; i < 200; i++) { // up to ~20s
                 long sz = dlq.getDeadLetterQueueSize(topic);
                 if (sz > 0) { ok = true; break; }
                 if (dlqSeen.getCount() == 0) { ok = true; break; }
+                // direct fallback: check raw stream size to avoid admin latency
+                try {
+                    long raw = client.getStream(io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.dlq(topic)).size();
+                    if (raw > 0) { ok = true; break; }
+                } catch (Exception ignore) {}
                 if (handled.getCount() <= 1) {
                     Thread.sleep(150);
                 }

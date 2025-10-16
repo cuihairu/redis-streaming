@@ -11,20 +11,26 @@ jobs:
   test:
     runs-on: self-hosted
     timeout-minutes: 45
+    concurrency:
+      group: tests-${{ github.ref }}
+      cancel-in-progress: true
 
     steps:
-      - name: Cleanup workspace
-        run: |
-          rm -rf ${{ github.workspace }}/*
-          rm -rf ${{ github.workspace }}/.* 2>/dev/null || true
-
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
+      - name: Verify Java version
+        run: |
+          java -version
+          echo "JAVA_HOME=$JAVA_HOME"
+
+      - name: Assert Java 17
+        run: |
+          MAJOR=$(java -version 2>&1 | awk -F[".] '/version/ {print $2}')
+          echo "Detected Java major: $MAJOR"
+          if [ "$MAJOR" != "17" ]; then
+            echo "❌ Expected Java 17 but found: $(java -version 2>&1 | head -n 1)"
+            exit 1
+          fi
 
       - name: Cache Gradle packages
         uses: actions/cache@v4
@@ -35,6 +41,8 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
+
+      # Change detection removed: always run full integration tests
 
       - name: Setup Docker permissions
         run: |
@@ -59,17 +67,16 @@ jobs:
         run: |
           # 清理可能存在的容器和网络
           docker compose -f docker-compose.minimal.yml down -v --remove-orphans 2>/dev/null || true
-          docker system prune -f
 
           # 启动测试环境
           echo "Starting test environment..."
+          echo "Start full minimal stack (redis/mysql/postgres)"
           docker compose -f docker-compose.minimal.yml up -d
 
           # 等待所有服务健康
           echo "Waiting for services to be healthy..."
           timeout 300 bash -c '
-            services="redis mysql postgres"
-            for service in $services; do
+            for service in redis mysql postgres; do
               echo "Waiting for $service..."
               until docker compose -f docker-compose.minimal.yml ps $service | grep -q "healthy\|Up"; do
                 sleep 2
@@ -95,12 +102,12 @@ jobs:
           echo "All service ports are accessible!"
 
       - name: Run unit tests
-        run: ./gradlew test --parallel --continue
+        run: ./gradlew test --parallel --continue --console=plain
         timeout-minutes: 15
 
       - name: Run integration tests
-        run: ./gradlew integrationTest --continue
-        timeout-minutes: 20
+        run: ./gradlew integrationTest --continue --info --stacktrace
+        timeout-minutes: 25
         env:
           REDIS_URL: redis://localhost:6379
           MYSQL_URL: jdbc:mysql://localhost:3306/test_db
@@ -154,12 +161,40 @@ jobs:
             echo "✅ All tests passed!"
           fi
 
+      - name: Upload integration test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: |
+            **/build/test-results/integrationTest/
+            **/build/reports/tests/integrationTest/
+          retention-days: 7
+
+      - name: Collect Docker logs
+        if: always()
+        run: |
+          mkdir -p docker-logs
+          # collect logs per running service in this compose
+          for s in redis mysql postgres; do
+            if docker compose -f docker-compose.minimal.yml ps $s >/dev/null 2>&1; then
+              docker compose -f docker-compose.minimal.yml logs $s > docker-logs/$s.log 2>&1 || true
+            fi
+          done
+
+      - name: Upload Docker logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-logs
+          path: docker-logs/
+          retention-days: 3
+
       - name: Cleanup test environment
         if: always()
         run: |
           echo "Cleaning up test environment..."
           docker compose -f docker-compose.minimal.yml down -v --remove-orphans
-          docker system prune -f
 
       - name: Cleanup Gradle Cache
         if: always()

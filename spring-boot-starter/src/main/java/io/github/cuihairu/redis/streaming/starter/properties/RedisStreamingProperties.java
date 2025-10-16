@@ -343,6 +343,40 @@ public class RedisStreamingProperties {
         private String dlqConsumerSuffix = "-dlq";
         private String defaultConsumerGroup = "default-group";
         private String defaultDlqGroup = "dlq-group";
+
+        /** Broker configuration */
+        private BrokerProperties broker = new BrokerProperties();
+
+        /** Retention configuration (Streams) */
+        private int retentionMaxLenPerPartition = 100_000; // default bounded backlog
+        private long retentionMs = 0L; // disabled by default
+        private int trimIntervalSec = 60; // background trim cadence
+
+        /** Deletion policy on ACK: none | immediate | all-groups-ack */
+        private String ackDeletePolicy = "none";
+        /** TTL for ack-set keys when using all-groups-ack (seconds) */
+        private int acksetTtlSec = 86400;
+
+        /** DLQ retention overrides (0 means disabled/use defaults) */
+        private int dlqRetentionMaxLen = 0;
+        private long dlqRetentionMs = 0L;
+    }
+
+    @Data
+    public static class BrokerProperties {
+        /** Broker type: redis | jdbc */
+        private String type = "redis";
+        /** JDBC settings (used when type=jdbc). DataSource bean can also be provided by user. */
+        private JdbcProperties jdbc = new JdbcProperties();
+    }
+
+    @Data
+    public static class JdbcProperties {
+        /** Fallback JDBC driver class (if user provides DataSource, this is ignored). */
+        private String driverClassName = "com.mysql.cj.jdbc.Driver";
+        private String url;
+        private String username;
+        private String password;
     }
 
     @Data

@@ -1,6 +1,7 @@
 package io.github.cuihairu.redis.streaming.config;
 
 import io.github.cuihairu.redis.streaming.config.impl.RedisConfigService;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
@@ -8,6 +9,7 @@ import org.redisson.config.Config;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@Tag("integration")
 class ConfigServiceLifecycleTest {
 
     @Test

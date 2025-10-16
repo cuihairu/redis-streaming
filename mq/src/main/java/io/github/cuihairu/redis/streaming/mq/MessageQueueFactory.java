@@ -20,10 +20,12 @@ public class MessageQueueFactory {
 
     private final RedissonClient redissonClient;
     private final MqOptions options;
+    private final io.github.cuihairu.redis.streaming.mq.broker.BrokerFactory brokerFactory;
 
     public MessageQueueFactory(RedissonClient redissonClient) {
         this.redissonClient = redissonClient;
         this.options = MqOptions.builder().build();
+        this.brokerFactory = new io.github.cuihairu.redis.streaming.mq.broker.impl.RedisBrokerFactory();
         // Configure key prefixes once per factory instance
         io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.configure(
                 this.options.getKeyPrefix(), this.options.getStreamKeyPrefix());
@@ -32,6 +34,16 @@ public class MessageQueueFactory {
     public MessageQueueFactory(RedissonClient redissonClient, MqOptions options) {
         this.redissonClient = redissonClient;
         this.options = options == null ? MqOptions.builder().build() : options;
+        this.brokerFactory = new io.github.cuihairu.redis.streaming.mq.broker.impl.RedisBrokerFactory();
+        io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.configure(
+                this.options.getKeyPrefix(), this.options.getStreamKeyPrefix());
+    }
+
+    public MessageQueueFactory(RedissonClient redissonClient, MqOptions options,
+                               io.github.cuihairu.redis.streaming.mq.broker.BrokerFactory brokerFactory) {
+        this.redissonClient = redissonClient;
+        this.options = options == null ? MqOptions.builder().build() : options;
+        this.brokerFactory = brokerFactory == null ? new io.github.cuihairu.redis.streaming.mq.broker.impl.RedisBrokerFactory() : brokerFactory;
         io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.configure(
                 this.options.getKeyPrefix(), this.options.getStreamKeyPrefix());
     }
@@ -42,9 +54,9 @@ public class MessageQueueFactory {
      * @return message producer instance
      */
     public MessageProducer createProducer() {
-        // Default: hash partitioner with dynamic partition metadata registry
-        return new RedisMessageProducer(redissonClient,
-                new HashPartitioner(), new TopicPartitionRegistry(redissonClient), options);
+        // Delegate via BrokerFactory to allow swapping persistence (redis|jdbc)
+        io.github.cuihairu.redis.streaming.mq.broker.Broker broker = brokerFactory.create(redissonClient, options);
+        return new io.github.cuihairu.redis.streaming.mq.impl.BrokerBackedProducer(broker);
     }
 
     /**
@@ -54,8 +66,9 @@ public class MessageQueueFactory {
      */
     public MessageConsumer createConsumer() {
         String consumerName = generateConsumerName();
+        io.github.cuihairu.redis.streaming.mq.broker.Broker broker = brokerFactory.create(redissonClient, options);
         return new RedisMessageConsumer(redissonClient, consumerName,
-                new TopicPartitionRegistry(redissonClient), options);
+                new TopicPartitionRegistry(redissonClient), options, broker);
     }
 
     /**
@@ -65,8 +78,9 @@ public class MessageQueueFactory {
      * @return message consumer instance
      */
     public MessageConsumer createConsumer(String consumerName) {
+        io.github.cuihairu.redis.streaming.mq.broker.Broker broker = brokerFactory.create(redissonClient, options);
         return new RedisMessageConsumer(redissonClient, consumerName,
-                new TopicPartitionRegistry(redissonClient), options);
+                new TopicPartitionRegistry(redissonClient), options, broker);
     }
 
     /**
@@ -74,7 +88,7 @@ public class MessageQueueFactory {
      */
     public MessageConsumer createDeadLetterConsumer() {
         String consumerName = generateConsumerName() + options.getDlqConsumerSuffix();
-        return new io.github.cuihairu.redis.streaming.mq.impl.RedisDeadLetterConsumer(redissonClient, consumerName, options);
+        return new io.github.cuihairu.redis.streaming.mq.impl.DlqConsumerAdapter(redissonClient, consumerName, options);
     }
 
     /**
@@ -84,7 +98,7 @@ public class MessageQueueFactory {
         String name = (consumerName == null || consumerName.isBlank())
                 ? generateConsumerName() + options.getDlqConsumerSuffix()
                 : (consumerName.endsWith(options.getDlqConsumerSuffix()) ? consumerName : consumerName + options.getDlqConsumerSuffix());
-        return new io.github.cuihairu.redis.streaming.mq.impl.RedisDeadLetterConsumer(redissonClient, name, options);
+        return new io.github.cuihairu.redis.streaming.mq.impl.DlqConsumerAdapter(redissonClient, name, options);
     }
 
     // Removed legacy overloads that took originalTopic; users should call subscribe(topic, ...) on the returned consumer.
@@ -110,7 +124,7 @@ public class MessageQueueFactory {
                 ? generateConsumerName() + options.getDlqConsumerSuffix()
                 : (consumerName.endsWith(options.getDlqConsumerSuffix()) ? consumerName : consumerName + options.getDlqConsumerSuffix());
         String g = (group == null || group.isBlank()) ? options.getDefaultDlqGroup() : group;
-        MessageConsumer c = new io.github.cuihairu.redis.streaming.mq.impl.RedisDeadLetterConsumer(redissonClient, name, options);
+        MessageConsumer c = new io.github.cuihairu.redis.streaming.mq.impl.DlqConsumerAdapter(redissonClient, name, options);
         c.subscribe(topic, g, handler);
         c.start();
         return c;

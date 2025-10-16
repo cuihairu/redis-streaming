@@ -5,6 +5,8 @@ import io.github.cuihairu.redis.streaming.mq.MessageConsumer;
 import io.github.cuihairu.redis.streaming.mq.MessageHandler;
 import io.github.cuihairu.redis.streaming.mq.MessageHandleResult;
 import io.github.cuihairu.redis.streaming.mq.lease.LeaseManager;
+import io.github.cuihairu.redis.streaming.mq.broker.Broker;
+import io.github.cuihairu.redis.streaming.mq.broker.BrokerRecord;
 import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
 import io.github.cuihairu.redis.streaming.mq.retry.ExponentialBackoffRetryPolicy;
@@ -41,6 +43,7 @@ public class RedisMessageConsumer implements MessageConsumer {
     private final Map<String, Subscription> subscriptions = new ConcurrentHashMap<>();
     private final Map<PartitionKey, PartitionWorker> workers = new ConcurrentHashMap<>();
     private final TopicPartitionRegistry partitionRegistry;
+    private final Broker broker; // optional broker; if present, use it for read/ack
     private final LeaseManager leaseManager;
     private final RetryPolicy retryPolicy;
     private final MqOptions options;
@@ -56,6 +59,25 @@ public class RedisMessageConsumer implements MessageConsumer {
         this.consumerPool = Executors.newScheduledThreadPool(this.options.getWorkerThreads());
         this.schedulerPool = Executors.newScheduledThreadPool(this.options.getSchedulerThreads());
         this.partitionRegistry = partitionRegistry;
+        this.broker = null;
+        this.leaseManager = new LeaseManager(redissonClient);
+        this.retryPolicy = new ExponentialBackoffRetryPolicy(
+                this.options.getRetryMaxAttempts(),
+                this.options.getRetryBaseBackoffMs(),
+                this.options.getRetryMaxBackoffMs());
+    }
+
+    public RedisMessageConsumer(RedissonClient redissonClient, String consumerName,
+                                TopicPartitionRegistry partitionRegistry,
+                                MqOptions options,
+                                Broker broker) {
+        this.redissonClient = redissonClient;
+        this.consumerName = consumerName;
+        this.options = options == null ? MqOptions.builder().build() : options;
+        this.consumerPool = Executors.newScheduledThreadPool(this.options.getWorkerThreads());
+        this.schedulerPool = Executors.newScheduledThreadPool(this.options.getSchedulerThreads());
+        this.partitionRegistry = partitionRegistry;
+        this.broker = broker;
         this.leaseManager = new LeaseManager(redissonClient);
         this.retryPolicy = new ExponentialBackoffRetryPolicy(
                 this.options.getRetryMaxAttempts(),
@@ -189,52 +211,78 @@ public class RedisMessageConsumer implements MessageConsumer {
         int partitionId = worker.partitionId;
         MessageHandler handler = worker.handler;
 
-        String streamKey = StreamKeys.partitionStream(topic, partitionId);
-        RStream<String, Object> stream = redissonClient.getStream(streamKey);
-
         while (running.get() && !closed.get() && worker.running.get()) {
             try {
                 int batch = worker.batchOverride != null ? worker.batchOverride : options.getConsumerBatchCount();
                 long to = worker.timeoutOverrideMs != null ? worker.timeoutOverrideMs : options.getConsumerPollTimeoutMs();
-                Map<StreamMessageId, Map<String, Object>> messages = stream.readGroup(
-                        group,
-                        consumerName,
-                        StreamReadGroupArgs.neverDelivered()
-                                .count(batch)
-                                .timeout(Duration.ofMillis(to))
-                );
-
-                for (Map.Entry<StreamMessageId, Map<String, Object>> entry : messages.entrySet()) {
-                    StreamMessageId messageId = entry.getKey();
-                    Map<String, Object> data = entry.getValue();
-
-                    Message message = StreamEntryCodec.parsePartitionEntry(topic, messageId.toString(), data);
-                    // include partitionId if present (support both numeric and string forms)
-                    Object pid = data.get("partitionId");
-                    int pidInt = partitionId;
-                    if (pid instanceof Number) {
-                        pidInt = ((Number) pid).intValue();
-                    } else if (pid != null) {
-                        try { pidInt = Integer.parseInt(pid.toString()); } catch (Exception ignore) {}
+                if (broker != null) {
+                    java.util.List<BrokerRecord> records = broker.readGroup(topic, group, consumerName, partitionId, batch, to);
+                    for (BrokerRecord br : records) {
+                        String id = br.getId();
+                        Map<String, Object> data = br.getData();
+                        Message message = StreamEntryCodec.parsePartitionEntry(topic, id, data);
+                        Object pid = data.get("partitionId");
+                        int pidInt = partitionId;
+                        if (pid instanceof Number) {
+                            pidInt = ((Number) pid).intValue();
+                        } else if (pid != null) {
+                            try { pidInt = Integer.parseInt(pid.toString()); } catch (Exception ignore) {}
+                        }
+                        message.getHeaders().put("partitionId", Integer.toString(pidInt));
+                        long start = System.nanoTime();
+                        try {
+                            MessageHandleResult result = handler.handle(message);
+                            handleResultBroker(topic, group, id, partitionId, message, result);
+                            MqMetrics.get().recordHandleLatency(topic, pidInt, (System.nanoTime() - start) / 1_000_000);
+                            MqMetrics.get().incConsumed(topic, pidInt);
+                        } catch (Exception e) {
+                            log.error("Error handling message {} from {}:{}", id, topic, partitionId, e);
+                            handleFailedMessageBroker(topic, group, id, partitionId, message);
+                            MqMetrics.get().recordHandleLatency(topic, pidInt, (System.nanoTime() - start) / 1_000_000);
+                            MqMetrics.get().incConsumed(topic, pidInt);
+                        }
                     }
-                    message.getHeaders().put("partitionId", Integer.toString(pidInt));
-                    long start = System.nanoTime();
-                    try {
-                        MessageHandleResult result = handler.handle(message);
-                        handleResult(stream, group, messageId, partitionId, message, result);
-                        MqMetrics.get().recordHandleLatency(topic, pidInt, (System.nanoTime() - start) / 1_000_000);
-                        MqMetrics.get().incConsumed(topic, pidInt);
-                    } catch (Exception e) {
-                        log.error("Error handling message {} from {}", messageId, streamKey, e);
-                        handleFailedMessage(stream, group, messageId, partitionId, message);
-                        MqMetrics.get().recordHandleLatency(topic, pidInt, (System.nanoTime() - start) / 1_000_000);
-                        MqMetrics.get().incConsumed(topic, pidInt);
+                } else {
+                    String streamKey = StreamKeys.partitionStream(topic, partitionId);
+                    RStream<String, Object> stream = redissonClient.getStream(streamKey);
+                    Map<StreamMessageId, Map<String, Object>> messages = stream.readGroup(
+                            group,
+                            consumerName,
+                            StreamReadGroupArgs.neverDelivered()
+                                    .count(batch)
+                                    .timeout(Duration.ofMillis(to))
+                    );
+                    for (Map.Entry<StreamMessageId, Map<String, Object>> entry : messages.entrySet()) {
+                        StreamMessageId messageId = entry.getKey();
+                        Map<String, Object> data = entry.getValue();
+                        Message message = StreamEntryCodec.parsePartitionEntry(topic, messageId.toString(), data);
+                        // include partitionId if present (support both numeric and string forms)
+                        Object pid = data.get("partitionId");
+                        int pidInt = partitionId;
+                        if (pid instanceof Number) {
+                            pidInt = ((Number) pid).intValue();
+                        } else if (pid != null) {
+                            try { pidInt = Integer.parseInt(pid.toString()); } catch (Exception ignore) {}
+                        }
+                        message.getHeaders().put("partitionId", Integer.toString(pidInt));
+                        long start = System.nanoTime();
+                        try {
+                            MessageHandleResult result = handler.handle(message);
+                            handleResult(stream, group, messageId, partitionId, message, result);
+                            MqMetrics.get().recordHandleLatency(topic, pidInt, (System.nanoTime() - start) / 1_000_000);
+                            MqMetrics.get().incConsumed(topic, pidInt);
+                        } catch (Exception e) {
+                            log.error("Error handling message {} from {}", messageId, streamKey, e);
+                            handleFailedMessage(stream, group, messageId, partitionId, message);
+                            MqMetrics.get().recordHandleLatency(topic, pidInt, (System.nanoTime() - start) / 1_000_000);
+                            MqMetrics.get().incConsumed(topic, pidInt);
+                        }
                     }
                 }
 
             } catch (Exception e) {
                 if (running.get() && !closed.get() && worker.running.get()) {
-                    log.error("Error consuming from {}", streamKey, e);
+                    log.error("Error consuming from {}:{}", topic, partitionId, e);
                     try {
                         Thread.sleep(500);
                     } catch (InterruptedException ie) {
@@ -296,27 +344,52 @@ public class RedisMessageConsumer implements MessageConsumer {
         switch (result) {
             case SUCCESS:
                 // Acknowledge the message
-                stream.ack(consumerGroup, messageId);
+                ackViaBackend(message.getTopic(), consumerGroup, partitionId, stream, messageId.toString());
                 log.debug("Message {} acknowledged", messageId);
                 MqMetrics.get().incAcked(message.getTopic(), partitionId);
                 break;
 
             case RETRY:
-                requeueOrDeadLetter(stream, consumerGroup, messageId, partitionId, message);
+                requeueOrDeadLetter(stream, consumerGroup, messageId.toString(), partitionId, message);
                 break;
 
             case FAIL:
             case DEAD_LETTER:
                 sendToDeadLetterQueue(message);
                 MqMetrics.get().incDeadLetter(message.getTopic(), partitionId);
-                stream.ack(consumerGroup, messageId);
+                ackViaBackend(message.getTopic(), consumerGroup, partitionId, stream, messageId.toString());
+                break;
+        }
+    }
+
+    private void handleResultBroker(String topic, String consumerGroup, String messageId,
+                                    int partitionId, Message message, MessageHandleResult result) {
+        switch (result) {
+            case SUCCESS:
+                ackViaBackend(topic, consumerGroup, partitionId, null, messageId);
+                log.debug("Message {} acknowledged", messageId);
+                MqMetrics.get().incAcked(message.getTopic(), partitionId);
+                break;
+            case RETRY:
+                requeueOrDeadLetter(null, consumerGroup, messageId, partitionId, message);
+                break;
+            case FAIL:
+            case DEAD_LETTER:
+                sendToDeadLetterQueue(message);
+                MqMetrics.get().incDeadLetter(message.getTopic(), partitionId);
+                ackViaBackend(topic, consumerGroup, partitionId, null, messageId);
                 break;
         }
     }
 
     private void handleFailedMessage(RStream<String, Object> stream, String consumerGroup,
                                      StreamMessageId messageId, int partitionId, Message message) {
-        requeueOrDeadLetter(stream, consumerGroup, messageId, partitionId, message);
+        requeueOrDeadLetter(stream, consumerGroup, messageId.toString(), partitionId, message);
+    }
+
+    private void handleFailedMessageBroker(String topic, String consumerGroup,
+                                           String messageId, int partitionId, Message message) {
+        requeueOrDeadLetter(null, consumerGroup, messageId, partitionId, message);
     }
 
     private void sendToDeadLetterQueue(Message message) {
@@ -335,7 +408,7 @@ public class RedisMessageConsumer implements MessageConsumer {
 
     private void requeueOrDeadLetter(RStream<String, Object> stream,
                                      String consumerGroup,
-                                     StreamMessageId messageId,
+                                     String messageId,
                                      int partitionId,
                                      Message message) {
         try {
@@ -343,11 +416,11 @@ public class RedisMessageConsumer implements MessageConsumer {
             if (message.hasExceededMaxRetries()) {
                 sendToDeadLetterQueue(message);
                 MqMetrics.get().incDeadLetter(message.getTopic(), partitionId);
-                stream.ack(consumerGroup, messageId);
+                ackViaBackend(message.getTopic(), consumerGroup, partitionId, stream, messageId);
                 return;
             }
             // ACK original and either re-enqueue directly (for tiny backoffs) or schedule via retry bucket
-            stream.ack(consumerGroup, messageId);
+            ackViaBackend(message.getTopic(), consumerGroup, partitionId, stream, messageId);
             int nextRetry = message.getRetryCount() + 1;
             long delayMs = retryPolicy.nextBackoffMs(nextRetry);
             long dueAt = System.currentTimeMillis() + delayMs;
@@ -372,7 +445,10 @@ public class RedisMessageConsumer implements MessageConsumer {
                     data.put("partitionId", partitionId);
                     if (message.getKey() != null) data.put("key", message.getKey());
                     if (message.getHeaders() != null && !message.getHeaders().isEmpty()) data.put("headers", objectToJson(message.getHeaders()));
-                    stream.add(StreamAddArgs.entries(data));
+                    RStream<String, Object> target = (stream != null)
+                            ? stream
+                            : redissonClient.getStream(StreamKeys.partitionStream(topic, partitionId));
+                    target.add(StreamAddArgs.entries(data));
                     MqMetrics.get().incRetried(topic, partitionId);
                     log.debug("Message {} re-enqueued directly for retry ({} ms)", messageId, delayMs);
                 } catch (Exception ex) {
@@ -417,6 +493,59 @@ public class RedisMessageConsumer implements MessageConsumer {
         } catch (Exception e) {
             throw new RuntimeException("JSON serialization failure", e);
         }
+    }
+
+    private void ackViaBackend(String topic, String consumerGroup, int partitionId,
+                               RStream<String, Object> streamOrNull, String messageId) {
+        try {
+            if (broker != null) {
+                broker.ack(topic, consumerGroup, partitionId, messageId);
+            } else if (streamOrNull != null) {
+                streamOrNull.ack(consumerGroup, parseStreamId(messageId));
+            } else {
+                // fallback get stream just for ack
+                String streamKey = StreamKeys.partitionStream(topic, partitionId);
+                redissonClient.getStream(streamKey).ack(consumerGroup, parseStreamId(messageId));
+            }
+            // Update commit frontier (best-effort): keep max acknowledged id per group/partition
+            try {
+                String frontierKey = StreamKeys.commitFrontier(topic, partitionId);
+                org.redisson.api.RMap<String, String> map = redissonClient.getMap(frontierKey);
+                String prev = map.get(consumerGroup);
+                if (prev == null || compareStreamId(messageId, prev) > 0) {
+                    map.put(consumerGroup, messageId);
+                }
+            } catch (Exception ignore) {}
+        } catch (Exception ignore) {}
+    }
+
+    private StreamMessageId parseStreamId(String id) {
+        try {
+            if (id == null) return StreamMessageId.MIN;
+            String[] parts = id.split("-", 2);
+            if (parts.length == 2) {
+                long ms = Long.parseLong(parts[0]);
+                long seq = Long.parseLong(parts[1]);
+                return new StreamMessageId(ms, seq);
+            }
+            long ms = Long.parseLong(id);
+            return new StreamMessageId(ms);
+        } catch (Exception e) {
+            // fallback to MIN to avoid throwing
+            return StreamMessageId.MIN;
+        }
+    }
+
+    // Compare Redis Stream ID strings like "ms-seq" lexicographically by numeric parts
+    private int compareStreamId(String a, String b) {
+        try {
+            String[] pa = a.split("-", 2); String[] pb = b.split("-", 2);
+            long am = Long.parseLong(pa[0]); long bm = Long.parseLong(pb[0]);
+            if (am != bm) return am < bm ? -1 : 1;
+            long as = pa.length>1?Long.parseLong(pa[1]):0L; long bs = pb.length>1?Long.parseLong(pb[1]):0L;
+            if (as != bs) return as < bs ? -1 : 1;
+            return 0;
+        } catch (Exception e) { return a.compareTo(b); }
     }
 
     private <T> T jsonToObject(String json, Class<T> type) {

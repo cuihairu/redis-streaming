@@ -250,6 +250,7 @@ public class MessageQueueExample {
         log.info("Dead letter queue test completed. Errors processed: {}", errorsProcessed);
 
         // Check dead letter queue size
+        @SuppressWarnings("deprecation")
         DeadLetterQueueManager dlqManager = new DeadLetterQueueManager(redissonClient);
         long dlqSize = dlqManager.getDeadLetterQueueSize(topic);
         log.info("Dead letter queue size for {}: {}", topic, dlqSize);

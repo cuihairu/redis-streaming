@@ -50,6 +50,23 @@ public class MqOptions {
     private String defaultConsumerGroup = "default-group";
     private String defaultDlqGroup = "dlq-group";
 
+    // Retention (Streams) - low overhead defaults
+    // Per-partition maximum length for stream (approximate trimming when possible)
+    private int retentionMaxLenPerPartition = 100_000; // default bounded backlog
+    // Optional time-based retention (milliseconds). 0 disables time trimming.
+    private long retentionMs = 0L;
+    // Background trimming cadence (seconds)
+    private int trimIntervalSec = 60;
+
+    // DLQ-specific retention (overrides if >0)
+    private int dlqRetentionMaxLen = 0; // 0 means use main retention if set
+    private long dlqRetentionMs = 0L;   // 0 means disabled
+
+    // Deletion policy on ACK: none | immediate | all-groups-ack
+    private String ackDeletePolicy = "none";
+    // TTL for ack-set keys used by all-groups-ack strategy (seconds)
+    private int acksetTtlSec = 86400; // 1 day
+
     public static Builder builder() { return new Builder(); }
 
     public static class Builder {
@@ -78,6 +95,13 @@ public class MqOptions {
         public Builder dlqConsumerSuffix(String v){ if (v != null) o.dlqConsumerSuffix = v; return this; }
         public Builder defaultConsumerGroup(String v){ if (v != null && !v.isBlank()) o.defaultConsumerGroup = v; return this; }
         public Builder defaultDlqGroup(String v){ if (v != null && !v.isBlank()) o.defaultDlqGroup = v; return this; }
+        public Builder retentionMaxLenPerPartition(int v){ o.retentionMaxLenPerPartition = Math.max(0, v); return this; }
+        public Builder retentionMs(long v){ o.retentionMs = Math.max(0, v); return this; }
+        public Builder trimIntervalSec(int v){ o.trimIntervalSec = Math.max(1, v); return this; }
+        public Builder dlqRetentionMaxLen(int v){ o.dlqRetentionMaxLen = Math.max(0, v); return this; }
+        public Builder dlqRetentionMs(long v){ o.dlqRetentionMs = Math.max(0, v); return this; }
+        public Builder ackDeletePolicy(String v){ if (v != null && !v.isBlank()) o.ackDeletePolicy = v.toLowerCase(); return this; }
+        public Builder acksetTtlSec(int v){ o.acksetTtlSec = Math.max(1, v); return this; }
         public MqOptions build(){ return o; }
     }
 

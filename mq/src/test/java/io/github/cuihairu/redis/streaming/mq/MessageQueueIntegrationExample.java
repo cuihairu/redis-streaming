@@ -85,6 +85,7 @@ public class MessageQueueIntegrationExample {
         producer.close();
     }
 
+    @SuppressWarnings("deprecation")
     private static void demonstrateDeadLetterQueue(RedissonClient redissonClient,
                                                   MessageQueueFactory factory,
                                                   String topic) throws Exception {

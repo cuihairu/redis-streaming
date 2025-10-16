@@ -74,6 +74,18 @@
 
 **关键类**: `RedisMessageProducer.java`, `RedisMessageConsumer.java`, `DeadLetterQueueManager.java` (9 个文件)
 
+Retention 与 ACK 删除策略（简述）
+- 默认通过“保留 + 裁剪”控制内存：
+  - 写时裁剪：每次写入后执行 `XTRIM MAXLEN ~`（低开销）
+  - 后台裁剪：每 `trimIntervalSec` 执行 `XTRIM MAXLEN ~`，可选 `XTRIM MINID ~`；多组时按“最小提交前沿”做安全裁剪
+- 可选 ACK 删除策略：
+  - `none`（默认）：仅 ACK，不立刻删除；依赖保留策略
+  - `immediate`：单组场景可用，ACK 后立刻 `XDEL`
+  - `all-groups-ack`：多组逐条计数，所有活跃组都 ACK 后删除
+- DLQ 可配置独立保留阈值（长度/时间）
+
+详见：`wiki/docs/retention-and-ack-policy.md`
+
 #### **registry** - 服务注册发现
 基于 Redis 的服务注册与发现，支持微服务架构和健康检查。
 

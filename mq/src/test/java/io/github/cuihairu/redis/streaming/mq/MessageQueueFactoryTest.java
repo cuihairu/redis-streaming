@@ -27,7 +27,8 @@ class MessageQueueFactoryTest {
         MessageProducer producer = factory.createProducer();
 
         assertNotNull(producer);
-        assertTrue(producer instanceof io.github.cuihairu.redis.streaming.mq.impl.RedisMessageProducer);
+        // Producer delegates to Broker now (router + persistence)
+        assertTrue(producer instanceof io.github.cuihairu.redis.streaming.mq.impl.BrokerBackedProducer);
     }
 
     @Test
@@ -52,8 +53,8 @@ class MessageQueueFactoryTest {
         MessageConsumer dlqConsumer = factory.createDeadLetterConsumer();
 
         assertNotNull(dlqConsumer);
-        // DLQ consumer is a dedicated implementation
-        assertTrue(dlqConsumer instanceof io.github.cuihairu.redis.streaming.mq.impl.RedisDeadLetterConsumer);
+        // DLQ consumer is provided via reliability adapter
+        assertTrue(dlqConsumer instanceof io.github.cuihairu.redis.streaming.mq.impl.DlqConsumerAdapter);
     }
 
     @Test
@@ -62,6 +63,6 @@ class MessageQueueFactoryTest {
         MessageConsumer dlqConsumer = factory.createDeadLetterConsumer(consumerName);
 
         assertNotNull(dlqConsumer);
-        assertTrue(dlqConsumer instanceof io.github.cuihairu.redis.streaming.mq.impl.RedisDeadLetterConsumer);
+        assertTrue(dlqConsumer instanceof io.github.cuihairu.redis.streaming.mq.impl.DlqConsumerAdapter);
     }
 }

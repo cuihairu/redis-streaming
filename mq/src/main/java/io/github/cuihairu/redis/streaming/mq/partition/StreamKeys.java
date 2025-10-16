@@ -53,4 +53,14 @@ public final class StreamKeys {
     public static String topicsRegistry() {
         return CONTROL_PREFIX + ":topics:registry";
     }
+
+    /** Commit frontier hash for a partition: HSET field=group value=lastStreamId */
+    public static String commitFrontier(String topic, int partitionId) {
+        return CONTROL_PREFIX + ":commit:" + topic + ":p:" + partitionId;
+    }
+
+    /** Ack set for a message: acks collected per group to support all-groups-ack policy. */
+    public static String ackSet(String topic, int partitionId, String messageId) {
+        return CONTROL_PREFIX + ":acks:" + topic + ":p:" + partitionId + ":" + messageId;
+    }
 }

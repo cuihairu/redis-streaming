@@ -30,6 +30,17 @@ subprojects {
         // Enable deprecation lint and treat warnings as errors; suppress unchecked warnings
         options.compilerArgs += ['-Xlint:deprecation', '-Xlint:unchecked', '-Werror']
         options.deprecation = true
+        // Compile against Java 17 API even when using newer JDKs locally (e.g., JDK 21)
+        if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17)) {
+            options.release = 17
+        }
+    }
+
+    // Tests should not fail compilation due to deprecation warnings (allow @Deprecated usage in tests)
+    tasks.withType(JavaCompile).configureEach { t ->
+        if (t.name.toLowerCase().contains('test')) {
+            t.options.compilerArgs = t.options.compilerArgs.findAll { it != '-Werror' }
+        }
     }
 
     dependencies {
