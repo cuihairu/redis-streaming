@@ -58,6 +58,11 @@ public class RedisStreamingProperties {
     private MqProperties mq = new MqProperties();
 
     /**
+     * 速率限制配置
+     */
+    private RateLimitProperties ratelimit = new RateLimitProperties();
+
+    /**
      * Redis单机配置（简化版）
      *
      * 仅支持单机模式，适合快速开发和测试。
@@ -405,5 +410,46 @@ public class RedisStreamingProperties {
          * 收集超时时间
          */
         private java.time.Duration timeout = java.time.Duration.ofSeconds(5);
+    }
+
+    @lombok.Data
+    public static class RateLimitProperties {
+        /** 是否启用限速（仅影响自动装配） */
+        private boolean enabled = false;
+        /** 后端：memory | redis */
+        private String backend = "memory";
+        /** 窗口大小（毫秒） */
+        private long windowMs = 1000;
+        /** 窗口内允许的最大请求数 */
+        private int limit = 100;
+        /** Redis Key 前缀（仅后端为 redis 时有效） */
+        private String keyPrefix = "streaming:rl";
+
+        /**
+         * 命名策略集合（可同时声明多个不同的限速器）。
+         * 当不为空时，将根据该集合创建一个 RateLimiterRegistry 供按名称获取。
+         */
+        private java.util.Map<String, Policy> policies = new java.util.HashMap<>();
+
+        /**
+         * 默认策略名称（当注入单个 RateLimiter 时使用）。
+         */
+        private String defaultName = "default";
+
+        @lombok.Data
+        public static class Policy {
+            /** 算法：sliding | token-bucket | leaky-bucket */
+            private String algorithm = "sliding";
+            /** 后端：memory | redis（仅 sliding/token-bucket 支持 redis） */
+            private String backend = "memory";
+            // sliding params
+            private long windowMs = 1000;
+            private int limit = 100;
+            // token/leaky params
+            private double capacity = 100.0;
+            private double ratePerSecond = 100.0;
+            // redis key prefix (sliding/token)
+            private String keyPrefix = "streaming:rl";
+        }
     }
 }
