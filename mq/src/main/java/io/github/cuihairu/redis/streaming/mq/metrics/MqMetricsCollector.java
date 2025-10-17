@@ -11,5 +11,7 @@ public interface MqMetricsCollector {
     void incRetried(String topic, int partitionId);
     void incDeadLetter(String topic, int partitionId);
     void recordHandleLatency(String topic, int partitionId, long millis);
-}
 
+    /** Optional: count messages that failed due to missing hash payload at parse time. */
+    default void incPayloadMissing(String topic, int partitionId) {}
+}

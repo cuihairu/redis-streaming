@@ -223,7 +223,17 @@ public class RedisMessageConsumer implements MessageConsumer {
                     for (BrokerRecord br : records) {
                         String id = br.getId();
                         Map<String, Object> data = br.getData();
-                        Message message = StreamEntryCodec.parsePartitionEntry(topic, id, data, payloadLifecycleManager);
+                        Message message;
+                        try {
+                            message = StreamEntryCodec.parsePartitionEntry(topic, id, data, payloadLifecycleManager);
+                        } catch (RuntimeException ex) {
+                            if (isPayloadMissing(ex)) {
+                                // Fallback: DLQ and ACK to avoid poison pending
+                                handleMissingPayload(topic, group, partitionId, id, data);
+                                continue;
+                            }
+                            throw ex;
+                        }
                         Object pid = data.get("partitionId");
                         int pidInt = partitionId;
                         if (pid instanceof Number) {
@@ -231,7 +241,7 @@ public class RedisMessageConsumer implements MessageConsumer {
                         } else if (pid != null) {
                             try { pidInt = Integer.parseInt(pid.toString()); } catch (Exception ignore) {}
                         }
-                        message.getHeaders().put("partitionId", Integer.toString(pidInt));
+                        message.getHeaders().put(io.github.cuihairu.redis.streaming.mq.MqHeaders.PARTITION_ID, Integer.toString(pidInt));
                         long start = System.nanoTime();
                         try {
                             MessageHandleResult result = handler.handle(message);
@@ -258,7 +268,16 @@ public class RedisMessageConsumer implements MessageConsumer {
                     for (Map.Entry<StreamMessageId, Map<String, Object>> entry : messages.entrySet()) {
                         StreamMessageId messageId = entry.getKey();
                         Map<String, Object> data = entry.getValue();
-                        Message message = StreamEntryCodec.parsePartitionEntry(topic, messageId.toString(), data, payloadLifecycleManager);
+                        Message message;
+                        try {
+                            message = StreamEntryCodec.parsePartitionEntry(topic, messageId.toString(), data, payloadLifecycleManager);
+                        } catch (RuntimeException ex) {
+                            if (isPayloadMissing(ex)) {
+                                handleMissingPayload(topic, group, partitionId, messageId.toString(), data, stream);
+                                continue;
+                            }
+                            throw ex;
+                        }
                         // include partitionId if present (support both numeric and string forms)
                         Object pid = data.get("partitionId");
                         int pidInt = partitionId;
@@ -267,7 +286,7 @@ public class RedisMessageConsumer implements MessageConsumer {
                         } else if (pid != null) {
                             try { pidInt = Integer.parseInt(pid.toString()); } catch (Exception ignore) {}
                         }
-                        message.getHeaders().put("partitionId", Integer.toString(pidInt));
+                        message.getHeaders().put(io.github.cuihairu.redis.streaming.mq.MqHeaders.PARTITION_ID, Integer.toString(pidInt));
                         long start = System.nanoTime();
                         try {
                             MessageHandleResult result = handler.handle(message);
@@ -321,7 +340,16 @@ public class RedisMessageConsumer implements MessageConsumer {
                             for (Map.Entry<StreamMessageId, Map<String, Object>> entry : claimed.entrySet()) {
                                 StreamMessageId claimedId = entry.getKey();
                                 Map<String, Object> data = entry.getValue();
-                                Message message = StreamEntryCodec.parsePartitionEntry(pk.topic, claimedId.toString(), data, payloadLifecycleManager);
+                                Message message;
+                                try {
+                                    message = StreamEntryCodec.parsePartitionEntry(pk.topic, claimedId.toString(), data, payloadLifecycleManager);
+                                } catch (RuntimeException ex) {
+                                    if (isPayloadMissing(ex)) {
+                                        handleMissingPayload(pk.topic, pk.group, pk.partitionId, claimedId.toString(), data, stream);
+                                        continue;
+                                    }
+                                    throw ex;
+                                }
                                 try {
                                     MessageHandleResult result = worker.handler.handle(message);
                                     handleResult(stream, pk.group, claimedId, pk.partitionId, message, result, data);
@@ -396,6 +424,64 @@ public class RedisMessageConsumer implements MessageConsumer {
                                            String messageId, int partitionId, Message message,
                                            Map<String, Object> messageData) {
         requeueOrDeadLetter(null, consumerGroup, messageId, partitionId, message, messageData);
+    }
+
+    // Detect payload-missing exception patterns from payload loaders
+    private boolean isPayloadMissing(Throwable ex) {
+        if (ex == null) return false;
+        String msg = ex.getMessage();
+        if (msg != null && (msg.contains("Payload not found") || msg.contains("Failed to load payload"))) {
+            return true;
+        }
+        Throwable c = ex.getCause();
+        return c != null && isPayloadMissing(c);
+    }
+
+    // When payload key has expired/missing, DLQ and ACK the original to avoid poison pending
+    private void handleMissingPayload(String topic, String group, int partitionId,
+                                      String messageId, Map<String, Object> messageData) {
+        handleMissingPayload(topic, group, partitionId, messageId, messageData, null);
+    }
+
+    private void handleMissingPayload(String topic, String group, int partitionId,
+                                      String messageId, Map<String, Object> messageData,
+                                      RStream<String, Object> streamOrNull) {
+        try {
+            Message m = new Message();
+            m.setId(messageId);
+            m.setTopic(topic);
+            m.setPayload(null);
+            m.setTimestamp(java.time.Instant.now());
+            // best-effort fields from raw data
+            Object key = messageData.get("key"); if (key != null) m.setKey(String.valueOf(key));
+            int rc = 0; Object rco = messageData.get("retryCount");
+            try { if (rco != null) rc = (rco instanceof Number) ? ((Number) rco).intValue() : Integer.parseInt(String.valueOf(rco)); } catch (Exception ignore) {}
+            m.setRetryCount(rc);
+            int mr = 3; Object mro = messageData.get("maxRetries");
+            try { if (mro != null) mr = (mro instanceof Number) ? ((Number) mro).intValue() : Integer.parseInt(String.valueOf(mro)); } catch (Exception ignore) {}
+            m.setMaxRetries(mr);
+
+            java.util.Map<String,String> headers = new java.util.HashMap<>();
+            Object hdr = messageData.get("headers");
+            if (hdr instanceof java.util.Map) {
+                ((java.util.Map<?,?>) hdr).forEach((k,v) -> { if (k!=null && v!=null) headers.put(String.valueOf(k), String.valueOf(v)); });
+            } else if (hdr instanceof String) {
+                try { headers.putAll(new com.fasterxml.jackson.databind.ObjectMapper().readValue((String) hdr, new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String,String>>(){})); } catch (Exception ignore) {}
+            }
+            // annotate missing details for ops
+            String ref = payloadLifecycleManager.extractPayloadHashRef(messageData);
+            headers.put(io.github.cuihairu.redis.streaming.mq.MqHeaders.PAYLOAD_MISSING, "true");
+            if (ref != null) headers.put(io.github.cuihairu.redis.streaming.mq.MqHeaders.PAYLOAD_MISSING_REF, ref);
+            m.setHeaders(headers);
+
+            // send to DLQ then ACK original
+            sendToDeadLetterQueue(m);
+            MqMetrics.get().incDeadLetter(topic, partitionId);
+            try { MqMetrics.get().incPayloadMissing(topic, partitionId); } catch (Throwable ignore) {}
+            ackViaBackend(topic, group, partitionId, streamOrNull, messageId, messageData);
+        } catch (Exception e) {
+            log.error("Failed to handle missing payload for {}:{} id={}", topic, partitionId, messageId, e);
+        }
     }
 
     private void sendToDeadLetterQueue(Message message) {

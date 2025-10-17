@@ -6,7 +6,7 @@ import io.github.cuihairu.redis.streaming.mq.partition.HashPartitioner;
 import java.util.Map;
 
 /**
- * Default router: allow forced partition via header 'x-force-partition-id', else hash by key.
+ * Default router: allow forced partition via header {@link io.github.cuihairu.redis.streaming.mq.MqHeaders#FORCE_PARTITION_ID}, else hash by key.
  */
 public class HashBrokerRouter implements BrokerRouter {
     private final HashPartitioner partitioner = new HashPartitioner();
@@ -16,7 +16,7 @@ public class HashBrokerRouter implements BrokerRouter {
         if (partitionCount <= 0) return 0;
         // Honor forced partition header if provided
         if (headers != null) {
-            String forced = headers.get("x-force-partition-id");
+            String forced = headers.get(io.github.cuihairu.redis.streaming.mq.MqHeaders.FORCE_PARTITION_ID);
             if (forced != null) {
                 try {
                     int fp = Integer.parseInt(forced);
@@ -28,4 +28,3 @@ public class HashBrokerRouter implements BrokerRouter {
         return partitioner.partition(key, partitionCount);
     }
 }
-

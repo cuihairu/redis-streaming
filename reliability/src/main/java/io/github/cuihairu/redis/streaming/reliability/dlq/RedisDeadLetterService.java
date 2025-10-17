@@ -5,6 +5,7 @@ import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
 import org.redisson.api.StreamMessageId;
 import org.redisson.api.stream.StreamAddArgs;
+import org.redisson.client.codec.StringCodec;
 
 import java.util.Map;
 
@@ -123,10 +124,41 @@ public class RedisDeadLetterService implements DeadLetterService {
                         .recordDlqReplay(originalTopic, pid, ok, dur);
                 return ok;
             } else {
-                // direct write fallback
+                // direct write fallback with basic TTL refresh for hash payload reference when present
                 String streamKey = ("stream:topic" + ":" + originalTopic + ":p:" + pid);
                 RStream<String, Object> orig = redissonClient.getStream(streamKey);
                 Map<String, Object> replay = DeadLetterCodec.buildPartitionEntryFromDlq(data, originalTopic, pid);
+
+                // If DLQ entry references hash-stored payload, attempt to extend TTL on the referenced key
+                try {
+                    Object hdr = data.get("headers");
+                    java.util.Map<String,String> headers = new java.util.HashMap<>();
+                    if (hdr instanceof java.util.Map) {
+                        ((java.util.Map<?,?>) hdr).forEach((k,v) -> { if (k!=null && v!=null) headers.put(String.valueOf(k), String.valueOf(v)); });
+                    } else if (hdr instanceof String) {
+                        try { headers.putAll(new com.fasterxml.jackson.databind.ObjectMapper().readValue((String) hdr, new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String,String>>(){})); } catch (Exception ignore) {}
+                    }
+                    String storageType = headers.get("x-payload-storage-type");
+                    String ref = headers.get("x-payload-hash-ref");
+                    if ("hash".equals(storageType) && ref != null && !ref.isEmpty()) {
+                        org.redisson.api.RBucket<String> b = redissonClient.getBucket(ref, StringCodec.INSTANCE);
+                        String val = b.get();
+                        if (val != null) {
+                            // extend TTL to a safe window (24h) to reduce chance of missing on immediate consume
+                            b.set(val, java.time.Duration.ofHours(24));
+                        } else {
+                            // annotate missing for observability; payload consumer will DLQ accordingly
+                            java.util.Map<String,String> h2 = new java.util.HashMap<>();
+                            Object h0 = replay.get("headers");
+                            if (h0 instanceof java.util.Map) {
+                                ((java.util.Map<?,?>) h0).forEach((k,v) -> { if (k!=null && v!=null) h2.put(String.valueOf(k), String.valueOf(v)); });
+                            }
+                            h2.put("x-payload-missing", "true");
+                            h2.put("x-payload-missing-ref", ref);
+                            replay.put("headers", h2);
+                        }
+                    }
+                } catch (Exception ignore) {}
                 StreamMessageId nid = orig.add(StreamAddArgs.entries(replay));
                 boolean ok = nid != null;
                 long dur = System.nanoTime() - start;

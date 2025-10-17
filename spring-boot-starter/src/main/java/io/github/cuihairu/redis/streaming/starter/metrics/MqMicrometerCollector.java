@@ -19,6 +19,7 @@ public class MqMicrometerCollector implements MqMetricsCollector {
     private final Map<String, Counter> acked = new ConcurrentHashMap<>();
     private final Map<String, Counter> retried = new ConcurrentHashMap<>();
     private final Map<String, Counter> dead = new ConcurrentHashMap<>();
+    private final Map<String, Counter> payloadMissing = new ConcurrentHashMap<>();
     private final Map<String, Timer> handleLatency = new ConcurrentHashMap<>();
 
     public MqMicrometerCollector(MeterRegistry registry) {
@@ -56,6 +57,11 @@ public class MqMicrometerCollector implements MqMetricsCollector {
                 .record(millis, java.util.concurrent.TimeUnit.MILLISECONDS);
     }
 
+    @Override
+    public void incPayloadMissing(String topic, int partitionId) {
+        counter(payloadMissing, "redis_streaming_mq_payload_missing_total", topic, partitionId).increment();
+    }
+
     private Counter counter(Map<String, Counter> cache, String name, String topic, int pid) {
         String key = name + "|" + topic + "|" + pid;
         return cache.computeIfAbsent(key, k -> Counter.builder(name)
@@ -72,4 +78,3 @@ public class MqMicrometerCollector implements MqMetricsCollector {
                 .register(registry));
     }
 }
-

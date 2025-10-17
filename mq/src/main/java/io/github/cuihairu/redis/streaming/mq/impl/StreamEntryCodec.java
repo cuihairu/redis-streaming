@@ -185,7 +185,7 @@ public final class StreamEntryCodec {
         dlqData.put("failedAt", Instant.now().toString());
         dlqData.put("retryCount", m.getRetryCount());
         // best-effort partitionId from headers if present
-        int pid = toInt(headers.get("partitionId"), 0);
+        int pid = toInt(headers.get(io.github.cuihairu.redis.streaming.mq.MqHeaders.PARTITION_ID), 0);
         dlqData.put("partitionId", pid);
         if (m.getKey() != null) dlqData.put("key", m.getKey());
         if (!headers.isEmpty()) dlqData.put("headers", headers);

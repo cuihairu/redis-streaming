@@ -61,7 +61,7 @@ public class RedisMessageProducer implements MessageProducer {
                 int partitionId;
                 // Allow callers (e.g. DLQ replay) to force a specific partition via header
                 try {
-                    String forced = message.getHeaders() != null ? message.getHeaders().getOrDefault("x-force-partition-id", null) : null;
+                    String forced = message.getHeaders() != null ? message.getHeaders().getOrDefault(io.github.cuihairu.redis.streaming.mq.MqHeaders.FORCE_PARTITION_ID, null) : null;
                     if (forced != null) {
                         int fp = Integer.parseInt(forced);
                         partitionId = (fp >= 0 && partitions > 0) ? (fp % partitions) : 0;

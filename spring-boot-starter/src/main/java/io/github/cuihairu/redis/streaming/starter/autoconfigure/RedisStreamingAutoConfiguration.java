@@ -361,7 +361,7 @@ public class RedisStreamingAutoConfiguration {
                 try {
                     java.util.Map<String,String> hdr = new java.util.HashMap<>();
                     if (headers != null) hdr.putAll(headers);
-                    hdr.put("x-force-partition-id", Integer.toString(partitionId));
+                    hdr.put(io.github.cuihairu.redis.streaming.mq.MqHeaders.FORCE_PARTITION_ID, Integer.toString(partitionId));
                     io.github.cuihairu.redis.streaming.mq.Message m = new io.github.cuihairu.redis.streaming.mq.Message(topic, payload, hdr);
                     m.setMaxRetries(maxRetries);
                     dlqReplayProducer.send(m).join();
