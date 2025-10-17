@@ -571,13 +571,17 @@ public class RedisMessageConsumer implements MessageConsumer {
                 String bucketKey = StreamKeys.retryBucket(topic);
                 String lua = "local z=KEYS[1]; local now=tonumber(ARGV[1]); local limit=tonumber(ARGV[2]); local ts=ARGV[3]; local sp=ARGV[4]; "
                         + "local ids=redis.call('ZRANGEBYSCORE', z, '-inf', now, 'LIMIT', 0, limit); local moved={}; "
-                        + "for i=1,#ids do local id=ids[i]; local t=redis.call('HGET', id, 'topic'); local pid=tonumber(redis.call('HGET', id, 'partitionId')) or 0; "
-                        + "local payload=redis.call('HGET', id, 'payload'); local retry=redis.call('HGET', id, 'retryCount') or '0'; local maxr=redis.call('HGET', id, 'maxRetries') or '0'; "
+                        + "for i=1,#ids do local id=ids[i]; "
+                        + "local t=redis.call('HGET', id, 'topic') or ''; "
+                        + "local pid=tonumber(redis.call('HGET', id, 'partitionId')) or 0; "
+                        + "local payload=redis.call('HGET', id, 'payload') or ''; "
+                        + "local retry=redis.call('HGET', id, 'retryCount') or '0'; local maxr=redis.call('HGET', id, 'maxRetries') or '0'; "
                         + "local k=redis.call('HGET', id, 'key') or ''; local hdr=redis.call('HGET', id, 'headers') or ''; local orig=redis.call('HGET', id, 'originalMessageId') or ''; "
-                        + "local sk=sp..':'..t..':p:'..pid; local args={'payload',payload,'timestamp',ts,'retryCount',retry,'maxRetries',maxr,'topic',t,'partitionId',tostring(pid)}; "
+                        + "if t=='' then redis.call('ZREM', z, id); redis.call('DEL', id); "
+                        + "else local sk=sp..':'..t..':p:'..pid; local args={'payload',payload,'timestamp',ts,'retryCount',retry,'maxRetries',maxr,'topic',t,'partitionId',tostring(pid)}; "
                         + "if k~='' then table.insert(args,'key'); table.insert(args,k); end; if hdr~='' then table.insert(args,'headers'); table.insert(args,hdr); end; "
                         + "if orig~='' then table.insert(args,'originalMessageId'); table.insert(args,orig); end; "
-                        + "redis.call('XADD', sk, '*', unpack(args)); redis.call('ZREM', z, id); redis.call('DEL', id); table.insert(moved, id); end; return moved;";
+                        + "redis.call('XADD', sk, '*', unpack(args)); redis.call('ZREM', z, id); redis.call('DEL', id); table.insert(moved, id); end; end; return moved;";
                 RScript script = redissonClient.getScript();
                 List<Object> moved = script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.MULTI, java.util.Collections.singletonList(bucketKey),
                         System.currentTimeMillis(), options.getRetryMoverBatch(), Instant.now().toString(), StreamKeys.streamPrefix());
