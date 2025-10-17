@@ -460,7 +460,8 @@ public class RedisMessageConsumer implements MessageConsumer {
             // Default path: schedule into retry bucket with backoff (Hash + ZSET id)
             String itemId = java.util.UUID.randomUUID().toString();
             String itemKey = StreamKeys.retryItem(topic, itemId);
-            org.redisson.api.RMap<String, String> item = redissonClient.getMap(itemKey);
+            // Use StringCodec to ensure plain string fields readable by Lua (HGET) and avoid binary values
+            org.redisson.api.RMap<String, String> item = redissonClient.getMap(itemKey, org.redisson.client.codec.StringCodec.INSTANCE);
             // Store as strings for Lua simplicity; payload/headers JSON-encoded
             item.put("topic", topic);
             item.put("partitionId", Integer.toString(partitionId));
@@ -472,7 +473,8 @@ public class RedisMessageConsumer implements MessageConsumer {
             item.put("originalMessageId", message.getId() != null ? message.getId() : "");
 
             String bucketKey = StreamKeys.retryBucket(topic);
-            org.redisson.api.RScoredSortedSet<String> bucket = redissonClient.getScoredSortedSet(bucketKey);
+            // Use StringCodec so ZSET members are plain strings (keys), matching hash keys for Lua mover
+            org.redisson.api.RScoredSortedSet<String> bucket = redissonClient.getScoredSortedSet(bucketKey, org.redisson.client.codec.StringCodec.INSTANCE);
             bucket.add(dueAt, itemKey);
             MqMetrics.get().incRetried(topic, partitionId);
             log.debug("Message {} scheduled for retry at {} ({} ms), item {}", messageId, dueAt, delayMs, itemKey);
