@@ -26,7 +26,10 @@ public class BrokerBackedProducer implements MessageProducer {
 
     @Override
     public CompletableFuture<String> send(String topic, String key, Object payload) {
-        return send(new Message(topic, key, payload));
+        // Message doesn't have (topic,key,payload) ctor without publisher; set key explicitly
+        Message msg = new Message(topic, payload);
+        msg.setKey(key);
+        return send(msg);
     }
 
     @Override
@@ -40,4 +43,3 @@ public class BrokerBackedProducer implements MessageProducer {
     @Override
     public boolean isClosed() { return closed.get(); }
 }
-

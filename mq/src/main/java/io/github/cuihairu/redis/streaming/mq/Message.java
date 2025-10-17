@@ -84,8 +84,18 @@ public class Message {
         this.headers = headers;
     }
 
+    public Message(String topic, Object payload, Map<String, String> headers) {
+        this(topic, payload);
+        this.headers = headers;
+    }
+
     public Message(String topic, String key, Object payload, String publisher) {
         this(topic, payload, publisher);
+        this.key = key;
+    }
+
+    public Message(String topic, String key, Object payload) {
+        this(topic, payload);
         this.key = key;
     }
 
