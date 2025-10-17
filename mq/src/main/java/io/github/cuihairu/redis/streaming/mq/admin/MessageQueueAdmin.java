@@ -153,4 +153,17 @@ public interface MessageQueueAdmin {
      * @return 是否更新成功
      */
     boolean updatePartitionCount(String topic, int newPartitionCount);
+
+    // ==================== 原始消息窥视（只读） ====================
+
+    /**
+     * 列出各分区最近的消息（按每分区条数采样聚合，按 Stream ID 降序）
+     */
+    List<MessageEntry> listRecent(String topic, int perPartitionCount);
+
+    /**
+     * 按分区与范围读取消息（XRANGE/XREVRANGE 原样返回字段）。
+     * @param reverse true 则使用 XREVRANGE，从 toId 倒序读取
+     */
+    List<MessageEntry> range(String topic, int partitionId, String fromId, String toId, int count, boolean reverse);
 }

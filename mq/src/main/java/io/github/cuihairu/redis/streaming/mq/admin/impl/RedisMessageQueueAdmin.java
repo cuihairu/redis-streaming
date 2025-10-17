@@ -518,4 +518,81 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             return false;
         }
     }
+
+    // ==================== 原始消息窥视（只读） ====================
+
+    @Override
+    public List<MessageEntry> listRecent(String topic, int perPartitionCount) {
+        try {
+            int pc = Math.max(1, partitionRegistry.getPartitionCount(topic));
+            List<MessageEntry> all = new ArrayList<>();
+            int per = Math.max(1, Math.min(perPartitionCount, 200));
+            for (int i = 0; i < pc; i++) {
+                RStream<String, Object> stream = redissonClient.getStream(StreamKeys.partitionStream(topic, i));
+                if (!stream.isExists()) continue;
+                @SuppressWarnings("deprecation")
+                Map<StreamMessageId, Map<String, Object>> recents = stream.range(per, StreamMessageId.MAX, StreamMessageId.MIN);
+                for (Map.Entry<StreamMessageId, Map<String, Object>> e : recents.entrySet()) {
+                    all.add(MessageEntry.builder()
+                            .id(e.getKey().toString())
+                            .partitionId(i)
+                            .fields(e.getValue())
+                            .build());
+                }
+            }
+            // 按 id 时间戳部分降序
+            all.sort((a, b) -> {
+                long ta = Long.parseLong(a.getId().split("-")[0]);
+                long tb = Long.parseLong(b.getId().split("-")[0]);
+                return Long.compare(tb, ta);
+            });
+            return all;
+        } catch (Exception e) {
+            log.error("Failed to listRecent for topic {}", topic, e);
+            return Collections.emptyList();
+        }
+    }
+
+    @Override
+    public List<MessageEntry> range(String topic, int partitionId, String fromId, String toId, int count, boolean reverse) {
+        try {
+            int pc = Math.max(1, partitionRegistry.getPartitionCount(topic));
+            int pid = Math.max(0, Math.min(partitionId, pc - 1));
+            RStream<String, Object> stream = redissonClient.getStream(StreamKeys.partitionStream(topic, pid));
+            if (!stream.isExists()) return Collections.emptyList();
+            StreamMessageId from = parseId(fromId, reverse ? StreamMessageId.MAX : StreamMessageId.MIN);
+            StreamMessageId to = parseId(toId, reverse ? StreamMessageId.MIN : StreamMessageId.MAX);
+            @SuppressWarnings("deprecation")
+            Map<StreamMessageId, Map<String, Object>> map = reverse
+                    ? stream.range(count, from, to)
+                    : stream.range(count, from, to);
+            List<MessageEntry> list = new ArrayList<>(map.size());
+            for (Map.Entry<StreamMessageId, Map<String, Object>> e : map.entrySet()) {
+                list.add(MessageEntry.builder()
+                        .id(e.getKey().toString())
+                        .partitionId(pid)
+                        .fields(e.getValue())
+                        .build());
+            }
+            return list;
+        } catch (Exception e) {
+            log.error("Failed to range for topic {} p{} {}-{}", topic, partitionId, fromId, toId, e);
+            return Collections.emptyList();
+        }
+    }
+
+    private StreamMessageId parseId(String id, StreamMessageId def) {
+        try {
+            if (id == null || id.isBlank()) return def;
+            if ("-".equals(id) || "0-0".equals(id) || "0".equals(id)) return StreamMessageId.MIN;
+            if ("+".equals(id) || "$".equals(id)) return StreamMessageId.MAX;
+            String[] parts = id.split("-");
+            if (parts.length == 2) {
+                return new StreamMessageId(Long.parseLong(parts[0]), Long.parseLong(parts[1]));
+            }
+            return new StreamMessageId(Long.parseLong(id));
+        } catch (Exception e) {
+            return def;
+        }
+    }
 }
