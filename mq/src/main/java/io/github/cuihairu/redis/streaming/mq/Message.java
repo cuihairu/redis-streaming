@@ -46,6 +46,11 @@ public class Message {
     private String key;
 
     /**
+     * Message publisher
+     */
+    private String publisher;
+
+    /**
      * Retry count for failed messages
      */
     private int retryCount;
@@ -55,21 +60,22 @@ public class Message {
      */
     private int maxRetries;
 
-    public Message(String topic, Object payload) {
+    public Message(String topic, Object payload, String publisher) {
         this.topic = topic;
         this.payload = payload;
         this.timestamp = Instant.now();
         this.retryCount = 0;
         this.maxRetries = 3;
+        this.publisher = publisher;
     }
 
-    public Message(String topic, Object payload, Map<String, String> headers) {
-        this(topic, payload);
+    public Message(String topic, Object payload, Map<String, String> headers, String publisher) {
+        this(topic, payload, publisher);
         this.headers = headers;
     }
 
-    public Message(String topic, String key, Object payload) {
-        this(topic, payload);
+    public Message(String topic, String key, Object payload, String publisher) {
+        this(topic, payload, publisher);
         this.key = key;
     }
 

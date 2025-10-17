@@ -36,15 +36,36 @@ public class RedisBrokerPersistence implements BrokerPersistence {
         String streamKey = StreamKeys.partitionStream(topic, partitionId);
         Map<String, Object> data = StreamEntryCodec.buildPartitionEntry(message, partitionId,
                 new io.github.cuihairu.redis.streaming.mq.impl.PayloadLifecycleManager(redissonClient, options));
+
+        // Normalize entry values to strings for XADD via Lua and to be codec-agnostic.
+        // Especially important for complex objects like payload/headers when global codec is StringCodec.
+        java.util.Map<String, Object> serialized = new java.util.HashMap<>(data.size());
+        com.fasterxml.jackson.databind.ObjectMapper _om = new com.fasterxml.jackson.databind.ObjectMapper();
+        for (java.util.Map.Entry<String, Object> e : data.entrySet()) {
+            Object v = e.getValue();
+            String s;
+            try {
+                if (v == null || v instanceof String || v instanceof Number || v instanceof Boolean) {
+                    s = String.valueOf(v == null ? "" : v);
+                } else {
+                    // JSON-encode non-primitive values (e.g., Map payload, headers) to preserve structure
+                    s = _om.writeValueAsString(v);
+                }
+            } catch (Exception ex) {
+                // Fallback to toString if JSON serialization fails
+                s = String.valueOf(v);
+            }
+            serialized.put(e.getKey(), s);
+        }
         // Prefer atomic XADD MAXLEN to avoid concurrency race
         try {
             int maxLen = Math.max(0, options.getRetentionMaxLenPerPartition());
             if (maxLen > 0) {
                 java.util.List<Object> argv = new java.util.ArrayList<>();
                 argv.add(String.valueOf(maxLen));
-                for (Map.Entry<String, Object> e : data.entrySet()) {
+                for (Map.Entry<String, Object> e : serialized.entrySet()) {
                     argv.add(e.getKey());
-                    argv.add(e.getValue() != null ? String.valueOf(e.getValue()) : "");
+                    argv.add(e.getValue());
                 }
                 Object res = redissonClient.getScript().eval(
                         RScript.Mode.READ_WRITE,
@@ -61,7 +82,8 @@ public class RedisBrokerPersistence implements BrokerPersistence {
 
         // Fallback: two-step add + trim (non-atomic)
         RStream<String, Object> stream = redissonClient.getStream(streamKey);
-        StreamMessageId id = stream.add(StreamAddArgs.entries(data));
+        // Use serialized (string) values to avoid codec-dependent object encoding
+        StreamMessageId id = stream.add(StreamAddArgs.entries(serialized));
         String sid = id != null ? id.toString() : null;
         try {
             int maxLen = options.getRetentionMaxLenPerPartition();

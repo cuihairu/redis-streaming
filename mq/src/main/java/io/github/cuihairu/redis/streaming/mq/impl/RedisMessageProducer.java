@@ -1,5 +1,6 @@
 package io.github.cuihairu.redis.streaming.mq.impl;
 
+import io.github.cuihairu.redis.streaming.core.utils.SystemUtils;
 import io.github.cuihairu.redis.streaming.mq.Message;
 import io.github.cuihairu.redis.streaming.mq.MessageProducer;
 import io.github.cuihairu.redis.streaming.mq.admin.TopicRegistry;
@@ -96,13 +97,13 @@ public class RedisMessageProducer implements MessageProducer {
 
     @Override
     public CompletableFuture<String> send(String topic, String key, Object payload) {
-        Message message = new Message(topic, key, payload);
+        Message message = new Message(topic, key, payload, SystemUtils.getLocalHostname(),0);
         return send(message);
     }
 
     @Override
     public CompletableFuture<String> send(String topic, Object payload) {
-        Message message = new Message(topic, payload);
+        Message message = new Message(topic, payload,SystemUtils.getLocalHostname(),0);
         return send(message);
     }
 

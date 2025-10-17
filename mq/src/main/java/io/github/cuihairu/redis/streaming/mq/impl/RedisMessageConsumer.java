@@ -102,16 +102,25 @@ public class RedisMessageConsumer implements MessageConsumer {
         Subscription sub = new Subscription(topic, consumerGroup, handler);
         subscriptions.put(topic, sub);
 
-        // Ensure groups exist on all partitions (lazy creation ok)
+        // Ensure groups exist on all partitions (idempotent Lua to avoid '-'/BUSYGROUP noise)
         int pc = partitionRegistry.getPartitionCount(topic);
+        org.redisson.api.RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
+        final String lua =
+                "local groups = redis.call('XINFO','GROUPS', KEYS[1])\n" +
+                "for i=1,#groups do local g = groups[i]; for j=1,#g,2 do if g[j]=='name' and g[j+1]==ARGV[1] then return 'EXISTS' end end end\n" +
+                "return redis.call('XGROUP','CREATE', KEYS[1], ARGV[1], ARGV[2], 'MKSTREAM')";
         for (int i = 0; i < pc; i++) {
             String streamKey = StreamKeys.partitionStream(topic, i);
             try {
-                redissonClient.getStream(streamKey)
-                        .createGroup(StreamCreateGroupArgs.name(consumerGroup).makeStream());
+                Object r = script.eval(org.redisson.api.RScript.Mode.READ_WRITE, lua,
+                        org.redisson.api.RScript.ReturnType.STATUS,
+                        java.util.Collections.singletonList(streamKey), consumerGroup, "0-0");
+                if (!"OK".equals(String.valueOf(r)) && !"EXISTS".equals(String.valueOf(r))) {
+                    log.debug("Ensure group via Lua returned {} for {} @ {}", String.valueOf(r), consumerGroup, streamKey);
+                }
             } catch (Exception e) {
-                // group may already exist
-                log.debug("Group already exists or created concurrently: {} @ {}", consumerGroup, streamKey);
+                // Ignore BUSYGROUP or race; continue
+                log.debug("Ensure group via Lua ignored for {} @ {}: {}", consumerGroup, streamKey, e.toString());
             }
         }
 
