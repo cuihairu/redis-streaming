@@ -102,13 +102,22 @@ public class RedisMessageConsumer implements MessageConsumer {
         Subscription sub = new Subscription(topic, consumerGroup, handler);
         subscriptions.put(topic, sub);
 
-        // Ensure groups exist on all partitions (idempotent Lua to avoid '-'/BUSYGROUP noise)
+        // Ensure groups exist on all partitions. Be robust when stream key doesn't exist yet:
+        // - Try XINFO GROUPS; if key missing, still attempt XGROUP CREATE ... MKSTREAM
+        // - If BUSYGROUP (already exists), treat as EXISTS
         int pc = partitionRegistry.getPartitionCount(topic);
         org.redisson.api.RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
         final String lua =
-                "local groups = redis.call('XINFO','GROUPS', KEYS[1])\n" +
-                "for i=1,#groups do local g = groups[i]; for j=1,#g,2 do if g[j]=='name' and g[j+1]==ARGV[1] then return 'EXISTS' end end end\n" +
-                "return redis.call('XGROUP','CREATE', KEYS[1], ARGV[1], ARGV[2], 'MKSTREAM')";
+                // Try to check existing groups; if XINFO fails (no key), continue to CREATE
+                "local exists=false \n" +
+                "local info = redis.pcall('XINFO','GROUPS', KEYS[1]) \n" +
+                "if type(info) == 'table' and info.err == nil then \n" +
+                "  for i=1,#info do local g = info[i]; for j=1,#g,2 do if g[j]=='name' and g[j+1]==ARGV[1] then exists=true; break end end if exists then break end end \n" +
+                "end \n" +
+                "if exists then return 'EXISTS' end \n" +
+                "local r = redis.pcall('XGROUP','CREATE', KEYS[1], ARGV[1], ARGV[2], 'MKSTREAM') \n" +
+                "if type(r)=='table' and r.err then if string.find(r.err,'BUSYGROUP') then return 'EXISTS' else return r.err end end \n" +
+                "return r";
         for (int i = 0; i < pc; i++) {
             String streamKey = StreamKeys.partitionStream(topic, i);
             try {
@@ -119,7 +128,7 @@ public class RedisMessageConsumer implements MessageConsumer {
                     log.debug("Ensure group via Lua returned {} for {} @ {}", String.valueOf(r), consumerGroup, streamKey);
                 }
             } catch (Exception e) {
-                // Ignore BUSYGROUP or race; continue
+                // Ignore BUSYGROUP or race; continue. Log at debug to avoid noise
                 log.debug("Ensure group via Lua ignored for {} @ {}: {}", consumerGroup, streamKey, e.toString());
             }
         }
