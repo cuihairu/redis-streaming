@@ -34,7 +34,8 @@ public class RedisBrokerPersistence implements BrokerPersistence {
         // Ensure topic keyspace exists (compat with current behavior)
         topicRegistry.registerTopic(topic);
         String streamKey = StreamKeys.partitionStream(topic, partitionId);
-        Map<String, Object> data = StreamEntryCodec.buildPartitionEntry(message, partitionId);
+        Map<String, Object> data = StreamEntryCodec.buildPartitionEntry(message, partitionId,
+                new io.github.cuihairu.redis.streaming.mq.impl.PayloadLifecycleManager(redissonClient, options));
         // Prefer atomic XADD MAXLEN to avoid concurrency race
         try {
             int maxLen = Math.max(0, options.getRetentionMaxLenPerPartition());

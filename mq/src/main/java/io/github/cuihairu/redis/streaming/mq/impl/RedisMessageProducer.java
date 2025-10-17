@@ -31,6 +31,7 @@ public class RedisMessageProducer implements MessageProducer {
     private final Partitioner partitioner;
     private final MqOptions options;
     private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final PayloadLifecycleManager payloadLifecycleManager;
 
     public RedisMessageProducer(RedissonClient redissonClient,
                                 Partitioner partitioner,
@@ -41,6 +42,7 @@ public class RedisMessageProducer implements MessageProducer {
         this.partitionRegistry = partitionRegistry;
         this.options = options;
         this.topicRegistry = new TopicRegistry(redissonClient, this.options.getKeyPrefix());
+        this.payloadLifecycleManager = new PayloadLifecycleManager(redissonClient, this.options);
     }
 
     @Override
@@ -63,7 +65,6 @@ public class RedisMessageProducer implements MessageProducer {
                     if (forced != null) {
                         int fp = Integer.parseInt(forced);
                         partitionId = (fp >= 0 && partitions > 0) ? (fp % partitions) : 0;
-                        if (partitionId < 0) partitionId += partitions;
                     } else {
                         partitionId = partitioner.partition(message.getKey(), partitions);
                     }
@@ -73,7 +74,7 @@ public class RedisMessageProducer implements MessageProducer {
                 String streamKey = StreamKeys.partitionStream(message.getTopic(), partitionId);
                 RStream<String, Object> stream = redissonClient.getStream(streamKey);
 
-                Map<String, Object> data = StreamEntryCodec.buildPartitionEntry(message, partitionId);
+                Map<String, Object> data = StreamEntryCodec.buildPartitionEntry(message, partitionId, payloadLifecycleManager);
 
                 // Add message to the selected partition stream
                 StreamMessageId messageId = stream.add(StreamAddArgs.entries(data));

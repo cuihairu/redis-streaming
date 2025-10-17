@@ -4,6 +4,7 @@ import io.github.cuihairu.redis.streaming.mq.admin.MessageQueueAdmin;
 import io.github.cuihairu.redis.streaming.mq.admin.TopicRegistry;
 import io.github.cuihairu.redis.streaming.mq.admin.model.*;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
+import io.github.cuihairu.redis.streaming.mq.impl.PayloadLifecycleManager;
 import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +25,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
     private final RedissonClient redissonClient;
     private final TopicRegistry topicRegistry;
     private final TopicPartitionRegistry partitionRegistry;
+    private final PayloadLifecycleManager payloadLifecycleManager;
 
     public RedisMessageQueueAdmin(RedissonClient redissonClient) {
         this(redissonClient, null);
@@ -34,6 +36,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
         String prefix = options != null ? options.getKeyPrefix() : TopicRegistry.DEFAULT_PREFIX;
         this.topicRegistry = new TopicRegistry(redissonClient, prefix);
         this.partitionRegistry = new TopicPartitionRegistry(redissonClient);
+        this.payloadLifecycleManager = new PayloadLifecycleManager(redissonClient, options != null ? options : io.github.cuihairu.redis.streaming.mq.config.MqOptions.builder().build());
     }
 
     // ==================== 队列信息查询 ====================
@@ -408,10 +411,14 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
                 try { deleted += keys.delete(k); } catch (Exception ignore) {}
             }
 
+            // Clean up payload hashes for this topic
+            long payloadHashesDeleted = payloadLifecycleManager.cleanupTopicPayloadHashes(topic);
+
             // Remove from registry regardless of deleted count for idempotency
             topicRegistry.unregisterTopic(topic);
-            log.info("Deleted topic artifacts for '{}': partitions={}, removedKeys={} (best-effort)", topic, pc, deleted);
-            return deleted > 0;
+            log.info("Deleted topic artifacts for '{}': partitions={}, removedKeys={}, payloadHashes={} (best-effort)",
+                     topic, pc, deleted, payloadHashesDeleted);
+            return deleted > 0 || payloadHashesDeleted > 0;
 
         } catch (Exception e) {
             log.error("Failed to delete topic: {}", topic, e);
