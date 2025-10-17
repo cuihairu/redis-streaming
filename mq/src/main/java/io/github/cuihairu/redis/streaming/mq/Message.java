@@ -1,5 +1,6 @@
 package io.github.cuihairu.redis.streaming.mq;
 
+import io.github.cuihairu.redis.streaming.core.utils.SystemUtils;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -67,6 +68,15 @@ public class Message {
         this.retryCount = 0;
         this.maxRetries = 3;
         this.publisher = publisher;
+    }
+
+    public Message(String topic, Object payload) {
+        this.topic = topic;
+        this.payload = payload;
+        this.timestamp = Instant.now();
+        this.retryCount = 0;
+        this.maxRetries = 3;
+        this.publisher = SystemUtils.getLocalHostname();
     }
 
     public Message(String topic, Object payload, Map<String, String> headers, String publisher) {
