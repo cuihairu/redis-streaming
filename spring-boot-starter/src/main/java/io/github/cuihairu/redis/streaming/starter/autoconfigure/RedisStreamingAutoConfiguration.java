@@ -190,7 +190,7 @@ public class RedisStreamingAutoConfiguration {
 
         @Bean
         @ConditionalOnMissingBean
-        public ClientInvoker clientInvoker(NamingService namingService,
+        public ClientInvoker clientInvoker(@org.springframework.beans.factory.annotation.Qualifier("namingService") NamingService namingService,
                                            LoadBalancer loadBalancer,
                                            RetryPolicy retryPolicy,
                                            RedisClientMetricsReporter reporter) {
