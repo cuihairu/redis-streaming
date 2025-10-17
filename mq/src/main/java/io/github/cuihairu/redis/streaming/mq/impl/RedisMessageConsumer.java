@@ -275,7 +275,7 @@ public class RedisMessageConsumer implements MessageConsumer {
                     }
                 } else {
                     String streamKey = StreamKeys.partitionStream(topic, partitionId);
-                    RStream<String, Object> stream = redissonClient.getStream(streamKey);
+                    RStream<String, Object> stream = redissonClient.getStream(org.redisson.client.codec.StringCodec.INSTANCE, streamKey);
                     Map<StreamMessageId, Map<String, Object>> messages = stream.readGroup(
                             group,
                             consumerName,
@@ -343,7 +343,7 @@ public class RedisMessageConsumer implements MessageConsumer {
         workers.forEach((pk, worker) -> {
             try {
                 String streamKey = StreamKeys.partitionStream(pk.topic, pk.partitionId);
-                RStream<String, Object> stream = redissonClient.getStream(streamKey);
+                RStream<String, Object> stream = redissonClient.getStream(org.redisson.client.codec.StringCodec.INSTANCE, streamKey);
 
                 @SuppressWarnings("deprecation")
                 List<PendingEntry> pendingEntries = stream.listPending(pk.group,

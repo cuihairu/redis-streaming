@@ -81,7 +81,7 @@ public class RedisBrokerPersistence implements BrokerPersistence {
         }
 
         // Fallback: two-step add + trim (non-atomic)
-        RStream<String, Object> stream = redissonClient.getStream(streamKey);
+        RStream<String, Object> stream = redissonClient.getStream(org.redisson.client.codec.StringCodec.INSTANCE, streamKey);
         // Use serialized (string) values to avoid codec-dependent object encoding
         StreamMessageId id = stream.add(StreamAddArgs.entries(serialized));
         String sid = id != null ? id.toString() : null;

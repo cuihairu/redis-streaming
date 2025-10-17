@@ -47,7 +47,7 @@ public class DefaultBroker implements Broker {
     @Override
     public java.util.List<io.github.cuihairu.redis.streaming.mq.broker.BrokerRecord> readGroup(String topic, String consumerGroup, String consumerName, int partitionId, int count, long timeoutMs) {
         String streamKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, partitionId);
-        org.redisson.api.RStream<String, Object> stream = redissonClient.getStream(streamKey);
+        org.redisson.api.RStream<String, Object> stream = redissonClient.getStream(org.redisson.client.codec.StringCodec.INSTANCE, streamKey);
         java.time.Duration timeout = java.time.Duration.ofMillis(timeoutMs < 0 ? 0 : timeoutMs);
         java.util.Map<org.redisson.api.StreamMessageId, java.util.Map<String, Object>> messages = stream.readGroup(
                 consumerGroup, consumerName,

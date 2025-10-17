@@ -73,7 +73,7 @@ public class RedisMessageProducer implements MessageProducer {
                     partitionId = partitioner.partition(message.getKey(), partitions);
                 }
                 String streamKey = StreamKeys.partitionStream(message.getTopic(), partitionId);
-                RStream<String, Object> stream = redissonClient.getStream(streamKey);
+            RStream<String, Object> stream = redissonClient.getStream(org.redisson.client.codec.StringCodec.INSTANCE, streamKey);
 
                 Map<String, Object> data = StreamEntryCodec.buildPartitionEntry(message, partitionId, payloadLifecycleManager);
 
