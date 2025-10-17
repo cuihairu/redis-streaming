@@ -482,7 +482,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
     private void cleanupExpiredInstances() {
         try {
             // 获取所有服务
-            RSet<String> servicesSet = redissonClient.getSet(registryKeys.getServicesIndexKey());
+            RSet<String> servicesSet = redissonClient.getSet(registryKeys.getServicesIndexKey(), org.redisson.client.codec.StringCodec.INSTANCE);
             Set<String> services = servicesSet.readAll();
 
             for (String serviceName : services) {
@@ -534,7 +534,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
                 try {
                     RScoredSortedSet<String> set = redissonClient.getScoredSortedSet(heartbeatKey);
                     if (set.size() == 0) {
-                        RSet<String> servicesSet = redissonClient.getSet(registryKeys.getServicesIndexKey());
+                        RSet<String> servicesSet = redissonClient.getSet(registryKeys.getServicesIndexKey(), org.redisson.client.codec.StringCodec.INSTANCE);
                         servicesSet.remove(serviceName);
                     }
                 } catch (Exception ignore) {}
