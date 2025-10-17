@@ -55,7 +55,7 @@ public class DeadLetterQueueManager {
     public Map<StreamMessageId, Map<String, Object>> getDeadLetterMessages(String topic, int limit) {
         String key = StreamKeys.dlq(topic);
         try {
-            RStream<String, Object> dlq = redissonClient.getStream(org.redisson.client.codec.StringCodec.INSTANCE, key);
+            RStream<String, Object> dlq = redissonClient.getStream(key, org.redisson.client.codec.StringCodec.INSTANCE);
             Map<StreamMessageId, Map<String, Object>> res = dlq.range(Math.max(1, limit), StreamMessageId.MIN, StreamMessageId.MAX);
             return res != null ? res : Collections.emptyMap();
         } catch (Exception e) {
@@ -89,7 +89,7 @@ public class DeadLetterQueueManager {
     public boolean replayMessage(String topic, StreamMessageId id) {
         String dlqKey = StreamKeys.dlq(topic);
         try {
-            RStream<String, Object> dlq = redissonClient.getStream(org.redisson.client.codec.StringCodec.INSTANCE, dlqKey);
+            RStream<String, Object> dlq = redissonClient.getStream(dlqKey, org.redisson.client.codec.StringCodec.INSTANCE);
             Map<StreamMessageId, Map<String, Object>> one = dlq.range(1, id, id);
             if (one == null || one.isEmpty()) return false;
             Map<String, Object> data = one.get(id);
@@ -145,7 +145,7 @@ public class DeadLetterQueueManager {
             if (!headers.isEmpty()) replay.put("headers", headers);
 
             String streamKey = StreamKeys.partitionStream(topic, pid);
-            RStream<String, Object> orig = redissonClient.getStream(org.redisson.client.codec.StringCodec.INSTANCE, streamKey);
+            RStream<String, Object> orig = redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE);
             return orig.add(StreamAddArgs.entries(replay)) != null;
         } catch (Exception e) {
             return false;
