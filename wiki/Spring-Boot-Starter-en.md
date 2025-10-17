@@ -2,6 +2,80 @@
 
 [中文](Spring-Boot-Starter) | [English](Spring-Boot-Starter-en)
 
+## Redisson Integration & Deployment Modes
+
+The starter reuses an existing `RedissonClient` in your app and only creates a simple single-server client if none is present.
+
+- Recommended: configure cluster/sentinel/SSL via `redisson-spring-boot-starter` (e.g. `implementation 'org.redisson:redisson-spring-boot-starter:3.29.0'`) and point `spring.redisson.file` to your YAML.
+
+Cluster (redisson-cluster.yaml)
+```yaml
+clusterServersConfig:
+  nodeAddresses: ["redis://10.0.0.1:6379", "redis://10.0.0.2:6379"]
+  password: your_pwd
+  scanInterval: 2000
+  connectTimeout: 10000
+  timeout: 3000
+```
+```yaml
+spring:
+  redisson:
+    file: classpath:redisson-cluster.yaml
+```
+
+Sentinel (redisson-sentinel.yaml)
+```yaml
+sentinelServersConfig:
+  masterName: mymaster
+  sentinelAddresses: ["redis://10.0.0.1:26379", "redis://10.0.0.2:26379"]
+  password: your_pwd
+  database: 0
+  checkSentinelsList: true
+```
+```yaml
+spring:
+  redisson:
+    file: classpath:redisson-sentinel.yaml
+```
+
+> Tip: with redisson-spring-boot-starter in place, you can remove `redis-streaming.redis.*`. The starter detects your `RedissonClient` and skips its internal single-server client.
+
+## Codec & Lua Best Practices
+
+Lua scripts in registry/MQ read/write string/JSON in these keyspaces:
+
+- Registry: `{prefix}:services` (Set), `{prefix}:services:{service}:heartbeats` (ZSet), `{prefix}:services:{service}:instance:{id}` (Hash)
+- MQ Retry: `streaming:mq:retry:{topic}` (ZSet), `streaming:mq:retry:item:{topic}:{uuid}` (Hash)
+
+Guidelines:
+
+- Access these keys with `StringCodec`; values should be strings/JSON. Using object codecs (e.g. Kryo) to read string replies (SMEMBERS/HGET) may cause deserialization errors.
+- You can still use Kryo/JSON for your own keys, as long as those keys are not touched by Lua.
+- Easiest: set global `codec: !<org.redisson.codec.StringCodec>` in Redisson config.
+
+## Metrics & Historical Curves (Micrometer/Prometheus)
+
+The starter ships Micrometer binders (MQ/Retention/Reliability). In your app:
+
+```gradle
+implementation 'org.springframework.boot:spring-boot-starter-actuator'
+runtimeOnly 'io.micrometer:micrometer-registry-prometheus:1.12.5'
+```
+
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,env,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+```
+
+Then scrape `/actuator/prometheus` (Prometheus/Grafana) for `mq_*`, `retention_*`, `reliability_*` metrics.
+
 ---
 
 ## 🚀 Quick Start

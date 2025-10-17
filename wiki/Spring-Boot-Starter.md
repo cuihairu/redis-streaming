@@ -416,8 +416,84 @@ redis-streaming:
 ```
 
 - 暴露 Bean：`MessageQueueFactory`、`MessageQueueAdmin`、`DeadLetterQueueManager`
-- 指标：Micrometer 细粒度 Counter/Timer（带 `topic/partition` 标签）与聚合 Gauge
-- 健康检查：`HealthIndicator`（topics 计数）；可扩展为租约/搬运积压探测
+ - 指标：Micrometer 细粒度 Counter/Timer（带 `topic/partition` 标签）与聚合 Gauge
+ - 健康检查：`HealthIndicator`（topics 计数）；可扩展为租约/搬运积压探测
+
+## 🔌 Redisson 集成与部署模式
+
+Starter 复用你工程里的 `RedissonClient`，若不存在才创建“单机开发用”客户端。
+
+- 推荐用 `redisson-spring-boot-starter` 配置集群/哨兵/SSL：
+  - Gradle：`implementation 'org.redisson:redisson-spring-boot-starter:3.29.0'`
+  - application.yml 指向配置文件：
+
+Cluster 示例（redisson-cluster.yaml）
+```yaml
+clusterServersConfig:
+  nodeAddresses: ["redis://10.0.0.1:6379", "redis://10.0.0.2:6379"]
+  password: your_pwd
+  scanInterval: 2000
+  connectTimeout: 10000
+  timeout: 3000
+```
+```yaml
+spring:
+  redisson:
+    file: classpath:redisson-cluster.yaml
+```
+
+Sentinel 示例（redisson-sentinel.yaml）
+```yaml
+sentinelServersConfig:
+  masterName: mymaster
+  sentinelAddresses: ["redis://10.0.0.1:26379", "redis://10.0.0.2:26379"]
+  password: your_pwd
+  database: 0
+  checkSentinelsList: true
+```
+```yaml
+spring:
+  redisson:
+    file: classpath:redisson-sentinel.yaml
+```
+
+> 提示：接入 redisson-spring-boot-starter 后，可移除 `redis-streaming.redis.*` 单机配置；不移除也无妨，Starter 会检测已有 `RedissonClient` 而跳过内置单机。
+
+## 🧰 编解码与 Lua 的最佳实践
+
+注册中心/MQ 的 Lua 在以下键空间读写字符串/JSON：
+
+- 注册中心：`{prefix}:services`（Set）、`{prefix}:services:{service}:heartbeats`（ZSet）、`{prefix}:services:{service}:instance:{id}`（Hash）
+- MQ 重试：`streaming:mq:retry:{topic}`（ZSet）、`streaming:mq:retry:item:{topic}:{uuid}`（Hash）
+
+建议：
+
+- 这些键的客户端访问统一使用 `StringCodec`，值用字符串/JSON；否则对象编解码（如 Kryo）去读 `SMEMBERS/HGET` 的字符串会报反序列化错误。
+- 业务自有键可继续使用 Kryo/JSON，但请确保不被 Lua 脚本访问。
+- 最省事：在 Redisson 配置里全局设置 `codec: !<org.redisson.codec.StringCodec>`。
+
+## 📈 指标与历史曲线（Micrometer/Prometheus）
+
+Starter 已内置 Micrometer 指标（MQ/Retention/Reliability）。在应用中：
+
+```gradle
+implementation 'org.springframework.boot:spring-boot-starter-actuator'
+runtimeOnly 'io.micrometer:micrometer-registry-prometheus:1.12.5'
+```
+
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,env,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+```
+
+随后访问 `/actuator/prometheus` 抓取指标（如 `mq_*`、`retention_*`、`reliability_*`），用 Prometheus/Grafana 绘制历史曲线。
 
 ---
 
