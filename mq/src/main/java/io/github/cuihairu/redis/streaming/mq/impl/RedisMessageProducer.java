@@ -97,13 +97,13 @@ public class RedisMessageProducer implements MessageProducer {
 
     @Override
     public CompletableFuture<String> send(String topic, String key, Object payload) {
-        Message message = new Message(topic, key, payload, SystemUtils.getLocalHostname(),0);
+        Message message = new Message(topic, key, payload, SystemUtils.getLocalHostname());
         return send(message);
     }
 
     @Override
     public CompletableFuture<String> send(String topic, Object payload) {
-        Message message = new Message(topic, payload,SystemUtils.getLocalHostname(),0);
+        Message message = new Message(topic, payload,SystemUtils.getLocalHostname());
         return send(message);
     }
 
