@@ -170,7 +170,7 @@ public class RedisStreamingAutoConfiguration {
 
         @Bean
         @ConditionalOnMissingBean
-        public ClientSelector clientSelector(NamingService namingService) {
+        public ClientSelector clientSelector(@org.springframework.beans.factory.annotation.Qualifier("namingService") NamingService namingService) {
             return new ClientSelector(namingService);
         }
 
@@ -213,7 +213,7 @@ public class RedisStreamingAutoConfiguration {
     static class DiscoveryConfiguration {
 
         @Bean
-        @ConditionalOnMissingBean
+        @ConditionalOnMissingBean({NamingService.class, ServiceDiscovery.class})
         public ServiceDiscovery serviceDiscovery(RedissonClient redissonClient, RedisStreamingProperties properties) {
             log.info("Initializing ServiceDiscovery with healthy-only: {}",
                     properties.getDiscovery().isHealthyOnly());
