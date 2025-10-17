@@ -582,9 +582,10 @@ public class RedisMessageConsumer implements MessageConsumer {
                         + "if k~='' then table.insert(args,'key'); table.insert(args,k); end; if hdr~='' then table.insert(args,'headers'); table.insert(args,hdr); end; "
                         + "if orig~='' then table.insert(args,'originalMessageId'); table.insert(args,orig); end; "
                         + "redis.call('XADD', sk, '*', unpack(args)); redis.call('ZREM', z, id); redis.call('DEL', id); table.insert(moved, id); end; end; return moved;";
-                RScript script = redissonClient.getScript();
+                // Use StringCodec and pass ARGV as strings to avoid non-string arg issues in Lua (tonumber())
+                RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
                 List<Object> moved = script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.MULTI, java.util.Collections.singletonList(bucketKey),
-                        System.currentTimeMillis(), options.getRetryMoverBatch(), Instant.now().toString(), StreamKeys.streamPrefix());
+                        String.valueOf(System.currentTimeMillis()), String.valueOf(options.getRetryMoverBatch()), Instant.now().toString(), StreamKeys.streamPrefix());
                 if (moved != null && !moved.isEmpty()) {
                     log.debug("Moved {} retry items for topic {}", moved.size(), topic);
                 }
