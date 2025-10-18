@@ -40,7 +40,7 @@ public class CommitFrontierMultiGroupIntegrationTest {
             assertTrue(h2.await(3, TimeUnit.SECONDS));
 
             String frontierKey = StreamKeys.commitFrontier(topic, 0);
-            Map<String,String> fm = client.getMap(frontierKey).readAllMap();
+            Map<String,String> fm = client.<String,String>getMap(frontierKey).readAllMap();
             assertNotNull(fm);
             assertTrue(fm.containsKey("g1"));
             assertTrue(fm.containsKey("g2"));
@@ -58,4 +58,3 @@ public class CommitFrontierMultiGroupIntegrationTest {
         return Redisson.create(config);
     }
 }
-
