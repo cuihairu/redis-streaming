@@ -41,13 +41,14 @@ public class RedisDeadLetterConsumerBranchesTest {
 
             // Prepare DLQ entries after consumer start so readGroup('>') can deliver them
             String dlqKey = StreamKeys.dlq(topic);
-            RStream<String, Object> dlq = client.getStream(dlqKey);
+            // Write DLQ entries with StringCodec and string fields to match replay protocol
+            RStream<String, Object> dlq = client.getStream(dlqKey, org.redisson.client.codec.StringCodec.INSTANCE);
 
             Map<String,Object> e1 = new HashMap<>();
             e1.put("originalTopic", topic);
             e1.put("payload", "x");
             e1.put("timestamp", Instant.now().toString());
-            e1.put("partitionId", 0);
+            e1.put("partitionId", "0");
             dlq.add(StreamAddArgs.entries(e1));
 
             Map<String,Object> e2 = new HashMap<>(e1);
