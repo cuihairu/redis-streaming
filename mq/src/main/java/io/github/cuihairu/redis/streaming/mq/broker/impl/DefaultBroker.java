@@ -63,7 +63,7 @@ public class DefaultBroker implements Broker {
     @Override
     public void ack(String topic, String consumerGroup, int partitionId, String messageId) {
         String streamKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, partitionId);
-        org.redisson.api.RStream<String, Object> stream = redissonClient.getStream(streamKey);
+        org.redisson.api.RStream<String, Object> stream = redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE);
         String policy = options.getAckDeletePolicy();
         if (policy == null) policy = "none";
         policy = policy.toLowerCase();
@@ -77,16 +77,16 @@ public class DefaultBroker implements Broker {
                 case "all-groups-ack": {
                     // Collect group ack into ack-set; if size reaches active group count, delete the entry
                     String ackKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.ackSet(topic, partitionId, messageId);
-                    org.redisson.api.RSet<String> ackset = redissonClient.getSet(ackKey);
+                    org.redisson.api.RSet<String> ackset = redissonClient.getSet(ackKey, org.redisson.client.codec.StringCodec.INSTANCE);
                     try { ackset.add(consumerGroup); } catch (Exception ignore) {}
-                    try { redissonClient.getBucket(ackKey).expire(java.time.Duration.ofSeconds(Math.max(1, options.getAcksetTtlSec()))); } catch (Exception ignore) {}
+                    try { redissonClient.getBucket(ackKey, org.redisson.client.codec.StringCodec.INSTANCE).expire(java.time.Duration.ofSeconds(Math.max(1, options.getAcksetTtlSec()))); } catch (Exception ignore) {}
                     // Compute active groups: groups present on stream AND having an active lease on this partition
                     int active = 0;
                     try {
                         java.util.List<org.redisson.api.StreamGroup> groups = stream.listGroups();
                         for (org.redisson.api.StreamGroup g : groups) {
                             String leaseKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.lease(topic, g.getName(), partitionId);
-                            boolean live = redissonClient.getBucket(leaseKey).isExists();
+                            boolean live = redissonClient.getBucket(leaseKey, org.redisson.client.codec.StringCodec.INSTANCE).isExists();
                             if (live) active++;
                         }
                     } catch (Exception ignore) {}

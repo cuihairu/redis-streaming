@@ -49,7 +49,7 @@ public class TopicRegistry {
      */
     public boolean registerTopic(String topic) {
         try {
-            RSet<String> registry = redissonClient.getSet(registryKey());
+            RSet<String> registry = redissonClient.getSet(registryKey(), org.redisson.client.codec.StringCodec.INSTANCE);
             boolean added = registry.add(topic);
 
             if (added) {
@@ -71,7 +71,7 @@ public class TopicRegistry {
      */
     public boolean unregisterTopic(String topic) {
         try {
-            RSet<String> registry = redissonClient.getSet(registryKey());
+            RSet<String> registry = redissonClient.getSet(registryKey(), org.redisson.client.codec.StringCodec.INSTANCE);
             boolean removed = registry.remove(topic);
 
             if (removed) {
@@ -93,7 +93,7 @@ public class TopicRegistry {
      */
     public boolean isTopicRegistered(String topic) {
         try {
-            RSet<String> registry = redissonClient.getSet(registryKey());
+            RSet<String> registry = redissonClient.getSet(registryKey(), org.redisson.client.codec.StringCodec.INSTANCE);
             return registry.contains(topic);
         } catch (Exception e) {
             log.error("Failed to check topic registration: {}", topic, e);
@@ -108,7 +108,7 @@ public class TopicRegistry {
      */
     public Set<String> getAllTopics() {
         try {
-            RSet<String> registry = redissonClient.getSet(registryKey());
+            RSet<String> registry = redissonClient.getSet(registryKey(), org.redisson.client.codec.StringCodec.INSTANCE);
             return registry.readAll();
         } catch (Exception e) {
             log.error("Failed to get all topics", e);
@@ -123,7 +123,7 @@ public class TopicRegistry {
      */
     public int getTopicCount() {
         try {
-            RSet<String> registry = redissonClient.getSet(registryKey());
+            RSet<String> registry = redissonClient.getSet(registryKey(), org.redisson.client.codec.StringCodec.INSTANCE);
             return registry.size();
         } catch (Exception e) {
             log.error("Failed to get topic count", e);

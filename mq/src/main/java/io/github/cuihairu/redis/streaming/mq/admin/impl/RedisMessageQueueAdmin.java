@@ -49,7 +49,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
                 // Prefer partition stream key for pc=1; fallback to legacy topic key for compatibility
                 RStream<String, Object> stream = redissonClient.getStream(StreamKeys.partitionStream(topic, 0), org.redisson.client.codec.StringCodec.INSTANCE);
                 if (!stream.isExists()) {
-                    stream = redissonClient.getStream(topic);
+                    stream = redissonClient.getStream(topic, org.redisson.client.codec.StringCodec.INSTANCE);
                     if (!stream.isExists()) {
                         return QueueInfo.builder().topic(topic).exists(false).length(0).consumerGroupCount(0).build();
                     }

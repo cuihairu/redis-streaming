@@ -285,9 +285,9 @@ public final class StreamEntryCodec {
     private static void storePayloadInHash(RedissonClient redissonClient, String hashKey, Object payload) {
         try {
             String jsonPayload = MAPPER.writeValueAsString(payload);
-            redissonClient.getBucket(hashKey).set(jsonPayload);
+            redissonClient.getBucket(hashKey, org.redisson.client.codec.StringCodec.INSTANCE).set(jsonPayload);
             // Set expiry - payload should expire after some time to avoid memory leaks
-            redissonClient.getBucket(hashKey).expire(java.time.Duration.ofHours(24));
+            redissonClient.getBucket(hashKey, org.redisson.client.codec.StringCodec.INSTANCE).expire(java.time.Duration.ofHours(24));
         } catch (Exception e) {
             throw new RuntimeException("Failed to store large payload in hash: " + hashKey, e);
         }
@@ -298,7 +298,7 @@ public final class StreamEntryCodec {
      */
     private static Object loadPayloadFromHash(RedissonClient redissonClient, String hashKey) {
         try {
-            String jsonPayload = (String) redissonClient.getBucket(hashKey).get();
+            String jsonPayload = (String) redissonClient.getBucket(hashKey, org.redisson.client.codec.StringCodec.INSTANCE).get();
             if (jsonPayload == null) {
                 throw new RuntimeException("Payload not found in hash: " + hashKey);
             }

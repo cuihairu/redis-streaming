@@ -18,7 +18,7 @@ public class LeaseManager {
 
     public boolean tryAcquire(String leaseKey, String ownerId, long ttlSeconds) {
         try {
-            RBucket<String> bucket = redissonClient.getBucket(leaseKey);
+            RBucket<String> bucket = redissonClient.getBucket(leaseKey, org.redisson.client.codec.StringCodec.INSTANCE);
             // Use non-deprecated API: setIfAbsent(value) + expire(Duration)
             boolean ok = bucket.setIfAbsent(ownerId);
             if (ok) {
@@ -38,7 +38,7 @@ public class LeaseManager {
 
     public boolean renewIfOwner(String leaseKey, String ownerId, long ttlSeconds) {
         try {
-            RBucket<String> bucket = redissonClient.getBucket(leaseKey);
+            RBucket<String> bucket = redissonClient.getBucket(leaseKey, org.redisson.client.codec.StringCodec.INSTANCE);
             String cur = bucket.get();
             if (ownerId.equals(cur)) {
                 return bucket.expire(java.time.Duration.ofSeconds(ttlSeconds));
@@ -52,7 +52,7 @@ public class LeaseManager {
 
     public boolean isOwner(String leaseKey, String ownerId) {
         try {
-            RBucket<String> bucket = redissonClient.getBucket(leaseKey);
+            RBucket<String> bucket = redissonClient.getBucket(leaseKey, org.redisson.client.codec.StringCodec.INSTANCE);
             String cur = bucket.get();
             return ownerId.equals(cur);
         } catch (Exception e) {
@@ -63,7 +63,7 @@ public class LeaseManager {
 
     public void releaseIfOwner(String leaseKey, String ownerId) {
         try {
-            RBucket<String> bucket = redissonClient.getBucket(leaseKey);
+            RBucket<String> bucket = redissonClient.getBucket(leaseKey, org.redisson.client.codec.StringCodec.INSTANCE);
             String cur = bucket.get();
             if (ownerId.equals(cur)) {
                 bucket.delete();
