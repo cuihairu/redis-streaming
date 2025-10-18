@@ -107,9 +107,9 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                             DeadLetterEntry entry = DeadLetterCodec.parseEntry(id.toString(), data);
                             try {
                                 DeadLetterConsumer.HandleResult r = s.handler.handle(entry);
-                                switch (r) {
+                            switch (r) {
                                     case SUCCESS:
-                                        try { stream.remove(id); } catch (Exception ignore) {}
+                                        // Do not delete on plain path; keep entry for admin tooling/replay
                                         break;
                                     case RETRY: {
                                         boolean replayed = false;
