@@ -55,9 +55,17 @@ public class DeadLetterQueueManager {
     public Map<StreamMessageId, Map<String, Object>> getDeadLetterMessages(String topic, int limit) {
         String key = StreamKeys.dlq(topic);
         try {
-            RStream<String, Object> dlq = redissonClient.getStream(key);
-            Map<StreamMessageId, Map<String, Object>> res = dlq.range(Math.max(1, limit), StreamMessageId.MIN, StreamMessageId.MAX);
-            return res != null ? res : Collections.emptyMap();
+            // Try default codec first, then fallback to StringCodec to read entries regardless of writer codec
+            RStream<String, Object> dlqDefault = redissonClient.getStream(key);
+            Map<StreamMessageId, Map<String, Object>> res = null;
+            try { res = dlqDefault.range(Math.max(1, limit), StreamMessageId.MIN, StreamMessageId.MAX); } catch (Exception ignore) {}
+            if (res == null || res.isEmpty()) {
+                try {
+                    RStream<String, Object> dlqStr = redissonClient.getStream(key, org.redisson.client.codec.StringCodec.INSTANCE);
+                    res = dlqStr.range(Math.max(1, limit), StreamMessageId.MIN, StreamMessageId.MAX);
+                } catch (Exception ignore) {}
+            }
+            return (res != null) ? res : Collections.emptyMap();
         } catch (Exception e) {
             return Collections.emptyMap();
         }

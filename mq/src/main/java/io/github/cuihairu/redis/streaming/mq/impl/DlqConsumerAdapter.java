@@ -31,12 +31,18 @@ public class DlqConsumerAdapter implements MessageConsumer {
                 // Normalize values to strings for StringCodec/stream fields
                 d.put("payload", (payload instanceof String) ? payload : toJson(payload));
                 d.put("timestamp", java.time.Instant.now().toString());
-                d.put("retryCount", 0);
-                d.put("maxRetries", Math.max(1, maxRetries));
+                d.put("retryCount", "0");
+                d.put("maxRetries", String.valueOf(Math.max(1, maxRetries)));
                 d.put("topic", topic);
-                d.put("partitionId", partitionId);
+                d.put("partitionId", String.valueOf(partitionId));
                 if (headers != null && !headers.isEmpty()) d.put("headers", toJson(headers));
-                return p.add(org.redisson.api.stream.StreamAddArgs.entries(d)) != null;
+                boolean ok = p.add(org.redisson.api.stream.StreamAddArgs.entries(d)) != null;
+                // Visibility check + one retry for flakiness
+                try {
+                    boolean visible = p.isExists() && p.size() > 0;
+                    if (!visible) { Thread.sleep(50); ok = p.add(org.redisson.api.stream.StreamAddArgs.entries(d)) != null; }
+                } catch (Exception ignore) {}
+                return ok;
             } catch (Exception e) { return false; }
         };
         this.delegate = new RedisDeadLetterConsumer(client, consumerName,
