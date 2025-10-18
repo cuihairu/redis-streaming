@@ -17,6 +17,7 @@ import java.util.Map;
 /** Adapter to expose reliability DLQ consumer as MQ MessageConsumer. */
 public class DlqConsumerAdapter implements MessageConsumer {
     private final DeadLetterConsumer delegate;
+    private static final com.fasterxml.jackson.databind.ObjectMapper _om = new com.fasterxml.jackson.databind.ObjectMapper();
 
     public DlqConsumerAdapter(RedissonClient client, String consumerName, MqOptions options) {
         // Provide a robust replay handler: publish back to original partition using StringCodec
@@ -25,13 +26,14 @@ public class DlqConsumerAdapter implements MessageConsumer {
                 String key = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, partitionId);
                 org.redisson.api.RStream<String, Object> p = client.getStream(key, org.redisson.client.codec.StringCodec.INSTANCE);
                 java.util.Map<String,Object> d = new java.util.HashMap<>();
-                d.put("payload", payload);
+                // Normalize values to strings for StringCodec/stream fields
+                d.put("payload", (payload instanceof String) ? payload : toJson(payload));
                 d.put("timestamp", java.time.Instant.now().toString());
                 d.put("retryCount", 0);
                 d.put("maxRetries", Math.max(1, maxRetries));
                 d.put("topic", topic);
                 d.put("partitionId", partitionId);
-                if (headers != null && !headers.isEmpty()) d.put("headers", headers);
+                if (headers != null && !headers.isEmpty()) d.put("headers", toJson(headers));
                 return p.add(org.redisson.api.stream.StreamAddArgs.entries(d)) != null;
             } catch (Exception e) { return false; }
         };
@@ -81,4 +83,8 @@ public class DlqConsumerAdapter implements MessageConsumer {
     @Override public void close() { delegate.close(); }
     @Override public boolean isRunning() { return delegate.isRunning(); }
     @Override public boolean isClosed() { return delegate.isClosed(); }
+
+    private static String toJson(Object o) {
+        try { return _om.writeValueAsString(o); } catch (Exception e) { return String.valueOf(o); }
+    }
 }
