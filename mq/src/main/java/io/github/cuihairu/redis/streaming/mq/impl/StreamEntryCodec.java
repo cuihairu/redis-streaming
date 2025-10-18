@@ -116,24 +116,26 @@ public final class StreamEntryCodec {
             } catch (Exception ignore) {}
         }
 
-        // Handle payload - check if it's stored in hash
+        // Handle payload - if headers indicate hash storage, or if a hash ref is present with empty/absent payload, try to load
         Object payload = data.get("payload");
         String storageType = headers.get(PayloadHeaders.PAYLOAD_STORAGE_TYPE);
+        String hashRef = headers.get(PayloadHeaders.PAYLOAD_HASH_REF);
 
-        if (PayloadHeaders.STORAGE_TYPE_HASH.equals(storageType) && (lifecycleManager != null || redissonClient != null)) {
-            // Load payload from Redis hash
-            String hashRef = headers.get(PayloadHeaders.PAYLOAD_HASH_REF);
-            if (hashRef != null) {
-                if (lifecycleManager != null) {
-                    payload = lifecycleManager.loadPayload(hashRef);
-                } else {
-                    payload = loadPayloadFromHash(redissonClient, hashRef);
-                }
-                // Remove payload-related headers from user-visible headers
-                headers.remove(PayloadHeaders.PAYLOAD_HASH_REF);
-                headers.remove(PayloadHeaders.PAYLOAD_STORAGE_TYPE);
-                headers.remove(PayloadHeaders.PAYLOAD_ORIGINAL_SIZE);
+        boolean shouldLoadFromHash = (hashRef != null)
+                && (PayloadHeaders.STORAGE_TYPE_HASH.equals(storageType)
+                    || payload == null
+                    || (payload instanceof String && ((String) payload).isEmpty()));
+
+        if (shouldLoadFromHash && (lifecycleManager != null || redissonClient != null)) {
+            if (lifecycleManager != null) {
+                payload = lifecycleManager.loadPayload(hashRef);
+            } else {
+                payload = loadPayloadFromHash(redissonClient, hashRef);
             }
+            // Remove payload-related headers from user-visible headers
+            headers.remove(PayloadHeaders.PAYLOAD_HASH_REF);
+            headers.remove(PayloadHeaders.PAYLOAD_STORAGE_TYPE);
+            headers.remove(PayloadHeaders.PAYLOAD_ORIGINAL_SIZE);
         }
 
         m.setPayload(payload);

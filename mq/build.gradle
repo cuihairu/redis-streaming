@@ -26,8 +26,8 @@ tasks.withType(Test).configureEach {
 }
 
 jacoco {
-    // Use a widely mirrored version to reduce resolution issues behind proxies
-    toolVersion = '0.8.8'
+    // Use a version that supports Java 21 class files (major 65)
+    toolVersion = '0.8.12'
 }
 
 // Configure coverage aggregation for unit + integration tests in this module

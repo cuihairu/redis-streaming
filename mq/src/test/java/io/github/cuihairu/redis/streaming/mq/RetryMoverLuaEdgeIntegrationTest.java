@@ -53,8 +53,10 @@ public class RetryMoverLuaEdgeIntegrationTest {
                 item.put("maxRetries", "3");
                 RScoredSortedSet<String> z = client.getScoredSortedSet(bucketKey, StringCodec.INSTANCE);
                 z.add((double) System.currentTimeMillis(), itemKey);
-                // wait a bit for mover
-                Thread.sleep(600);
+                // Wait for the periodic mover (runs every 1s) to pick this up.
+                // The initial run may have occurred before this item was enqueued,
+                // so give it a full interval plus a little buffer for scheduling.
+                Thread.sleep(1200);
                 // item should be removed from ZSET and hash deleted
                 assertFalse(client.getMap(itemKey, StringCodec.INSTANCE).isExists());
             }
@@ -92,4 +94,3 @@ public class RetryMoverLuaEdgeIntegrationTest {
         return Redisson.create(config);
     }
 }
-

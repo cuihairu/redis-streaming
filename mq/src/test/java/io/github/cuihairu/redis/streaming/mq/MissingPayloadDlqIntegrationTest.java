@@ -37,6 +37,8 @@ public class MissingPayloadDlqIntegrationTest {
             // Subscribe (handler should not be called because parse will trigger missing payload path)
             consumer.subscribe(topic, "g", m -> MessageHandleResult.SUCCESS);
             consumer.start();
+            // Give scheduler a brief moment to create group/workers before injecting the crafted entry
+            Thread.sleep(200);
 
             // Craft a stream entry that points to a non-existent payload hash
             String streamKey = StreamKeys.partitionStream(topic, 0);
@@ -83,4 +85,3 @@ public class MissingPayloadDlqIntegrationTest {
         return Redisson.create(config);
     }
 }
-

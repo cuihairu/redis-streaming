@@ -1,5 +1,6 @@
 plugins {
     id 'java-library'
+    id 'jacoco'
 }
 
 dependencies {
@@ -19,4 +20,52 @@ dependencies {
 
     testCompileOnly 'org.projectlombok:lombok:1.18.34'
     testAnnotationProcessor 'org.projectlombok:lombok:1.18.34'
+}
+
+// Enable JUnit 5
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
+
+jacoco {
+    // Align with mq module; supports JDK 21 class files
+    toolVersion = '0.8.12'
+}
+
+// Configure coverage report for registry module (use existing task from jacoco plugin)
+tasks.named('jacocoTestReport', JacocoReport) {
+    dependsOn tasks.withType(Test)
+    reports {
+        xml.required = true
+        html.required = true
+    }
+    classDirectories.setFrom(fileTree(dir: "$buildDir/classes/java/main"))
+    sourceDirectories.setFrom(files('src/main/java'))
+    executionData.setFrom(fileTree(dir: buildDir, includes: ['jacoco/*.exec']))
+    doFirst { executionData.files.removeIf { !it.exists() } }
+}
+
+tasks.withType(Test).configureEach {
+    finalizedBy(tasks.named('jacocoTestReport'))
+}
+// Enforce a modest coverage bar to guard regressions (configure existing task)
+tasks.named('jacocoTestCoverageVerification', JacocoCoverageVerification) {
+    dependsOn tasks.withType(Test)
+    executionData.setFrom(fileTree(dir: buildDir, includes: ['jacoco/*.exec']))
+    classDirectories.setFrom(fileTree(dir: "$buildDir/classes/java/main"))
+    doFirst { executionData.files.removeIf { !it.exists() } }
+    violationRules {
+        rule {
+            // Conservative initial bar; can be raised as suite grows
+            limit {
+                counter = 'INSTRUCTION'
+                value = 'COVEREDRATIO'
+                minimum = 0.50
+            }
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('jacocoTestCoverageVerification')
 }

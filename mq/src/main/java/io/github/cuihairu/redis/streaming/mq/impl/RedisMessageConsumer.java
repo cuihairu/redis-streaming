@@ -241,6 +241,19 @@ public class RedisMessageConsumer implements MessageConsumer {
                     for (BrokerRecord br : records) {
                         String id = br.getId();
                         Map<String, Object> data = br.getData();
+                        // Pre-check hash-ref existence to route missing payloads to DLQ even if parse doesn't throw
+                        try {
+                            String ref = payloadLifecycleManager.extractPayloadHashRef(data);
+                            if (ref != null) {
+                                org.redisson.api.RBucket<String> bucket = redissonClient.getBucket(ref, org.redisson.client.codec.StringCodec.INSTANCE);
+                                boolean okRef = false;
+                                try { okRef = bucket.isExists() && bucket.get() != null; } catch (Exception ignore) {}
+                                if (!okRef) {
+                                    handleMissingPayload(topic, group, partitionId, id, data);
+                                    continue;
+                                }
+                            }
+                        } catch (Exception ignore) {}
                         Message message;
                         try {
                             message = StreamEntryCodec.parsePartitionEntry(topic, id, data, payloadLifecycleManager);
@@ -448,8 +461,12 @@ public class RedisMessageConsumer implements MessageConsumer {
     private boolean isPayloadMissing(Throwable ex) {
         if (ex == null) return false;
         String msg = ex.getMessage();
-        if (msg != null && (msg.contains("Payload not found") || msg.contains("Failed to load payload"))) {
-            return true;
+        if (msg != null) {
+            // Support both lifecycle and direct-hash loader error messages
+            if (msg.contains("Payload not found") || msg.contains("Failed to load payload")
+                    || msg.contains("Payload not found in hash") || msg.contains("Failed to load payload from hash")) {
+                return true;
+            }
         }
         Throwable c = ex.getCause();
         return c != null && isPayloadMissing(c);
@@ -508,7 +525,23 @@ public class RedisMessageConsumer implements MessageConsumer {
             // Use StringCodec to keep DLQ entries codec-agnostic and consistent with admin/tools
             RStream<String, Object> dlqStream = redissonClient.getStream(dlqKey, org.redisson.client.codec.StringCodec.INSTANCE);
             Map<String, Object> dlqData = StreamEntryCodec.buildDlqEntry(message, payloadLifecycleManager);
-            dlqStream.add(StreamAddArgs.entries(dlqData));
+            // Normalize values to strings for StringCodec to avoid binary/non-string field issues
+            java.util.Map<String, Object> serialized = new java.util.HashMap<>(dlqData.size());
+            for (java.util.Map.Entry<String, Object> e : dlqData.entrySet()) {
+                Object v = e.getValue();
+                String s;
+                try {
+                    if (v == null || v instanceof String || v instanceof Number || v instanceof Boolean) {
+                        s = String.valueOf(v == null ? "" : v);
+                    } else {
+                        s = objectMapper.writeValueAsString(v);
+                    }
+                } catch (Exception ex) {
+                    s = String.valueOf(v);
+                }
+                serialized.put(e.getKey(), s);
+            }
+            dlqStream.add(StreamAddArgs.entries(serialized));
             log.warn("Message sent to dead letter queue: {}", dlqKey);
         } catch (Exception e) {
             log.error("Failed to send message to dead letter queue", e);

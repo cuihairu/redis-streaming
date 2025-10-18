@@ -40,12 +40,12 @@ public class CommitFrontierMultiGroupIntegrationTest {
             assertTrue(h2.await(3, TimeUnit.SECONDS));
 
             String frontierKey = StreamKeys.commitFrontier(topic, 0);
-            Map<String,String> fm = client.<String,String>getMap(frontierKey).readAllMap();
-            assertNotNull(fm);
-            assertTrue(fm.containsKey("g1"));
-            assertTrue(fm.containsKey("g2"));
-            assertNotNull(fm.get("g1"));
-            assertNotNull(fm.get("g2"));
+            // Frontier update is best-effort after ACK; wait briefly for both group entries to appear
+            boolean both = waitUntil(() -> {
+                Map<String,String> m = client.<String,String>getMap(frontierKey).readAllMap();
+                return m != null && m.containsKey("g1") && m.containsKey("g2") && m.get("g1") != null && m.get("g2") != null;
+            }, 3000);
+            assertTrue(both, "frontier map should contain both g1 and g2");
 
             c1.stop(); c1.close(); c2.stop(); c2.close(); p.close();
         } finally { client.shutdown(); }
@@ -56,5 +56,15 @@ public class CommitFrontierMultiGroupIntegrationTest {
         String redisUrl = System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379");
         config.useSingleServer().setAddress(redisUrl).setConnectionMinimumIdleSize(1).setConnectionPoolSize(8);
         return Redisson.create(config);
+    }
+
+    private boolean waitUntil(java.util.concurrent.Callable<Boolean> cond, long timeoutMs) throws Exception {
+        long dl = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < dl) {
+            Boolean ok = cond.call();
+            if (ok != null && ok) return true;
+            Thread.sleep(50);
+        }
+        return false;
     }
 }

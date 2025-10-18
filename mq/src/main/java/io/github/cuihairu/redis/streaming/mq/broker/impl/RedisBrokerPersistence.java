@@ -57,7 +57,7 @@ public class RedisBrokerPersistence implements BrokerPersistence {
             }
             serialized.put(e.getKey(), s);
         }
-        // Prefer atomic XADD MAXLEN to avoid concurrency race
+        // Prefer atomic XADD MAXLEN (= exact) to avoid concurrency race and ensure hard bound
         try {
             int maxLen = Math.max(0, options.getRetentionMaxLenPerPartition());
             if (maxLen > 0) {
@@ -69,7 +69,8 @@ public class RedisBrokerPersistence implements BrokerPersistence {
                 }
                 Object res = redissonClient.getScript().eval(
                         RScript.Mode.READ_WRITE,
-                        "return redis.call('XADD', KEYS[1], 'MAXLEN', ARGV[1], '*', unpack(ARGV, 2))",
+                        // Use '=' for exact trimming semantics (Redis 7+). Without it Redis may approximate and exceed the bound.
+                        "return redis.call('XADD', KEYS[1], 'MAXLEN', '=', ARGV[1], '*', unpack(ARGV, 2))",
                         RScript.ReturnType.VALUE,
                         java.util.Collections.singletonList(streamKey), argv.toArray());
                 String sid = res != null ? String.valueOf(res) : null;
@@ -88,9 +89,36 @@ public class RedisBrokerPersistence implements BrokerPersistence {
         try {
             int maxLen = options.getRetentionMaxLenPerPartition();
             if (maxLen > 0) {
-                String lua = "return redis.call('XTRIM', KEYS[1], 'MAXLEN', ARGV[1])";
-                redissonClient.getScript().eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.STATUS,
-                        java.util.Collections.singletonList(streamKey), String.valueOf(maxLen));
+                // Prefer exact trimming when available (Redis 7+)
+                try {
+                    String lua = "return redis.call('XTRIM', KEYS[1], 'MAXLEN', '=', ARGV[1])";
+                    redissonClient.getScript().eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.STATUS,
+                            java.util.Collections.singletonList(streamKey), String.valueOf(maxLen));
+                } catch (Exception eExact) {
+                    // Compatibility fallback for older Redis: approximate trimming (may exceed bound transiently)
+                    try {
+                        String luaApprox = "return redis.call('XTRIM', KEYS[1], 'MAXLEN', ARGV[1])";
+                        redissonClient.getScript().eval(RScript.Mode.READ_WRITE, luaApprox, RScript.ReturnType.STATUS,
+                                java.util.Collections.singletonList(streamKey), String.valueOf(maxLen));
+                    } catch (Exception ignore2) {}
+                }
+                // Enforce a hard cap if still above maxLen (delete oldest entries). This is a small exact trim
+                // to satisfy strict tests even on Redis versions without '=' exact trimming.
+                try {
+                    long size = stream.size();
+                    if (size > maxLen) {
+                        long toDelete = size - maxLen;
+                        int batch = (int) Math.min(Integer.MAX_VALUE, toDelete);
+                        @SuppressWarnings("deprecation")
+                        java.util.Map<StreamMessageId, java.util.Map<String, Object>> old = stream.range(batch, StreamMessageId.MIN, StreamMessageId.MAX);
+                        int removed = 0;
+                        for (StreamMessageId rid : old.keySet()) {
+                            try { stream.remove(rid); removed++; } catch (Exception ignore) {}
+                            if (removed >= toDelete) break;
+                        }
+                        try { io.github.cuihairu.redis.streaming.mq.metrics.RetentionMetrics.get().recordTrim(topic, partitionId, removed, "xdel"); } catch (Exception ignore) {}
+                    }
+                } catch (Exception ignore) {}
             }
         } catch (Exception ignore) {}
         return sid;

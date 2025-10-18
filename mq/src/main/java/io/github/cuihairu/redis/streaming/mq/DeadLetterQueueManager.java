@@ -39,16 +39,27 @@ public class DeadLetterQueueManager {
         String key = StreamKeys.dlq(topic);
         try {
             long sz = redissonClient.getStream(key).size();
-            if (sz == 0) {
-                @SuppressWarnings({"deprecation", "unchecked"})
-                Map<StreamMessageId, Map<String, Object>> any = (Map) redissonClient.getStream(key)
-                        .range(1, StreamMessageId.MIN, StreamMessageId.MAX);
-                return (any == null || any.isEmpty()) ? 0 : any.size();
-            }
-            return sz;
-        } catch (Exception e) {
-            return 0;
+            if (sz > 0) return sz;
+        } catch (Exception ignore) {
+            // fall through to codec fallback
         }
+        try {
+            long sz2 = redissonClient.getStream(key, org.redisson.client.codec.StringCodec.INSTANCE).size();
+            if (sz2 > 0) return sz2;
+        } catch (Exception ignore) {}
+        try {
+            @SuppressWarnings({"deprecation", "unchecked"})
+            Map<StreamMessageId, Map<String, Object>> any = (Map) redissonClient.getStream(key)
+                    .range(1, StreamMessageId.MIN, StreamMessageId.MAX);
+            if (any != null && !any.isEmpty()) return any.size();
+        } catch (Exception ignore) {}
+        try {
+            @SuppressWarnings({"deprecation", "unchecked"})
+            Map<StreamMessageId, Map<String, Object>> any = (Map) redissonClient.getStream(key, org.redisson.client.codec.StringCodec.INSTANCE)
+                    .range(1, StreamMessageId.MIN, StreamMessageId.MAX);
+            if (any != null && !any.isEmpty()) return any.size();
+        } catch (Exception ignore) {}
+        return 0;
     }
 
     /** List recent DLQ entries for a topic (ascending by id). */

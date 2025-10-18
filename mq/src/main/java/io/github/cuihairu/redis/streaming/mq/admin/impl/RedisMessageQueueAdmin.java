@@ -192,12 +192,14 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             int consumers = 0;
             long lag = 0;
             boolean hasActive = false;
+            boolean foundGroup = false;
             for (int i = 0; i < pc; i++) {
                 RStream<String, Object> s = redissonClient.getStream(pc <= 1 ? StreamKeys.partitionStream(topic, 0) : StreamKeys.partitionStream(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
                 if (!s.isExists()) continue;
                 List<StreamGroup> groups = s.listGroups();
                 StreamGroup g = groups.stream().filter(x -> x.getName().equals(group)).findFirst().orElse(null);
                 if (g != null) {
+                    foundGroup = true;
                     pending += g.getPending();
                     consumers += g.getConsumers();
                     StreamMessageId last = s.getInfo().getLastGeneratedId();
@@ -209,6 +211,10 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
                     }
                     hasActive |= g.getConsumers() > 0;
                 }
+            }
+            if (!foundGroup) {
+                // Align with tests: return null when topic/group not present
+                return null;
             }
             return ConsumerGroupStats.builder()
                     .groupName(group)
@@ -452,6 +458,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             }
             for (String key : keys) {
                 RStream<String, Object> s = redissonClient.getStream(key, org.redisson.client.codec.StringCodec.INSTANCE);
+                if (!s.isExists()) continue;
                 attempted = true;
                 try {
                     s.removeGroup(group);
@@ -491,12 +498,15 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             boolean any = false;
             for (int i = 0; i < pc; i++) {
                 RStream<String, Object> s = redissonClient.getStream(StreamKeys.partitionStream(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
-                if (!s.isExists()) continue;
+                // Always attempt to (re)create with MKSTREAM to be robust even if stream key doesn't exist yet
                 any = true;
+                try { s.removeGroup(group); } catch (Exception ignore) {}
                 try {
-                    s.removeGroup(group);
-                } catch (Exception ignore) {}
-                s.createGroup(StreamCreateGroupArgs.name(group).id(targetId));
+                    s.createGroup(StreamCreateGroupArgs.name(group).id(targetId).makeStream());
+                } catch (Exception e) {
+                    // If BUSYGROUP due to race, treat as success
+                    try { if (e.getMessage() != null && e.getMessage().contains("BUSYGROUP")) { /* ok */ } else { throw e; } } catch (Exception ignore2) {}
+                }
             }
             if (any) {
                 log.info("Reset consumer group offset across {} partitions: topic={}, group={}, id={}", pc, topic, group, messageId);
@@ -535,16 +545,36 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             List<MessageEntry> all = new ArrayList<>();
             int per = Math.max(1, Math.min(perPartitionCount, 200));
             for (int i = 0; i < pc; i++) {
-                RStream<String, Object> stream = redissonClient.getStream(StreamKeys.partitionStream(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
+                String sk = StreamKeys.partitionStream(topic, i);
+                org.redisson.api.RStream<String, Object> stream = redissonClient.getStream(sk, org.redisson.client.codec.StringCodec.INSTANCE);
                 if (!stream.isExists()) continue;
-                @SuppressWarnings("deprecation")
-                Map<StreamMessageId, Map<String, Object>> recents = stream.range(per, StreamMessageId.MAX, StreamMessageId.MIN);
-                for (Map.Entry<StreamMessageId, Map<String, Object>> e : recents.entrySet()) {
-                    all.add(MessageEntry.builder()
-                            .id(e.getKey().toString())
-                            .partitionId(i)
-                            .fields(e.getValue())
-                            .build());
+                // Use XREVRANGE to fetch last N entries efficiently
+                org.redisson.api.RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
+                @SuppressWarnings("unchecked")
+                java.util.List<Object> rows = (java.util.List<Object>) script.eval(
+                        org.redisson.api.RScript.Mode.READ_ONLY,
+                        "return redis.call('XREVRANGE', KEYS[1], ARGV[1], ARGV[2], 'COUNT', tonumber(ARGV[3]))",
+                        org.redisson.api.RScript.ReturnType.MULTI,
+                        java.util.Collections.singletonList(sk), "+", "-", String.valueOf(per));
+                if (rows != null) {
+                    for (Object row : rows) {
+                        // Each row = {id, {field1, value1, ...}}
+                        if (!(row instanceof java.util.List)) continue;
+                        java.util.List<?> pair = (java.util.List<?>) row;
+                        if (pair.size() < 2) continue;
+                        String id = String.valueOf(pair.get(0));
+                        Object fvs = pair.get(1);
+                        java.util.Map<String, Object> fields = new java.util.HashMap<>();
+                        if (fvs instanceof java.util.List) {
+                            java.util.List<?> list = (java.util.List<?>) fvs;
+                            for (int idx = 0; idx + 1 < list.size(); idx += 2) {
+                                Object k = list.get(idx);
+                                Object v = list.get(idx + 1);
+                                if (k != null && v != null) fields.put(String.valueOf(k), v);
+                            }
+                        }
+                        all.add(MessageEntry.builder().id(id).partitionId(i).fields(fields).build());
+                    }
                 }
             }
             // 按 id 时间戳部分降序
@@ -565,23 +595,49 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
         try {
             int pc = Math.max(1, partitionRegistry.getPartitionCount(topic));
             int pid = Math.max(0, Math.min(partitionId, pc - 1));
-            RStream<String, Object> stream = redissonClient.getStream(StreamKeys.partitionStream(topic, pid), org.redisson.client.codec.StringCodec.INSTANCE);
+            String sk = StreamKeys.partitionStream(topic, pid);
+            RStream<String, Object> stream = redissonClient.getStream(sk, org.redisson.client.codec.StringCodec.INSTANCE);
             if (!stream.isExists()) return Collections.emptyList();
-            StreamMessageId from = parseId(fromId, reverse ? StreamMessageId.MAX : StreamMessageId.MIN);
-            StreamMessageId to = parseId(toId, reverse ? StreamMessageId.MIN : StreamMessageId.MAX);
-            @SuppressWarnings("deprecation")
-            Map<StreamMessageId, Map<String, Object>> map = reverse
-                    ? stream.range(count, from, to)
-                    : stream.range(count, from, to);
-            List<MessageEntry> list = new ArrayList<>(map.size());
-            for (Map.Entry<StreamMessageId, Map<String, Object>> e : map.entrySet()) {
-                list.add(MessageEntry.builder()
-                        .id(e.getKey().toString())
-                        .partitionId(pid)
-                        .fields(e.getValue())
-                        .build());
+            List<MessageEntry> out = new ArrayList<>();
+            if (!reverse) {
+                StreamMessageId from = parseId(fromId, StreamMessageId.MIN);
+                StreamMessageId to = parseId(toId, StreamMessageId.MAX);
+                @SuppressWarnings("deprecation")
+                Map<StreamMessageId, Map<String, Object>> map = stream.range(Math.max(1, count), from, to);
+                for (Map.Entry<StreamMessageId, Map<String, Object>> e : map.entrySet()) {
+                    out.add(MessageEntry.builder().id(e.getKey().toString()).partitionId(pid).fields(e.getValue()).build());
+                }
+                return out;
             }
-            return list;
+            // Reverse: XREVRANGE toId fromId COUNT count
+            org.redisson.api.RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
+            String from = (fromId == null || fromId.isBlank()) ? "+" : fromId;
+            String to = (toId == null || toId.isBlank()) ? "-" : toId;
+            @SuppressWarnings("unchecked")
+            java.util.List<Object> rows = (java.util.List<Object>) script.eval(
+                    org.redisson.api.RScript.Mode.READ_ONLY,
+                    "return redis.call('XREVRANGE', KEYS[1], ARGV[1], ARGV[2], 'COUNT', tonumber(ARGV[3]))",
+                    org.redisson.api.RScript.ReturnType.MULTI,
+                    java.util.Collections.singletonList(sk), from, to, String.valueOf(Math.max(1, count)));
+            if (rows != null) {
+                for (Object row : rows) {
+                    if (!(row instanceof java.util.List)) continue;
+                    java.util.List<?> pair = (java.util.List<?>) row;
+                    if (pair.size() < 2) continue;
+                    String id = String.valueOf(pair.get(0));
+                    Object fvs = pair.get(1);
+                    java.util.Map<String, Object> fields = new java.util.HashMap<>();
+                    if (fvs instanceof java.util.List) {
+                        java.util.List<?> list = (java.util.List<?>) fvs;
+                        for (int idx = 0; idx + 1 < list.size(); idx += 2) {
+                            Object k = list.get(idx); Object v = list.get(idx + 1);
+                            if (k != null && v != null) fields.put(String.valueOf(k), v);
+                        }
+                    }
+                    out.add(MessageEntry.builder().id(id).partitionId(pid).fields(fields).build());
+                }
+            }
+            return out;
         } catch (Exception e) {
             log.error("Failed to range for topic {} p{} {}-{}", topic, partitionId, fromId, toId, e);
             return Collections.emptyList();

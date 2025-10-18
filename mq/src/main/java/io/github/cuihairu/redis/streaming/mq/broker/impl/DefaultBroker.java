@@ -48,6 +48,27 @@ public class DefaultBroker implements Broker {
     public java.util.List<io.github.cuihairu.redis.streaming.mq.broker.BrokerRecord> readGroup(String topic, String consumerGroup, String consumerName, int partitionId, int count, long timeoutMs) {
         String streamKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, partitionId);
         org.redisson.api.RStream<String, Object> stream = redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE);
+        // Best-effort: ensure the consumer group exists on this stream before reading. This avoids races
+        // where subscription hasn't created the group yet when the first message arrives.
+        try {
+            boolean exists = false;
+            try {
+                java.util.List<org.redisson.api.StreamGroup> groups = stream.listGroups();
+                if (groups != null) {
+                    for (org.redisson.api.StreamGroup g : groups) {
+                        if (consumerGroup.equals(g.getName())) { exists = true; break; }
+                    }
+                }
+            } catch (Exception ignore) {}
+            if (!exists) {
+                try {
+                    stream.createGroup(org.redisson.api.stream.StreamCreateGroupArgs
+                            .name(consumerGroup)
+                            .id(org.redisson.api.StreamMessageId.MIN)
+                            .makeStream());
+                } catch (Exception ignore) {}
+            }
+        } catch (Exception ignore) {}
         java.time.Duration timeout = java.time.Duration.ofMillis(timeoutMs < 0 ? 0 : timeoutMs);
         java.util.Map<org.redisson.api.StreamMessageId, java.util.Map<String, Object>> messages = stream.readGroup(
                 consumerGroup, consumerName,
