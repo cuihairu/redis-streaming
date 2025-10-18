@@ -93,7 +93,8 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
             try {
                 for (Sub s : subs.values()) {
                     String dlq = DlqKeys.dlq(s.topic);
-                    RStream<String, Object> stream = redissonClient.getStream(dlq);
+                    // Use StringCodec for DLQ stream to be codec-agnostic (fields are strings/JSON)
+                    RStream<String, Object> stream = redissonClient.getStream(dlq, org.redisson.client.codec.StringCodec.INSTANCE);
                     StreamMessageId last = lastIds.getOrDefault(s.topic, StreamMessageId.MIN);
                     Map<StreamMessageId, Map<String, Object>> polled = stream.read(
                             StreamReadArgs.greaterThan(last).count(10).timeout(Duration.ofMillis(500))
@@ -178,7 +179,8 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                                         } else {
                                             String topic = entry.getOriginalTopic();
                                             int pid = entry.getPartitionId();
-                                            RStream<String, Object> p = redissonClient.getStream("stream:topic:" + topic + ":p:" + pid);
+                                            // Replay to original partition stream with StringCodec for string fields
+                                            RStream<String, Object> p = redissonClient.getStream("stream:topic:" + topic + ":p:" + pid, org.redisson.client.codec.StringCodec.INSTANCE);
                                             Map<String, Object> d = DeadLetterCodec.buildPartitionEntryFromDlq(data, topic, pid);
                                             p.add(StreamAddArgs.entries(d));
                                             ok = true;
