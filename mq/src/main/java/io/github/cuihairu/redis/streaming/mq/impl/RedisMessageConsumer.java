@@ -635,7 +635,8 @@ public class RedisMessageConsumer implements MessageConsumer {
             // Update commit frontier (best-effort): keep max acknowledged id per group/partition
             try {
                 String frontierKey = StreamKeys.commitFrontier(topic, partitionId);
-                org.redisson.api.RMap<String, String> map = redissonClient.getMap(frontierKey, org.redisson.client.codec.StringCodec.INSTANCE);
+                // Use client's default codec to be readable by generic tooling/metrics/tests
+                org.redisson.api.RMap<String, String> map = redissonClient.getMap(frontierKey);
                 String prev = map.get(consumerGroup);
                 if (prev == null || compareStreamId(messageId, prev) > 0) {
                     map.put(consumerGroup, messageId);
