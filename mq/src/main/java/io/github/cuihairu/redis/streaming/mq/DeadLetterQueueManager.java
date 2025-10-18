@@ -38,10 +38,10 @@ public class DeadLetterQueueManager {
     public long getDeadLetterQueueSize(String topic) {
         String key = StreamKeys.dlq(topic);
         try {
-            long sz = redissonClient.getStream(key, org.redisson.client.codec.StringCodec.INSTANCE).size();
+            long sz = redissonClient.getStream(key).size();
             if (sz == 0) {
                 @SuppressWarnings({"deprecation", "unchecked"})
-                Map<StreamMessageId, Map<String, Object>> any = (Map) redissonClient.getStream(key, org.redisson.client.codec.StringCodec.INSTANCE)
+                Map<StreamMessageId, Map<String, Object>> any = (Map) redissonClient.getStream(key)
                         .range(1, StreamMessageId.MIN, StreamMessageId.MAX);
                 return (any == null || any.isEmpty()) ? 0 : any.size();
             }
@@ -55,7 +55,7 @@ public class DeadLetterQueueManager {
     public Map<StreamMessageId, Map<String, Object>> getDeadLetterMessages(String topic, int limit) {
         String key = StreamKeys.dlq(topic);
         try {
-            RStream<String, Object> dlq = redissonClient.getStream(key, org.redisson.client.codec.StringCodec.INSTANCE);
+            RStream<String, Object> dlq = redissonClient.getStream(key);
             Map<StreamMessageId, Map<String, Object>> res = dlq.range(Math.max(1, limit), StreamMessageId.MIN, StreamMessageId.MAX);
             return res != null ? res : Collections.emptyMap();
         } catch (Exception e) {
@@ -67,7 +67,7 @@ public class DeadLetterQueueManager {
     public boolean deleteMessage(String topic, StreamMessageId id) {
         String key = StreamKeys.dlq(topic);
         try {
-            return redissonClient.getStream(key, org.redisson.client.codec.StringCodec.INSTANCE).remove(id) > 0;
+            return redissonClient.getStream(key).remove(id) > 0;
         } catch (Exception e) {
             return false;
         }
@@ -77,7 +77,7 @@ public class DeadLetterQueueManager {
     public long clearDeadLetterQueue(String topic) {
         String key = StreamKeys.dlq(topic);
         try {
-            long size = redissonClient.getStream(key, org.redisson.client.codec.StringCodec.INSTANCE).size();
+            long size = redissonClient.getStream(key).size();
             long deleted = redissonClient.getKeys().delete(key);
             return deleted > 0 ? size : 0;
         } catch (Exception e) {
