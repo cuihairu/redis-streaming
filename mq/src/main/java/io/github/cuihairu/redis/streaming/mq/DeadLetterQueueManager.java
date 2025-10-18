@@ -97,10 +97,22 @@ public class DeadLetterQueueManager {
     public boolean replayMessage(String topic, StreamMessageId id) {
         String dlqKey = StreamKeys.dlq(topic);
         try {
-            RStream<String, Object> dlq = redissonClient.getStream(dlqKey, org.redisson.client.codec.StringCodec.INSTANCE);
-            Map<StreamMessageId, Map<String, Object>> one = dlq.range(1, id, id);
-            if (one == null || one.isEmpty()) return false;
-            Map<String, Object> data = one.get(id);
+            // Try default codec first, then StringCodec fallback (entries may be written with either)
+            Map<StreamMessageId, Map<String, Object>> one = null;
+            Map<String, Object> data = null;
+            try {
+                RStream<String, Object> dlqDef = redissonClient.getStream(dlqKey);
+                one = dlqDef.range(1, id, id);
+                if (one != null && !one.isEmpty()) data = one.get(id);
+            } catch (Exception ignore) {}
+            if (data == null) {
+                try {
+                    RStream<String, Object> dlqStr = redissonClient.getStream(dlqKey, org.redisson.client.codec.StringCodec.INSTANCE);
+                    one = dlqStr.range(1, id, id);
+                    if (one != null && !one.isEmpty()) data = one.get(id);
+                } catch (Exception ignore) {}
+            }
+            if (data == null) return false;
 
             // Determine partition
             int pid = 0;
