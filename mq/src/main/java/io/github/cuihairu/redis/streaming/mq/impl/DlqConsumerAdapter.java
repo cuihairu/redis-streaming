@@ -17,9 +17,11 @@ import java.util.Map;
 /** Adapter to expose reliability DLQ consumer as MQ MessageConsumer. */
 public class DlqConsumerAdapter implements MessageConsumer {
     private final DeadLetterConsumer delegate;
+    private final org.redisson.api.RedissonClient client;
     private static final com.fasterxml.jackson.databind.ObjectMapper _om = new com.fasterxml.jackson.databind.ObjectMapper();
 
     public DlqConsumerAdapter(RedissonClient client, String consumerName, MqOptions options) {
+        this.client = client;
         // Provide a robust replay handler: publish back to original partition using StringCodec
         io.github.cuihairu.redis.streaming.reliability.dlq.ReplayHandler replay = (topic, partitionId, payload, headers, maxRetries) -> {
             try {
@@ -69,11 +71,32 @@ public class DlqConsumerAdapter implements MessageConsumer {
         m.setHeaders(hdr);
         MessageHandleResult r = handler.handle(m);
         switch (r) {
-            case SUCCESS: return DeadLetterConsumer.HandleResult.SUCCESS;
-            case RETRY: return DeadLetterConsumer.HandleResult.RETRY;
+            case SUCCESS:
+                return DeadLetterConsumer.HandleResult.SUCCESS;
+            case RETRY: {
+                // Proactively replay once here to ensure visibility even if delegate replay path is delayed
+                try {
+                    int pid = e.getPartitionId();
+                    String topic = e.getOriginalTopic();
+                    String key = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, pid);
+                    org.redisson.api.RStream<String, Object> p = client.getStream(key, org.redisson.client.codec.StringCodec.INSTANCE);
+                    java.util.Map<String,Object> d = new java.util.HashMap<>();
+                    d.put("payload", (e.getPayload() instanceof String) ? e.getPayload() : toJson(e.getPayload()));
+                    d.put("timestamp", java.time.Instant.now().toString());
+                    d.put("retryCount", 0);
+                    d.put("maxRetries", Math.max(1, e.getMaxRetries()));
+                    d.put("topic", topic);
+                    d.put("partitionId", pid);
+                    if (e.getHeaders() != null && !e.getHeaders().isEmpty()) d.put("headers", toJson(e.getHeaders()));
+                    p.add(org.redisson.api.stream.StreamAddArgs.entries(d));
+                } catch (Exception ignore) {}
+                return DeadLetterConsumer.HandleResult.RETRY;
+            }
             case FAIL:
-            case DEAD_LETTER: return DeadLetterConsumer.HandleResult.FAIL;
-            default: return DeadLetterConsumer.HandleResult.FAIL;
+            case DEAD_LETTER:
+                return DeadLetterConsumer.HandleResult.FAIL;
+            default:
+                return DeadLetterConsumer.HandleResult.FAIL;
         }
     }
 
