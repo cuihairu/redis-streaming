@@ -29,8 +29,8 @@ jacoco {
     toolVersion = '0.8.10'
 }
 
-// Aggregate coverage for unit + integration tests in this module
-tasks.register('jacocoTestReport', JacocoReport) {
+// Configure coverage aggregation for unit + integration tests in this module
+tasks.named('jacocoTestReport', JacocoReport) {
     dependsOn tasks.withType(Test)
     reports {
         xml.required = true
