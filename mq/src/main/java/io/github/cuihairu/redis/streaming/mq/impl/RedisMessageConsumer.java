@@ -559,7 +559,7 @@ public class RedisMessageConsumer implements MessageConsumer {
                     if (message.getHeaders() != null && !message.getHeaders().isEmpty()) data.put("headers", objectToJson(message.getHeaders()));
                     RStream<String, Object> target = (stream != null)
                             ? stream
-                            : redissonClient.getStream(StreamKeys.partitionStream(topic, partitionId));
+                            : redissonClient.getStream(StreamKeys.partitionStream(topic, partitionId), org.redisson.client.codec.StringCodec.INSTANCE);
                     target.add(StreamAddArgs.entries(data));
                     MqMetrics.get().incRetried(topic, partitionId);
                     log.debug("Message {} re-enqueued directly for retry ({} ms)", messageId, delayMs);
@@ -624,7 +624,7 @@ public class RedisMessageConsumer implements MessageConsumer {
             } else {
                 // fallback get stream just for ack
                 String streamKey = StreamKeys.partitionStream(topic, partitionId);
-                redissonClient.getStream(streamKey).ack(consumerGroup, parseStreamId(messageId));
+                redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE).ack(consumerGroup, parseStreamId(messageId));
             }
 
             // Clean up large payload hash if exists
