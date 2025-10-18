@@ -61,15 +61,6 @@ public class Message {
      */
     private int maxRetries;
 
-    public Message(String topic, Object payload, String publisher) {
-        this.topic = topic;
-        this.payload = payload;
-        this.timestamp = Instant.now();
-        this.retryCount = 0;
-        this.maxRetries = 3;
-        this.publisher = publisher;
-    }
-
     public Message(String topic, Object payload) {
         this.topic = topic;
         this.payload = payload;
@@ -80,8 +71,9 @@ public class Message {
     }
 
     public Message(String topic, Object payload, Map<String, String> headers, String publisher) {
-        this(topic, payload, publisher);
+        this(topic, payload);
         this.headers = headers;
+        this.publisher = publisher;
     }
 
     public Message(String topic, Object payload, Map<String, String> headers) {
