@@ -214,11 +214,16 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                                         } else {
                                             String topic = entry.getOriginalTopic();
                                             int pid = entry.getPartitionId();
-                                            // Use client's default codec for replay to be symmetric with test writers
-                                            RStream<String, Object> p = redissonClient.getStream("stream:topic:" + topic + ":p:" + pid);
+                                            // Write with StringCodec for stable field protocol
+                                            RStream<String, Object> p = redissonClient.getStream("stream:topic:" + topic + ":p:" + pid, org.redisson.client.codec.StringCodec.INSTANCE);
                                             Map<String, Object> d = DeadLetterCodec.buildPartitionEntryFromDlq(data, topic, pid);
                                             p.add(StreamAddArgs.entries(d));
                                             ok = true;
+                                            // Visibility check + one retry
+                                            try {
+                                                boolean visible = p.isExists() && p.size() > 0;
+                                                if (!visible) { Thread.sleep(50); p.add(StreamAddArgs.entries(d)); }
+                                            } catch (Exception ignore) {}
                                         }
                                     } catch (Exception ex) {
                                         log.error("DLQ replay failed", ex);
@@ -228,7 +233,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                                                     .recordDlqReplay(entry.getOriginalTopic(), entry.getPartitionId(), ok,
                                                             System.nanoTime() - start);
                                         } catch (Exception ignore) {}
-                                        // ack regardless to avoid poison loop; admin can requeue explicitly
+                                        // ack regardless to avoid poison pending; admin can requeue explicitly
                                         stream.ack(s.group, id);
                                     }
                                     break;
