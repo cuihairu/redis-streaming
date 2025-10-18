@@ -9,7 +9,15 @@ allprojects {
     version = '0.1.0'
 
     repositories {
+        // Prefer mirrored repositories to avoid TLS/proxy issues resolving artifacts (e.g., JaCoCo agent)
+        maven { url = 'https://maven.aliyun.com/repository/public' }
+        maven { url = 'https://maven.aliyun.com/repository/central' }
+        maven { url = 'https://mirrors.cloud.tencent.com/nexus/repository/maven-public/' }
+        maven { url = 'https://repo.huaweicloud.com/repository/maven/' }
+        // Fallback to central
         mavenCentral()
+        // Optional
+        mavenLocal()
     }
 }
 
