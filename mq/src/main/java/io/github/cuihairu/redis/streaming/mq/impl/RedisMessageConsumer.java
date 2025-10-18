@@ -505,7 +505,8 @@ public class RedisMessageConsumer implements MessageConsumer {
     private void sendToDeadLetterQueue(Message message) {
         try {
             String dlqKey = StreamKeys.dlq(message.getTopic());
-            RStream<String, Object> dlqStream = redissonClient.getStream(dlqKey);
+            // Use StringCodec to keep DLQ entries codec-agnostic and consistent with admin/tools
+            RStream<String, Object> dlqStream = redissonClient.getStream(dlqKey, org.redisson.client.codec.StringCodec.INSTANCE);
             Map<String, Object> dlqData = StreamEntryCodec.buildDlqEntry(message, payloadLifecycleManager);
             dlqStream.add(StreamAddArgs.entries(dlqData));
             log.warn("Message sent to dead letter queue: {}", dlqKey);
