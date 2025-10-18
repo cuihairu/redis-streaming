@@ -161,7 +161,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                                                     .recordDlqReplay(entry.getOriginalTopic(), entry.getPartitionId(), replayed,
                                                             System.nanoTime() - start);
                                         } catch (Exception ignore) {}
-                                        if (replayed) { try { stream.remove(id); } catch (Exception ignore) {} }
+                                        // Keep DLQ entry for admin/replay even after successful replay on plain path
                                         break;
                                     }
                                     case FAIL:
