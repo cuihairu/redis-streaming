@@ -19,8 +19,25 @@ public class DlqConsumerAdapter implements MessageConsumer {
     private final DeadLetterConsumer delegate;
 
     public DlqConsumerAdapter(RedissonClient client, String consumerName, MqOptions options) {
+        // Provide a robust replay handler: publish back to original partition using StringCodec
+        io.github.cuihairu.redis.streaming.reliability.dlq.ReplayHandler replay = (topic, partitionId, payload, headers, maxRetries) -> {
+            try {
+                String key = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, partitionId);
+                org.redisson.api.RStream<String, Object> p = client.getStream(key, org.redisson.client.codec.StringCodec.INSTANCE);
+                java.util.Map<String,Object> d = new java.util.HashMap<>();
+                d.put("payload", payload);
+                d.put("timestamp", java.time.Instant.now().toString());
+                d.put("retryCount", 0);
+                d.put("maxRetries", Math.max(1, maxRetries));
+                d.put("topic", topic);
+                d.put("partitionId", partitionId);
+                if (headers != null && !headers.isEmpty()) d.put("headers", headers);
+                return p.add(org.redisson.api.stream.StreamAddArgs.entries(d)) != null;
+            } catch (Exception e) { return false; }
+        };
         this.delegate = new RedisDeadLetterConsumer(client, consumerName,
-                options != null ? options.getDefaultDlqGroup() : "dlq-group");
+                options != null ? options.getDefaultDlqGroup() : "dlq-group",
+                replay);
         // configure DLQ stream prefix to match MQ if needed
         io.github.cuihairu.redis.streaming.reliability.dlq.DlqKeys.configure(
                 options != null ? options.getStreamKeyPrefix() : "stream:topic");
@@ -65,4 +82,3 @@ public class DlqConsumerAdapter implements MessageConsumer {
     @Override public boolean isRunning() { return delegate.isRunning(); }
     @Override public boolean isClosed() { return delegate.isClosed(); }
 }
-
