@@ -93,8 +93,8 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
             try {
                 for (Sub s : subs.values()) {
                     String dlq = DlqKeys.dlq(s.topic);
-                    // Use StringCodec for DLQ stream to be codec-agnostic (fields are strings/JSON)
-                    RStream<String, Object> stream = redissonClient.getStream(dlq, org.redisson.client.codec.StringCodec.INSTANCE);
+                    // Use client's default codec to match writers that didn't normalize to strings
+                    RStream<String, Object> stream = redissonClient.getStream(dlq);
                     StreamMessageId last = lastIds.getOrDefault(s.topic, StreamMessageId.MIN);
                     Map<StreamMessageId, Map<String, Object>> polled = stream.read(
                             StreamReadArgs.greaterThan(last).count(10).timeout(Duration.ofMillis(500))
@@ -179,8 +179,8 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                                         } else {
                                             String topic = entry.getOriginalTopic();
                                             int pid = entry.getPartitionId();
-                                            // Replay to original partition stream with StringCodec for string fields
-                                            RStream<String, Object> p = redissonClient.getStream("stream:topic:" + topic + ":p:" + pid, org.redisson.client.codec.StringCodec.INSTANCE);
+                                            // Use client's default codec for replay to be symmetric with test writers
+                                            RStream<String, Object> p = redissonClient.getStream("stream:topic:" + topic + ":p:" + pid);
                                             Map<String, Object> d = DeadLetterCodec.buildPartitionEntryFromDlq(data, topic, pid);
                                             p.add(StreamAddArgs.entries(d));
                                             ok = true;
