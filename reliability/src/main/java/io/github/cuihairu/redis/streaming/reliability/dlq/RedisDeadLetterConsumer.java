@@ -35,6 +35,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final Map<String, Sub> subs = new ConcurrentHashMap<>();
     private final Map<String, StreamMessageId> lastIds = new ConcurrentHashMap<>();
+    private static final com.fasterxml.jackson.databind.ObjectMapper _om = new com.fasterxml.jackson.databind.ObjectMapper();
 
     public RedisDeadLetterConsumer(RedissonClient redissonClient, String consumerName, String defaultGroup) {
         this(redissonClient, consumerName, defaultGroup, null);
@@ -93,12 +94,22 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
             try {
                 for (Sub s : subs.values()) {
                     String dlq = DlqKeys.dlq(s.topic);
-                    // Use client's default codec to match writers that didn't normalize to strings
-                    RStream<String, Object> stream = redissonClient.getStream(dlq);
+                    // Try default codec first, then StringCodec as fallback
+                    RStream<String, Object> streamDefault = redissonClient.getStream(dlq);
+                    RStream<String, Object> streamString  = redissonClient.getStream(dlq, org.redisson.client.codec.StringCodec.INSTANCE);
+                    RStream<String, Object> stream = streamDefault;
                     StreamMessageId last = lastIds.getOrDefault(s.topic, StreamMessageId.MIN);
-                    Map<StreamMessageId, Map<String, Object>> polled = stream.read(
-                            StreamReadArgs.greaterThan(last).count(10).timeout(Duration.ofMillis(500))
-                    );
+                    Map<StreamMessageId, Map<String, Object>> polled = null;
+                    try {
+                        polled = streamDefault.read(StreamReadArgs.greaterThan(last).count(10).timeout(Duration.ofMillis(500)));
+                        stream = streamDefault;
+                    } catch (Exception ignore) {}
+                    if (polled == null || polled.isEmpty()) {
+                        try {
+                            polled = streamString.read(StreamReadArgs.greaterThan(last).count(10).timeout(Duration.ofMillis(500)));
+                            if (polled != null && !polled.isEmpty()) stream = streamString;
+                        } catch (Exception ignore) {}
+                    }
                     if (polled != null && !polled.isEmpty()) {
                         StreamMessageId maxId = last;
                         for (Map.Entry<StreamMessageId, Map<String, Object>> e : polled.entrySet()) {
@@ -121,16 +132,26 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                                                 String topic = entry.getOriginalTopic();
                                                 int pid = entry.getPartitionId();
                                                 String skey = "stream:topic:" + topic + ":p:" + pid;
-                                                RStream<String, Object> p = redissonClient.getStream(skey);
+                                                RStream<String, Object> p = redissonClient.getStream(skey, org.redisson.client.codec.StringCodec.INSTANCE);
                                                 Map<String, Object> d = new HashMap<>();
-                                                d.put("payload", entry.getPayload());
+                                                d.put("payload", (entry.getPayload() instanceof String) ? entry.getPayload() : toJson(entry.getPayload()));
                                                 d.put("timestamp", Instant.now().toString());
-                                                d.put("retryCount", 0);
-                                                d.put("maxRetries", entry.getMaxRetries());
+                                                d.put("retryCount", "0");
+                                                d.put("maxRetries", String.valueOf(entry.getMaxRetries()));
                                                 d.put("topic", topic);
-                                                d.put("partitionId", pid);
+                                                d.put("partitionId", String.valueOf(pid));
+                                                if (entry.getHeaders() != null && !entry.getHeaders().isEmpty()) d.put("headers", toJson(entry.getHeaders()));
                                                 StreamMessageId nid = p.add(StreamAddArgs.entries(d));
                                                 replayed = nid != null;
+                                                // Visibility check and one retry
+                                                try {
+                                                    boolean visible = p.isExists() && p.size() > 0;
+                                                    if (!visible) {
+                                                        Thread.sleep(50);
+                                                        nid = p.add(StreamAddArgs.entries(d));
+                                                        replayed = replayed || (nid != null);
+                                                    }
+                                                } catch (Exception ignore) {}
                                             }
                                         } catch (Exception ex2) {
                                             log.error("DLQ replay failed (plain)", ex2);
@@ -156,10 +177,24 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                         continue;
                     }
 
-                    try { stream.createGroup(StreamCreateGroupArgs.name(s.group).id(StreamMessageId.MIN).makeStream()); } catch (Exception ignore) {}
-                    Map<StreamMessageId, Map<String, Object>> messages = stream.readGroup(
-                            s.group, consumerName, StreamReadGroupArgs.neverDelivered().count(10).timeout(Duration.ofMillis(500))
-                    );
+                    // Group path: ensure group and read on default, then fallback to StringCodec
+                    Map<StreamMessageId, Map<String, Object>> messages = java.util.Collections.emptyMap();
+                    try {
+                        streamDefault.createGroup(StreamCreateGroupArgs.name(s.group).id(StreamMessageId.MIN).makeStream());
+                    } catch (Exception ignore) {}
+                    try {
+                        messages = streamDefault.readGroup(s.group, consumerName,
+                                StreamReadGroupArgs.neverDelivered().count(10).timeout(Duration.ofMillis(500)));
+                        stream = streamDefault;
+                    } catch (Exception ignore) {}
+                    if (messages == null || messages.isEmpty()) {
+                        try { streamString.createGroup(StreamCreateGroupArgs.name(s.group).id(StreamMessageId.MIN).makeStream()); } catch (Exception ignore) {}
+                        try {
+                            messages = streamString.readGroup(s.group, consumerName,
+                                    StreamReadGroupArgs.neverDelivered().count(10).timeout(Duration.ofMillis(500)));
+                            if (messages != null && !messages.isEmpty()) stream = streamString;
+                        } catch (Exception ignore) {}
+                    }
                     for (Map.Entry<StreamMessageId, Map<String, Object>> e : messages.entrySet()) {
                         StreamMessageId id = e.getKey();
                         Map<String, Object> data = e.getValue();
@@ -219,5 +254,9 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
         final String group;
         final DeadLetterHandler handler;
         Sub(String t, String g, DeadLetterHandler h){ this.topic=t; this.group=g; this.handler=h; }
+    }
+
+    private static String toJson(Object o) {
+        try { return _om.writeValueAsString(o); } catch (Exception e) { return String.valueOf(o); }
     }
 }
