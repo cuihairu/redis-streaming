@@ -82,8 +82,9 @@ public class Message {
     }
 
     public Message(String topic, String key, Object payload, String publisher) {
-        this(topic, payload, publisher);
+        this(topic, payload);
         this.key = key;
+        this.publisher = publisher;
     }
 
     public Message(String topic, String key, Object payload) {
