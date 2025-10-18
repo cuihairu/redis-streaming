@@ -15,6 +15,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /** Adapter to expose reliability DLQ consumer as MQ MessageConsumer. */
+@lombok.extern.slf4j.Slf4j
 public class DlqConsumerAdapter implements MessageConsumer {
     private final DeadLetterConsumer delegate;
     private final org.redisson.api.RedissonClient client;
@@ -37,6 +38,7 @@ public class DlqConsumerAdapter implements MessageConsumer {
                 d.put("partitionId", String.valueOf(partitionId));
                 if (headers != null && !headers.isEmpty()) d.put("headers", toJson(headers));
                 boolean ok = p.add(org.redisson.api.stream.StreamAddArgs.entries(d)) != null;
+                try { log.info("Adapter proactive replay: key={}, ok={}, size={}", key, ok, p.size()); } catch (Exception ignore) {}
                 // Visibility check + one retry for flakiness
                 try {
                     boolean visible = p.isExists() && p.size() > 0;

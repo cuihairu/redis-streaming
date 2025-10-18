@@ -55,7 +55,7 @@ public class RedisDeadLetterConsumerBranchesTest {
             dlq.add(StreamAddArgs.entries(e2));
 
             // Wait for processing/replay
-            RStream<String,Object> orig = client.getStream(StreamKeys.partitionStream(topic, 0));
+            RStream<String,Object> orig = client.getStream(StreamKeys.partitionStream(topic, 0), org.redisson.client.codec.StringCodec.INSTANCE);
             boolean ok = false;
             for (int i = 0; i < 200; i++) { // up to ~20s
                 if (orig.isExists() && orig.size() > 0) { ok = true; break; }

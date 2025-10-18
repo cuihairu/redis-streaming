@@ -111,6 +111,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                         } catch (Exception ignore) {}
                     }
                     if (polled != null && !polled.isEmpty()) {
+                        try { log.info("DLQ plain read: topic={}, codec={}, polled={} ", s.topic, (stream==streamDefault?"default":"string"), polled.size()); } catch (Exception ignore) {}
                         StreamMessageId maxId = last;
                         for (Map.Entry<StreamMessageId, Map<String, Object>> e : polled.entrySet()) {
                             StreamMessageId id = e.getKey();
@@ -121,6 +122,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                             switch (r) {
                                     case SUCCESS:
                                         // Do not delete on plain path; keep entry for admin tooling/replay
+                                        try { log.info("DLQ plain SUCCESS: topic={}, id={}", s.topic, id); } catch (Exception ignore) {}
                                         break;
                                     case RETRY: {
                                         boolean replayed = false;
@@ -128,6 +130,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                                         try {
                                             if (replayHandler != null) {
                                                 replayed = replayHandler.publish(entry.getOriginalTopic(), entry.getPartitionId(), entry.getPayload(), entry.getHeaders(), entry.getMaxRetries());
+                                                try { log.info("DLQ plain RETRY via handler: topic={}, pid={}, replayed={}", entry.getOriginalTopic(), entry.getPartitionId(), replayed); } catch (Exception ignore) {}
                                             } else {
                                                 String topic = entry.getOriginalTopic();
                                                 int pid = entry.getPartitionId();
@@ -143,6 +146,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                                                 if (entry.getHeaders() != null && !entry.getHeaders().isEmpty()) d.put("headers", toJson(entry.getHeaders()));
                                                 StreamMessageId nid = p.add(StreamAddArgs.entries(d));
                                                 replayed = nid != null;
+                                                try { log.info("DLQ plain RETRY replayed={}, origKey={}, nid={}", replayed, skey, nid); } catch (Exception ignore) {}
                                                 // Visibility check and one retry
                                                 try {
                                                     boolean visible = p.isExists() && p.size() > 0;
@@ -150,6 +154,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                                                         Thread.sleep(50);
                                                         nid = p.add(StreamAddArgs.entries(d));
                                                         replayed = replayed || (nid != null);
+                                                        try { log.info("DLQ plain RETRY visibility retry: origKey={}, visibleAfter={} size={}", skey, (p.isExists() && p.size()>0), p.size()); } catch (Exception ignore) {}
                                                     }
                                                 } catch (Exception ignore) {}
                                             }
@@ -195,6 +200,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                             if (messages != null && !messages.isEmpty()) stream = streamString;
                         } catch (Exception ignore) {}
                     }
+                    try { if (messages!=null && !messages.isEmpty()) log.info("DLQ group read: topic={}, codec=default, messages={}", s.topic, messages.size()); } catch (Exception ignore) {}
                     for (Map.Entry<StreamMessageId, Map<String, Object>> e : messages.entrySet()) {
                         StreamMessageId id = e.getKey();
                         Map<String, Object> data = e.getValue();
@@ -204,6 +210,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                             switch (r) {
                                 case SUCCESS:
                                     stream.ack(s.group, id);
+                                    try { log.info("DLQ group SUCCESS: topic={}, id={}", s.topic, id); } catch (Exception ignore) {}
                                     break;
                                 case RETRY: {
                                     long start = System.nanoTime();
@@ -223,6 +230,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                                             try {
                                                 boolean visible = p.isExists() && p.size() > 0;
                                                 if (!visible) { Thread.sleep(50); p.add(StreamAddArgs.entries(d)); }
+                                                try { log.info("DLQ group RETRY replay ok={}, origKey=stream:topic:{}:p:{}, visible={} size={}", ok, topic, pid, (p.isExists() && p.size()>0), p.size()); } catch (Exception ignore) {}
                                             } catch (Exception ignore) {}
                                         }
                                     } catch (Exception ex) {
