@@ -2,6 +2,7 @@ package io.github.cuihairu.redis.streaming.mq;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import io.github.cuihairu.redis.streaming.mq.impl.PayloadHeaders;
 import io.github.cuihairu.redis.streaming.mq.impl.PayloadLifecycleManager;
 import io.github.cuihairu.redis.streaming.mq.impl.StreamEntryCodec;
@@ -28,7 +29,10 @@ import java.util.Map;
 @SuppressWarnings("deprecation")
 public class DeadLetterQueueManager {
     private final RedissonClient redissonClient;
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    // Keep a configured mapper to parse any JSON header maps reliably
+    private static final ObjectMapper MAPPER = new ObjectMapper()
+            .findAndRegisterModules()
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     public DeadLetterQueueManager(RedissonClient redissonClient) {
         this.redissonClient = redissonClient;

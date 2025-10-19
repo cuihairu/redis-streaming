@@ -56,6 +56,16 @@ final class DeadLetterCodec {
         Object hdr = data.get("headers");
         if (hdr instanceof java.util.Map) {
             ((java.util.Map<?,?>) hdr).forEach((k,v) -> { if (k!=null && v!=null) headers.put(String.valueOf(k), String.valueOf(v)); });
+        } else if (hdr instanceof String) {
+            // Be tolerant: some producers store headers as JSON string
+            try {
+                @SuppressWarnings("unchecked")
+                java.util.Map<String,Object> m = new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readValue((String) hdr, new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String,Object>>(){});
+                if (m != null) {
+                    m.forEach((k,v) -> { if (k!=null && v!=null) headers.put(String.valueOf(k), String.valueOf(v)); });
+                }
+            } catch (Exception ignore) {}
         }
         if (topic != null) headers.put("originalTopic", topic);
         headers.put("partitionId", Integer.toString(pid));

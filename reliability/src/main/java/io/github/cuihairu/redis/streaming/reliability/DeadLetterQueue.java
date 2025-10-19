@@ -4,6 +4,7 @@ import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * A queue for storing failed elements that could not be processed.
@@ -16,6 +17,7 @@ public class DeadLetterQueue<T> implements Serializable {
 
     private final ConcurrentLinkedQueue<FailedElement<T>> queue;
     private final int maxSize;
+    private final AtomicInteger sizeCounter = new AtomicInteger(0);
 
     /**
      * Create a dead letter queue with unlimited size
@@ -43,11 +45,27 @@ public class DeadLetterQueue<T> implements Serializable {
      * @return true if added successfully, false if queue is full
      */
     public boolean add(T element, Exception exception, int attemptCount) {
-        if (queue.size() >= maxSize) {
-            return false;
+        // Fast-path check then CAS to avoid overshoot under contention
+        while (true) {
+            int s = sizeCounter.get();
+            if (s >= maxSize) {
+                return false;
+            }
+            if (sizeCounter.compareAndSet(s, s + 1)) {
+                break;
+            }
         }
-        FailedElement<T> failedElement = new FailedElement<>(element, exception, attemptCount);
-        return queue.offer(failedElement);
+        boolean offered = false;
+        try {
+            FailedElement<T> failedElement = new FailedElement<>(element, exception, attemptCount);
+            offered = queue.offer(failedElement);
+            return offered;
+        } finally {
+            if (!offered) {
+                // Extremely rare for ConcurrentLinkedQueue.offer to fail; keep counters consistent
+                sizeCounter.decrementAndGet();
+            }
+        }
     }
 
     /**
@@ -56,7 +74,9 @@ public class DeadLetterQueue<T> implements Serializable {
      * @return The next failed element, or null if queue is empty
      */
     public FailedElement<T> poll() {
-        return queue.poll();
+        FailedElement<T> e = queue.poll();
+        if (e != null) sizeCounter.decrementAndGet();
+        return e;
     }
 
     /**
@@ -83,7 +103,7 @@ public class DeadLetterQueue<T> implements Serializable {
      * @return The number of elements in the queue
      */
     public int size() {
-        return queue.size();
+        return sizeCounter.get();
     }
 
     /**
@@ -101,7 +121,7 @@ public class DeadLetterQueue<T> implements Serializable {
      * @return true if full
      */
     public boolean isFull() {
-        return queue.size() >= maxSize;
+        return sizeCounter.get() >= maxSize;
     }
 
     /**
@@ -109,6 +129,7 @@ public class DeadLetterQueue<T> implements Serializable {
      */
     public void clear() {
         queue.clear();
+        sizeCounter.set(0);
     }
 
     /**

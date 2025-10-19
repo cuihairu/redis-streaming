@@ -34,11 +34,13 @@ public class RetryExecutor implements Serializable {
             try {
                 return function.apply(input);
             } catch (Exception e) {
-                lastException = e;
+                // Unwrap RuntimeException(e.getCause()) so retry policy can match real root cause
+                Exception eval = unwrap(e);
+                lastException = eval;
 
                 // Check if we should retry
-                if (attempt >= maxAttempts || !policy.isRetryable(e)) {
-                    throw e;
+                if (attempt >= maxAttempts || !policy.isRetryable(eval)) {
+                    throw eval;
                 }
 
                 // Wait before retrying
@@ -90,5 +92,16 @@ public class RetryExecutor implements Serializable {
     @FunctionalInterface
     public interface RunnableWithException {
         void run() throws Exception;
+    }
+
+    /**
+     * If we caught a RuntimeException wrapping a checked Exception, unwrap it
+     * so that retry filters (whitelist/blacklist) can correctly match the cause.
+     */
+    private static Exception unwrap(Exception e) {
+        if (e instanceof RuntimeException && e.getCause() instanceof Exception) {
+            return (Exception) e.getCause();
+        }
+        return e;
     }
 }

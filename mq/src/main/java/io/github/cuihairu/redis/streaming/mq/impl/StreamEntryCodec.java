@@ -2,6 +2,7 @@ package io.github.cuihairu.redis.streaming.mq.impl;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import io.github.cuihairu.redis.streaming.mq.Message;
 import org.redisson.api.RedissonClient;
 
@@ -15,7 +16,10 @@ import java.util.UUID;
  * scattering ad-hoc Map assembly/parsing logic across the codebase.
  */
 public final class StreamEntryCodec {
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    // Reuse a pre-configured ObjectMapper to keep JSON handling consistent (e.g., Java Time)
+    private static final ObjectMapper MAPPER = new ObjectMapper()
+            .findAndRegisterModules()
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     private StreamEntryCodec() {}
 

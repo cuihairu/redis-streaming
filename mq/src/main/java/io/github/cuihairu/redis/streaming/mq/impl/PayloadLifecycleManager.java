@@ -2,6 +2,7 @@ package io.github.cuihairu.redis.streaming.mq.impl;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import io.github.cuihairu.redis.streaming.mq.Message;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
 import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
@@ -26,7 +27,10 @@ import java.util.*;
 @Slf4j
 public class PayloadLifecycleManager {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    // Use a single, pre-configured ObjectMapper that supports Java 8 date/time types
+    private static final ObjectMapper MAPPER = new ObjectMapper()
+            .findAndRegisterModules() // picks up jackson-datatype-jsr310 if present
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     private final RedissonClient redissonClient;
     private final String controlPrefix;
