@@ -4,6 +4,7 @@ import java.lang.management.ManagementFactory;
 import java.lang.management.RuntimeMXBean;
 import java.lang.management.ThreadMXBean;
 import java.util.Map;
+import io.github.cuihairu.redis.streaming.core.utils.SystemUtils;
 
 /**
  * 应用程序指标收集器
@@ -33,12 +34,10 @@ public class ApplicationMetricCollector implements MetricCollector {
             }
         }
 
-        String hostname;
+        String hostname = "unknown";
         try {
-            hostname = java.net.InetAddress.getLocalHost().getHostName();
-        } catch (Exception e) {
-            hostname = "unknown";
-        }
+            hostname = SystemUtils.getLocalHostname();
+        } catch (Throwable ignore) {}
 
         return Map.of(
                 "threadCount", threadBean.getThreadCount(),
