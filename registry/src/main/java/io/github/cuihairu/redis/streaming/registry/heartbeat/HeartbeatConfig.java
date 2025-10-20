@@ -42,10 +42,10 @@ public class HeartbeatConfig {
      */
     private Map<String, ChangeThreshold> changeThresholds = Map.of(
             MetricKeys.MEMORY_HEAP_USAGE_PERCENT, new ChangeThreshold(10.0, ChangeThresholdType.ABSOLUTE),     // 内存变化10%
-            MetricKeys.CPU_PROCESS_LOAD, new ChangeThreshold(20.0, ChangeThresholdType.ABSOLUTE),   // CPU变化20%
-            MetricKeys.DISK_USAGE_PERCENT, new ChangeThreshold(5.0, ChangeThresholdType.ABSOLUTE), // 磁盘变化5%
-            MetricKeys.APPLICATION_THREAD_COUNT, new ChangeThreshold(100, ChangeThresholdType.ABSOLUTE), // 线程数变化100
-            MetricKeys.HEALTHY, new ChangeThreshold(0, ChangeThresholdType.ANY)              // 健康状态任何变化
+            MetricKeys.CPU_PROCESS_LOAD, new ChangeThreshold(0.20, ChangeThresholdType.ABSOLUTE),              // CPU变化0.20（即20%）
+            MetricKeys.DISK_USAGE_PERCENT, new ChangeThreshold(5.0, ChangeThresholdType.ABSOLUTE),             // 磁盘变化5%
+            MetricKeys.APPLICATION_THREAD_COUNT, new ChangeThreshold(100, ChangeThresholdType.ABSOLUTE),       // 线程数变化100
+            MetricKeys.HEALTHY, new ChangeThreshold(0, ChangeThresholdType.ANY)                                // 健康状态任何变化
     );
 
     // ========== Metadata 相关配置（新增）==========

@@ -20,12 +20,17 @@ public class DiskMetricCollector implements MetricCollector {
         long free = root.getFreeSpace();
         long used = total - free;
 
-        return Map.of(
-                "total", total,
-                "free", free,
-                "used", used,
-                "usagePercent", total > 0 ? (double) used / total * 100 : 0
-        );
+        double pct = total > 0 ? (double) used / total * 100 : 0;
+        java.util.Map<String, Object> out = new java.util.HashMap<>();
+        out.put("totalSpace", total);
+        out.put(MetricKeys.DISK_TOTAL_SPACE, total);
+        out.put("freeSpace", free);
+        out.put(MetricKeys.DISK_FREE_SPACE, free);
+        out.put("usedSpace", used);
+        out.put(MetricKeys.DISK_USED_SPACE, used);
+        out.put("usagePercent", pct);
+        out.put(MetricKeys.DISK_USAGE_PERCENT, pct);
+        return out;
     }
 
     @Override

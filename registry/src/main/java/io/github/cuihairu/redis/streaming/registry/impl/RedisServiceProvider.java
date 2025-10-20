@@ -79,6 +79,8 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
             collectors.add(new CpuMetricCollector());
             collectors.add(new MemoryMetricCollector());
             collectors.add(new ApplicationMetricCollector());
+            // GC metrics (low cost)
+            collectors.add(new io.github.cuihairu.redis.streaming.registry.metrics.GcMetricCollector());
             // disk collector (low cost)
             collectors.add(new io.github.cuihairu.redis.streaming.registry.metrics.DiskMetricCollector());
             // optional network collector if available (Linux /proc)
