@@ -97,7 +97,12 @@ public class MetricsCollectionManager {
         }
     }
 
-    /** Map dotted key -> 旧版大写键名（仅维护常见字段） */
+    /**
+     * Map dotted key -> 旧版大写键名（仅维护常见字段）
+     * 说明：这里访问了被 @Deprecated 标注的旧键，以实现过渡期双写；
+     * 下个小版本会移除此方法与双写逻辑。
+     */
+    @SuppressWarnings("deprecation")
     private String legacyKeyOf(String dotted) {
         return switch (dotted) {
             case MetricKeys.CPU_PROCESS_LOAD -> MetricKeys.LEGACY_CPU_PROCESS_LOAD;
