@@ -245,6 +245,46 @@ streaming:
     connection-minimum-idle-size: 10 # 最小空闲连接
 ```
 
+## 📑 模块骨架（占位）
+
+### 1. 依赖与版本
+- JDK 17+，Redis 6+
+- Gradle/Maven 依赖见上述“添加依赖”章节
+
+### 2. 配置项清单（概览）
+- Redis：`streaming.redis.*` 或通过 redisson-spring-boot-starter 统一配置
+- Registry：`streaming.registry.*`
+- MQ：`redis-streaming.mq.*`（新版前缀），消费/重试/搬运参数
+- Reliability：重试/DLQ/去重/限流开关与参数（Starter 中的自动装配）
+
+### 3. 自动装配与关键 Bean
+- `MessageQueueFactory`, `MessageQueueAdmin`, `DeadLetterService/Admin`
+- `RateLimiterRegistry`、`RateLimiter`（可命名多策略）
+- Micrometer Binders：MQ、Retention、Reliability 指标
+
+### 4. 指标导出
+- 参考“Micrometer/Prometheus”章节；主要指标：`mq_*`、`retention_*`、`reliability_*`
+
+### 5. 最小示例（占位）
+```yaml
+spring:
+  application:
+    name: demo
+redis-streaming:
+  mq:
+    enabled: true
+```
+```java
+@SpringBootApplication
+@EnableRedisStreaming
+public class App { public static void main(String[] args){ SpringApplication.run(App.class,args);} }
+```
+
+### 6. 常见问题（占位）
+- 与 redisson-spring-boot-starter 的共存与优先级
+- 组消费首条消息与 `>` 行为；组创建顺序
+- 本地/CI 集成测试依赖 Redis 环境
+
 ### 服务注册配置
 
 ```yaml
