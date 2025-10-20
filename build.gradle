@@ -14,10 +14,11 @@ scmVersion {
     }
 }
 
+// Set project version early (root), subprojects will inherit
+version = (findProperty('version') ?: scmVersion.version)
+
 allprojects {
     group = 'io.github.cuihairu.redis-streaming'
-    // Derive version from git tags via axion-release; allow override with -Pversion
-    version = (findProperty('version') ?: rootProject.scmVersion.version)
 
     repositories {
         // Prefer mirrored repositories to avoid TLS/proxy issues resolving artifacts (e.g., JaCoCo agent)
