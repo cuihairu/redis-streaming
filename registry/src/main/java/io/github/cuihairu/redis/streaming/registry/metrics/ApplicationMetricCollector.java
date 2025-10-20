@@ -20,6 +20,26 @@ public class ApplicationMetricCollector implements MetricCollector {
         ThreadMXBean threadBean = ManagementFactory.getThreadMXBean();
         RuntimeMXBean runtimeBean = ManagementFactory.getRuntimeMXBean();
 
+        long pid;
+        try {
+            pid = ProcessHandle.current().pid();
+        } catch (Throwable t) {
+            // Fallback to legacy JVM name parsing (pid@hostname)
+            try {
+                String name = runtimeBean.getName();
+                pid = Long.parseLong(name.split("@")[0]);
+            } catch (Exception e) {
+                pid = -1L;
+            }
+        }
+
+        String hostname;
+        try {
+            hostname = java.net.InetAddress.getLocalHost().getHostName();
+        } catch (Exception e) {
+            hostname = "unknown";
+        }
+
         return Map.of(
                 "threadCount", threadBean.getThreadCount(),
                 "peakThreadCount", threadBean.getPeakThreadCount(),
@@ -27,7 +47,9 @@ public class ApplicationMetricCollector implements MetricCollector {
                 "uptime", runtimeBean.getUptime(),
                 "startTime", runtimeBean.getStartTime(),
                 "vmName", runtimeBean.getVmName(),
-                "vmVersion", runtimeBean.getVmVersion()
+                "vmVersion", runtimeBean.getVmVersion(),
+                "pid", pid,
+                "hostname", hostname
         );
     }
 }
