@@ -23,7 +23,7 @@ public class MetricsConfig {
     // 指标变化阈值
     private Map<String, ChangeThreshold> changeThresholds = Map.of(
             MetricKeys.MEMORY_HEAP_USAGE_PERCENT, new ChangeThreshold(10.0, ChangeThresholdType.ABSOLUTE),
-            MetricKeys.CPU_PROCESS_LOAD, new ChangeThreshold(20.0, ChangeThresholdType.ABSOLUTE),
+            MetricKeys.CPU_PROCESS_LOAD, new ChangeThreshold(0.20, ChangeThresholdType.ABSOLUTE),
             MetricKeys.DISK_USAGE_PERCENT, new ChangeThreshold(5.0, ChangeThresholdType.ABSOLUTE)
     );
 

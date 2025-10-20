@@ -22,20 +22,31 @@ public class CpuMetricCollector implements MetricCollector {
 
     @Override
     public Object collectMetric() {
-        // 需要 com.sun.management.OperatingSystemMXBean 获取详细CPU信息
+        // 说明：统一约定 CPU_*_LOAD 语义为 0~1 的小数，百分比转换交由消费端
         if (osBean instanceof com.sun.management.OperatingSystemMXBean sunOsBean) {
-            double processCpuLoad = sunOsBean.getProcessCpuLoad();
-            return Map.of(
-                    "processCpuLoad", processCpuLoad >= 0 ? processCpuLoad * 100 : -1,
-                    "availableProcessors", osBean.getAvailableProcessors(),
-                    "loadAverage", osBean.getSystemLoadAverage()
-            );
+            double processCpuLoad = sunOsBean.getProcessCpuLoad();  // 0~1 或 -1
+            double systemCpuLoad = sunOsBean.getCpuLoad();    // 0~1 或 -1
+
+            java.util.Map<String, Object> out = new java.util.HashMap<>();
+            if (processCpuLoad >= 0) {
+                out.put("processCpuLoad", processCpuLoad);
+                out.put(MetricKeys.CPU_PROCESS_LOAD, processCpuLoad);
+            }
+            if (systemCpuLoad >= 0) {
+                out.put("systemCpuLoad", systemCpuLoad);
+                out.put(MetricKeys.CPU_SYSTEM_LOAD, systemCpuLoad);
+            }
+            out.put("availableProcessors", osBean.getAvailableProcessors());
+            out.put(MetricKeys.CPU_AVAILABLE_PROCESSORS, osBean.getAvailableProcessors());
+            out.put("loadAverage", osBean.getSystemLoadAverage()); // 信息项，消费端不再兜底估算
+            return out;
         }
 
-        return Map.of(
-                "availableProcessors", osBean.getAvailableProcessors(),
-                "loadAverage", osBean.getSystemLoadAverage()
-        );
+        // 降级：无法获取详细CPU信息时仅上报可用核数和系统平均负载
+        java.util.Map<String, Object> out = new java.util.HashMap<>();
+        out.put("availableProcessors", osBean.getAvailableProcessors());
+        out.put("loadAverage", osBean.getSystemLoadAverage());
+        return out;
     }
 
     @Override

@@ -40,12 +40,12 @@ public final class MetricKeys {
     // ==================== CPU 相关指标 ====================
 
     /**
-     * 进程CPU负载（0-100）
+     * 进程CPU负载（0~1 小数）。消费端如需百分比，请自行 *100。
      */
     public static final String CPU_PROCESS_LOAD = "cpu.processCpuLoad";
 
     /**
-     * 系统CPU负载（0-100）
+     * 系统CPU负载（0~1 小数）。消费端如需百分比，请自行 *100。
      */
     public static final String CPU_SYSTEM_LOAD = "cpu.systemCpuLoad";
 
@@ -143,4 +143,45 @@ public final class MetricKeys {
      * 错误数
      */
     public static final String NETWORK_ERRORS = "network.errors";
+
+    // ==================== 兼容性（旧键）====================
+    // 过渡期双写这些旧键，消费端可优先使用上面的扁平/分层统一键；下个小版本将清理这些旧键。
+
+    /**
+     * 旧键：进程CPU负载（百分比或小数不定）。请改用 CPU_PROCESS_LOAD（0~1）。
+     */
+    @Deprecated public static final String LEGACY_CPU_PROCESS_LOAD = "CPU_PROCESS_LOAD";
+
+    /**
+     * 旧键：系统CPU负载（百分比或小数不定）。请改用 CPU_SYSTEM_LOAD（0~1）。
+     */
+    @Deprecated public static final String LEGACY_CPU_SYSTEM_LOAD = "CPU_SYSTEM_LOAD";
+
+    /**
+     * 旧键：可用CPU核心数。请改用 CPU_AVAILABLE_PROCESSORS。
+     */
+    @Deprecated public static final String LEGACY_CPU_AVAILABLE_PROCESSORS = "CPU_AVAILABLE_PROCESSORS";
+
+    /**
+     * 旧键：堆内存已使用（字节）。请改用 MEMORY_HEAP_USED。
+     */
+    @Deprecated public static final String LEGACY_MEMORY_HEAP_USED = "MEMORY_HEAP_USED";
+
+    /**
+     * 旧键：堆内存最大（字节）。请改用 MEMORY_HEAP_MAX。
+     */
+    @Deprecated public static final String LEGACY_MEMORY_HEAP_MAX = "MEMORY_HEAP_MAX";
+
+    /**
+     * 旧键：磁盘总/已用/可用（字节）。请改用 DISK_TOTAL_SPACE / DISK_USED_SPACE / DISK_FREE_SPACE。
+     */
+    @Deprecated public static final String LEGACY_DISK_TOTAL_SPACE = "DISK_TOTAL_SPACE";
+    @Deprecated public static final String LEGACY_DISK_USED_SPACE  = "DISK_USED_SPACE";
+    @Deprecated public static final String LEGACY_DISK_FREE_SPACE  = "DISK_FREE_SPACE";
+
+    /**
+     * 旧键：系统平均负载。仅用于旧版兜底，不建议消费端再依赖。
+     */
+    @Deprecated public static final String LEGACY_SYSTEM_LOAD_AVERAGE = "SYSTEM_LOAD_AVERAGE";
+    @Deprecated public static final String LEGACY_LOAD_AVERAGE = "LOAD_AVERAGE";
 }

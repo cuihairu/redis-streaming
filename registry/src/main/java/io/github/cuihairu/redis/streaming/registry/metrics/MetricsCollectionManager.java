@@ -21,6 +21,8 @@ public class MetricsCollectionManager {
     private final Map<String, Object> lastMetrics = new ConcurrentHashMap<>();
     private final Map<String, Long> lastCollectionTimes = new ConcurrentHashMap<>();
 
+    private volatile boolean legacyWarnLogged = false;
+
     public MetricsCollectionManager(List<MetricCollector> collectors, MetricsConfig config) {
         this.collectors = collectors != null ? collectors : Collections.emptyList();
         this.config = config != null ? config : new MetricsConfig();
@@ -56,6 +58,8 @@ public class MetricsCollectionManager {
                 Object metric = collectWithTimeout(collector);
                 if (metric != null) {
                     result.put(metricType, metric);
+                    // 统一：扁平化为 dotted key（如 cpu.processCpuLoad），并做过渡期旧键双写
+                    addDottedAndLegacyKeys(metricType, metric, result);
                     lastMetrics.put(metricType, metric);
                     lastCollectionTimes.put(metricType, now);
                 }
@@ -65,6 +69,47 @@ public class MetricsCollectionManager {
         }
 
         return result;
+    }
+
+    /**
+     * 将分组的指标（如 {processCpuLoad: 0.2}）扁平化到 result 顶层（如 cpu.processCpuLoad -> 0.2），
+     * 并在过渡期同步写入旧键（大写风格）以便消费端兼容。
+     */
+    @SuppressWarnings("unchecked")
+    private void addDottedAndLegacyKeys(String metricType, Object metric, Map<String, Object> out) {
+        if (!(metric instanceof Map)) return;
+        Map<String, Object> m = (Map<String, Object>) metric;
+        for (Map.Entry<String, Object> e : m.entrySet()) {
+            String leaf = e.getKey();
+            Object val = e.getValue();
+            // 如果子键已经是 dotted 形式（包含点），直接使用；否则前缀 metricType.
+            String dotted = leaf.contains(".") ? leaf : (metricType + "." + leaf);
+            out.put(dotted, val);
+            // 旧键映射（有限集合）
+            String legacy = legacyKeyOf(dotted);
+            if (legacy != null) {
+                out.put(legacy, val);
+                if (!legacyWarnLogged) {
+                    legacyWarnLogged = true;
+                    logger.warn("[metrics] Writing legacy metric keys for compatibility; will be removed in next minor release.");
+                }
+            }
+        }
+    }
+
+    /** Map dotted key -> 旧版大写键名（仅维护常见字段） */
+    private String legacyKeyOf(String dotted) {
+        return switch (dotted) {
+            case MetricKeys.CPU_PROCESS_LOAD -> MetricKeys.LEGACY_CPU_PROCESS_LOAD;
+            case MetricKeys.CPU_SYSTEM_LOAD -> MetricKeys.LEGACY_CPU_SYSTEM_LOAD;
+            case MetricKeys.CPU_AVAILABLE_PROCESSORS -> MetricKeys.LEGACY_CPU_AVAILABLE_PROCESSORS;
+            case MetricKeys.MEMORY_HEAP_USED -> MetricKeys.LEGACY_MEMORY_HEAP_USED;
+            case MetricKeys.MEMORY_HEAP_MAX -> MetricKeys.LEGACY_MEMORY_HEAP_MAX;
+            case MetricKeys.DISK_TOTAL_SPACE -> MetricKeys.LEGACY_DISK_TOTAL_SPACE;
+            case MetricKeys.DISK_USED_SPACE  -> MetricKeys.LEGACY_DISK_USED_SPACE;
+            case MetricKeys.DISK_FREE_SPACE  -> MetricKeys.LEGACY_DISK_FREE_SPACE;
+            default -> null;
+        };
     }
 
     private boolean shouldCollectMetric(String metricType, long now) {
