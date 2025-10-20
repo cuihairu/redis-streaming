@@ -66,7 +66,7 @@ jobs:
           docker compose -f docker-compose.yml down -v || true
 
       - name: Publish to Maven Central
-        if: ${{ (github.event_name == 'release' && github.event.action == 'published') || (github.event_name == 'workflow_dispatch' && github.event.inputs.version != '') }}
+        if: ${{ (github.event_name == 'release' && github.event.action == 'published') || (github.event_name == 'workflow_dispatch' && github.event.inputs.version != '') || startsWith(github.ref, 'refs/tags/v') }}
         env:
           # Vanniktech Maven Publish (Central Portal) expects Gradle properties below
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.CENTRAL_PORTAL_USERNAME }}
@@ -80,13 +80,12 @@ jobs:
         run: |
           set -euo pipefail
           ./gradlew -q checkCentralPortalCreds || true
-          # Derive version: workflow_dispatch input > release tag > pushed tag
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            VERSION='${{ github.event.inputs.version }}'
-          elif [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
-            VERSION='${{ github.event.release.tag_name }}'
+          # If manually dispatched with an explicit version, allow override; otherwise axion uses git tag (e.g., v1.2.3)
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && -n "${{ github.event.inputs.version }}" ]]; then
+            EXTRA_ARGS=("-Pversion=${{ github.event.inputs.version }}")
+            echo "Publishing with explicit version override: ${{ github.event.inputs.version }}"
           else
-            VERSION="${GITHUB_REF_NAME#v}"
+            EXTRA_ARGS=()
+            echo "Publishing with axion-release derived version from git tags"
           fi
-          echo "Publishing version: $VERSION"
-          ./gradlew -Pversion="$VERSION" publishAllPublicationsToMavenCentralRepository --warning-mode=all --stacktrace
+          ./gradlew "${EXTRA_ARGS[@]}" publishAllPublicationsToMavenCentralRepository --warning-mode=all --stacktrace

@@ -3,11 +3,21 @@ plugins {
     id 'jacoco'
     id 'signing'
     id 'com.vanniktech.maven.publish' version '0.29.0' apply false
+    id 'pl.allegro.tech.build.axion-release' version '1.17.0'
+}
+
+// Configure axion-release to derive version from git tags like `v1.2.3`
+scmVersion {
+    tag {
+        prefix = 'v'
+        // default versionSeparator is empty, so tags look like v1.2.3
+    }
 }
 
 allprojects {
     group = 'io.github.cuihairu.redis-streaming'
-    version = '0.1.0'
+    // Derive version from git tags via axion-release; allow override with -Pversion
+    version = (findProperty('version') ?: rootProject.scmVersion.version)
 
     repositories {
         // Prefer mirrored repositories to avoid TLS/proxy issues resolving artifacts (e.g., JaCoCo agent)
