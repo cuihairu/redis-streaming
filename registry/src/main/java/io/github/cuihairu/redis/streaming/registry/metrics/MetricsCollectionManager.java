@@ -45,10 +45,11 @@ public class MetricsCollectionManager {
 
             // 检查是否需要收集
             if (!forceAll && !shouldCollectMetric(metricType, now)) {
-                // 使用缓存的值
+                // 使用缓存的值，但依然扁平化导出 dotted/legacy 键，保证上报稳定
                 Object lastValue = lastMetrics.get(metricType);
                 if (lastValue != null) {
                     result.put(metricType, lastValue);
+                    addDottedAndLegacyKeys(metricType, lastValue, result);
                 }
                 continue;
             }
