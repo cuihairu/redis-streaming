@@ -108,7 +108,7 @@ The registry module implements a comprehensive service discovery system:
 ## Development Guidelines
 
 ### Code Organization
-- Follow package structure: `io.github.cuihairu.redis-streaming.<module>`
+- Follow package structure: `io.github.cuihairu.redis.streaming.<module>`
 - Use Lombok annotations for reducing boilerplate code
 - Implement proper error handling with retry strategies
 - Include comprehensive unit tests for all components
@@ -118,7 +118,7 @@ The registry module implements a comprehensive service discovery system:
 - Implement proper cleanup for streams (autoTrim methods)
 - Handle Redis connection failures gracefully
 - Support multiple Redis deployment options (standalone, cluster, sentinel)
-- Follow package structure: `io.github.cuihairu.redis-streaming.<module>`
+- Follow package structure: `io.github.cuihairu.redis.streaming.<module>`
 
 ### Service Registry Implementation Guidelines
 - All service instances must implement ServiceInstance interface
@@ -289,7 +289,7 @@ docker-compose down -v
 ./gradlew :core:test --tests "ServiceInstanceTest"
 
 # Run tests for specific package
-./gradlew :core:test --tests "io.github.cuihairu.redis-streaming.core.registry.*"
+./gradlew :core:test --tests "io.github.cuihairu.redis.streaming.core.utils.*"
 
 # Run specific integration test
 ./gradlew :core:integrationTest --tests "RedisRegistryIntegrationExample"

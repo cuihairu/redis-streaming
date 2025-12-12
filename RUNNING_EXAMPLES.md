@@ -11,7 +11,7 @@ These examples are fully functional and can be run directly:
 1. **ServiceRegistryExample** - Service discovery and registration
    - Location: `examples/src/main/java/.../registry/ServiceRegistryExample.java`
    - Features: Service registration, discovery, health checks, load balancing
-   - Run: `./gradlew :examples:run -PmainClass=io.github.cuihairu.redis-streaming.examples.registry.ServiceRegistryExample`
+   - Run: `./gradlew :examples:run -PmainClass=io.github.cuihairu.redis.streaming.examples.registry.ServiceRegistryExample`
 
 2. **MessageQueueExample** - Message queue and event streaming  
    - Location: `examples/src/main/java/.../mq/MessageQueueExample.java`
@@ -80,16 +80,16 @@ docker run -d -p 6379:6379 redis:7-alpine
 ./gradlew build -x test
 
 # Run ServiceRegistryExample
-./gradlew :examples:run -PmainClass=io.github.cuihairu.redis-streaming.examples.registry.ServiceRegistryExample
+./gradlew :examples:run -PmainClass=io.github.cuihairu.redis.streaming.examples.registry.ServiceRegistryExample
 
 # Run MessageQueueExample  
-./gradlew :examples:run -PmainClass=io.github.cuihairu.redis-streaming.examples.mq.MessageQueueExample
+./gradlew :examples:run -PmainClass=io.github.cuihairu.redis.streaming.examples.mq.MessageQueueExample
 
 # Run ComprehensiveStreamingExample
-./gradlew :examples:run -PmainClass=io.github.cuihairu.redis-streaming.examples.streaming.ComprehensiveStreamingExample
+./gradlew :examples:run -PmainClass=io.github.cuihairu.redis.streaming.examples.streaming.ComprehensiveStreamingExample
 
 # Run CDCIntegrationExample (requires database setup)
-./gradlew :examples:run -PmainClass=io.github.cuihairu.redis-streaming.examples.cdc.CDCIntegrationExample
+./gradlew :examples:run -PmainClass=io.github.cuihairu.redis.streaming.examples.cdc.CDCIntegrationExample
 ```
 
 **Note for CDC example**: Set database credentials via environment variables:
@@ -109,7 +109,7 @@ export DB_USER=db_user
 export DB_PASSWORD=db_password
 export DB_URL=jdbc:mysql://localhost:3306/test_db
 
-./gradlew :examples:run -PmainClass=io.github.cuihairu.redis-streaming.examples.cdc.CDCIntegrationExample
+./gradlew :examples:run -PmainClass=io.github.cuihairu.redis.streaming.examples.cdc.CDCIntegrationExample
 ```
 
 ### Option 2: Using IDE (IntelliJ IDEA / VS Code)

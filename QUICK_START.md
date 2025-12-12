@@ -79,7 +79,7 @@ public class QuickStart {
 ### 3. Hello World - 消息队列
 
 ```java
-import io.github.cuihairu.redis-streaming.core.mq.*;
+import io.github.cuihairu.redis.streaming.mq.*;
 
 // 创建生产者
 MessageProducer producer = MessageQueueFactory.createProducer(
@@ -167,7 +167,7 @@ consumer.consume(message -> {
 ### 示例 1: PV/UV 统计
 
 ```java
-import io.github.cuihairu.redis-streaming.aggregation.*;
+import io.github.cuihairu.redis.streaming.aggregation.*;
 
 // 创建 PV 计数器
 PVCounter pvCounter = new PVCounter(redisson, "page_views");
@@ -193,7 +193,7 @@ System.out.println("PV: " + pv + ", UV: " + uv);
 ### 示例 2: Top-K 热榜
 
 ```java
-import io.github.cuihairu.redis-streaming.aggregation.TopKAnalyzer;
+import io.github.cuihairu.redis.streaming.aggregation.TopKAnalyzer;
 
 // 创建 Top-K 分析器 (Top 10)
 TopKAnalyzer<String> topK = new TopKAnalyzer<>(
@@ -213,7 +213,7 @@ System.out.println("热门商品: " + top10);
 ### 示例 3: 复杂事件检测
 
 ```java
-import io.github.cuihairu.redis-streaming.cep.*;
+import io.github.cuihairu.redis.streaming.cep.*;
 
 // 定义模式: 连续3次登录失败
 PatternSequence<LoginEvent> pattern = PatternSequence.<LoginEvent>begin()
@@ -240,7 +240,7 @@ for (LoginEvent event : events) {
 ### 示例 4: Redis KTable
 
 ```java
-import io.github.cuihairu.redis-streaming.table.impl.RedisKTable;
+import io.github.cuihairu.redis.streaming.table.impl.RedisKTable;
 
 // 创建 KTable
 RedisKTable<String, User> userTable = new RedisKTable<>(
@@ -270,7 +270,7 @@ KTable<String, UserProfile> enriched = userTable.join(
 ### 示例 5: Prometheus 监控
 
 ```java
-import io.github.cuihairu.redis-streaming.metrics.prometheus.*;
+import io.github.cuihairu.redis.streaming.metrics.prometheus.*;
 
 // 创建指标收集器
 PrometheusMetricCollector metrics = new PrometheusMetricCollector("myapp");
@@ -293,7 +293,7 @@ metrics.incrementCounter("http_requests", tags);
 ### 示例 6: CDC 数据捕获
 
 ```java
-import io.github.cuihairu.redis-streaming.cdc.*;
+import io.github.cuihairu.redis.streaming.cdc.*;
 
 // 配置 MySQL Binlog CDC
 CDCConfiguration config = CDCConfigurationBuilder.builder()
@@ -350,7 +350,7 @@ public class RedisManager {
 **推荐**: 使用 RetryExecutor 处理瞬时故障
 
 ```java
-import io.github.cuihairu.redis-streaming.reliability.retry.*;
+import io.github.cuihairu.redis.streaming.reliability.retry.*;
 
 RetryPolicy policy = RetryPolicy.builder()
     .maxRetries(3)

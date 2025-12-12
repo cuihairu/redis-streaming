@@ -7,6 +7,7 @@
 ## P0（阻塞项）
 
 ### 1) `./gradlew test` 会间接跑到 `integrationTest`（未启动 Redis 时大量失败）
+**状态**：已修复（mq/registry 的 JaCoCo 仅绑定单元测试 `test`）
 
 - 现象：执行 `./gradlew test` 时，`mq` / `registry` 的 `integrationTest` 会被拉起；如果本机未启动 Redis（默认 `127.0.0.1:6379`），测试会大量失败。
 - 根因：`mq`/`registry` 模块把所有 `Test`（包含 `integrationTest`）都纳入 `jacocoTestReport` 的依赖，并且所有 `Test` 结束后都会 `finalizedBy jacocoTestReport`。
@@ -43,6 +44,7 @@
 - 同时该文档中“Related Files”的包路径引用仍为旧路径（需要同步到当前 `io/github/cuihairu/redis/streaming/...`）。
 
 ### 5) 文档/示例中的 Java 包名仍混用 `redis-streaming`（带连字符，无法作为 Java package）
+**状态**：已修复（示例/命令/import 已统一为 `io.github.cuihairu.redis.streaming...`）
 
 当前代码包名为：`io.github.cuihairu.redis.streaming...`（无连字符）。
 
@@ -89,4 +91,3 @@
 
 - `AGENTS.md` / `CLAUDE.md` / `README.md` / `settings.gradle` 的模块列表、命名规范、运行命令存在不一致处
 - 需要统一“对外接口 + 使用文档 + 工程结构”，降低新用户上手成本
-

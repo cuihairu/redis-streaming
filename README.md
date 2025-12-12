@@ -502,7 +502,7 @@ configService.removeConfig("database.config", "DEFAULT_GROUP");
 
 #### 消息队列
 ```java
-import io.github.cuihairu.redis-streaming.mq.*;
+import io.github.cuihairu.redis.streaming.mq.*;
 
 // 生产者
 MessageProducer producer = MessageQueueFactory.createProducer(
@@ -522,7 +522,7 @@ consumer.consume(message -> {
 
 #### 窗口聚合
 ```java
-import io.github.cuihairu.redis-streaming.aggregation.*;
+import io.github.cuihairu.redis.streaming.aggregation.*;
 
 // 创建窗口聚合器
 WindowAggregator aggregator = new WindowAggregator(
@@ -540,7 +540,7 @@ Map<String, Double> result = aggregator.getResult("window-key");
 
 #### CDC 数据捕获
 ```java
-import io.github.cuihairu.redis-streaming.cdc.*;
+import io.github.cuihairu.redis.streaming.cdc.*;
 
 // 配置 MySQL Binlog CDC
 CDCConfiguration config = CDCConfigurationBuilder.builder()
