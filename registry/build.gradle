@@ -34,7 +34,8 @@ jacoco {
 
 // Configure coverage report for registry module (use existing task from jacoco plugin)
 tasks.named('jacocoTestReport', JacocoReport) {
-    dependsOn tasks.withType(Test)
+    // Only depend on unit tests; integration tests require Redis and should not be pulled in by coverage.
+    dependsOn tasks.named('test')
     reports {
         xml.required = true
         html.required = true
@@ -45,7 +46,8 @@ tasks.named('jacocoTestReport', JacocoReport) {
     doFirst { executionData.files.removeIf { !it.exists() } }
 }
 
-tasks.withType(Test).configureEach {
+// Generate coverage after unit tests only (avoid indirectly triggering integration tests).
+tasks.named('test') {
     finalizedBy(tasks.named('jacocoTestReport'))
 }
 // Enforce a modest coverage bar to guard regressions (configure existing task)

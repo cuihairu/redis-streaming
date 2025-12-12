@@ -18,6 +18,8 @@ import java.util.Map;
 public class RedisDeadLetterService implements DeadLetterService {
     private final RedissonClient redissonClient;
     private final ReplayHandler replayHandler;
+    private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
 
     public RedisDeadLetterService(RedissonClient redissonClient) { this(redissonClient, null); }
 
@@ -114,11 +116,37 @@ public class RedisDeadLetterService implements DeadLetterService {
                 Object hdr = data.get("headers");
                 if (hdr instanceof java.util.Map) {
                     ((java.util.Map<?,?>) hdr).forEach((k,v) -> { if (k!=null && v!=null) headers.put(String.valueOf(k), String.valueOf(v)); });
+                } else if (hdr instanceof String) {
+                    try {
+                        @SuppressWarnings("unchecked")
+                        java.util.Map<String,Object> m = MAPPER.readValue((String) hdr,
+                                new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String,Object>>(){});
+                        if (m != null) m.forEach((k,v) -> { if (k!=null && v!=null) headers.put(String.valueOf(k), String.valueOf(v)); });
+                    } catch (Exception ignore) {}
                 }
                 int maxRetries = 3;
                 Object mr = data.get("maxRetries");
                 try { if (mr != null) maxRetries = (mr instanceof Number) ? ((Number) mr).intValue() : Integer.parseInt(String.valueOf(mr)); } catch (Exception ignore) {}
-                boolean ok = replayHandler.publish(originalTopic, pid, data.get("payload"), headers, maxRetries);
+
+                // If DLQ stored payload via hash reference, resolve it for the custom replay handler.
+                Object payload = data.get("payload");
+                String storageType = headers.get("x-payload-storage-type");
+                String ref = headers.get("x-payload-hash-ref");
+                if ((payload == null || (payload instanceof String && ((String) payload).isEmpty()))
+                        && "hash".equals(storageType) && ref != null && !ref.isEmpty()) {
+                    try {
+                        org.redisson.api.RBucket<String> b = redissonClient.getBucket(ref, StringCodec.INSTANCE);
+                        String json = b.get();
+                        if (json != null) {
+                            payload = MAPPER.readValue(json, Object.class);
+                        } else {
+                            headers.put("x-payload-missing", "true");
+                            headers.put("x-payload-missing-ref", ref);
+                        }
+                    } catch (Exception ignore) {}
+                }
+
+                boolean ok = replayHandler.publish(originalTopic, pid, payload, headers, maxRetries);
                 long dur = System.nanoTime() - start;
                 io.github.cuihairu.redis.streaming.reliability.metrics.ReliabilityMetrics.get()
                         .recordDlqReplay(originalTopic, pid, ok, dur);

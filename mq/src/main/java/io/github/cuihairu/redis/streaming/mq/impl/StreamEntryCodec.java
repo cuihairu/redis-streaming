@@ -201,14 +201,24 @@ public final class StreamEntryCodec {
 
     /** Parse a DLQ entry map into a Message with minimal normalization. */
     public static Message parseDlqEntry(String id, Map<String, Object> data) {
+        return parseDlqEntry(id, data, (PayloadLifecycleManager) null);
+    }
+
+    /** Parse a DLQ entry map into a Message and resolve hash-stored payload when possible. */
+    public static Message parseDlqEntry(String id, Map<String, Object> data, RedissonClient redissonClient) {
+        PayloadLifecycleManager plm = redissonClient != null ? new PayloadLifecycleManager(redissonClient) : null;
+        return parseDlqEntry(id, data, plm);
+    }
+
+    /** Parse a DLQ entry map into a Message and resolve hash-stored payload when possible. */
+    public static Message parseDlqEntry(String id, Map<String, Object> data, PayloadLifecycleManager lifecycleManager) {
         Message m = new Message();
         m.setId(id);
         String topic = toStringOrNull(data.get("originalTopic"));
         m.setTopic(topic != null ? topic : "");
-        m.setPayload(data.get("payload"));
+
         String ts = toStringOrNull(data.get("timestamp"));
         m.setTimestamp(ts != null ? Instant.parse(ts) : Instant.now());
-
         m.setRetryCount(toInt(data.get("retryCount"), 0));
 
         // Merge known DLQ fields into headers for convenience
@@ -225,6 +235,25 @@ public final class StreamEntryCodec {
         } else if (hdr instanceof String) {
             try { headers.putAll(MAPPER.readValue((String) hdr, new TypeReference<Map<String,String>>(){})); } catch (Exception ignore) {}
         }
+
+        Object payload = data.get("payload");
+        String storageType = headers.get(PayloadHeaders.PAYLOAD_STORAGE_TYPE);
+        String hashRef = headers.get(PayloadHeaders.PAYLOAD_HASH_REF);
+
+        boolean shouldLoadFromHash = (hashRef != null)
+                && (PayloadHeaders.STORAGE_TYPE_HASH.equals(storageType)
+                    || payload == null
+                    || (payload instanceof String && ((String) payload).isEmpty()));
+
+        if (shouldLoadFromHash && lifecycleManager != null) {
+            payload = lifecycleManager.loadPayload(hashRef);
+            // Hide internal headers from user-visible headers
+            headers.remove(PayloadHeaders.PAYLOAD_HASH_REF);
+            headers.remove(PayloadHeaders.PAYLOAD_STORAGE_TYPE);
+            headers.remove(PayloadHeaders.PAYLOAD_ORIGINAL_SIZE);
+        }
+
+        m.setPayload(payload);
         m.setHeaders(headers);
         return m;
     }

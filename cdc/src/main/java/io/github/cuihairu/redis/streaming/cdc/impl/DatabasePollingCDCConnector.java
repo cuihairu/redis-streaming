@@ -32,6 +32,7 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
     private String timestampColumn;
     private String incrementalColumn;
     private int queryTimeoutSeconds;
+    private TableFilter tableFilter;
 
     public DatabasePollingCDCConnector(CDCConfiguration configuration) {
         super(configuration);
@@ -50,6 +51,7 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
             throw new IllegalArgumentException("JDBC URL is required for database polling CDC");
         }
 
+        this.tableFilter = TableFilter.from(configuration.getTableIncludes(), configuration.getTableExcludes());
         this.tables = parseTableList((String) configuration.getProperty(TABLES_PROPERTY));
         this.timestampColumn = (String) configuration.getProperty(TIMESTAMP_COLUMN_PROPERTY, "updated_at");
         this.incrementalColumn = (String) configuration.getProperty(INCREMENTAL_COLUMN_PROPERTY);
@@ -59,6 +61,23 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
 
         if (tables == null || tables.isEmpty()) {
             throw new IllegalArgumentException("At least one table must be specified for polling");
+        }
+
+        // Apply include/exclude filtering to the configured table list.
+        if (tableFilter != null) {
+            List<String> filtered = new ArrayList<>();
+            for (String t : tables) {
+                String db = extractDatabase(t);
+                String tn = extractTableName(t);
+                if (tableFilter.allowed(db, tn)) {
+                    filtered.add(t);
+                }
+            }
+            this.tables = filtered;
+        }
+
+        if (tables == null || tables.isEmpty()) {
+            throw new IllegalArgumentException("No tables left after include/exclude filtering");
         }
 
         this.dataSource = createDataSource(jdbcUrl, driverClass, username, password);

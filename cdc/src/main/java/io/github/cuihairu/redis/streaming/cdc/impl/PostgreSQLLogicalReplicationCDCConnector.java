@@ -9,6 +9,7 @@ import org.postgresql.replication.PGReplicationStream;
 import org.postgresql.replication.fluent.logical.ChainedLogicalStreamBuilder;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.time.Instant;
 import java.util.*;
@@ -37,6 +38,7 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
     private String publicationName;
     private LogSequenceNumber lastReceivedLSN;
     private long statusIntervalMs;
+    private TableFilter tableFilter;
 
     // Pattern for parsing logical replication messages (test-decoding format)
     private static final Pattern TABLE_PATTERN = Pattern.compile("table\\s+(\\w+)\\.(\\w+):");
@@ -67,6 +69,7 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
         this.statusIntervalMs = Long.parseLong(
             String.valueOf(configuration.getProperty(STATUS_INTERVAL_PROPERTY, "10000"))
         );
+        this.tableFilter = TableFilter.from(configuration.getTableIncludes(), configuration.getTableExcludes());
 
         Properties props = new Properties();
         PGProperty.USER.set(props, username);
@@ -214,10 +217,10 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
                 return;
             }
 
-            int offset = buffer.arrayOffset();
-            byte[] source = buffer.array();
-            int length = source.length - offset;
-            String message = new String(source, offset, length);
+            // Read only the remaining bytes; do not use the backing array length as message length.
+            byte[] bytes = new byte[buffer.remaining()];
+            buffer.get(bytes);
+            String message = new String(bytes, StandardCharsets.UTF_8);
 
             parseLogicalMessage(message);
 
@@ -251,6 +254,9 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
             }
 
             if (currentTable == null || currentDatabase == null) {
+                continue;
+            }
+            if (tableFilter != null && !tableFilter.allowed(currentDatabase, currentTable)) {
                 continue;
             }
 

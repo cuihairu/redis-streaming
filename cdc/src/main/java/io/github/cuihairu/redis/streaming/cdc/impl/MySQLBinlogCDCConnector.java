@@ -28,6 +28,7 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
     private final AtomicLong binlogPosition = new AtomicLong(0);
     private String binlogFilename;
     private final Map<Long, TableMapEventData> tableMapEvents = new HashMap<>();
+    private TableFilter tableFilter;
 
     public MySQLBinlogCDCConnector(CDCConfiguration configuration) {
         super(configuration);
@@ -55,6 +56,9 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
         // Create and configure binary log client
         this.binaryLogClient = new BinaryLogClient(hostname, port, username, password);
         this.binaryLogClient.setServerId(serverId);
+
+        // Build include/exclude filter (empty includes means allow all).
+        this.tableFilter = TableFilter.from(configuration.getTableIncludes(), configuration.getTableExcludes());
 
         // Set starting position if specified
         if (binlogFilename != null) {
@@ -183,6 +187,9 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
 
         String database = tableMapEvent.getDatabase();
         String table = tableMapEvent.getTable();
+        if (tableFilter != null && !tableFilter.allowed(database, table)) {
+            return;
+        }
 
         for (Serializable[] row : eventData.getRows()) {
             Map<String, Object> afterData = convertRowToMap(row);
@@ -212,6 +219,9 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
 
         String database = tableMapEvent.getDatabase();
         String table = tableMapEvent.getTable();
+        if (tableFilter != null && !tableFilter.allowed(database, table)) {
+            return;
+        }
 
         for (Map.Entry<Serializable[], Serializable[]> row : eventData.getRows()) {
             Map<String, Object> beforeData = convertRowToMap(row.getKey());
@@ -242,6 +252,9 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
 
         String database = tableMapEvent.getDatabase();
         String table = tableMapEvent.getTable();
+        if (tableFilter != null && !tableFilter.allowed(database, table)) {
+            return;
+        }
 
         for (Serializable[] row : eventData.getRows()) {
             Map<String, Object> beforeData = convertRowToMap(row);
@@ -270,9 +283,16 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
     }
 
     private void updateCurrentPosition(Event event) {
+        // Prefer nextPosition from header (v4) so position advances on every row event, not only on ROTATE.
         EventHeader header = event.getHeader();
-        // Position is tracked via binlogPosition which is updated in handleRotateEvent
-        this.currentPosition = binlogFilename + ":" + binlogPosition.get();
+        if (header instanceof EventHeaderV4) {
+            long next = ((EventHeaderV4) header).getNextPosition();
+            if (next > 0) {
+                binlogPosition.set(next);
+            }
+        }
+        String fn = (binlogFilename != null) ? binlogFilename : "";
+        this.currentPosition = fn + ":" + binlogPosition.get();
     }
 
     private Map<String, Object> convertRowToMap(Serializable[] row) {
