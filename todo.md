@@ -48,11 +48,11 @@
 
 当前代码包名为：`io.github.cuihairu.redis.streaming...`（无连字符）。
 
-需要清理/修正的典型位置（不止这些）：
-- `RUNNING_EXAMPLES.md`：示例运行命令的 `-PmainClass=io.github.cuihairu.redis-streaming...`（应改为 `io.github.cuihairu.redis.streaming...`）
-- `README.md`：多处 `import io.github.cuihairu.redis-streaming.*;`（应改为 `io.github.cuihairu.redis.streaming.*;`）
-- `QUICK_START.md`：多处示例 import 使用了 `redis-streaming`
-- `CLAUDE.md`：关于 package structure 的描述仍含 `redis-streaming`（建议统一为实际包名）
+已修复的典型位置（不止这些）：
+- `RUNNING_EXAMPLES.md`：`mainClass` 包名已改为 `io.github.cuihairu.redis.streaming...`
+- `README.md`：示例 import 包名已改为 `io.github.cuihairu.redis.streaming...`
+- `QUICK_START.md`：示例 import 包名已改为 `io.github.cuihairu.redis.streaming...`
+- `CLAUDE.md`：package structure/命令示例已改为 `io.github.cuihairu.redis.streaming...`
 
 ### 6) `examples` 中存在 `.broken` 示例文件
 

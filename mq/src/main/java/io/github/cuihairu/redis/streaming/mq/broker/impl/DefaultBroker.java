@@ -8,11 +8,14 @@ import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
 import io.github.cuihairu.redis.streaming.mq.metrics.MqMetrics;
 import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
 import org.redisson.api.RedissonClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Default Broker implementation: centralizes routing + persistence over Redis (by default).
  */
 public class DefaultBroker implements Broker {
+    private static final Logger log = LoggerFactory.getLogger(DefaultBroker.class);
     private final RedissonClient redissonClient;
     private final MqOptions options;
     private final BrokerRouter router;
@@ -88,43 +91,61 @@ public class DefaultBroker implements Broker {
         String policy = options.getAckDeletePolicy();
         if (policy == null) policy = "none";
         policy = policy.toLowerCase();
+        // Ack is not best-effort: swallowing failures causes invisible pending buildup and inconsistent cleanup.
         try {
             stream.ack(consumerGroup, parseStreamId(messageId));
-            switch (policy) {
-                case "immediate":
-                    // Single-group safe: delete immediately after ack
-                    try { stream.remove(parseStreamId(messageId)); } catch (Exception ignore) {}
-                    break;
-                case "all-groups-ack": {
-                    // Collect group ack into ack-set; if size reaches active group count, delete the entry
-                    String ackKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.ackSet(topic, partitionId, messageId);
-                    org.redisson.api.RSet<String> ackset = redissonClient.getSet(ackKey, org.redisson.client.codec.StringCodec.INSTANCE);
-                    try { ackset.add(consumerGroup); } catch (Exception ignore) {}
-                    try { redissonClient.getBucket(ackKey, org.redisson.client.codec.StringCodec.INSTANCE).expire(java.time.Duration.ofSeconds(Math.max(1, options.getAcksetTtlSec()))); } catch (Exception ignore) {}
-                    // Compute active groups: groups present on stream AND having an active lease on this partition
-                    int active = 0;
-                    try {
-                        java.util.List<org.redisson.api.StreamGroup> groups = stream.listGroups();
-                        for (org.redisson.api.StreamGroup g : groups) {
-                            String leaseKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.lease(topic, g.getName(), partitionId);
-                            boolean live = redissonClient.getBucket(leaseKey, org.redisson.client.codec.StringCodec.INSTANCE).isExists();
-                            if (live) active++;
-                        }
-                    } catch (Exception ignore) {}
-                    try {
-                        if (active > 0 && ackset.size() >= active) {
-                            stream.remove(parseStreamId(messageId));
-                            try { ackset.delete(); } catch (Exception ignore2) {}
-                        }
-                    } catch (Exception ignore) {}
-                    break;
+        } catch (Exception e) {
+            log.warn("Broker ack failed: topic={} group={} partition={} id={}", topic, consumerGroup, partitionId, messageId, e);
+            throw (e instanceof RuntimeException) ? (RuntimeException) e : new RuntimeException("Broker ack failed", e);
+        }
+
+        switch (policy) {
+            case "immediate":
+                // Single-group safe: delete immediately after ack
+                try { stream.remove(parseStreamId(messageId)); } catch (Exception e) {
+                    log.debug("Broker immediate delete failed: {} {}", streamKey, messageId, e);
                 }
-                case "none":
-                default:
-                    // do nothing
-                    break;
+                break;
+            case "all-groups-ack": {
+                // Collect group ack into ack-set; if size reaches active group count, delete the entry
+                String ackKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.ackSet(topic, partitionId, messageId);
+                org.redisson.api.RSet<String> ackset = redissonClient.getSet(ackKey, org.redisson.client.codec.StringCodec.INSTANCE);
+                try { ackset.add(consumerGroup); } catch (Exception e) {
+                    log.debug("Ack-set add failed: {}", ackKey, e);
+                }
+                try {
+                    redissonClient.getBucket(ackKey, org.redisson.client.codec.StringCodec.INSTANCE)
+                            .expire(java.time.Duration.ofSeconds(Math.max(1, options.getAcksetTtlSec())));
+                } catch (Exception e) {
+                    log.debug("Ack-set expire failed: {}", ackKey, e);
+                }
+                // Compute active groups: groups present on stream AND having an active lease on this partition
+                int active = 0;
+                try {
+                    java.util.List<org.redisson.api.StreamGroup> groups = stream.listGroups();
+                    for (org.redisson.api.StreamGroup g : groups) {
+                        String leaseKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.lease(topic, g.getName(), partitionId);
+                        boolean live = redissonClient.getBucket(leaseKey, org.redisson.client.codec.StringCodec.INSTANCE).isExists();
+                        if (live) active++;
+                    }
+                } catch (Exception e) {
+                    log.debug("Failed to compute active groups: {}:p:{}", topic, partitionId, e);
+                }
+                try {
+                    if (active > 0 && ackset.size() >= active) {
+                        stream.remove(parseStreamId(messageId));
+                        try { ackset.delete(); } catch (Exception e) { log.debug("Ack-set delete failed: {}", ackKey, e); }
+                    }
+                } catch (Exception e) {
+                    log.debug("all-groups-ack delete failed: {} {}", streamKey, messageId, e);
+                }
+                break;
             }
-        } catch (Exception ignore) { }
+            case "none":
+            default:
+                // do nothing
+                break;
+        }
     }
 
     private org.redisson.api.StreamMessageId parseStreamId(String id) {
