@@ -195,6 +195,7 @@ public class KafkaSource<T> implements AutoCloseable {
      * Seek to the beginning of the topic.
      */
     public void seekToBeginning() {
+        ensureAssigned();
         consumer.seekToBeginning(consumer.assignment());
         log.info("Seeked to beginning for topic: {}", topic);
     }
@@ -203,6 +204,7 @@ public class KafkaSource<T> implements AutoCloseable {
      * Seek to the end of the topic.
      */
     public void seekToEnd() {
+        ensureAssigned();
         consumer.seekToEnd(consumer.assignment());
         log.info("Seeked to end for topic: {}", topic);
     }
@@ -260,6 +262,25 @@ public class KafkaSource<T> implements AutoCloseable {
         } catch (Exception e) {
             log.error("Failed to deserialize Kafka record: {}", e.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * Kafka only assigns partitions after at least one poll. Seek operations require assignment.
+     */
+    private void ensureAssigned() {
+        if (!consumer.assignment().isEmpty()) {
+            return;
+        }
+        try {
+            consumer.poll(Duration.ZERO);
+            if (!consumer.assignment().isEmpty()) {
+                return;
+            }
+            // Best-effort: one short poll to allow group join/assignment.
+            consumer.poll(Duration.ofMillis(100));
+        } catch (Exception e) {
+            log.warn("Failed to ensure partition assignment for topic {} before seek", topic, e);
         }
     }
 }

@@ -657,25 +657,38 @@ public class RedisMessageConsumer implements MessageConsumer {
             } else {
                 // fallback get stream just for ack
                 String streamKey = StreamKeys.partitionStream(topic, partitionId);
-                redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE).ack(consumerGroup, parseStreamId(messageId));
+                redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE)
+                        .ack(consumerGroup, parseStreamId(messageId));
             }
+        } catch (Exception e) {
+            // Do not swallow: ack failure means the message will remain pending and be reprocessed.
+            log.warn("Failed to ack message {} topic={} group={} partition={}",
+                    messageId, topic, consumerGroup, partitionId, e);
+            throw (e instanceof RuntimeException) ? (RuntimeException) e : new RuntimeException("Ack failed", e);
+        }
 
-            // Clean up large payload hash if exists
-            if (messageData != null) {
-                payloadLifecycleManager.deletePayloadHashFromStreamData(messageData);
-            }
-
-            // Update commit frontier (best-effort): keep max acknowledged id per group/partition
+        // Clean up large payload hash if exists (best-effort)
+        if (messageData != null) {
             try {
-                String frontierKey = StreamKeys.commitFrontier(topic, partitionId);
-                // Use client's default codec to be readable by generic tooling/metrics/tests
-                org.redisson.api.RMap<String, String> map = redissonClient.getMap(frontierKey);
-                String prev = map.get(consumerGroup);
-                if (prev == null || compareStreamId(messageId, prev) > 0) {
-                    map.put(consumerGroup, messageId);
-                }
-            } catch (Exception ignore) {}
-        } catch (Exception ignore) {}
+                payloadLifecycleManager.deletePayloadHashFromStreamData(messageData);
+            } catch (Exception e) {
+                log.debug("Failed to cleanup payload hash for message {} topic={}", messageId, topic, e);
+            }
+        }
+
+        // Update commit frontier (best-effort): keep max acknowledged id per group/partition
+        try {
+            String frontierKey = StreamKeys.commitFrontier(topic, partitionId);
+            // Use client's default codec to be readable by generic tooling/metrics/tests
+            org.redisson.api.RMap<String, String> map = redissonClient.getMap(frontierKey);
+            String prev = map.get(consumerGroup);
+            if (prev == null || compareStreamId(messageId, prev) > 0) {
+                map.put(consumerGroup, messageId);
+            }
+        } catch (Exception e) {
+            log.debug("Failed to update commit frontier for topic={} group={} partition={}",
+                    topic, consumerGroup, partitionId, e);
+        }
     }
 
     private StreamMessageId parseStreamId(String id) {

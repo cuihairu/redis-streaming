@@ -149,45 +149,59 @@ public class RedisKTable<K, V> implements KTable<K, V> {
     @Override
     public <VR> KTable<K, VR> mapValues(Function<V, VR> mapper) {
         String newTableName = tableName + ":mapValues:" + System.currentTimeMillis();
-        @SuppressWarnings("unchecked")
-        RedisKTable<K, VR> result = new RedisKTable<>(
-            redissonClient, newTableName, keyClass, (Class<VR>) Object.class
-        );
-
         try {
+            Map<K, VR> temp = new HashMap<>();
+            Class<VR> inferred = null;
             Map<K, V> state = getState();
             for (Map.Entry<K, V> entry : state.entrySet()) {
                 VR newValue = mapper.apply(entry.getValue());
-                result.put(entry.getKey(), newValue);
+                temp.put(entry.getKey(), newValue);
+                if (inferred == null && newValue != null) {
+                    @SuppressWarnings("unchecked")
+                    Class<VR> c = (Class<VR>) newValue.getClass();
+                    inferred = c;
+                }
             }
+            @SuppressWarnings("unchecked")
+            Class<VR> valueCls = inferred != null ? inferred : (Class<VR>) Object.class;
+            RedisKTable<K, VR> result = new RedisKTable<>(redissonClient, newTableName, keyClass, valueCls);
+            for (Map.Entry<K, VR> e : temp.entrySet()) {
+                result.put(e.getKey(), e.getValue());
+            }
+            return result;
         } catch (Exception e) {
             log.error("Failed to map values for table {}", tableName, e);
             throw new RuntimeException("Map values failed", e);
         }
-
-        return result;
     }
 
     @Override
     public <VR> KTable<K, VR> mapValues(BiFunction<K, V, VR> mapper) {
         String newTableName = tableName + ":mapValues:" + System.currentTimeMillis();
-        @SuppressWarnings("unchecked")
-        RedisKTable<K, VR> result = new RedisKTable<>(
-            redissonClient, newTableName, keyClass, (Class<VR>) Object.class
-        );
-
         try {
+            Map<K, VR> temp = new HashMap<>();
+            Class<VR> inferred = null;
             Map<K, V> state = getState();
             for (Map.Entry<K, V> entry : state.entrySet()) {
                 VR newValue = mapper.apply(entry.getKey(), entry.getValue());
-                result.put(entry.getKey(), newValue);
+                temp.put(entry.getKey(), newValue);
+                if (inferred == null && newValue != null) {
+                    @SuppressWarnings("unchecked")
+                    Class<VR> c = (Class<VR>) newValue.getClass();
+                    inferred = c;
+                }
             }
+            @SuppressWarnings("unchecked")
+            Class<VR> valueCls = inferred != null ? inferred : (Class<VR>) Object.class;
+            RedisKTable<K, VR> result = new RedisKTable<>(redissonClient, newTableName, keyClass, valueCls);
+            for (Map.Entry<K, VR> e : temp.entrySet()) {
+                result.put(e.getKey(), e.getValue());
+            }
+            return result;
         } catch (Exception e) {
             log.error("Failed to map values for table {}", tableName, e);
             throw new RuntimeException("Map values failed", e);
         }
-
-        return result;
     }
 
     @Override
@@ -220,26 +234,34 @@ public class RedisKTable<K, V> implements KTable<K, V> {
 
         RedisKTable<K, VO> otherTable = (RedisKTable<K, VO>) other;
         String newTableName = tableName + ":join:" + System.currentTimeMillis();
-        @SuppressWarnings("unchecked")
-        RedisKTable<K, VR> result = new RedisKTable<>(
-            redissonClient, newTableName, keyClass, (Class<VR>) Object.class
-        );
 
         try {
+            Map<K, VR> temp = new HashMap<>();
+            Class<VR> inferred = null;
             Map<K, V> state = getState();
             for (Map.Entry<K, V> entry : state.entrySet()) {
                 VO otherValue = otherTable.get(entry.getKey());
                 if (otherValue != null) {
                     VR joinedValue = joiner.apply(entry.getValue(), otherValue);
-                    result.put(entry.getKey(), joinedValue);
+                    temp.put(entry.getKey(), joinedValue);
+                    if (inferred == null && joinedValue != null) {
+                        @SuppressWarnings("unchecked")
+                        Class<VR> c = (Class<VR>) joinedValue.getClass();
+                        inferred = c;
+                    }
                 }
             }
+            @SuppressWarnings("unchecked")
+            Class<VR> valueCls = inferred != null ? inferred : (Class<VR>) Object.class;
+            RedisKTable<K, VR> result = new RedisKTable<>(redissonClient, newTableName, keyClass, valueCls);
+            for (Map.Entry<K, VR> e : temp.entrySet()) {
+                result.put(e.getKey(), e.getValue());
+            }
+            return result;
         } catch (Exception e) {
             log.error("Failed to join tables {} and {}", tableName, otherTable.tableName, e);
             throw new RuntimeException("Join failed", e);
         }
-
-        return result;
     }
 
     @Override
@@ -250,24 +272,32 @@ public class RedisKTable<K, V> implements KTable<K, V> {
 
         RedisKTable<K, VO> otherTable = (RedisKTable<K, VO>) other;
         String newTableName = tableName + ":leftJoin:" + System.currentTimeMillis();
-        @SuppressWarnings("unchecked")
-        RedisKTable<K, VR> result = new RedisKTable<>(
-            redissonClient, newTableName, keyClass, (Class<VR>) Object.class
-        );
 
         try {
+            Map<K, VR> temp = new HashMap<>();
+            Class<VR> inferred = null;
             Map<K, V> state = getState();
             for (Map.Entry<K, V> entry : state.entrySet()) {
                 VO otherValue = otherTable.get(entry.getKey());
                 VR joinedValue = joiner.apply(entry.getValue(), otherValue);
-                result.put(entry.getKey(), joinedValue);
+                temp.put(entry.getKey(), joinedValue);
+                if (inferred == null && joinedValue != null) {
+                    @SuppressWarnings("unchecked")
+                    Class<VR> c = (Class<VR>) joinedValue.getClass();
+                    inferred = c;
+                }
             }
+            @SuppressWarnings("unchecked")
+            Class<VR> valueCls = inferred != null ? inferred : (Class<VR>) Object.class;
+            RedisKTable<K, VR> result = new RedisKTable<>(redissonClient, newTableName, keyClass, valueCls);
+            for (Map.Entry<K, VR> e : temp.entrySet()) {
+                result.put(e.getKey(), e.getValue());
+            }
+            return result;
         } catch (Exception e) {
             log.error("Failed to left join tables {} and {}", tableName, otherTable.tableName, e);
             throw new RuntimeException("Left join failed", e);
         }
-
-        return result;
     }
 
     @Override
