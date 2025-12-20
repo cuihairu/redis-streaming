@@ -6,14 +6,17 @@ This module provides a simple, in-memory runtime implementation of the Streaming
 
 ## Current Status
 
-**Status**: 🚧 In Development
+**Status**: Minimal in-memory runtime available (single-threaded)
 
-The runtime module is currently under active development. A simplified implementation is planned that includes:
+The runtime module provides a small, pull-based in-memory implementation intended for tests/examples:
 
-- Basic DataStream operations (map, filter, flatMap)
-- KeyedStream support with state management
-- Window operations integration
-- Watermark propagation (planned)
+- `StreamExecutionEnvironment`: `fromElements`, `fromCollection`, `addSource`
+- `DataStream`: `map`, `filter`, `flatMap`, `keyBy`, `addSink`, `print`
+- `KeyedStream`: `process`, `reduce`, `getState` (keyed `ValueState`)
+
+Not yet implemented in the in-memory runtime:
+- `window(...)`, `sum(...)`
+- timers / watermark propagation / checkpointing
 
 ## Why a Separate Runtime Module?
 
@@ -39,12 +42,23 @@ See the `examples` module for usage patterns.
 ## Planned Features
 
 - [x] Core operator abstractions
-- [ ] Pull-based execution model
-- [ ] State backend integration
+- [x] Pull-based execution model (in-memory)
+- [x] Basic keyed state (in-memory `ValueState`)
 - [ ] Window assignment and triggering
 - [ ] Watermark handling
 - [ ] Checkpointing integration
 - [ ] Parallel execution
+
+## Quick Example
+
+```java
+var env = StreamExecutionEnvironment.getExecutionEnvironment();
+env.fromElements("a b", "c")
+    .flatMap(line -> Arrays.asList(line.split(" ")))
+    .keyBy(w -> w)
+    .reduce((x, y) -> x)
+    .print("word=");
+```
 
 ## Implementation Notes
 

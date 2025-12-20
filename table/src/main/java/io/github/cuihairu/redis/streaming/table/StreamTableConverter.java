@@ -24,9 +24,9 @@ public class StreamTableConverter {
      * @return A KTable built from the stream
      */
     public static <K, V> KTable<K, V> toTable(DataStream<KTable.KeyValue<K, V>> stream) {
-        // For now, return an empty in-memory table
-        // In a real implementation, this would consume the stream and populate the table
-        return new InMemoryKTable<>();
+        InMemoryKTable<K, V> table = new InMemoryKTable<>();
+        stream.addSink(kv -> table.put(kv.getKey(), kv.getValue()));
+        return table;
     }
 
     /**

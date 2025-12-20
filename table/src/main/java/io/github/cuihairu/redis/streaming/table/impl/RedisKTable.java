@@ -3,6 +3,7 @@ package io.github.cuihairu.redis.streaming.table.impl;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.cuihairu.redis.streaming.api.stream.DataStream;
+import io.github.cuihairu.redis.streaming.runtime.StreamExecutionEnvironment;
 import io.github.cuihairu.redis.streaming.table.KGroupedTable;
 import io.github.cuihairu.redis.streaming.table.KTable;
 import lombok.extern.slf4j.Slf4j;
@@ -10,7 +11,9 @@ import org.redisson.api.RMap;
 import org.redisson.api.RedissonClient;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -302,12 +305,15 @@ public class RedisKTable<K, V> implements KTable<K, V> {
 
     @Override
     public DataStream<KeyValue<K, V>> toStream() {
-        throw new UnsupportedOperationException("toStream not implemented for RedisKTable");
+        Map<K, V> snapshot = getState();
+        List<KeyValue<K, V>> out = new ArrayList<>(snapshot.size());
+        snapshot.forEach((k, v) -> out.add(KeyValue.of(k, v)));
+        return StreamExecutionEnvironment.getExecutionEnvironment().fromCollection(out);
     }
 
     @Override
     public <KR> KGroupedTable<KR, V> groupBy(Function<KeyValue<K, V>, KR> keySelector) {
-        throw new UnsupportedOperationException("groupBy not implemented for RedisKTable");
+        return RedisKGroupedTable.from(this, keySelector);
     }
 
     // Serialization helpers
@@ -337,5 +343,9 @@ public class RedisKTable<K, V> implements KTable<K, V> {
 
     public String getTableName() {
         return tableName;
+    }
+
+    RedissonClient getRedissonClient() {
+        return redissonClient;
     }
 }

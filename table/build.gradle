@@ -4,6 +4,7 @@ plugins {
 
 dependencies {
     api project(':core')
+    implementation project(':runtime')
 
     // Redis client for Redis KTable
     implementation 'org.redisson:redisson:3.52.0'

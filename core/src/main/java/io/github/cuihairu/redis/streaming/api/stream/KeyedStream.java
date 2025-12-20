@@ -21,7 +21,7 @@ public interface KeyedStream<K, T> {
      * @param <R> The type of the resulting elements
      * @return A new KeyedStream with transformed elements
      */
-    <K, R> KeyedStream<K, R> map(Function<T, R> mapper);
+    <R> KeyedStream<K, R> map(Function<T, R> mapper);
 
     /**
      * Apply a stateful process function to the stream

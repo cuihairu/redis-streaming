@@ -1,9 +1,12 @@
 package io.github.cuihairu.redis.streaming.table.impl;
 
 import io.github.cuihairu.redis.streaming.api.stream.DataStream;
+import io.github.cuihairu.redis.streaming.runtime.StreamExecutionEnvironment;
 import io.github.cuihairu.redis.streaming.table.KGroupedTable;
 import io.github.cuihairu.redis.streaming.table.KTable;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
@@ -142,7 +145,9 @@ public class InMemoryKTable<K, V> implements KTable<K, V> {
 
     @Override
     public DataStream<KeyValue<K, V>> toStream() {
-        throw new UnsupportedOperationException("toStream not implemented for InMemoryKTable");
+        List<KeyValue<K, V>> out = new ArrayList<>(state.size());
+        state.forEach((k, v) -> out.add(KeyValue.of(k, v)));
+        return StreamExecutionEnvironment.getExecutionEnvironment().fromCollection(out);
     }
 
     @Override
