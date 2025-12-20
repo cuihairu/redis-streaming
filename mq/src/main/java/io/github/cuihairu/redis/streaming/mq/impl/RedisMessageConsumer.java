@@ -171,18 +171,19 @@ public class RedisMessageConsumer implements MessageConsumer {
         if (running.compareAndSet(false, true)) {
             log.info("Starting Redis consumer '{}'", consumerName);
 
-            // initial assignment
-            schedulerPool.submit(this::rebalanceAssignments);
+            // Do an initial rebalance synchronously to reduce startup races in short-lived tests.
+            // Subsequent rebalances run on the scheduler thread.
+            rebalanceAssignments();
 
             // periodic rebalance and lease renewal
             schedulerPool.scheduleWithFixedDelay(this::rebalanceAssignments,
-                    0, options.getRebalanceIntervalSec(), TimeUnit.SECONDS);
+                    options.getRebalanceIntervalSec(), options.getRebalanceIntervalSec(), TimeUnit.SECONDS);
             schedulerPool.scheduleWithFixedDelay(this::renewLeases,
                     options.getRenewIntervalSec(), options.getRenewIntervalSec(), TimeUnit.SECONDS);
 
-            // pending processing (can wait for first scan)
+            // pending processing: run immediately to reduce flakiness when tests inject a pending entry shortly after start
             schedulerPool.scheduleWithFixedDelay(this::processPendingMessages,
-                    options.getPendingScanIntervalSec(), options.getPendingScanIntervalSec(), TimeUnit.SECONDS);
+                    0, options.getPendingScanIntervalSec(), TimeUnit.SECONDS);
             // due retry moving: start immediately to reduce flakiness in short-running tests
             schedulerPool.scheduleWithFixedDelay(this::moveDueRetries,
                     0, options.getRetryMoverIntervalSec(), TimeUnit.SECONDS);

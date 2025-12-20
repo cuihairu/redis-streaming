@@ -6,6 +6,17 @@ plugins {
     id 'pl.allegro.tech.build.axion-release' version '1.17.0'
 }
 
+// Integration tests share a single Redis instance by default; serialize integrationTest tasks across modules
+// even when Gradle parallel project execution is enabled (org.gradle.parallel=true).
+abstract class SharedRedisIntegrationTestService implements org.gradle.api.services.BuildService<org.gradle.api.services.BuildServiceParameters.None>, AutoCloseable {
+    @Override
+    void close() {}
+}
+
+def sharedRedisIntegrationTestService = gradle.sharedServices.registerIfAbsent("sharedRedisIntegrationTestService", SharedRedisIntegrationTestService) {
+    maxParallelUsages = 1
+}
+
 // Configure axion-release to derive version from git tags like `v1.2.3`
 scmVersion {
     tag {
@@ -116,6 +127,9 @@ subprojects {
         group = 'verification'
 
         shouldRunAfter test
+
+        // Prevent cross-module interference when running integration tests in parallel against a shared Redis.
+        usesService(sharedRedisIntegrationTestService)
 
         // Configure to show more output
         testLogging {
