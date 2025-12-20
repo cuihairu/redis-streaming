@@ -38,6 +38,7 @@ replay_pid*
 .vscode
 .codebuddy
 .claude
+.spec-workflow
 
 # Ignore Gradle build output directory
 build

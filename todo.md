@@ -19,29 +19,31 @@
   - 覆盖率报告：建议挂到 `check` 或单独任务，而不是 `test` 的 finalizedBy（避免误触发集成测试）
 
 ### 2) `runtime` 模块目前是占位符（核心执行引擎未实现）
+**状态**：已部分修复（新增最小可用 In-Memory Runtime）
 
-- `runtime/src/main/java/.../RuntimePlaceholder.java` 明确为占位符，仅提供提示文案；`runtime/README.md` 中列出了大量 planned features。
-- 需要：
-  - 明确 runtime 的目标（仅 In-Memory 运行时用于测试/示例，还是可生产的执行引擎）
-  - 逐步补齐：DataStream 执行模型、operator 链接、状态/水位线/窗口/Checkpoint 集成等
+- 已实现：
+  - `StreamExecutionEnvironment`：`fromElements/fromCollection/addSource`
+  - 基于 iterator 的 `DataStream`/`KeyedStream`（`map/filter/flatMap/keyBy/addSink/print`；`process/reduce/getState`）
+- 仍未实现：`window(...)` / `sum(...)`、watermark/timer/Checkpoint 等；生产级 runtime 仍在规划中（详见 `runtime/README.md`）。
 
 ## P1（重要但不阻塞）
 
 ### 3) `table` 模块存在未实现 API
+**状态**：已修复（补齐 `toStream()` / `groupBy()` 等最小可用能力）
 
-- `table/src/main/java/.../InMemoryKTable.java`：`toStream()` 未实现（抛 `UnsupportedOperationException`）
-- `table/src/main/java/.../RedisKTable.java`：`toStream()`、`groupBy()` 未实现（抛 `UnsupportedOperationException`）
-- 建议先确定依赖关系：
-  - 如果 `toStream()` 依赖 runtime 的 DataStream 执行器：需要在 runtime 具备最小可用能力后再落地
-  - 如果允许提供一个“pull-based/iterator”形式的 DataStream：可先实现一个轻量 DataStream 适配器
+- 已实现：
+  - `InMemoryKTable.toStream()` / `RedisKTable.toStream()`：以 snapshot 方式导出为 runtime 的 `DataStream`
+  - `RedisKTable.groupBy(...)`：提供 `RedisKGroupedTable` 聚合能力
+  - `StreamTableConverter`：支持 `DataStream -> KTable`（In-Memory）
 
 ### 4) CEP：高级量词/严格相邻等已知问题待修复
+**状态**：已修复
 
 - `cep/CEP_ISSUES.md` 列出尚未正确工作的能力：
   - Optional `?`
   - Strict contiguity `next`
   - Range quantifiers `{n,m}`
-- 同时该文档中“Related Files”的包路径引用仍为旧路径（需要同步到当前 `io/github/cuihairu/redis/streaming/...`）。
+- 文档与测试已同步到当前包路径（`io/github/cuihairu/redis/streaming/...`）。
 
 ### 5) 文档/示例中的 Java 包名仍混用 `redis-streaming`（带连字符，无法作为 Java package）
 **状态**：已修复（示例/命令/import 已统一为 `io.github.cuihairu.redis.streaming...`）
