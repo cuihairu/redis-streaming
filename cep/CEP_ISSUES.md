@@ -13,32 +13,21 @@ The CEP (Complex Event Processing) module has advanced pattern matching features
 ## Issues to Fix
 
 ### 1. Optional Pattern (?)
-**Status**: ❌ Not working correctly
+**Status**: ✅ Fixed
 
 **Pattern**: `A B? C` (A, optionally B, then C)
 
 **Expected**: Should match both `A,C` and `A,B,C`
 
-**Current Behavior**: Does not correctly skip optional patterns
-
-**Root Cause**: In `tryExtend()`, when current step has `minOccurrences=0` and event doesn't match, it should:
-1. Skip current step (increment currentStep)
-2. Try matching event against next step
-3. If next step matches and is last, mark as complete
-
-**Problem**: The partial match's `currentStep` is not advancing correctly after matching first step.
+**Notes**: Optional steps are skipped on-demand when the current event does not match the optional pattern, allowing the event to match subsequent steps without creating duplicate matches.
 
 ### 2. ZeroOrMore at Start (*)
-**Status**: ✅ Partially fixed
+**Status**: ✅ Fixed
 
 **Pattern**: `A* B` (zero or more A, followed by B)
 
-**Current**: Works when B is processed directly (matches with zero A's)
-
-**Remaining Issue**: May not work correctly with longer sequences
-
 ### 3. Strict Contiguity (next)
-**Status**: ❌ Not working correctly
+**Status**: ✅ Fixed
 
 **Pattern**: `A next B` (B must immediately follow A, no events in between)
 
@@ -46,39 +35,23 @@ The CEP (Complex Event Processing) module has advanced pattern matching features
 - `A,B` → Match
 - `A,C,B` → No match
 
-**Current Behavior**: Not properly failing when non-matching events appear between strict patterns
-
-**Root Cause**: The strict contiguity check needs to happen at the point where we advance to the next step, not just when we process non-matching events.
+**Notes**: Strict steps now fail immediately on the first non-matching event while waiting for that step.
 
 ### 4. Range Quantifiers
-**Status**: ❌ Not working correctly
+**Status**: ✅ Fixed
 
 **Pattern**: `A{2,4}` (2 to 4 A's)
 
 **Expected**: Should match on 2nd, 3rd, and 4th A, but not 5th
 
-**Current**: Logic for tracking multiple matches at different counts may be incomplete
+**Notes**: Range quantifiers now emit matches at valid counts without starting overlapping new matches from events already used to extend existing matches (default non-reuse behavior).
 
 ## Test Files
-- `AdvancedCEPTest.java` - Contains all failing tests
-- Tests are tagged but not excluded
+- `cep/src/test/java/io/github/cuihairu/redis/streaming/cep/AdvancedCEPTest.java`
 
-## Recommended Fix Approach
-
-### Phase 1: Fix Optional Pattern
-1. Debug why `currentStep` doesn't advance after first match
-2. Ensure copy() method properly copies currentStep
-3. Fix logic for advancing currentStep when matching intermediate steps
-
-### Phase 2: Fix Strict Contiguity
-1. Track the "last event" for each partial match
-2. When advancing to a STRICT step, verify no events were skipped
-3. Fail the match if events were skipped for strict step
-
-### Phase 3: Fix Range Quantifiers
-1. Implement proper tracking of "how many matches to generate"
-2. When in range `{2,4}`, should generate matches at 2, 3, and 4 occurrences
-3. Test with overlapping matches
+## Implementation Notes
+- Core logic lives in `cep/src/main/java/io/github/cuihairu/redis/streaming/cep/PatternSequenceMatcher.java`.
+- Advanced quantifier/contiguity cases are covered by `AdvancedCEPTest`.
 
 ## Technical Notes
 
@@ -117,5 +90,5 @@ if (event matches current step) {
 **Medium** - Basic patterns work, these are advanced features
 
 ## Related Files
-- `/cep/src/main/java/io/github/cuihairu/streaming/cep/PatternSequenceMatcher.java`
-- `/cep/src/test/java/io/github/cuihairu/streaming/cep/AdvancedCEPTest.java`
+- `cep/src/main/java/io/github/cuihairu/redis/streaming/cep/PatternSequenceMatcher.java`
+- `cep/src/test/java/io/github/cuihairu/redis/streaming/cep/AdvancedCEPTest.java`

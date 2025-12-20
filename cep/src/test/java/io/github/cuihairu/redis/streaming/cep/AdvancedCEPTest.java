@@ -1,6 +1,5 @@
 package io.github.cuihairu.redis.streaming.cep;
 
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -35,7 +34,6 @@ class AdvancedCEPTest {
     }
 
     @Test
-    @Disabled("Known issue: zeroOrMore quantifier - see CEP_ISSUES.md")
     void testKleeneStar_ZeroOrMore() {
         // Pattern: A* B (zero or more A, followed by B)
         PatternSequence<String> pattern = PatternSequence.<String>begin()
@@ -58,7 +56,6 @@ class AdvancedCEPTest {
     }
 
     @Test
-    @Disabled("Known issue: optional quantifier - see CEP_ISSUES.md")
     void testOptionalPattern() {
         // Pattern: A B? C (A, optionally B, then C)
         PatternSequence<String> pattern = PatternSequence.<String>begin()
@@ -100,7 +97,6 @@ class AdvancedCEPTest {
     }
 
     @Test
-    @Disabled("Known issue: range quantifier - see CEP_ISSUES.md")
     void testRangeQuantifier() {
         // Pattern: A{2,4} (2 to 4 A's)
         PatternSequence<String> pattern = PatternSequence.<String>begin()
@@ -124,7 +120,6 @@ class AdvancedCEPTest {
     }
 
     @Test
-    @Disabled("Known issue: relaxed contiguity - see CEP_ISSUES.md")
     void testFollowedBy_RelaxedContiguity() {
         // Pattern: A followedBy B (relaxed - allows events in between)
         PatternSequence<String> pattern = PatternSequence.<String>begin()
@@ -143,7 +138,6 @@ class AdvancedCEPTest {
     }
 
     @Test
-    @Disabled("Known issue: strict contiguity - see CEP_ISSUES.md")
     void testNext_StrictContiguity() {
         // Pattern: A next B (strict - no events allowed in between)
         PatternSequence<String> pattern = PatternSequence.<String>begin()
@@ -166,7 +160,6 @@ class AdvancedCEPTest {
     }
 
     @Test
-    @Disabled("Known issue: time constraints - see CEP_ISSUES.md")
     void testWithinTimeConstraint() {
         // Pattern: A followedBy B within 5 seconds
         PatternSequence<String> pattern = PatternSequence.<String>begin()
@@ -185,7 +178,7 @@ class AdvancedCEPTest {
         matcher.clear();
         matcher.process("A", 0);
         List<PatternSequenceMatcher.CompleteMatch<String>> matches2 = matcher.process("B", 6000);
-        assertEquals(0, matcher.getCompleteMatches().size() - matches1.size()); // Should not create new match
+        assertEquals(0, matches2.size()); // Should not create new match
     }
 
     @Test
