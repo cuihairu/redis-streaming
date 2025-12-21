@@ -300,32 +300,15 @@ docker-compose down -v
 
 ### CI/CD Testing Strategy
 
-#### Self-hosted Runner Setup (Linux)
+#### GitHub-Hosted Runner Configuration
 
-For Linux self-hosted runners, Docker permissions need to be configured:
+项目使用 GitHub 官方托管的 runner (ubuntu-latest) 进行 CI/CD，具有以下优势：
 
-```bash
-# 1. Run the setup script on your Linux runner
-./setup-runner-docker.sh
-
-# 2. Restart the GitHub Actions runner service
-sudo systemctl restart actions.runner.*
-
-# 3. Verify Docker access
-docker ps
-```
-
-**Manual setup (alternative):**
-```bash
-# Add user to docker group
-sudo usermod -aG docker $USER
-
-# Restart runner service
-sudo systemctl restart actions.runner.*
-
-# Verify permissions
-docker ps
-```
+- **无需维护** - GitHub 负责所有维护和更新
+- **高性能环境** - 2-core CPU, 7 GB RAM, 14 GB SSD
+- **预装工具** - Docker, Git, Java, Node.js, Python 等
+- **自动缓存** - 支持依赖和构建缓存
+- **安全可靠** - GitHub 管理的安全环境
 
 #### CI/CD Pipeline
 
@@ -337,6 +320,23 @@ docker ps
 docker-compose up -d
 ./gradlew clean check
 docker-compose down
+```
+
+#### 本地测试建议
+
+为了在本地模拟 CI 环境：
+
+```bash
+# 1. 使用相同的 Java 版本
+# 安装 Java 17 (Temurin)
+sudo apt install -y openjdk-17-jdk
+
+# 2. 验证 Java 版本
+java -version
+# 应显示: openjdk version "17.x.x"
+
+# 3. 运行完整的测试套件
+./test-env.sh test
 ```
 
 ### Test Coverage Goals
