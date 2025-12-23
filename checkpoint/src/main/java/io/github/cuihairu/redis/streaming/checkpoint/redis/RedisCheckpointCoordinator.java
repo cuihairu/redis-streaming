@@ -18,11 +18,25 @@ public class RedisCheckpointCoordinator implements CheckpointCoordinator {
 
     private static final Logger log = LoggerFactory.getLogger(RedisCheckpointCoordinator.class);
 
+    private static final class PendingCheckpoint {
+        private final long createdAtMillis;
+        private final Map<String, Boolean> acknowledgements;
+
+        private PendingCheckpoint(long createdAtMillis) {
+            this.createdAtMillis = createdAtMillis;
+            this.acknowledgements = new ConcurrentHashMap<>();
+        }
+
+        private int acknowledgementCount() {
+            return acknowledgements.size();
+        }
+    }
+
     private final CheckpointStorage storage;
     private final AtomicLong checkpointIdCounter;
 
-    // Track pending checkpoints: checkpointId -> set of task IDs that acknowledged
-    private final Map<Long, Map<String, Boolean>> pendingCheckpoints;
+    // Track pending checkpoints: checkpointId -> pending checkpoint with task acknowledgements
+    private final Map<Long, PendingCheckpoint> pendingCheckpoints;
 
     // Configuration
     private final int requiredTaskAcks;
@@ -52,6 +66,8 @@ public class RedisCheckpointCoordinator implements CheckpointCoordinator {
 
     @Override
     public long triggerCheckpoint() {
+        cleanupExpiredPendingCheckpoints();
+
         long checkpointId = checkpointIdCounter.getAndIncrement();
         long timestamp = System.currentTimeMillis();
 
@@ -62,7 +78,7 @@ public class RedisCheckpointCoordinator implements CheckpointCoordinator {
             storage.storeCheckpoint(checkpoint);
 
             // Track as pending
-            pendingCheckpoints.put(checkpointId, new ConcurrentHashMap<>());
+            pendingCheckpoints.put(checkpointId, new PendingCheckpoint(timestamp));
 
             log.info("Triggered checkpoint {}", checkpointId);
             return checkpointId;
@@ -76,28 +92,59 @@ public class RedisCheckpointCoordinator implements CheckpointCoordinator {
 
     @Override
     public void acknowledgeCheckpoint(long checkpointId, String taskId) {
-        Map<String, Boolean> acks = pendingCheckpoints.get(checkpointId);
+        cleanupExpiredPendingCheckpoints();
 
-        if (acks == null) {
+        PendingCheckpoint pendingCheckpoint = pendingCheckpoints.get(checkpointId);
+
+        if (pendingCheckpoint == null) {
             log.warn("Received ack for unknown checkpoint {} from task {}", checkpointId, taskId);
             return;
         }
 
-        acks.put(taskId, true);
+        long now = System.currentTimeMillis();
+        if (isExpired(pendingCheckpoint, now)) {
+            boolean removed = pendingCheckpoints.remove(checkpointId, pendingCheckpoint);
+            if (removed) {
+                log.warn(
+                        "Checkpoint {} timed out after {} ms (acks {}/{})",
+                        checkpointId,
+                        now - pendingCheckpoint.createdAtMillis,
+                        pendingCheckpoint.acknowledgementCount(),
+                        requiredTaskAcks
+                );
+            }
+            return;
+        }
+
+        pendingCheckpoint.acknowledgements.put(taskId, true);
         log.debug("Task {} acknowledged checkpoint {}", taskId, checkpointId);
 
         // Check if all required tasks have acknowledged
-        if (acks.size() >= requiredTaskAcks) {
+        if (pendingCheckpoint.acknowledgementCount() >= requiredTaskAcks) {
             completeCheckpoint(checkpointId);
         }
     }
 
     @Override
     public void completeCheckpoint(long checkpointId) {
-        Map<String, Boolean> acks = pendingCheckpoints.remove(checkpointId);
+        cleanupExpiredPendingCheckpoints();
 
-        if (acks == null) {
+        PendingCheckpoint pendingCheckpoint = pendingCheckpoints.remove(checkpointId);
+
+        if (pendingCheckpoint == null) {
             log.warn("Attempted to complete unknown checkpoint {}", checkpointId);
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        if (isExpired(pendingCheckpoint, now)) {
+            log.warn(
+                    "Skipping completion for timed-out checkpoint {} after {} ms (acks {}/{})",
+                    checkpointId,
+                    now - pendingCheckpoint.createdAtMillis,
+                    pendingCheckpoint.acknowledgementCount(),
+                    requiredTaskAcks
+            );
             return;
         }
 
@@ -106,7 +153,11 @@ public class RedisCheckpointCoordinator implements CheckpointCoordinator {
             if (checkpoint != null) {
                 checkpoint.markCompleted();
                 storage.storeCheckpoint(checkpoint);
-                log.info("Completed checkpoint {} (acknowledged by {} tasks)", checkpointId, acks.size());
+                log.info(
+                        "Completed checkpoint {} (acknowledged by {} tasks)",
+                        checkpointId,
+                        pendingCheckpoint.acknowledgementCount()
+                );
             }
         } catch (Exception e) {
             log.error("Failed to complete checkpoint {}", checkpointId, e);
@@ -184,7 +235,48 @@ public class RedisCheckpointCoordinator implements CheckpointCoordinator {
      * Get the number of pending checkpoints
      */
     public int getPendingCheckpointCount() {
+        cleanupExpiredPendingCheckpoints();
         return pendingCheckpoints.size();
+    }
+
+    /**
+     * Cleanup pending checkpoints that exceeded {@code checkpointTimeout}.
+     *
+     * @return Number of pending checkpoints removed
+     */
+    public int cleanupExpiredPendingCheckpoints() {
+        if (checkpointTimeout <= 0) {
+            return 0;
+        }
+
+        long now = System.currentTimeMillis();
+        int removedCount = 0;
+        for (Map.Entry<Long, PendingCheckpoint> entry : pendingCheckpoints.entrySet()) {
+            Long checkpointId = entry.getKey();
+            PendingCheckpoint pendingCheckpoint = entry.getValue();
+
+            if (!isExpired(pendingCheckpoint, now)) {
+                continue;
+            }
+
+            boolean removed = pendingCheckpoints.remove(checkpointId, pendingCheckpoint);
+            if (removed) {
+                removedCount++;
+                log.warn(
+                        "Checkpoint {} timed out after {} ms (acks {}/{})",
+                        checkpointId,
+                        now - pendingCheckpoint.createdAtMillis,
+                        pendingCheckpoint.acknowledgementCount(),
+                        requiredTaskAcks
+                );
+            }
+        }
+
+        return removedCount;
+    }
+
+    private boolean isExpired(PendingCheckpoint pendingCheckpoint, long nowMillis) {
+        return checkpointTimeout > 0 && nowMillis - pendingCheckpoint.createdAtMillis > checkpointTimeout;
     }
 
     /**
