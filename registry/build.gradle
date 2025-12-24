@@ -42,7 +42,8 @@ tasks.named('jacocoTestReport', JacocoReport) {
     }
     classDirectories.setFrom(fileTree(dir: "$buildDir/classes/java/main"))
     sourceDirectories.setFrom(files('src/main/java'))
-    executionData.setFrom(fileTree(dir: buildDir, includes: ['jacoco/*.exec']))
+    // Only include unit-test execution data; integrationTest may also produce an exec when running `check`.
+    executionData.setFrom(fileTree(dir: "$buildDir/jacoco", includes: ['test.exec']))
     doFirst { executionData.files.removeIf { !it.exists() } }
 }
 
@@ -52,8 +53,11 @@ tasks.named('test') {
 }
 // Enforce a modest coverage bar to guard regressions (configure existing task)
 tasks.named('jacocoTestCoverageVerification', JacocoCoverageVerification) {
-    dependsOn tasks.withType(Test)
-    executionData.setFrom(fileTree(dir: buildDir, includes: ['jacoco/*.exec']))
+    // Verify combined coverage for unit + integration tests. `check` already runs integrationTest,
+    // and the historical threshold assumes integration coverage is included.
+    dependsOn tasks.named('test')
+    dependsOn tasks.named('integrationTest')
+    executionData.setFrom(fileTree(dir: "$buildDir/jacoco", includes: ['test.exec', 'integrationTest.exec']))
     classDirectories.setFrom(fileTree(dir: "$buildDir/classes/java/main"))
     doFirst { executionData.files.removeIf { !it.exists() } }
     violationRules {

@@ -42,7 +42,9 @@ tasks.named('jacocoTestReport', JacocoReport) {
     }
     classDirectories.setFrom(fileTree(dir: "$buildDir/classes/java/main"))
     sourceDirectories.setFrom(files('src/main/java'))
-    executionData.setFrom(fileTree(dir: buildDir, includes: ['jacoco/*.exec']))
+    // Only include unit-test execution data. When running `check`, integrationTest will also produce
+    // an exec file; do not consume it here to avoid Gradle implicit dependency validation issues.
+    executionData.setFrom(fileTree(dir: "$buildDir/jacoco", includes: ['test.exec']))
     doFirst { executionData.files.removeIf { !it.exists() } }
 }
 
