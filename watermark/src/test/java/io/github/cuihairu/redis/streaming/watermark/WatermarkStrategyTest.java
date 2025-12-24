@@ -1,11 +1,14 @@
 package io.github.cuihairu.redis.streaming.watermark;
 
+import io.github.cuihairu.redis.streaming.api.watermark.Watermark;
 import io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator;
 import io.github.cuihairu.redis.streaming.watermark.generators.AscendingTimestampWatermarkGenerator;
 import io.github.cuihairu.redis.streaming.watermark.generators.BoundedOutOfOrdernessWatermarkGenerator;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -67,7 +70,10 @@ class WatermarkStrategyTest {
         WatermarkGenerator<Event> generator = strategy.createWatermarkGenerator();
         assertNotNull(generator);
 
-        // Should not emit watermarks (no easy way to test without mocking)
+        TestWatermarkOutput output = new TestWatermarkOutput();
+        generator.onEvent(new Event(1, "x"), 1, output);
+        generator.onPeriodicEmit(output);
+        assertTrue(output.getWatermarks().isEmpty());
     }
 
     @Test
@@ -79,6 +85,13 @@ class WatermarkStrategyTest {
         WatermarkGenerator<Event> generator = strategy.createWatermarkGenerator();
         assertNotNull(generator);
         assertTrue(generator instanceof BoundedOutOfOrdernessWatermarkGenerator);
+    }
+
+    @Test
+    void testExtractTimestampFallsBackToRecordTimestamp() {
+        WatermarkStrategy<Event> strategy = WatermarkStrategy.forMonotonousTimestamps();
+        Event event = new Event(5000, "test");
+        assertEquals(123L, strategy.extractTimestamp(event, 123L));
     }
 
     /**
@@ -99,6 +112,27 @@ class WatermarkStrategyTest {
 
         public String getData() {
             return data;
+        }
+    }
+
+    private static class TestWatermarkOutput implements WatermarkGenerator.WatermarkOutput {
+        private final List<Watermark> watermarks = new ArrayList<>();
+
+        @Override
+        public void emitWatermark(Watermark watermark) {
+            watermarks.add(watermark);
+        }
+
+        @Override
+        public void markIdle() {
+        }
+
+        @Override
+        public void markActive() {
+        }
+
+        public List<Watermark> getWatermarks() {
+            return watermarks;
         }
     }
 }

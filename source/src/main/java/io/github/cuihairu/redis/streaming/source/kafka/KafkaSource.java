@@ -25,7 +25,7 @@ import java.util.function.Consumer;
 @Slf4j
 public class KafkaSource<T> implements AutoCloseable {
 
-    private final KafkaConsumer<String, String> consumer;
+    private final org.apache.kafka.clients.consumer.Consumer<String, String> consumer;
     private final String topic;
     private final ObjectMapper objectMapper;
     private final Class<T> valueClass;
@@ -113,6 +113,22 @@ public class KafkaSource<T> implements AutoCloseable {
         this.consumer.subscribe(Collections.singletonList(topic));
 
         log.info("Created Kafka source with custom properties for topic: {}", topic);
+    }
+
+    KafkaSource(
+            org.apache.kafka.clients.consumer.Consumer<String, String> consumer,
+            String topic,
+            ObjectMapper objectMapper,
+            Class<T> valueClass) {
+        Objects.requireNonNull(consumer, "Consumer cannot be null");
+        Objects.requireNonNull(topic, "Topic cannot be null");
+        Objects.requireNonNull(objectMapper, "ObjectMapper cannot be null");
+        Objects.requireNonNull(valueClass, "Value class cannot be null");
+
+        this.consumer = consumer;
+        this.topic = topic;
+        this.objectMapper = objectMapper;
+        this.valueClass = valueClass;
     }
 
     /**

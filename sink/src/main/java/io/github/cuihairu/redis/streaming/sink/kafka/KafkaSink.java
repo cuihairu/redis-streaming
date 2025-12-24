@@ -3,6 +3,7 @@ package io.github.cuihairu.redis.streaming.sink.kafka;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
@@ -22,7 +23,7 @@ import java.util.concurrent.Future;
 @Slf4j
 public class KafkaSink<T> implements AutoCloseable {
 
-    private final KafkaProducer<String, String> producer;
+    private final Producer<String, String> producer;
     private final String topic;
     private final ObjectMapper objectMapper;
     private final KeyExtractor<T> keyExtractor;
@@ -95,6 +96,21 @@ public class KafkaSink<T> implements AutoCloseable {
         this.producer = new KafkaProducer<>(producerProps);
 
         log.info("Created Kafka sink with custom properties for topic: {}", topic);
+    }
+
+    KafkaSink(
+            Producer<String, String> producer,
+            String topic,
+            ObjectMapper objectMapper,
+            KeyExtractor<T> keyExtractor) {
+        Objects.requireNonNull(producer, "Producer cannot be null");
+        Objects.requireNonNull(topic, "Topic cannot be null");
+        Objects.requireNonNull(objectMapper, "ObjectMapper cannot be null");
+
+        this.producer = producer;
+        this.topic = topic;
+        this.objectMapper = objectMapper;
+        this.keyExtractor = keyExtractor;
     }
 
     /**
