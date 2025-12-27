@@ -28,13 +28,10 @@ These examples are fully functional and can be run directly:
    - Features: MySQL binlog CDC, PostgreSQL logical replication, database polling, CDC manager
    - Run: Requires MySQL/PostgreSQL with proper CDC setup (see Prerequisites)
 
-### 🚧 Pending Examples (`.broken` files)
-
-These examples use APIs that are not yet fully implemented:
-
-1. **StreamAggregationExample.java.broken**
-   - Waiting for: Complete aggregation API implementation
-   - Alternative: Use `aggregation/src/test/java/.../AggregationIntegrationExample.java`
+5. **StreamAggregationExample** - Windowed aggregation and basic analytics
+   - Location: `examples/src/main/java/.../aggregation/StreamAggregationExample.java`
+   - Features: Sliding/tumbling window aggregations, PV counter, top-K
+   - Run: Requires Redis running on localhost:6379
 
 ## Prerequisites
 
@@ -87,6 +84,9 @@ docker run -d -p 6379:6379 redis:7-alpine
 
 # Run ComprehensiveStreamingExample
 ./gradlew :examples:run -PmainClass=io.github.cuihairu.redis.streaming.examples.streaming.ComprehensiveStreamingExample
+
+# Run StreamAggregationExample
+./gradlew :examples:run -PmainClass=io.github.cuihairu.redis.streaming.examples.aggregation.StreamAggregationExample
 
 # Run CDCIntegrationExample (requires database setup)
 ./gradlew :examples:run -PmainClass=io.github.cuihairu.redis.streaming.examples.cdc.CDCIntegrationExample

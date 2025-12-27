@@ -52,11 +52,24 @@ final class TableFilter {
             if (raw == null) continue;
             String s = raw.trim();
             if (s.isEmpty()) continue;
-            // Escape then reintroduce '*' wildcard.
-            String regex = Pattern.quote(s).replace("\\*", ".*");
-            out.add(Pattern.compile("^" + regex + "$"));
+            out.add(Pattern.compile("^" + toWildcardRegex(s) + "$"));
         }
         return out;
     }
-}
 
+    private static String toWildcardRegex(String pattern) {
+        StringBuilder out = new StringBuilder(pattern.length() + 8);
+        for (int i = 0; i < pattern.length(); i++) {
+            char c = pattern.charAt(i);
+            if (c == '*') {
+                out.append(".*");
+                continue;
+            }
+            if ("\\.[]{}()+-^$|?".indexOf(c) >= 0) {
+                out.append('\\');
+            }
+            out.append(c);
+        }
+        return out.toString();
+    }
+}

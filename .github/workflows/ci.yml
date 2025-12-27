@@ -55,9 +55,17 @@ jobs:
       - name: Build & Test (unit + integration)
         run: |
           set -euo pipefail
-          ./gradlew clean check --warning-mode=all
+          ./gradlew clean check jacocoRootReport --warning-mode=all
         env:
           REDIS_URL: redis://127.0.0.1:6379
+
+      - name: Upload coverage to Codecov
+        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: build/reports/jacoco/jacocoRootReport/jacocoRootReport.xml
+          fail_ci_if_error: true
 
       - name: Shutdown Redis
         if: always()

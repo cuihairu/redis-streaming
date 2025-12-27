@@ -46,6 +46,7 @@ allprojects {
 
 subprojects {
     apply plugin: 'java'
+    apply plugin: 'jacoco'
     apply plugin: 'signing'
     // Only publish real modules; exclude example module from publishing
     if (project.name != 'examples') {
@@ -216,7 +217,12 @@ subprojects {
 
 // Aggregate coverage across subprojects
 tasks.register('jacocoRootReport', JacocoReport) {
-    dependsOn subprojects.collect { it.tasks.withType(Test) }
+    // Depend only on unit tests; integration tests require Redis and should not be pulled in by coverage.
+    // (If integration tests already ran, their .exec files will still be picked up via executionData.)
+    dependsOn subprojects.collect { it.tasks.named('test') }
+    // If integration tests are already in the task graph (e.g., `check`), prefer generating reports after them
+    // so their execution data can be included.
+    shouldRunAfter subprojects.collect { it.tasks.named('integrationTest') }
     additionalSourceDirs.from files(subprojects.collect { it.file('src/main/java') })
     sourceDirectories.from files(subprojects.collect { it.file('src/main/java') })
     classDirectories.from files(subprojects.collect { fileTree(dir: "${it.buildDir}/classes/java/main") })
@@ -231,7 +237,12 @@ tasks.register('jacocoRootReport', JacocoReport) {
 }
 
 tasks.register('jacocoRootCoverageVerification', JacocoCoverageVerification) {
-    dependsOn subprojects.collect { it.tasks.withType(Test) }
+    // Depend only on unit tests; integration tests require Redis and should not be pulled in by coverage.
+    // (If integration tests already ran, their .exec files will still be picked up via executionData.)
+    dependsOn subprojects.collect { it.tasks.named('test') }
+    // If integration tests are already in the task graph (e.g., `check`), prefer verifying after them
+    // so their execution data can be included.
+    shouldRunAfter subprojects.collect { it.tasks.named('integrationTest') }
     executionData.from files(subprojects.collect { fileTree(dir: it.buildDir, includes: ['jacoco/*.exec']) })
     classDirectories.from files(subprojects.collect { fileTree(dir: "${it.buildDir}/classes/java/main") })
     doFirst { executionData.files.removeIf { !it.exists() } }

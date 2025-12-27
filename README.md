@@ -5,6 +5,7 @@
 [![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://www.oracle.com/java/)
 [![Redis](https://img.shields.io/badge/Redis-6.0+-red.svg)](https://redis.io/)
 [![Version](https://img.shields.io/badge/Version-0.1.0-blue.svg)](https://github.com/cuihairu/redis-streaming)
+[![codecov](https://codecov.io/gh/cuihairu/redis-streaming/branch/main/graph/badge.svg)](https://codecov.io/gh/cuihairu/redis-streaming)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ## 🚀 核心特性
@@ -523,19 +524,23 @@ consumer.consume(message -> {
 #### 窗口聚合
 ```java
 import io.github.cuihairu.redis.streaming.aggregation.*;
+import io.github.cuihairu.redis.streaming.aggregation.functions.SumFunction;
+
+import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
 
 // 创建窗口聚合器
-WindowAggregator aggregator = new WindowAggregator(
-    redissonClient,
-    "page_views",
-    new TumblingWindow(Duration.ofMinutes(5))
-);
+WindowAggregator aggregator = new WindowAggregator(redissonClient, "page_views");
+aggregator.registerFunction("SUM", SumFunction.getInstance());
 
-// 添加数据
-aggregator.add("product-123", 1.0, System.currentTimeMillis());
+TimeWindow window = TumblingWindow.of(Duration.ofMinutes(5));
+
+// 添加数据（窗口内的数值将被聚合）
+aggregator.addValue(window, "product-123", 19.99, Instant.now());
 
 // 获取聚合结果
-Map<String, Double> result = aggregator.getResult("window-key");
+BigDecimal total = aggregator.getAggregatedResult(window, "product-123", "SUM", Instant.now());
 ```
 
 #### CDC 数据捕获
