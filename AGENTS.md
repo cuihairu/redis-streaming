@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Modules
-- Multi-module Gradle project (Java 17). Key modules: `core`, `runtime`, `registry`, `mq`, `state`, `window`, `aggregation`, `join`, `cdc`, `sink`, `source`, `metrics`, `spring-boot-starter`, `examples` (see `settings.gradle`).
+- Multi-module Gradle project (Java 17). Key modules: `core`, `runtime`, `mq`, `registry`, `config`, `state`, `checkpoint`, `watermark`, `window`, `aggregation`, `table`, `join`, `cdc`, `source`, `sink`, `reliability`, `cep`, `metrics`, `spring-boot-starter`, `examples` (see `settings.gradle`).
 - Code: `*/src/main/java`; tests: `*/src/test/java`; resources in corresponding `resources` dirs.
 - Dev assets: `docker-compose.yml` (Redis for tests), `docs/`, `README.md`, `TESTING.md`.
 

@@ -58,8 +58,7 @@
 
 ### 6) `examples` 中存在 `.broken` 示例文件
 
-- `examples/src/main/java/.../StreamAggregationExample.java.broken`
-- 需要：明确“等待哪部分 API 补齐”，以及补齐后将其恢复为可编译/可运行的示例（或删除/迁移到 docs）
+**状态**：已修复（仓库已无 `.broken` 示例文件；相关文档已同步）
 
 ### 7) Wiki/文档中存在 TBD/过时段落
 
@@ -77,17 +76,14 @@
 
 ### 8) 大量 `*.backup` 源码/测试残留需要定策略
 
-- 存在多处 `src/main/java.backup`、`src/test.backup`（source/sink/cdc/metrics 等）
-- 需要决定：
-  - 这些是否仍需要保留（作为历史草稿/参考实现）
-  - 若不需要：删除或迁移到 `docs/`/`wiki/` 作为设计参考，避免仓库噪音与维护成本
+**状态**：已清理（移除 `src/main/java.backup`、`src/test.backup` 等备份目录，并在 `.gitignore` 中添加忽略规则）
 
 ### 9) Checkpoint 协调器里有未使用的超时配置
 
-- `checkpoint/src/main/java/.../RedisCheckpointCoordinator.java` 中 `checkpointTimeout` 目前只赋值未参与逻辑。
-- 需要：
-  - 增加“checkpoint 过期/超时失败”的处理（定时清理 pending checkpoints、标记失败等），或
-  - 移除该字段与相关构造参数，避免“看起来支持但实际不生效”
+**状态**：已修复（支持 pending checkpoint 超时清理，并在 ack/complete 时检查超时）
+
+- 当前实现会在 `triggerCheckpoint/acknowledgeCheckpoint/completeCheckpoint` 入口执行超时清理，并对超时 checkpoint 打日志告警。
+- 进一步演进（可选）：Checkpoint API 若增加 “failed/aborted” 状态，可在超时时落盘状态以便可观测与治理。
 
 ### 10) 约定/指南与实际工程状态需要再对齐一次
 

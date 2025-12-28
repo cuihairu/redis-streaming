@@ -66,3 +66,7 @@ docker-compose.override.yml
 *.swp
 *.swo
 *~
+
+# Source backups (do not commit)
+**/src/main/java.backup/
+**/src/test.backup/

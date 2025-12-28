@@ -260,7 +260,7 @@ Error: Unable to connect to MySQL/PostgreSQL server
 1. Review the working examples to understand the API usage
 2. Check integration tests in each module for more detailed usage patterns  
 3. Refer to `CLAUDE.md` for module-specific documentation
-4. Once more APIs are implemented, the `.broken` examples will be updated
+4. If you need features that are not yet implemented, check `todo.md` / module READMEs for the current roadmap
 
 ## Contributing
 

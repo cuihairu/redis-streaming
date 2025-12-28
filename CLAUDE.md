@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Java streaming processing framework built around Redis Stream and other Redis data structures. The project consists of multiple Gradle modules designed to provide lightweight messaging, service registry, time series analysis, and other streaming capabilities.
+This is a Java 17 streaming processing framework built around Redis Streams and other Redis data structures. The project consists of multiple Gradle modules that cover MQ, registry/config, state/checkpointing, window/aggregation, table/join, CDC, reliability, CEP, and integrations.
 
 ## Build and Development Commands
 
@@ -51,23 +51,26 @@ This is a Java streaming processing framework built around Redis Stream and othe
 ## Project Structure
 
 ### Multi-Module Architecture
-- **core**: Core functionality with Redis-based components
-  - `registry`: Service registration and discovery with full protocol support
-    - Service identity and instance abstractions
-    - Health checking system (HTTP, TCP, WebSocket, Custom)
-    - Client interfaces: ServiceRegistry, ServiceProvider, ServiceConsumer, ServiceDiscovery, NamingService
-    - Redis-based implementations with pub/sub notifications
-  - `mq`: Message queue implementation using Redis Streams (planned)
-  - `timeseries`: Time window aggregation using Redis Sorted Set/TimeSeries (planned)
-  - `logs`: Log aggregation through Redis List/Stream with ELK forwarding (planned)
-  - `utils`: Utility classes for instance ID generation and system operations
-- **spring-boot-starter**: Spring Boot auto-configuration and annotation support
-- **examples**: Example implementations demonstrating usage patterns
-- **aggregation**: Stream aggregation and windowing operations (PV counting, Top-K analysis)
-- **cdc**: Change Data Capture from databases (MySQL Binlog, Oracle LogMiner)
-- **sink**: Data output connectors (Elasticsearch, HBase, Snowflake)
-- **source**: Data input connectors (IoT devices, HTTP APIs, file systems)
-- **metrics**: Monitoring and observability (Prometheus integration, Micrometer)
+- **core**: Core API definitions (DataStream/State/Checkpoint/Window/etc.)
+- **runtime**: Minimal in-memory runtime (single-thread; for tests/examples)
+- **mq**: Redis Streams message queue (consumer groups, DLQ, retry)
+- **registry**: Service registration & discovery (health checks, metadata filtering)
+- **config**: Redis-backed configuration center (versioning, notifications)
+- **state**: State abstractions & Redis-backed implementations
+- **checkpoint**: Checkpoint coordination & storage
+- **watermark**: Watermark generators and related utilities
+- **window**: Windowing primitives (assigners/triggers/evictors)
+- **aggregation**: Window aggregations (TopK, quantiles, PV/UV, etc.)
+- **table**: KTable (in-memory & Redis-backed)
+- **join**: Stream-stream joins
+- **cdc**: CDC connectors (MySQL binlog, PostgreSQL logical replication, polling)
+- **source**: Input connectors (Kafka, HTTP, Redis, etc.)
+- **sink**: Output connectors (Kafka, Redis, etc.)
+- **reliability**: Reliability building blocks (dedup, DLQ helpers)
+- **cep**: Complex event processing
+- **metrics**: Metrics/observability integrations
+- **spring-boot-starter**: Spring Boot auto-configuration and annotations
+- **examples**: Runnable examples and usage patterns
 
 ### Key Dependencies
 - **Redisson 3.29.0**: Redis client for distributed operations and connection pooling
@@ -101,7 +104,7 @@ The registry module implements a comprehensive service discovery system:
 - Configuration management with dynamic refresh capabilities
 
 ### Java Version and Encoding
-- Source/Target compatibility: Java 11
+- Source/Target compatibility: Java 17
 - Default encoding: UTF-8
 - Uses modern Java features while maintaining compatibility
 
@@ -175,6 +178,7 @@ docker-compose up -d
 
 # 2. Verify Redis is running
 docker-compose ps
+```
 
 #### Integration Tests (Full Environment Required)
 ```bash
@@ -279,8 +283,9 @@ The project includes comprehensive test infrastructure:
 - ✅ **Parallel testing** - Safe concurrent test execution
 - ✅ **Auto-cleanup** - Containers removed after tests
 
-# Clean volumes
-docker-compose down -v
+Cleanup volumes:
+```bash
+docker-compose -f docker-compose.test.yml down -v
 ```
 
 ### Running Specific Tests
