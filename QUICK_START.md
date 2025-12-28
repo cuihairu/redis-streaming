@@ -481,14 +481,14 @@ try {
 
 - 查看 [完整文档](README.md)
 - 运行 [示例程序](examples/)
-- 阅读 [API 文档](docs/api/)
-- 加入 [社区讨论](https://github.com/cuihairu/streaming/discussions)
+- 阅读 [API 文档](docs/API.md)
+- 加入 [社区讨论](https://github.com/cuihairu/redis-streaming/discussions)
 
 ## 获取帮助
 
 - 📖 文档: [README.md](README.md)
-- 🐛 问题反馈: [GitHub Issues](https://github.com/cuihairu/streaming/issues)
-- 💬 讨论: [GitHub Discussions](https://github.com/cuihairu/streaming/discussions)
+- 🐛 问题反馈: [GitHub Issues](https://github.com/cuihairu/redis-streaming/issues)
+- 💬 讨论: [GitHub Discussions](https://github.com/cuihairu/redis-streaming/discussions)
 - 📧 邮件: cuihairu@example.com
 
 ---

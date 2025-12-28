@@ -85,7 +85,7 @@ Retention 与 ACK 删除策略（简述）
   - `all-groups-ack`：多组逐条计数，所有活跃组都 ACK 后删除
 - DLQ 可配置独立保留阈值（长度/时间）
 
-详见：`wiki/docs/retention-and-ack-policy.md`
+详见：`docs/retention-and-ack-policy.md`
 
 #### **registry** - 服务注册发现
 基于 Redis 的服务注册与发现，支持微服务架构和健康检查。

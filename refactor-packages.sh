@@ -33,12 +33,12 @@ done
 echo ""
 echo "Step 2: Updating package declarations..."
 # Update package declarations in all Java files
-find . -type f -name "*.java" -not -path "*/build/*" -not -path "*/.gradle/*" -not -path "*/core.backup/*" -exec sed -i '' 's/package io\.github\.cuihairu\.streaming/package io.github.cuihairu.redis.streaming/g' {} \;
+find . -type f -name "*.java" -not -path "*/build/*" -not -path "*/.gradle/*" -not -path "*/src/main/java.backup/*" -not -path "*/src/test.backup/*" -not -path "*/core.backup/*" -exec sed -i '' 's/package io\.github\.cuihairu\.streaming/package io.github.cuihairu.redis.streaming/g' {} \;
 
 echo ""
 echo "Step 3: Updating import statements..."
 # Update import statements in all Java files
-find . -type f -name "*.java" -not -path "*/build/*" -not -path "*/.gradle/*" -not -path "*/core.backup/*" -exec sed -i '' 's/import io\.github\.cuihairu\.streaming/import io.github.cuihairu.redis.streaming/g' {} \;
+find . -type f -name "*.java" -not -path "*/build/*" -not -path "*/.gradle/*" -not -path "*/src/main/java.backup/*" -not -path "*/src/test.backup/*" -not -path "*/core.backup/*" -exec sed -i '' 's/import io\.github\.cuihairu\.streaming/import io.github.cuihairu.redis.streaming/g' {} \;
 
 echo ""
 echo "Step 4: Updating spring.factories if exists..."

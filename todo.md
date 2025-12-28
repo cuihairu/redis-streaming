@@ -62,6 +62,8 @@
 
 ### 7) Wiki/文档中存在 TBD/过时段落
 
+**状态**：已部分修复（关键 Wiki 页面已补齐最小可用说明，移除 TBD 占位）
+
 典型位置：
 - `wiki/Runtime.md`（TBD）
 - `wiki/CDC.md`（TBD）
@@ -70,7 +72,7 @@
 - `wiki/State.md`（TBD，且当前代码里已存在 `state.backend.StateBackend`，文档需更新）
 - `wiki/Source.md`（TBD）
 
-建议：要么补齐“能跑的最小示例/配置”，要么删掉 TBD 片段避免误导。
+建议：继续补齐“能跑的最小示例/配置”，并把限制/未实现点写清楚（避免误导）。
 
 ## P2（清理/演进）
 
@@ -86,6 +88,8 @@
 - 进一步演进（可选）：Checkpoint API 若增加 “failed/aborted” 状态，可在超时时落盘状态以便可观测与治理。
 
 ### 10) 约定/指南与实际工程状态需要再对齐一次
+
+**状态**：已部分修复（补齐 `docs/` 目录以修复链接；并对齐 AGENTS/CLAUDE/wiki 的占位文档）
 
 - `AGENTS.md` / `CLAUDE.md` / `README.md` / `settings.gradle` 的模块列表、命名规范、运行命令存在不一致处
 - 需要统一“对外接口 + 使用文档 + 工程结构”，降低新用户上手成本
