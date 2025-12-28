@@ -22,6 +22,8 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
     steps:
       - name: Checkout
@@ -60,10 +62,10 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379
 
       - name: Upload coverage to Codecov
-        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        if: ${{ env.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}
           files: build/reports/jacoco/jacocoRootReport/jacocoRootReport.xml
           fail_ci_if_error: true
 
