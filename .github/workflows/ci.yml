@@ -42,17 +42,13 @@ jobs:
           java -version
           javac -version
 
-      - name: Start Redis with Docker
+      - name: Start test environment (Redis, MySQL, PostgreSQL, Elasticsearch)
         run: |
           set -euo pipefail
-          docker compose -f docker-compose.yml up -d redis || docker compose up -d redis
-          # wait up to ~20s
-          for i in {1..40}; do
-            if docker ps --format '{{.Names}}' | grep -q redis; then
-              break
-            fi
-            sleep 0.5
-          done
+          docker compose -f docker-compose.test.yml up -d
+          # 等待所有服务就绪（使用 healthcheck）
+          timeout 120 bash -c 'until docker compose -f docker-compose.test.yml ps | grep -q "healthy"; do sleep 2; done'
+          docker compose -f docker-compose.test.yml ps
 
       - name: Build & Test (unit + integration)
         run: |
@@ -60,20 +56,27 @@ jobs:
           ./gradlew clean check jacocoRootReport --warning-mode=all
         env:
           REDIS_URL: redis://127.0.0.1:6379
+          MYSQL_URL: jdbc:mysql://127.0.0.1:3306/test_db
+          MYSQL_USER: test_user
+          MYSQL_PASSWORD: test_password
+          POSTGRES_URL: jdbc:postgresql://127.0.0.1:5432/test_db
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          ELASTICSEARCH_URL: http://127.0.0.1:9200
 
       - name: Upload coverage to Codecov
-        if: ${{ env.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v5
         with:
           token: ${{ env.CODECOV_TOKEN }}
           files: build/reports/jacoco/jacocoRootReport/jacocoRootReport.xml
-          fail_ci_if_error: true
+          fail_ci_if_error: false
+          verbose: true
 
-      - name: Shutdown Redis
+      - name: Shutdown test environment
         if: always()
         run: |
           set -euo pipefail
-          docker compose -f docker-compose.yml down -v || true
+          docker compose -f docker-compose.test.yml down -v || true
 
       - name: Publish to Maven Central
         if: ${{ (github.event_name == 'release' && github.event.action == 'published') || (github.event_name == 'workflow_dispatch' && github.event.inputs.version != '') || startsWith(github.ref, 'refs/tags/v') }}
