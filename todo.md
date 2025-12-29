@@ -24,7 +24,9 @@
 - 已实现：
   - `StreamExecutionEnvironment`：`fromElements/fromCollection/addSource`
   - 基于 iterator 的 `DataStream`/`KeyedStream`（`map/filter/flatMap/keyBy/addSink/print`；`process/reduce/getState`）
-- 仍未实现：`window(...)` / `sum(...)`、watermark/timer/Checkpoint 等；生产级 runtime 仍在规划中（详见 `runtime/README.md`）。
+- 已补齐（in-memory 语义）：`window(...)` / `sum(...)`
+  - 说明：当前 window 以“消费完整上游迭代器后一次性产出结果”的 batch 风格实现；未实现 trigger/timer/watermark 协调。
+- 仍未实现：watermark/timer/Checkpoint 等；生产级 runtime 仍在规划中（详见 `runtime/README.md`）。
 
 ## P1（重要但不阻塞）
 

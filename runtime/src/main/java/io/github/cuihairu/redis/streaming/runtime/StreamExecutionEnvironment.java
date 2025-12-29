@@ -3,6 +3,7 @@ package io.github.cuihairu.redis.streaming.runtime;
 import io.github.cuihairu.redis.streaming.api.stream.DataStream;
 import io.github.cuihairu.redis.streaming.api.stream.StreamSource;
 import io.github.cuihairu.redis.streaming.runtime.internal.InMemoryDataStream;
+import io.github.cuihairu.redis.streaming.runtime.internal.InMemoryRecord;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -10,6 +11,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * A minimal, in-memory execution environment for the core streaming API.
@@ -28,7 +30,8 @@ public final class StreamExecutionEnvironment {
 
     public <T> DataStream<T> fromCollection(Collection<T> elements) {
         Objects.requireNonNull(elements, "elements");
-        return new InMemoryDataStream<>(elements::iterator);
+        List<T> copy = new ArrayList<>(elements);
+        return new InMemoryDataStream<>(copy::iterator);
     }
 
     @SafeVarargs
@@ -40,20 +43,21 @@ public final class StreamExecutionEnvironment {
     public <T> DataStream<T> addSource(StreamSource<T> source) {
         Objects.requireNonNull(source, "source");
 
-        List<T> out = new ArrayList<>();
+        List<InMemoryRecord<T>> out = new ArrayList<>();
         Object checkpointLock = new Object();
         AtomicBoolean stopped = new AtomicBoolean(false);
+        AtomicLong fallbackTimestamp = new AtomicLong(0L);
 
         try {
             source.run(new StreamSource.SourceContext<>() {
                 @Override
                 public void collect(T element) {
-                    out.add(element);
+                    out.add(new InMemoryRecord<>(element, fallbackTimestamp.getAndIncrement()));
                 }
 
                 @Override
                 public void collectWithTimestamp(T element, long timestamp) {
-                    out.add(element);
+                    out.add(new InMemoryRecord<>(element, timestamp));
                 }
 
                 @Override
@@ -72,7 +76,6 @@ public final class StreamExecutionEnvironment {
             stopped.set(true);
         }
 
-        return fromCollection(out);
+        return InMemoryDataStream.fromRecords(out::iterator);
     }
 }
-

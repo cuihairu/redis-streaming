@@ -27,6 +27,7 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
     public InMemoryKeyedStream(Supplier<Iterator<T>> iteratorSupplier, Function<T, K> keySelector) {
         this(new InMemoryKeyedStateStore<>(), () -> new Iterator<>() {
             private final Iterator<T> it = Objects.requireNonNull(iteratorSupplier, "iteratorSupplier").get();
+            private long timestamp = 0L;
 
             @Override
             public boolean hasNext() {
@@ -36,7 +37,28 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
             @Override
             public KeyedRecord<K, T> next() {
                 T v = it.next();
-                return new KeyedRecord<>(Objects.requireNonNull(keySelector, "keySelector").apply(v), v);
+                return new KeyedRecord<>(Objects.requireNonNull(keySelector, "keySelector").apply(v), v, timestamp++);
+            }
+        });
+    }
+
+    InMemoryKeyedStream(Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier,
+                        Function<T, K> keySelector,
+                        boolean unused) {
+        this(new InMemoryKeyedStateStore<>(), () -> new Iterator<>() {
+            private final Iterator<InMemoryRecord<T>> it =
+                    Objects.requireNonNull(recordIteratorSupplier, "recordIteratorSupplier").get();
+
+            @Override
+            public boolean hasNext() {
+                return it.hasNext();
+            }
+
+            @Override
+            public KeyedRecord<K, T> next() {
+                InMemoryRecord<T> record = it.next();
+                T value = record.value();
+                return new KeyedRecord<>(Objects.requireNonNull(keySelector, "keySelector").apply(value), value, record.timestamp());
             }
         });
     }
@@ -62,7 +84,7 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
             public KeyedRecord<K, R> next() {
                 KeyedRecord<K, T> r = it.next();
                 stateStore.setCurrentKey(r.key());
-                return new KeyedRecord<>(r.key(), mapper.apply(r.value()));
+                return new KeyedRecord<>(r.key(), mapper.apply(r.value()), r.timestamp());
             }
         });
     }
@@ -70,17 +92,20 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
     @Override
     public <R> DataStream<R> process(KeyedProcessFunction<K, T, R> processFunction) {
         Objects.requireNonNull(processFunction, "processFunction");
-        return new InMemoryDataStream<>(() -> new Iterator<>() {
+        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
             private final Iterator<KeyedRecord<K, T>> in = keyedIteratorSupplier.get();
-            private final ArrayDeque<R> buffer = new ArrayDeque<>();
+            private final ArrayDeque<InMemoryRecord<R>> buffer = new ArrayDeque<>();
             private final KeyedProcessFunction.Context ctx = new InMemoryProcessContext();
-            private final KeyedProcessFunction.Collector<R> out = buffer::addLast;
+            private long currentTimestamp = 0L;
+            private final KeyedProcessFunction.Collector<R> out = value ->
+                    buffer.addLast(new InMemoryRecord<>(value, currentTimestamp));
 
             @Override
             public boolean hasNext() {
                 while (buffer.isEmpty() && in.hasNext()) {
                     KeyedRecord<K, T> record = in.next();
                     stateStore.setCurrentKey(record.key());
+                    currentTimestamp = record.timestamp();
                     try {
                         processFunction.processElement(record.key(), record.value(), ctx, out);
                     } catch (Exception e) {
@@ -91,7 +116,7 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
             }
 
             @Override
-            public R next() {
+            public InMemoryRecord<R> next() {
                 if (!hasNext()) {
                     throw new NoSuchElementException();
                 }
@@ -102,16 +127,17 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
 
     @Override
     public WindowedStream<K, T> window(WindowAssigner<T> windowAssigner) {
-        throw new UnsupportedOperationException("In-memory runtime windowing is not implemented yet");
+        Objects.requireNonNull(windowAssigner, "windowAssigner");
+        return new InMemoryWindowedStream<>(keyedIteratorSupplier, windowAssigner);
     }
 
     @Override
     public DataStream<T> reduce(ReduceFunction<T> reducer) {
         Objects.requireNonNull(reducer, "reducer");
-        return new InMemoryDataStream<>(() -> new Iterator<>() {
+        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
             private final Iterator<KeyedRecord<K, T>> in = keyedIteratorSupplier.get();
             private final Map<K, T> acc = new HashMap<>();
-            private final ArrayDeque<T> buffer = new ArrayDeque<>();
+            private final ArrayDeque<InMemoryRecord<T>> buffer = new ArrayDeque<>();
 
             @Override
             public boolean hasNext() {
@@ -128,13 +154,13 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
                         throw new RuntimeException("Reduce function failed", e);
                     }
                     acc.put(key, reduced);
-                    buffer.addLast(reduced);
+                    buffer.addLast(new InMemoryRecord<>(reduced, record.timestamp()));
                 }
                 return !buffer.isEmpty();
             }
 
             @Override
-            public T next() {
+            public InMemoryRecord<T> next() {
                 if (!hasNext()) {
                     throw new NoSuchElementException();
                 }
@@ -145,7 +171,44 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
 
     @Override
     public DataStream<T> sum(Function<T, ? extends Number> fieldSelector) {
-        throw new UnsupportedOperationException("In-memory runtime sum() is not implemented yet");
+        Objects.requireNonNull(fieldSelector, "fieldSelector");
+        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
+            private final Iterator<KeyedRecord<K, T>> in = keyedIteratorSupplier.get();
+            private final Map<K, Number> acc = new HashMap<>();
+            private final ArrayDeque<InMemoryRecord<T>> buffer = new ArrayDeque<>();
+
+            @Override
+            public boolean hasNext() {
+                while (buffer.isEmpty() && in.hasNext()) {
+                    KeyedRecord<K, T> record = in.next();
+                    K key = record.key();
+                    T value = record.value();
+                    if (!(value instanceof Number)) {
+                        throw new UnsupportedOperationException(
+                                "In-memory runtime sum() only supports Number elements, but got: " +
+                                        (value == null ? "null" : value.getClass().getName()));
+                    }
+
+                    stateStore.setCurrentKey(key);
+
+                    Number current = acc.get(key);
+                    Number next = addNumbers(current, fieldSelector.apply(value));
+                    acc.put(key, next);
+                    @SuppressWarnings("unchecked")
+                    T out = (T) castToSameNumberType(next, (Number) value);
+                    buffer.addLast(new InMemoryRecord<>(out, record.timestamp()));
+                }
+                return !buffer.isEmpty();
+            }
+
+            @Override
+            public InMemoryRecord<T> next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                return buffer.removeFirst();
+            }
+        });
     }
 
     @Override
@@ -173,5 +236,28 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
         public void registerEventTimeTimer(long time) {
             // not implemented
         }
+    }
+
+    private static Number addNumbers(Number a, Number b) {
+        if (b == null) {
+            return a == null ? 0L : a;
+        }
+        if (a == null) {
+            return b;
+        }
+        if (a instanceof Double || a instanceof Float || b instanceof Double || b instanceof Float) {
+            return a.doubleValue() + b.doubleValue();
+        }
+        return a.longValue() + b.longValue();
+    }
+
+    private static Number castToSameNumberType(Number value, Number sample) {
+        if (sample instanceof Integer) return value.intValue();
+        if (sample instanceof Long) return value.longValue();
+        if (sample instanceof Double) return value.doubleValue();
+        if (sample instanceof Float) return value.floatValue();
+        if (sample instanceof Short) return value.shortValue();
+        if (sample instanceof Byte) return value.byteValue();
+        return value;
     }
 }

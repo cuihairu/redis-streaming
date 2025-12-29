@@ -12,11 +12,17 @@ The runtime module provides a small, pull-based in-memory implementation intende
 
 - `StreamExecutionEnvironment`: `fromElements`, `fromCollection`, `addSource`
 - `DataStream`: `map`, `filter`, `flatMap`, `keyBy`, `addSink`, `print`
-- `KeyedStream`: `process`, `reduce`, `getState` (keyed `ValueState`)
+- `KeyedStream`: `process`, `reduce`, `sum`, `getState` (keyed `ValueState`)
+- `WindowedStream`: `reduce`, `aggregate`, `apply`, `sum`, `count`
 
 Not yet implemented in the in-memory runtime:
-- `window(...)`, `sum(...)`
 - timers / watermark propagation / checkpointing
+
+Notes about semantics (in-memory runtime):
+- Window results are produced after the upstream iterator is fully consumed (batch-style evaluation).
+- Timestamps:
+  - `fromElements/fromCollection`: assigns deterministic synthetic timestamps `0..N-1`
+  - `addSource`: preserves `collectWithTimestamp(...)` timestamps; `collect(...)` uses an increasing fallback timestamp
 
 ## Why a Separate Runtime Module?
 

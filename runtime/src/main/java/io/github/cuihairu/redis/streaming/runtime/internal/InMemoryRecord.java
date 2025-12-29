@@ -1,4 +1,4 @@
 package io.github.cuihairu.redis.streaming.runtime.internal;
 
-record KeyedRecord<K, T>(K key, T value, long timestamp) {
+public record InMemoryRecord<T>(T value, long timestamp) {
 }

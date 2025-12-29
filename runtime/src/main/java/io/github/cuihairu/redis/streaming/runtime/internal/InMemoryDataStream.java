@@ -17,22 +17,13 @@ import java.util.function.Supplier;
 public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
     private static final Logger log = LoggerFactory.getLogger(InMemoryDataStream.class);
 
-    private final Supplier<Iterator<T>> iteratorSupplier;
+    private final Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier;
 
     public InMemoryDataStream(Supplier<Iterator<T>> iteratorSupplier) {
-        this.iteratorSupplier = Objects.requireNonNull(iteratorSupplier, "iteratorSupplier");
-    }
-
-    @Override
-    public Iterator<T> iterator() {
-        return iteratorSupplier.get();
-    }
-
-    @Override
-    public <R> DataStream<R> map(Function<T, R> mapper) {
-        Objects.requireNonNull(mapper, "mapper");
-        return new InMemoryDataStream<>(() -> new Iterator<>() {
+        Objects.requireNonNull(iteratorSupplier, "iteratorSupplier");
+        this.recordIteratorSupplier = () -> new Iterator<>() {
             private final Iterator<T> it = iteratorSupplier.get();
+            private long timestamp = 0L;
 
             @Override
             public boolean hasNext() {
@@ -40,8 +31,52 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
             }
 
             @Override
-            public R next() {
-                return mapper.apply(it.next());
+            public InMemoryRecord<T> next() {
+                return new InMemoryRecord<>(it.next(), timestamp++);
+            }
+        };
+    }
+
+    private InMemoryDataStream(Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier, boolean unused) {
+        this.recordIteratorSupplier = Objects.requireNonNull(recordIteratorSupplier, "recordIteratorSupplier");
+    }
+
+    public static <T> InMemoryDataStream<T> fromRecords(Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier) {
+        return new InMemoryDataStream<>(recordIteratorSupplier, true);
+    }
+
+    @Override
+    public Iterator<T> iterator() {
+        return new Iterator<>() {
+            private final Iterator<InMemoryRecord<T>> it = recordIteratorSupplier.get();
+
+            @Override
+            public boolean hasNext() {
+                return it.hasNext();
+            }
+
+            @Override
+            public T next() {
+                return it.next().value();
+            }
+        };
+    }
+
+    @Override
+    public <R> DataStream<R> map(Function<T, R> mapper) {
+        Objects.requireNonNull(mapper, "mapper");
+        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
+            private final Iterator<InMemoryRecord<T>> it = recordIteratorSupplier.get();
+
+            @Override
+            public boolean hasNext() {
+                return it.hasNext();
+            }
+
+            @Override
+            public InMemoryRecord<R> next() {
+                InMemoryRecord<T> record = it.next();
+                return new InMemoryRecord<>(mapper.apply(record.value()), record.timestamp());
             }
         });
     }
@@ -49,11 +84,11 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
     @Override
     public DataStream<T> filter(Predicate<T> predicate) {
         Objects.requireNonNull(predicate, "predicate");
-        return new InMemoryDataStream<>(() -> new Iterator<>() {
-            private final Iterator<T> it = iteratorSupplier.get();
+        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
+            private final Iterator<InMemoryRecord<T>> it = recordIteratorSupplier.get();
             private boolean computed = false;
             private boolean hasNext = false;
-            private T next;
+            private InMemoryRecord<T> next;
 
             @Override
             public boolean hasNext() {
@@ -62,8 +97,8 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
                 }
                 computed = true;
                 while (it.hasNext()) {
-                    T candidate = it.next();
-                    if (predicate.test(candidate)) {
+                    InMemoryRecord<T> candidate = it.next();
+                    if (predicate.test(candidate.value())) {
                         next = candidate;
                         hasNext = true;
                         return true;
@@ -75,12 +110,12 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
             }
 
             @Override
-            public T next() {
+            public InMemoryRecord<T> next() {
                 if (!hasNext()) {
                     throw new NoSuchElementException();
                 }
                 computed = false;
-                T out = next;
+                InMemoryRecord<T> out = next;
                 next = null;
                 return out;
             }
@@ -90,25 +125,28 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
     @Override
     public <R> DataStream<R> flatMap(Function<T, Iterable<R>> mapper) {
         Objects.requireNonNull(mapper, "mapper");
-        return new InMemoryDataStream<>(() -> new Iterator<>() {
-            private final Iterator<T> it = iteratorSupplier.get();
+        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
+            private final Iterator<InMemoryRecord<T>> it = recordIteratorSupplier.get();
             private Iterator<R> current = Collections.emptyIterator();
+            private long currentTimestamp = 0L;
 
             @Override
             public boolean hasNext() {
                 while (!current.hasNext() && it.hasNext()) {
-                    Iterable<R> mapped = mapper.apply(it.next());
+                    InMemoryRecord<T> record = it.next();
+                    currentTimestamp = record.timestamp();
+                    Iterable<R> mapped = mapper.apply(record.value());
                     current = mapped == null ? Collections.emptyIterator() : mapped.iterator();
                 }
                 return current.hasNext();
             }
 
             @Override
-            public R next() {
+            public InMemoryRecord<R> next() {
                 if (!hasNext()) {
                     throw new NoSuchElementException();
                 }
-                return current.next();
+                return new InMemoryRecord<>(current.next(), currentTimestamp);
             }
         });
     }
@@ -116,7 +154,7 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
     @Override
     public <K> KeyedStream<K, T> keyBy(Function<T, K> keySelector) {
         Objects.requireNonNull(keySelector, "keySelector");
-        return new InMemoryKeyedStream<>(iteratorSupplier, keySelector);
+        return new InMemoryKeyedStream<>(recordIteratorSupplier, keySelector, true);
     }
 
     @Override
@@ -143,4 +181,3 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
         return addSink(v -> log.info("{}{}", p, v));
     }
 }
-

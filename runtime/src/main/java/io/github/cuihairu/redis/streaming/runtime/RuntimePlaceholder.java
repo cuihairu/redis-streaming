@@ -25,7 +25,7 @@ public class RuntimePlaceholder {
      */
     public static String getStatus() {
         return "Runtime module provides a minimal in-memory runtime (StreamExecutionEnvironment). " +
-                "It is intended for tests/examples; advanced features (windowing/watermarks/checkpointing) are still in development. " +
+                "It is intended for tests/examples; timers/watermarks/checkpointing are still in development. " +
                 "See runtime/README.md for details.";
     }
 }
