@@ -74,6 +74,23 @@ class StreamJoinerTest {
     }
 
     @Test
+    void testInnerJoinWithMatchWhenLeftArrivesFirst() throws Exception {
+        User user = new User("user1", "Alice", 1000);
+        Order order = new Order("order1", "user1", 99.99, 1000);
+
+        // Process order first
+        List<EnrichedOrder> results1 = joiner.processLeft(order);
+        assertEquals(0, results1.size()); // No user yet
+
+        // Process user later should still produce the match
+        List<EnrichedOrder> results2 = joiner.processRight(user);
+        assertEquals(1, results2.size());
+        assertEquals("order1", results2.get(0).getOrderId());
+        assertEquals("Alice", results2.get(0).getUserName());
+        assertEquals(99.99, results2.get(0).getAmount());
+    }
+
+    @Test
     void testInnerJoinWithoutMatch() throws Exception {
         Order order = new Order("order1", "user1", 99.99, 1000);
 
@@ -164,6 +181,32 @@ class StreamJoinerTest {
         assertEquals(1, results.size()); // RIGHT join emits even without match
         assertEquals("Alice", results.get(0).getUserName());
         assertEquals("no-order", results.get(0).getOrderId());
+    }
+
+    @Test
+    void testFullOuterJoinEmitsUnmatchedBothSides() throws Exception {
+        JoinConfig<Order, User, String> fullOuterConfig = JoinConfig.<Order, User, String>builder()
+                .joinType(JoinType.FULL_OUTER)
+                .joinWindow(JoinWindow.ofSize(Duration.ofSeconds(10)))
+                .leftKeySelector(Order::getUserId)
+                .rightKeySelector(User::getUserId)
+                .leftTimestampExtractor(Order::getTimestamp)
+                .rightTimestampExtractor(User::getTimestamp)
+                .build();
+
+        JoinFunction<Order, User, String> func = (order, user) -> {
+            String orderId = order == null ? "null" : order.getOrderId();
+            String userId = user == null ? "null" : user.getUserId();
+            return orderId + ":" + userId;
+        };
+
+        StreamJoiner<Order, User, String, String> fullOuter = new StreamJoiner<>(fullOuterConfig, func);
+
+        Order order = new Order("order1", "order-only", 1.0, 1000);
+        User user = new User("user-only", "Alice", 1000);
+
+        assertEquals(List.of("order1:null"), fullOuter.processLeft(order));
+        assertEquals(List.of("null:user-only"), fullOuter.processRight(user));
     }
 
     @Test

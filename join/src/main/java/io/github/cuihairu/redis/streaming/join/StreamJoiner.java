@@ -43,6 +43,7 @@ public class StreamJoiner<L, R, K, O> {
         // Buffer the left element
         leftBuffer.computeIfAbsent(key, k -> new ArrayList<>())
                 .add(new TimestampedElement<>(element, timestamp));
+        enforceMaxStateSize();
 
         // Find matching right elements
         List<O> results = new ArrayList<>();
@@ -57,8 +58,8 @@ public class StreamJoiner<L, R, K, O> {
             }
         }
 
-        // For LEFT join, emit even if no match
-        if (config.getJoinType() == JoinType.LEFT && results.isEmpty()) {
+        // For LEFT and FULL_OUTER joins, emit even if no match
+        if ((config.getJoinType() == JoinType.LEFT || config.getJoinType() == JoinType.FULL_OUTER) && results.isEmpty()) {
             O joined = joinFunction.join(element, null);
             results.add(joined);
         }
@@ -80,29 +81,25 @@ public class StreamJoiner<L, R, K, O> {
         // Buffer the right element
         rightBuffer.computeIfAbsent(key, k -> new ArrayList<>())
                 .add(new TimestampedElement<>(element, timestamp));
+        enforceMaxStateSize();
 
-        // Find matching left elements (only for INNER and RIGHT joins emit here)
+        // Find matching left elements
         List<O> results = new ArrayList<>();
 
-        // For INNER and LEFT joins, we emit from processLeft
-        // For RIGHT join, we emit from processRight
-        if (config.getJoinType() == JoinType.RIGHT || config.getJoinType() == JoinType.FULL_OUTER) {
-            List<TimestampedElement<L>> leftElements = leftBuffer.get(key);
-
-            if (leftElements != null) {
-                for (TimestampedElement<L> leftElem : leftElements) {
-                    if (config.getJoinWindow().contains(leftElem.timestamp, timestamp)) {
-                        O joined = joinFunction.join(leftElem.element, element);
-                        results.add(joined);
-                    }
+        List<TimestampedElement<L>> leftElements = leftBuffer.get(key);
+        if (leftElements != null) {
+            for (TimestampedElement<L> leftElem : leftElements) {
+                if (config.getJoinWindow().contains(leftElem.timestamp, timestamp)) {
+                    O joined = joinFunction.join(leftElem.element, element);
+                    results.add(joined);
                 }
             }
+        }
 
-            // For RIGHT join, emit even if no match
-            if (config.getJoinType() == JoinType.RIGHT && results.isEmpty()) {
-                O joined = joinFunction.join(null, element);
-                results.add(joined);
-            }
+        // For RIGHT and FULL_OUTER joins, emit even if no match
+        if ((config.getJoinType() == JoinType.RIGHT || config.getJoinType() == JoinType.FULL_OUTER) && results.isEmpty()) {
+            O joined = joinFunction.join(null, element);
+            results.add(joined);
         }
 
         cleanup();
@@ -150,6 +147,68 @@ public class StreamJoiner<L, R, K, O> {
         buffer.entrySet().removeIf(entry -> entry.getValue().isEmpty());
     }
 
+    private void enforceMaxStateSize() {
+        int maxStateSize = config.getMaxStateSize();
+        int total = totalBufferSize();
+        while (total > maxStateSize) {
+            if (!evictOldestElement()) {
+                return;
+            }
+            total--;
+        }
+    }
+
+    private int totalBufferSize() {
+        return getLeftBufferSize() + getRightBufferSize();
+    }
+
+    private boolean evictOldestElement() {
+        OldestElement oldest = findOldest(leftBuffer, true);
+        OldestElement rightOldest = findOldest(rightBuffer, false);
+
+        if (oldest == null) {
+            oldest = rightOldest;
+        } else if (rightOldest != null && rightOldest.timestamp < oldest.timestamp) {
+            oldest = rightOldest;
+        }
+
+        if (oldest == null) {
+            return false;
+        }
+
+        if (oldest.isLeft) {
+            removeAt(leftBuffer, oldest.key, oldest.index);
+        } else {
+            removeAt(rightBuffer, oldest.key, oldest.index);
+        }
+        return true;
+    }
+
+    private <T> OldestElement findOldest(Map<K, List<TimestampedElement<T>>> buffer, boolean isLeft) {
+        OldestElement oldest = null;
+        for (Map.Entry<K, List<TimestampedElement<T>>> entry : buffer.entrySet()) {
+            List<TimestampedElement<T>> list = entry.getValue();
+            for (int i = 0; i < list.size(); i++) {
+                long ts = list.get(i).timestamp;
+                if (oldest == null || ts < oldest.timestamp) {
+                    oldest = new OldestElement(isLeft, entry.getKey(), i, ts);
+                }
+            }
+        }
+        return oldest;
+    }
+
+    private <T> void removeAt(Map<K, List<TimestampedElement<T>>> buffer, K key, int index) {
+        List<TimestampedElement<T>> list = buffer.get(key);
+        if (list == null || index < 0 || index >= list.size()) {
+            return;
+        }
+        list.remove(index);
+        if (list.isEmpty()) {
+            buffer.remove(key);
+        }
+    }
+
     /**
      * Get the current size of left buffer
      */
@@ -181,6 +240,20 @@ public class StreamJoiner<L, R, K, O> {
 
         TimestampedElement(T element, long timestamp) {
             this.element = element;
+            this.timestamp = timestamp;
+        }
+    }
+
+    private final class OldestElement {
+        final boolean isLeft;
+        final K key;
+        final int index;
+        final long timestamp;
+
+        private OldestElement(boolean isLeft, K key, int index, long timestamp) {
+            this.isLeft = isLeft;
+            this.key = key;
+            this.index = index;
             this.timestamp = timestamp;
         }
     }
