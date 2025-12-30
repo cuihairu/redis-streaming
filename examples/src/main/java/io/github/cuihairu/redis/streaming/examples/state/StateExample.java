@@ -1,16 +1,22 @@
-package io.github.cuihairu.redis.streaming.state;
+package io.github.cuihairu.redis.streaming.examples.state;
 
-import io.github.cuihairu.redis.streaming.api.state.*;
+import io.github.cuihairu.redis.streaming.api.state.ListState;
+import io.github.cuihairu.redis.streaming.api.state.MapState;
+import io.github.cuihairu.redis.streaming.api.state.SetState;
+import io.github.cuihairu.redis.streaming.api.state.StateDescriptor;
+import io.github.cuihairu.redis.streaming.api.state.ValueState;
 import io.github.cuihairu.redis.streaming.state.redis.RedisStateBackend;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
 
-import java.util.Arrays;
+import java.util.HashMap;
 
 /**
- * Example demonstrating State module usage
+ * Example demonstrating State module usage.
+ *
+ * Requires Redis at redis://127.0.0.1:6379 (override via REDIS_URL).
  */
 @Slf4j
 public class StateExample {
@@ -18,32 +24,21 @@ public class StateExample {
     public static void main(String[] args) throws Exception {
         log.info("Starting State Example");
 
-        // Setup Redis connection
+        String redisUrl = System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379");
         Config config = new Config();
-        config.useSingleServer().setAddress("redis://127.0.0.1:6379");
+        config.useSingleServer().setAddress(redisUrl);
         RedissonClient redisson = Redisson.create(config);
 
         try {
-            // Create state backend
             RedisStateBackend stateBackend = new RedisStateBackend(redisson, "example:state:");
 
-            // Example 1: ValueState - User session counter
             demonstrateValueState(stateBackend);
-
-            // Example 2: MapState - User preferences
             demonstrateMapState(stateBackend);
-
-            // Example 3: ListState - User activity log
             demonstrateListState(stateBackend);
-
-            // Example 4: SetState - Unique visitors
             demonstrateSetState(stateBackend);
-
-            // Example 5: Stateful word count
             demonstrateStatefulWordCount(stateBackend);
 
             log.info("State Example completed successfully");
-
         } finally {
             redisson.shutdown();
         }
@@ -55,7 +50,6 @@ public class StateExample {
         StateDescriptor<Integer> descriptor = new StateDescriptor<>("session-counter", Integer.class);
         ValueState<Integer> counter = stateBackend.createValueState(descriptor);
 
-        // Simulate user visits
         for (int i = 0; i < 5; i++) {
             Integer count = counter.value();
             if (count == null) count = 0;
@@ -74,7 +68,6 @@ public class StateExample {
         MapState<String, String> preferences = stateBackend.createMapState(
                 "user-preferences", String.class, String.class);
 
-        // Set preferences
         preferences.put("theme", "dark");
         preferences.put("language", "en");
         preferences.put("timezone", "UTC");
@@ -82,7 +75,6 @@ public class StateExample {
         log.info("Theme: {}", preferences.get("theme"));
         log.info("Language: {}", preferences.get("language"));
 
-        // List all preferences
         log.info("All preferences:");
         preferences.entries().forEach(entry ->
                 log.info("  {} = {}", entry.getKey(), entry.getValue()));
@@ -94,22 +86,20 @@ public class StateExample {
         log.info("=== ListState Example: Activity Log ===");
 
         StateDescriptor<String> descriptor = new StateDescriptor<>("activity-log", String.class);
-        ListState<String> log = stateBackend.createListState(descriptor);
+        ListState<String> activityLog = stateBackend.createListState(descriptor);
 
-        // Add activities
-        log.add("login");
-        log.add("view_product");
-        log.add("add_to_cart");
-        log.add("checkout");
+        activityLog.add("login");
+        activityLog.add("view_product");
+        activityLog.add("add_to_cart");
+        activityLog.add("checkout");
 
-        // Print activity log
-        StateExample.log.info("User activity:");
+        log.info("User activity:");
         int index = 1;
-        for (String activity : log.get()) {
-            StateExample.log.info("  {}. {}", index++, activity);
+        for (String activity : activityLog.get()) {
+            log.info("  {}. {}", index++, activity);
         }
 
-        log.clear();
+        activityLog.clear();
     }
 
     private static void demonstrateSetState(RedisStateBackend stateBackend) {
@@ -118,7 +108,6 @@ public class StateExample {
         StateDescriptor<String> descriptor = new StateDescriptor<>("unique-visitors", String.class);
         SetState<String> visitors = stateBackend.createSetState(descriptor);
 
-        // Track visitors (with duplicates)
         String[] userIds = {"user1", "user2", "user1", "user3", "user2", "user4"};
 
         for (String userId : userIds) {
@@ -128,7 +117,6 @@ public class StateExample {
 
         log.info("Total unique visitors: {}", visitors.size());
 
-        // List all unique visitors
         log.info("Unique visitors:");
         visitors.get().forEach(userId -> log.info("  - {}", userId));
 
@@ -138,28 +126,18 @@ public class StateExample {
     private static void demonstrateStatefulWordCount(RedisStateBackend stateBackend) {
         log.info("=== Stateful Processing Example: Word Count ===");
 
-        // Use MapState to count words
         MapState<String, Long> wordCounts = stateBackend.createMapState(
                 "word-counts", String.class, Long.class);
 
-        // Process some text
-        String[] texts = {
-                "hello world",
-                "hello streaming",
-                "world of streaming"
-        };
-
+        String[] texts = {"hello world", "hello streaming", "world of streaming"};
         for (String text : texts) {
-            String[] words = text.split(" ");
-            for (String word : words) {
+            for (String word : text.split(" ")) {
                 Long count = wordCounts.get(word);
                 if (count == null) count = 0L;
-                count++;
-                wordCounts.put(word, count);
+                wordCounts.put(word, count + 1);
             }
         }
 
-        // Print word counts
         log.info("Word counts:");
         wordCounts.entries().forEach(entry ->
                 log.info("  '{}': {}", entry.getKey(), entry.getValue()));
@@ -167,3 +145,4 @@ public class StateExample {
         wordCounts.clear();
     }
 }
+

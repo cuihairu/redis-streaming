@@ -223,10 +223,11 @@ tasks.register('jacocoRootReport', JacocoReport) {
     // If integration tests are already in the task graph (e.g., `check`), must run after them
     // so their execution data can be included.
     mustRunAfter subprojects.collect { it.tasks.named('integrationTest') }
-    additionalSourceDirs.from files(subprojects.collect { it.file('src/main/java') })
-    sourceDirectories.from files(subprojects.collect { it.file('src/main/java') })
-    classDirectories.from files(subprojects.collect { fileTree(dir: "${it.buildDir}/classes/java/main") })
-    executionData.from files(subprojects.collect { fileTree(dir: it.buildDir, includes: ['jacoco/*.exec']) })
+    def covProjects = subprojects.findAll { it.name != 'examples' }
+    additionalSourceDirs.from files(covProjects.collect { it.file('src/main/java') })
+    sourceDirectories.from files(covProjects.collect { it.file('src/main/java') })
+    classDirectories.from files(covProjects.collect { fileTree(dir: "${it.buildDir}/classes/java/main") })
+    executionData.from files(covProjects.collect { fileTree(dir: it.buildDir, includes: ['jacoco/*.exec']) })
     doFirst {
         executionData.files.removeIf { !it.exists() }
     }
@@ -243,8 +244,9 @@ tasks.register('jacocoRootCoverageVerification', JacocoCoverageVerification) {
     // If integration tests are already in the task graph (e.g., `check`), must run after them
     // so their execution data can be included.
     mustRunAfter subprojects.collect { it.tasks.named('integrationTest') }
-    executionData.from files(subprojects.collect { fileTree(dir: it.buildDir, includes: ['jacoco/*.exec']) })
-    classDirectories.from files(subprojects.collect { fileTree(dir: "${it.buildDir}/classes/java/main") })
+    def covProjects = subprojects.findAll { it.name != 'examples' }
+    executionData.from files(covProjects.collect { fileTree(dir: it.buildDir, includes: ['jacoco/*.exec']) })
+    classDirectories.from files(covProjects.collect { fileTree(dir: "${it.buildDir}/classes/java/main") })
     doFirst { executionData.files.removeIf { !it.exists() } }
     violationRules {
         rule {
