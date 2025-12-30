@@ -113,15 +113,7 @@ public class WatermarkStrategy<T> implements Serializable {
      * TimestampAssigner extracts timestamps from events
      */
     @FunctionalInterface
-    public interface TimestampAssigner<T> extends Serializable {
-        /**
-         * Extract timestamp from the given event
-         *
-         * @param event The event
-         * @param recordTimestamp The timestamp from the record metadata (if available)
-         * @return The extracted timestamp
-         */
-        long extractTimestamp(T event, long recordTimestamp);
+    public interface TimestampAssigner<T> extends io.github.cuihairu.redis.streaming.api.watermark.TimestampAssigner<T> {
     }
 
     /**

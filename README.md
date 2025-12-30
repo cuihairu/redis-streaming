@@ -28,9 +28,9 @@
 - **🎯 CEP** - 完整的复杂事件处理，支持 Kleene closure、高级模式操作
 
 ### 🚧 部分实现
-- **🌊 流处理运行时 (Runtime)** - 运行时引擎规划中，当前可使用独立模块（mq、state、aggregation、cep）
+- **🌊 流处理运行时 (Runtime)** - 最小可用的 in-memory runtime（单线程，用于 tests/examples）
 - **💧 Watermark** - 生成器已实现，可与 aggregation 模块配合使用
-- **🪟 窗口分配器 (Window)** - 窗口逻辑已实现，已集成到 aggregation 模块
+- **🪟 窗口分配器 (Window)** - 窗口逻辑已实现，可与 runtime/core 的 WindowAssigner 配合使用
 
 ## 📦 模块架构
 
@@ -46,18 +46,18 @@
 - 状态管理抽象（State, ValueState, MapState, ListState, SetState）
 - 检查点抽象（Checkpoint, CheckpointCoordinator）
 - 水位线抽象（Watermark, WatermarkGenerator）
-- 窗口抽象（WindowAssigner, Trigger, Evictor）
+- 窗口抽象（WindowAssigner, WindowAssigner.Trigger）
 - 连接器抽象（StreamSource, StreamSink）
 - 工具类（InstanceIdGenerator, SystemUtils）
 
-**关键类**: `DataStream.java`, `KeyedStream.java`, `State.java` (23 个文件)
+**关键类**: `DataStream.java`, `KeyedStream.java`, `State.java` (24 个文件)
 
 #### **runtime** - 流处理运行时引擎
 统一流处理运行时执行引擎。
 
 **实现状态**: 🚧 最小可用（In-Memory，单线程）
 
-**说明**: 当前提供最小可用的 in-memory runtime（主要用于 tests/examples）：`StreamExecutionEnvironment` + 基础算子链（`map/filter/flatMap/keyBy/addSink`）与基础 keyed state（`getState/process/reduce`）。窗口/水位线/Checkpoint 等仍在规划中，详见 `runtime/README.md`。
+**说明**: 当前提供最小可用的 in-memory runtime（主要用于 tests/examples）：`StreamExecutionEnvironment` + 基础算子链（`map/filter/flatMap/keyBy/addSink`）与基础 keyed state（`getState/process/reduce`），并支持 timers / watermarks / in-memory checkpointing。详见 `runtime/README.md`。
 
 ### **Tier 2: 基础设施层**
 
@@ -597,7 +597,7 @@ connector.start();
 ### ✅ 已完成模块（生产可用）
 
 #### Tier 1: 核心抽象层
-- [x] **core** - 核心 API 定义 (23 个文件)
+- [x] **core** - 核心 API 定义 (24 个文件)
   - 完整的流处理 API 抽象
   - 状态、检查点、水位线、窗口抽象
 
@@ -650,8 +650,6 @@ connector.start();
   - Prometheus Exporter、指标收集器
 - [x] **spring-boot-starter** - Spring Boot 集成 (6 个文件)
   - 完整自动配置、注解支持
-- [x] **examples** - 示例代码 (3 个文件)
-  - 服务注册发现、消息队列示例
 
 ---
 
@@ -665,7 +663,7 @@ connector.start();
 #### Tier 1: 核心抽象层
 - [ ] **runtime** - 流处理运行时引擎
   - 🚧 最小可用 In-Memory Runtime 已实现（用于 tests/examples）
-  - 📋 Window/Watermark/Checkpoint 等仍在规划，详见 `runtime/README.md`
+  - ✅ 已支持 timers / watermarks / in-memory checkpointing；窗口触发器与并行执行仍在规划，详见 `runtime/README.md`
 
 ---
 
@@ -673,9 +671,9 @@ connector.start();
 
 #### 高优先级（可选增强）
 1. **Runtime 运行时引擎** - 统一流处理执行引擎
-   - Phase 1: 简单内存运行时
+   - Phase 1: 简单内存运行时（已实现）
    - Phase 2: 分布式调度
-   - Phase 3: 与 Window、Watermark 完整集成
+   - Phase 3: Window Trigger / 并行执行 / 端到端语义完善
    - 注：当前独立模块已满足大部分使用场景
 
 #### 中优先级（功能增强）
@@ -724,8 +722,8 @@ connector.start();
 ---
 
 **当前版本**: 0.1.0
-**最后更新**: 2025-01-12
-**完成度**: 17/20 模块完成（85.0%），2/20 模块部分完成（10.0%），1/20 模块规划中（5.0%）
+**最后更新**: 2025-12-30
+**完成度**: 18/20 模块完成（90.0%），2/20 模块部分完成（10.0%）
 
 ### 📝 版本说明
 
@@ -740,4 +738,4 @@ connector.start();
 - ✅ CEP 完成：复杂事件处理（含 Kleene closure、高级模式操作）
 - ✅ 监控集成：Prometheus Exporter、指标收集器
 - ✅ Spring Boot 自动配置（含 @ServiceChangeListener 注解支持）
-- 📋 Runtime 模块：架构规划完成，建议使用独立模块（20个模块中17个已完成）
+- 🚧 Runtime 模块：最小可用 in-memory runtime 已实现（timers/watermarks/checkpointing），用于 tests/examples；Trigger/并行执行仍在规划

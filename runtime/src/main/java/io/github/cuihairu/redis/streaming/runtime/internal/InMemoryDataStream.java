@@ -3,6 +3,7 @@ package io.github.cuihairu.redis.streaming.runtime.internal;
 import io.github.cuihairu.redis.streaming.api.stream.DataStream;
 import io.github.cuihairu.redis.streaming.api.stream.KeyedStream;
 import io.github.cuihairu.redis.streaming.api.stream.StreamSink;
+import io.github.cuihairu.redis.streaming.api.watermark.TimestampAssigner;
 import io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator;
 import io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator.WatermarkOutput;
 import org.slf4j.Logger;
@@ -246,6 +247,50 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
                 watermarkGenerator.onEvent(record.value(), record.timestamp(), output);
                 watermarkGenerator.onPeriodicEmit(output);
                 return record;
+            }
+        }, state, checkpointCoordinator);
+    }
+
+    @Override
+    public DataStream<T> assignTimestampsAndWatermarks(
+            TimestampAssigner<T> timestampAssigner,
+            WatermarkGenerator<T> watermarkGenerator) {
+        Objects.requireNonNull(timestampAssigner, "timestampAssigner");
+        Objects.requireNonNull(watermarkGenerator, "watermarkGenerator");
+
+        WatermarkState state = new WatermarkState();
+        WatermarkOutput output = new WatermarkOutput() {
+            @Override
+            public void emitWatermark(io.github.cuihairu.redis.streaming.api.watermark.Watermark watermark) {
+                state.emit(watermark);
+            }
+
+            @Override
+            public void markIdle() {
+                state.markIdle();
+            }
+
+            @Override
+            public void markActive() {
+                state.markActive();
+            }
+        };
+
+        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
+            private final Iterator<InMemoryRecord<T>> it = recordIteratorSupplier.get();
+
+            @Override
+            public boolean hasNext() {
+                return it.hasNext();
+            }
+
+            @Override
+            public InMemoryRecord<T> next() {
+                InMemoryRecord<T> record = it.next();
+                long eventTimestamp = timestampAssigner.extractTimestamp(record.value(), record.timestamp());
+                watermarkGenerator.onEvent(record.value(), eventTimestamp, output);
+                watermarkGenerator.onPeriodicEmit(output);
+                return new InMemoryRecord<>(record.value(), eventTimestamp);
             }
         }, state, checkpointCoordinator);
     }

@@ -3,6 +3,7 @@ package io.github.cuihairu.redis.streaming.api.stream;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator;
+import io.github.cuihairu.redis.streaming.api.watermark.TimestampAssigner;
 
 /**
  * DataStream represents a stream of elements of the same type.
@@ -80,5 +81,21 @@ public interface DataStream<T> {
      */
     default DataStream<T> assignTimestampsAndWatermarks(WatermarkGenerator<T> watermarkGenerator) {
         throw new UnsupportedOperationException("This runtime does not support watermark assignment");
+    }
+
+    /**
+     * Assign event-time timestamps and watermarks to this stream.
+     *
+     * <p>This overload allows extracting event-time timestamps from elements via a {@link TimestampAssigner}.
+     * Not all runtime implementations support this operation.</p>
+     *
+     * @param timestampAssigner  event timestamp extractor
+     * @param watermarkGenerator watermark generator
+     * @return a stream with event-time timestamps and watermark tracking enabled
+     */
+    default DataStream<T> assignTimestampsAndWatermarks(
+            TimestampAssigner<T> timestampAssigner,
+            WatermarkGenerator<T> watermarkGenerator) {
+        throw new UnsupportedOperationException("This runtime does not support event-time timestamp assignment");
     }
 }

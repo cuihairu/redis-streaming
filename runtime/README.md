@@ -12,17 +12,19 @@ The runtime module provides a small, pull-based in-memory implementation intende
 
 - `StreamExecutionEnvironment`: `fromElements`, `fromCollection`, `addSource`
 - `DataStream`: `map`, `filter`, `flatMap`, `keyBy`, `addSink`, `print`
-- `KeyedStream`: `process`, `reduce`, `sum`, `getState` (keyed `ValueState`)
+- `DataStream`: watermarks via `assignTimestampsAndWatermarks(...)` (record timestamps or event-time timestamps via `TimestampAssigner`)
+- `KeyedStream`: `process` (timers + watermark-aware event-time), `reduce`, `sum`, `getState` (keyed `ValueState`)
 - `WindowedStream`: `reduce`, `aggregate`, `apply`, `sum`, `count`
-
-Not yet implemented in the in-memory runtime:
-- timers / watermark propagation / checkpointing
+- `Checkpointing`: `enableCheckpointing()` provides an in-memory `CheckpointCoordinator` that snapshots/restores keyed state during a run
 
 Notes about semantics (in-memory runtime):
+- Single-threaded, pull-based execution.
 - Window results are produced after the upstream iterator is fully consumed (batch-style evaluation).
+- Window triggers from `WindowAssigner.Trigger` are not used by the in-memory runtime (windows are evaluated once at the end).
 - Timestamps:
   - `fromElements/fromCollection`: assigns deterministic synthetic timestamps `0..N-1`
   - `addSource`: preserves `collectWithTimestamp(...)` timestamps; `collect(...)` uses an increasing fallback timestamp
+  - `assignTimestampsAndWatermarks(timestampAssigner, ...)`: rewrites record timestamps to event-time timestamps (used by window assignment)
 
 ## Why a Separate Runtime Module?
 
@@ -50,9 +52,9 @@ See the `examples` module for usage patterns.
 - [x] Core operator abstractions
 - [x] Pull-based execution model (in-memory)
 - [x] Basic keyed state (in-memory `ValueState`)
-- [ ] Window assignment and triggering
-- [ ] Watermark handling
-- [ ] Checkpointing integration
+- [x] Window assignment (batch-style evaluation)
+- [x] Watermark handling (event-time + idle/active)
+- [x] Checkpointing integration (in-memory)
 - [ ] Parallel execution
 
 ## Quick Example

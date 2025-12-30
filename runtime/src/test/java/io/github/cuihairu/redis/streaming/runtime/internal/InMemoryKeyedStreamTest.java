@@ -189,6 +189,37 @@ class InMemoryKeyedStreamTest {
     }
 
     @Test
+    void eventTimeTimerFiresWhenWatermarkAdvancesWithTimestampAssigner() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        record Event(long ts, String value) {
+        }
+
+        List<String> out = new ArrayList<>();
+        env.fromElements(new Event(10, "e1"), new Event(20, "e2"))
+                .assignTimestampsAndWatermarks((event, recordTs) -> event.ts(),
+                        new AscendingTimestampWatermarkGenerator<>())
+                .keyBy(v -> "k")
+                .process(new KeyedProcessFunction<String, Event, String>() {
+                    @Override
+                    public void processElement(String key, Event value, Context ctx, Collector<String> out) {
+                        out.collect("e:" + value.value());
+                        if ("e1".equals(value.value())) {
+                            ctx.registerEventTimeTimer(15);
+                        }
+                    }
+
+                    @Override
+                    public void onEventTime(long timestamp, String key, Context ctx, Collector<String> out) {
+                        out.collect("et:" + timestamp);
+                    }
+                })
+                .addSink(out::add);
+
+        assertEquals(List.of("e:e1", "et:15", "e:e2"), out);
+    }
+
+    @Test
     void checkpointCanRestoreKeyedValueStateWithinRun() {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment().enableCheckpointing();
         var coordinator = env.getCheckpointCoordinator();
