@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -80,11 +81,8 @@ class DatabasePollingCDCConnectorIntegrationTest {
         CompletableFuture<Void> startFuture = connector.start();
 
         // Start should fail with exception
-        Exception exception = assertThrows(Exception.class, () -> {
-            startFuture.join();
-        });
-
-        assertTrue(exception.getCause() instanceof IllegalArgumentException);
+        CompletionException exception = assertThrows(CompletionException.class, startFuture::join);
+        assertNotNull(findCause(exception, IllegalArgumentException.class));
 
         connector.stop();
     }
@@ -103,11 +101,8 @@ class DatabasePollingCDCConnectorIntegrationTest {
         CompletableFuture<Void> startFuture = connector.start();
 
         // Start should fail with exception
-        Exception exception = assertThrows(Exception.class, () -> {
-            startFuture.join();
-        });
-
-        assertTrue(exception.getCause() instanceof IllegalArgumentException);
+        CompletionException exception = assertThrows(CompletionException.class, startFuture::join);
+        assertNotNull(findCause(exception, IllegalArgumentException.class));
 
         connector.stop();
     }
@@ -241,6 +236,17 @@ class DatabasePollingCDCConnectorIntegrationTest {
         assertEquals(connectorName, connector.getName());
 
         connector.stop();
+    }
+
+    private static <T extends Throwable> T findCause(Throwable t, Class<T> type) {
+        Throwable current = t;
+        while (current != null) {
+            if (type.isInstance(current)) {
+                return type.cast(current);
+            }
+            current = current.getCause();
+        }
+        return null;
     }
 
     @Test
