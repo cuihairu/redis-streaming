@@ -1,5 +1,7 @@
 package io.github.cuihairu.redis.streaming.metrics.prometheus;
 
+import io.github.cuihairu.redis.streaming.metrics.Metric;
+import io.github.cuihairu.redis.streaming.metrics.MetricType;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
@@ -87,6 +89,56 @@ public class PrometheusMetricCollectorTest {
         assertTrue(counters.isEmpty());
         assertTrue(gauges.isEmpty());
         assertTrue(histograms.isEmpty());
+    }
+
+    @Test
+    public void testGetMetricAndGetMetrics() {
+        PrometheusMetricCollector collector = new PrometheusMetricCollector("ns_" + UUID.randomUUID().toString().replace("-", ""));
+
+        collector.incrementCounter("requests.total", 2);
+        Metric counter = collector.getMetric("requests.total");
+        assertNotNull(counter);
+        assertEquals(MetricType.COUNTER, counter.getType());
+        assertEquals(2.0, counter.getValue());
+
+        Map<String, Metric> all = collector.getMetrics();
+        assertTrue(all.containsKey("requests.total"));
+    }
+
+    @Test
+    public void testTaggedMetricsAreReadable() {
+        PrometheusMetricCollector collector = new PrometheusMetricCollector("ns_" + UUID.randomUUID().toString().replace("-", ""));
+
+        Map<String, String> tags = new LinkedHashMap<>();
+        tags.put("service", "a");
+        tags.put("region", "b");
+
+        collector.incrementCounter("tagged.counter", tags);
+        collector.setGauge("tagged.gauge", 1.5, tags);
+
+        Metric taggedCounter = collector.getMetric("tagged.counter.region_b.service_a");
+        assertNotNull(taggedCounter);
+        assertEquals(MetricType.COUNTER, taggedCounter.getType());
+        assertEquals(tags, taggedCounter.getTags());
+
+        Metric taggedGauge = collector.getMetric("tagged.gauge.region_b.service_a");
+        assertNotNull(taggedGauge);
+        assertEquals(MetricType.GAUGE, taggedGauge.getType());
+        assertEquals(1.5, taggedGauge.getValue());
+        assertEquals(tags, taggedGauge.getTags());
+    }
+
+    @Test
+    public void testClearUnregistersCollectorsSoTheyCanBeRecreated() {
+        String namespace = "ns_" + UUID.randomUUID().toString().replace("-", "");
+
+        PrometheusMetricCollector first = new PrometheusMetricCollector(namespace);
+        first.incrementCounter("recreate.me");
+        first.clear();
+
+        PrometheusMetricCollector second = new PrometheusMetricCollector(namespace);
+        second.incrementCounter("recreate.me");
+        second.clear();
     }
 
     @SuppressWarnings("unchecked")
