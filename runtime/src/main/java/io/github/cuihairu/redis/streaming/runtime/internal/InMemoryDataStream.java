@@ -21,6 +21,7 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
 
     private final Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier;
     private final WatermarkState watermarkState;
+    private final InMemoryCheckpointCoordinator checkpointCoordinator;
 
     public InMemoryDataStream(Supplier<Iterator<T>> iteratorSupplier) {
         Objects.requireNonNull(iteratorSupplier, "iteratorSupplier");
@@ -39,15 +40,19 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
             }
         };
         this.watermarkState = null;
+        this.checkpointCoordinator = null;
     }
 
     private InMemoryDataStream(Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier, boolean unused) {
-        this(recordIteratorSupplier, null);
+        this(recordIteratorSupplier, null, null);
     }
 
-    private InMemoryDataStream(Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier, WatermarkState watermarkState) {
+    private InMemoryDataStream(Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier,
+                               WatermarkState watermarkState,
+                               InMemoryCheckpointCoordinator checkpointCoordinator) {
         this.recordIteratorSupplier = Objects.requireNonNull(recordIteratorSupplier, "recordIteratorSupplier");
         this.watermarkState = watermarkState;
+        this.checkpointCoordinator = checkpointCoordinator;
     }
 
     public static <T> InMemoryDataStream<T> fromRecords(Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier) {
@@ -56,7 +61,18 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
 
     static <T> InMemoryDataStream<T> fromRecords(Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier,
                                                  WatermarkState watermarkState) {
-        return new InMemoryDataStream<>(recordIteratorSupplier, watermarkState);
+        return new InMemoryDataStream<>(recordIteratorSupplier, watermarkState, null);
+    }
+
+    public static <T> InMemoryDataStream<T> fromRecords(Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier,
+                                                        InMemoryCheckpointCoordinator checkpointCoordinator) {
+        return new InMemoryDataStream<>(recordIteratorSupplier, null, checkpointCoordinator);
+    }
+
+    static <T> InMemoryDataStream<T> fromRecords(Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier,
+                                                 WatermarkState watermarkState,
+                                                 InMemoryCheckpointCoordinator checkpointCoordinator) {
+        return new InMemoryDataStream<>(recordIteratorSupplier, watermarkState, checkpointCoordinator);
     }
 
     @Override
@@ -92,7 +108,7 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
                 InMemoryRecord<T> record = it.next();
                 return new InMemoryRecord<>(mapper.apply(record.value()), record.timestamp());
             }
-        }, watermarkState);
+        }, watermarkState, checkpointCoordinator);
     }
 
     @Override
@@ -133,7 +149,7 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
                 next = null;
                 return out;
             }
-        }, watermarkState);
+        }, watermarkState, checkpointCoordinator);
     }
 
     @Override
@@ -162,13 +178,13 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
                 }
                 return new InMemoryRecord<>(current.next(), currentTimestamp);
             }
-        }, watermarkState);
+        }, watermarkState, checkpointCoordinator);
     }
 
     @Override
     public <K> KeyedStream<K, T> keyBy(Function<T, K> keySelector) {
         Objects.requireNonNull(keySelector, "keySelector");
-        return new InMemoryKeyedStream<>(recordIteratorSupplier, keySelector, watermarkState);
+        return new InMemoryKeyedStream<>(recordIteratorSupplier, keySelector, watermarkState, checkpointCoordinator);
     }
 
     @Override
@@ -231,6 +247,6 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
                 watermarkGenerator.onPeriodicEmit(output);
                 return record;
             }
-        }, state);
+        }, state, checkpointCoordinator);
     }
 }

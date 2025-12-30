@@ -10,6 +10,7 @@ dependencies {
     implementation project(':state')
     implementation project(':watermark')
     implementation project(':window')
+    implementation project(':checkpoint')
 
     // External dependencies
     implementation 'org.redisson:redisson:3.52.0'

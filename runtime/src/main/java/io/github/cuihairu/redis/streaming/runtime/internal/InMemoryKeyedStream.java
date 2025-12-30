@@ -27,6 +27,9 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
     private final InMemoryKeyedStateStore<K> stateStore;
     private final Supplier<Iterator<KeyedRecord<K, T>>> keyedIteratorSupplier;
     private final WatermarkState watermarkState;
+    private final InMemoryCheckpointCoordinator checkpointCoordinator;
+    @SuppressWarnings("unused")
+    private final String checkpointStoreId;
 
     public InMemoryKeyedStream(Supplier<Iterator<T>> iteratorSupplier, Function<T, K> keySelector) {
         this(new InMemoryKeyedStateStore<>(), () -> new Iterator<>() {
@@ -43,12 +46,13 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
                 T v = it.next();
                 return new KeyedRecord<>(Objects.requireNonNull(keySelector, "keySelector").apply(v), v, timestamp++);
             }
-        }, null);
+        }, null, null, null);
     }
 
     InMemoryKeyedStream(Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier,
                         Function<T, K> keySelector,
-                        WatermarkState watermarkState) {
+                        WatermarkState watermarkState,
+                        InMemoryCheckpointCoordinator checkpointCoordinator) {
         this(new InMemoryKeyedStateStore<>(), () -> new Iterator<>() {
             private final Iterator<InMemoryRecord<T>> it =
                     Objects.requireNonNull(recordIteratorSupplier, "recordIteratorSupplier").get();
@@ -64,15 +68,25 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
                 T value = record.value();
                 return new KeyedRecord<>(Objects.requireNonNull(keySelector, "keySelector").apply(value), value, record.timestamp());
             }
-        }, watermarkState);
+        }, watermarkState, checkpointCoordinator, null);
     }
 
     private InMemoryKeyedStream(InMemoryKeyedStateStore<K> stateStore,
                                 Supplier<Iterator<KeyedRecord<K, T>>> keyedIteratorSupplier,
-                                WatermarkState watermarkState) {
+                                WatermarkState watermarkState,
+                                InMemoryCheckpointCoordinator checkpointCoordinator,
+                                String checkpointStoreId) {
         this.stateStore = Objects.requireNonNull(stateStore, "stateStore");
         this.keyedIteratorSupplier = Objects.requireNonNull(keyedIteratorSupplier, "keyedIteratorSupplier");
         this.watermarkState = watermarkState;
+        this.checkpointCoordinator = checkpointCoordinator;
+        if (checkpointCoordinator == null) {
+            this.checkpointStoreId = null;
+        } else if (checkpointStoreId != null) {
+            this.checkpointStoreId = checkpointStoreId;
+        } else {
+            this.checkpointStoreId = checkpointCoordinator.registerStore(stateStore);
+        }
     }
 
     @Override
@@ -92,7 +106,7 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
                 stateStore.setCurrentKey(r.key());
                 return new KeyedRecord<>(r.key(), mapper.apply(r.value()), r.timestamp());
             }
-        }, watermarkState);
+        }, watermarkState, checkpointCoordinator, checkpointStoreId);
     }
 
     @Override

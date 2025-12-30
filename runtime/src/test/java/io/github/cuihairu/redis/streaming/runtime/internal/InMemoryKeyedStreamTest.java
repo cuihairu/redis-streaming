@@ -2,12 +2,14 @@ package io.github.cuihairu.redis.streaming.runtime.internal;
 
 import io.github.cuihairu.redis.streaming.api.stream.KeyedProcessFunction;
 import io.github.cuihairu.redis.streaming.api.stream.ReduceFunction;
+import io.github.cuihairu.redis.streaming.api.state.StateDescriptor;
 import io.github.cuihairu.redis.streaming.runtime.StreamExecutionEnvironment;
 import io.github.cuihairu.redis.streaming.watermark.generators.AscendingTimestampWatermarkGenerator;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -184,5 +186,40 @@ class InMemoryKeyedStreamTest {
                 .addSink(out::add);
 
         assertEquals(List.of("e:e1", "et:15", "e:e2"), out);
+    }
+
+    @Test
+    void checkpointCanRestoreKeyedValueStateWithinRun() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment().enableCheckpointing();
+        var coordinator = env.getCheckpointCoordinator();
+
+        List<String> out = new ArrayList<>();
+        AtomicLong checkpointId = new AtomicLong(-1);
+
+        var keyed = env.fromElements(1, 2, 3).keyBy(v -> "k");
+        var sumState = keyed.getState(new StateDescriptor<>("sum", Integer.class, 0));
+
+        KeyedProcessFunction<String, Integer, String> fn = new KeyedProcessFunction<>() {
+            @Override
+            public void processElement(String key, Integer value, Context ctx, Collector<String> collector) {
+                if (value == 2) {
+                    sumState.update(999);
+                    coordinator.restoreFromCheckpoint(checkpointId.get());
+                    collector.collect("restored=" + sumState.value());
+                }
+
+                int next = sumState.value() + value;
+                sumState.update(next);
+                collector.collect("sum=" + next);
+
+                if (value == 1) {
+                    checkpointId.set(coordinator.triggerCheckpoint());
+                }
+            }
+        };
+
+        keyed.process(fn).addSink(out::add);
+
+        assertEquals(List.of("sum=1", "restored=1", "sum=3", "sum=6"), out);
     }
 }

@@ -2,7 +2,9 @@ package io.github.cuihairu.redis.streaming.runtime;
 
 import io.github.cuihairu.redis.streaming.api.stream.DataStream;
 import io.github.cuihairu.redis.streaming.api.stream.StreamSource;
+import io.github.cuihairu.redis.streaming.api.checkpoint.CheckpointCoordinator;
 import io.github.cuihairu.redis.streaming.runtime.internal.InMemoryDataStream;
+import io.github.cuihairu.redis.streaming.runtime.internal.InMemoryCheckpointCoordinator;
 import io.github.cuihairu.redis.streaming.runtime.internal.InMemoryRecord;
 
 import java.util.ArrayList;
@@ -21,6 +23,8 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class StreamExecutionEnvironment {
 
+    private InMemoryCheckpointCoordinator checkpointCoordinator;
+
     private StreamExecutionEnvironment() {
     }
 
@@ -28,10 +32,36 @@ public final class StreamExecutionEnvironment {
         return new StreamExecutionEnvironment();
     }
 
+    public StreamExecutionEnvironment enableCheckpointing() {
+        if (checkpointCoordinator == null) {
+            checkpointCoordinator = new InMemoryCheckpointCoordinator();
+        }
+        return this;
+    }
+
+    public CheckpointCoordinator getCheckpointCoordinator() {
+        return checkpointCoordinator;
+    }
+
     public <T> DataStream<T> fromCollection(Collection<T> elements) {
         Objects.requireNonNull(elements, "elements");
         List<T> copy = new ArrayList<>(elements);
-        return new InMemoryDataStream<>(copy::iterator);
+        return InMemoryDataStream.fromRecords(() -> {
+            final java.util.Iterator<T> it = copy.iterator();
+            return new java.util.Iterator<>() {
+                private long timestamp = 0L;
+
+                @Override
+                public boolean hasNext() {
+                    return it.hasNext();
+                }
+
+                @Override
+                public InMemoryRecord<T> next() {
+                    return new InMemoryRecord<>(it.next(), timestamp++);
+                }
+            };
+        }, checkpointCoordinator);
     }
 
     @SafeVarargs
@@ -76,6 +106,6 @@ public final class StreamExecutionEnvironment {
             stopped.set(true);
         }
 
-        return InMemoryDataStream.fromRecords(out::iterator);
+        return InMemoryDataStream.fromRecords(out::iterator, checkpointCoordinator);
     }
 }
