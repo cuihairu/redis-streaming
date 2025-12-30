@@ -38,6 +38,9 @@ public class RedisDeadLetterService implements DeadLetterService {
 
     @Override
     public Map<StreamMessageId, Map<String, Object>> range(String originalTopic, int limit) {
+        if (limit <= 0) {
+            return Map.of();
+        }
         String key = DlqKeys.dlq(originalTopic);
         RStream<String, Object> dlq = redissonClient.getStream(key);
         try {

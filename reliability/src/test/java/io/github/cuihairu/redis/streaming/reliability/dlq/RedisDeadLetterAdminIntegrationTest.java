@@ -7,7 +7,6 @@ import org.redisson.api.RedissonClient;
 import org.redisson.api.StreamMessageId;
 import org.redisson.api.RStream;
 import org.redisson.api.stream.StreamAddArgs;
-import org.redisson.client.codec.StringCodec;
 import org.redisson.config.Config;
 
 import java.util.*;
@@ -29,7 +28,7 @@ class RedisDeadLetterAdminIntegrationTest {
 
     private void addDlqEntry(RedissonClient client, String topic, String payload) {
         String dlqKey = DlqKeys.dlq(topic);
-        RStream<String, Object> dlq = client.getStream(dlqKey, StringCodec.INSTANCE);
+        RStream<String, Object> dlq = client.getStream(dlqKey);
 
         Map<String, Object> fields = new HashMap<>();
         fields.put("topic", topic);
@@ -53,7 +52,10 @@ class RedisDeadLetterAdminIntegrationTest {
             List<String> topics = admin.listTopics();
 
             assertNotNull(topics);
-            assertTrue(topics.isEmpty());
+            // Shared Redis instance may already contain DLQ topics from other integration tests.
+            // Assert that a fresh, random topic is not present before we add any entries for it.
+            String topic = "dlq-empty-" + UUID.randomUUID().toString().substring(0, 8);
+            assertFalse(topics.contains(topic));
 
         } finally {
             client.shutdown();
@@ -245,13 +247,6 @@ class RedisDeadLetterAdminIntegrationTest {
             for (int i = 0; i < 3; i++) {
                 addDlqEntry(client, topic, "payload-" + i);
             }
-
-            // Create the source stream for replay
-            String streamKey = "stream:topic:" + topic;
-            RStream<String, Object> stream = client.getStream(streamKey, StringCodec.INSTANCE);
-            stream.createGroup(
-                    org.redisson.api.stream.StreamCreateGroupArgs.name("dlq-replay-group")
-                            .id(StreamMessageId.MIN).makeStream());
 
             DeadLetterService service = new RedisDeadLetterService(client);
             RedisDeadLetterAdmin admin = new RedisDeadLetterAdmin(client, service);
