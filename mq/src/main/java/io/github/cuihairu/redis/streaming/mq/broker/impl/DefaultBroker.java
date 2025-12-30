@@ -35,6 +35,13 @@ public class DefaultBroker implements Broker {
 
     @Override
     public String produce(Message message) {
+        if (message == null) {
+            return null;
+        }
+        if (message.getTopic() == null || message.getTopic().trim().isEmpty()) {
+            return null;
+        }
+
         // Ensure partitions metadata exists
         partitionRegistry.ensureTopic(message.getTopic(), options.getDefaultPartitionCount());
         int partitions = partitionRegistry.getPartitionCount(message.getTopic());
@@ -51,37 +58,58 @@ public class DefaultBroker implements Broker {
     public java.util.List<io.github.cuihairu.redis.streaming.mq.broker.BrokerRecord> readGroup(String topic, String consumerGroup, String consumerName, int partitionId, int count, long timeoutMs) {
         String streamKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, partitionId);
         org.redisson.api.RStream<String, Object> stream = redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE);
-        // Best-effort: ensure the consumer group exists on this stream before reading. This avoids races
-        // where subscription hasn't created the group yet when the first message arrives.
-        try {
-            boolean exists = false;
-            try {
-                java.util.List<org.redisson.api.StreamGroup> groups = stream.listGroups();
-                if (groups != null) {
-                    for (org.redisson.api.StreamGroup g : groups) {
-                        if (consumerGroup.equals(g.getName())) { exists = true; break; }
-                    }
-                }
-            } catch (Exception ignore) {}
-            if (!exists) {
-                try {
-                    stream.createGroup(org.redisson.api.stream.StreamCreateGroupArgs
-                            .name(consumerGroup)
-                            .id(org.redisson.api.StreamMessageId.MIN)
-                            .makeStream());
-                } catch (Exception ignore) {}
-            }
-        } catch (Exception ignore) {}
+        // Ensure the consumer group exists on this stream before reading. This avoids NOGROUP races
+        // and makes DefaultBroker usable without an explicit "subscribe/create group" step.
+        ensureConsumerGroupExists(streamKey, consumerGroup);
         java.time.Duration timeout = java.time.Duration.ofMillis(timeoutMs < 0 ? 0 : timeoutMs);
-        java.util.Map<org.redisson.api.StreamMessageId, java.util.Map<String, Object>> messages = stream.readGroup(
-                consumerGroup, consumerName,
-                org.redisson.api.stream.StreamReadGroupArgs.neverDelivered().count(Math.max(1, count)).timeout(timeout)
-        );
+        org.redisson.api.stream.StreamReadGroupArgs args =
+                org.redisson.api.stream.StreamReadGroupArgs.neverDelivered().count(Math.max(1, count)).timeout(timeout);
+        java.util.Map<org.redisson.api.StreamMessageId, java.util.Map<String, Object>> messages;
+        try {
+            messages = stream.readGroup(consumerGroup, consumerName, args);
+        } catch (Exception first) {
+            // Retry once if group wasn't created yet (race / failed ensure). This keeps integration usage simple.
+            String msg = first.getMessage();
+            if (msg != null && msg.contains("NOGROUP")) {
+                ensureConsumerGroupExists(streamKey, consumerGroup);
+                messages = stream.readGroup(consumerGroup, consumerName, args);
+            } else {
+                throw first;
+            }
+        }
         java.util.List<io.github.cuihairu.redis.streaming.mq.broker.BrokerRecord> out = new java.util.ArrayList<>(messages.size());
         for (java.util.Map.Entry<org.redisson.api.StreamMessageId, java.util.Map<String, Object>> e : messages.entrySet()) {
             out.add(new io.github.cuihairu.redis.streaming.mq.broker.BrokerRecord(e.getKey().toString(), e.getValue()));
         }
         return out;
+    }
+
+    private void ensureConsumerGroupExists(String streamKey, String consumerGroup) {
+        if (streamKey == null || consumerGroup == null) {
+            return;
+        }
+        try {
+            // Equivalent to: XGROUP CREATE <streamKey> <consumerGroup> 0-0 MKSTREAM
+            // Swallow BUSYGROUP (already exists) and propagate other errors.
+            String lua = """
+                    local ok, err = pcall(function()
+                      return redis.call('XGROUP', 'CREATE', KEYS[1], ARGV[1], '0-0', 'MKSTREAM')
+                    end)
+                    if ok then return 1 end
+                    if string.find(err, 'BUSYGROUP') ~= nil then return 0 end
+                    return redis.error_reply(err)
+                    """;
+            org.redisson.api.RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
+            script.eval(
+                    org.redisson.api.RScript.Mode.READ_WRITE,
+                    lua,
+                    org.redisson.api.RScript.ReturnType.INTEGER,
+                    java.util.Collections.singletonList(streamKey),
+                    consumerGroup
+            );
+        } catch (Exception e) {
+            log.debug("Failed to ensure consumer group exists: stream={} group={}", streamKey, consumerGroup, e);
+        }
     }
 
     @Override

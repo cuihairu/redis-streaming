@@ -194,8 +194,10 @@ class RedisBrokerPersistenceIntegrationTest {
             message.setTopic(topic);
             message.setKey("test-key");
             message.setPayload("test-payload");
-            message.getHeaders().put("header1", "value1");
-            message.getHeaders().put("header2", "456");
+            java.util.Map<String, String> headers = new java.util.HashMap<>();
+            headers.put("header1", "value1");
+            headers.put("header2", "456");
+            message.setHeaders(headers);
 
             String messageId = persistence.append(topic, 0, message);
 

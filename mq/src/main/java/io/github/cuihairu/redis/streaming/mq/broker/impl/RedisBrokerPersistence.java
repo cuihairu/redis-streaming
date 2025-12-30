@@ -31,6 +31,13 @@ public class RedisBrokerPersistence implements BrokerPersistence {
 
     @Override
     public String append(String topic, int partitionId, Message message) {
+        if (topic == null || topic.trim().isEmpty()) {
+            return null;
+        }
+        if (message == null) {
+            return null;
+        }
+
         // Ensure topic keyspace exists (compat with current behavior)
         topicRegistry.registerTopic(topic);
         String streamKey = StreamKeys.partitionStream(topic, partitionId);
