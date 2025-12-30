@@ -12,10 +12,13 @@ import io.github.cuihairu.redis.streaming.api.stream.WindowedStream;
 import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.util.PriorityQueue;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -95,22 +98,36 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
         return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
             private final Iterator<KeyedRecord<K, T>> in = keyedIteratorSupplier.get();
             private final ArrayDeque<InMemoryRecord<R>> buffer = new ArrayDeque<>();
-            private final KeyedProcessFunction.Context ctx = new InMemoryProcessContext();
-            private long currentTimestamp = 0L;
+            private final TimerQueue timerQueue = new TimerQueue();
+            private final KeyedProcessFunction.Context ctx = new ContextImpl();
+            private long currentTimestamp = Long.MIN_VALUE;
+            private boolean inputDrained = false;
             private final KeyedProcessFunction.Collector<R> out = value ->
                     buffer.addLast(new InMemoryRecord<>(value, currentTimestamp));
 
             @Override
             public boolean hasNext() {
-                while (buffer.isEmpty() && in.hasNext()) {
-                    KeyedRecord<K, T> record = in.next();
-                    stateStore.setCurrentKey(record.key());
-                    currentTimestamp = record.timestamp();
-                    try {
-                        processFunction.processElement(record.key(), record.value(), ctx, out);
-                    } catch (Exception e) {
-                        throw new RuntimeException("Keyed process function failed", e);
+                while (buffer.isEmpty()) {
+                    if (!inputDrained && in.hasNext()) {
+                        KeyedRecord<K, T> record = in.next();
+                        currentTimestamp = record.timestamp();
+                        timerQueue.fireDueTimers(currentTimestamp);
+                        stateStore.setCurrentKey(record.key());
+                        try {
+                            processFunction.processElement(record.key(), record.value(), ctx, out);
+                        } catch (Exception e) {
+                            throw new RuntimeException("Keyed process function failed", e);
+                        }
+                        timerQueue.fireDueTimers(currentTimestamp);
+                        continue;
                     }
+
+                    if (!inputDrained) {
+                        inputDrained = true;
+                        timerQueue.drainAllTimers();
+                        continue;
+                    }
+                    break;
                 }
                 return !buffer.isEmpty();
             }
@@ -122,7 +139,102 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
                 }
                 return buffer.removeFirst();
             }
+
+            private final class TimerQueue {
+                private long seq = 0L;
+                private final PriorityQueue<Timer<K>> timers = new PriorityQueue<>(
+                        (a, b) -> {
+                            int c = Long.compare(a.timestamp(), b.timestamp());
+                            if (c != 0) return c;
+                            return Long.compare(a.seq(), b.seq());
+                        }
+                );
+                private final Set<TimerKey<K>> scheduled = new HashSet<>();
+
+                void registerProcessingTimeTimer(long timestamp) {
+                    register(timestamp, TimerType.PROCESSING_TIME);
+                }
+
+                void registerEventTimeTimer(long timestamp) {
+                    register(timestamp, TimerType.EVENT_TIME);
+                }
+
+                private void register(long timestamp, TimerType type) {
+                    K key = stateStore.currentKey();
+                    if (key == null) {
+                        throw new IllegalStateException("No current key set for timer registration");
+                    }
+                    TimerKey<K> timerKey = new TimerKey<>(key, timestamp, type);
+                    if (!scheduled.add(timerKey)) {
+                        return;
+                    }
+                    timers.add(new Timer<>(seq++, key, timestamp, type));
+                }
+
+                void fireDueTimers(long upToTimestamp) {
+                    while (!timers.isEmpty() && timers.peek().timestamp() <= upToTimestamp) {
+                        Timer<K> timer = timers.poll();
+                        scheduled.remove(new TimerKey<>(timer.key(), timer.timestamp(), timer.type()));
+                        fire(timer);
+                    }
+                }
+
+                void drainAllTimers() {
+                    while (!timers.isEmpty()) {
+                        Timer<K> timer = timers.poll();
+                        scheduled.remove(new TimerKey<>(timer.key(), timer.timestamp(), timer.type()));
+                        fire(timer);
+                    }
+                }
+
+                private void fire(Timer<K> timer) {
+                    stateStore.setCurrentKey(timer.key());
+                    currentTimestamp = timer.timestamp();
+                    try {
+                        switch (timer.type()) {
+                            case PROCESSING_TIME -> processFunction.onProcessingTime(timer.timestamp(), timer.key(), ctx, out);
+                            case EVENT_TIME -> processFunction.onEventTime(timer.timestamp(), timer.key(), ctx, out);
+                        }
+                    } catch (Exception e) {
+                        throw new RuntimeException("Keyed process timer callback failed", e);
+                    }
+                    fireDueTimers(currentTimestamp);
+                }
+            }
+
+            private final class ContextImpl implements KeyedProcessFunction.Context {
+                @Override
+                public long currentProcessingTime() {
+                    return currentTimestamp;
+                }
+
+                @Override
+                public long currentWatermark() {
+                    return currentTimestamp;
+                }
+
+                @Override
+                public void registerProcessingTimeTimer(long time) {
+                    timerQueue.registerProcessingTimeTimer(time);
+                }
+
+                @Override
+                public void registerEventTimeTimer(long time) {
+                    timerQueue.registerEventTimeTimer(time);
+                }
+            }
         });
+    }
+
+    private enum TimerType {
+        PROCESSING_TIME,
+        EVENT_TIME
+    }
+
+    private record TimerKey<KK>(KK key, long timestamp, TimerType type) {
+    }
+
+    private record Timer<KK>(long seq, KK key, long timestamp, TimerType type) {
     }
 
     @Override
@@ -214,28 +326,6 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
     @Override
     public <S> ValueState<S> getState(StateDescriptor<S> stateDescriptor) {
         return new InMemoryKeyedValueState<>(stateStore, stateDescriptor);
-    }
-
-    private static final class InMemoryProcessContext implements KeyedProcessFunction.Context {
-        @Override
-        public long currentProcessingTime() {
-            return System.currentTimeMillis();
-        }
-
-        @Override
-        public long currentWatermark() {
-            return Long.MIN_VALUE;
-        }
-
-        @Override
-        public void registerProcessingTimeTimer(long time) {
-            // not implemented
-        }
-
-        @Override
-        public void registerEventTimeTimer(long time) {
-            // not implemented
-        }
     }
 
     private static Number addNumbers(Number a, Number b) {

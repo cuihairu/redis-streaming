@@ -75,5 +75,82 @@ class InMemoryKeyedStreamTest {
         assertThrows(NullPointerException.class, () -> keyed.process(null));
         assertThrows(NullPointerException.class, () -> keyed.map(null));
     }
-}
 
+    @Test
+    void processFiresProcessingTimeTimersBeforeNextElementAndAfterDrain() {
+        InMemoryKeyedStream<String, Integer> keyed = new InMemoryKeyedStream<>(
+                () -> List.of(1, 2, 3).iterator(),
+                v -> "k"
+        );
+
+        KeyedProcessFunction<String, Integer, String> fn = new KeyedProcessFunction<>() {
+            @Override
+            public void processElement(String key, Integer value, Context ctx, Collector<String> out) {
+                out.collect("e:" + value);
+                ctx.registerProcessingTimeTimer(ctx.currentProcessingTime() + 1);
+            }
+
+            @Override
+            public void onProcessingTime(long timestamp, String key, Context ctx, Collector<String> out) {
+                out.collect("pt:" + timestamp);
+            }
+        };
+
+        List<String> out = new ArrayList<>();
+        keyed.process(fn).addSink(out::add);
+
+        assertEquals(List.of("e:1", "pt:1", "e:2", "pt:2", "e:3", "pt:3"), out);
+    }
+
+    @Test
+    void processFiresEventTimeTimers() {
+        InMemoryKeyedStream<String, Integer> keyed = new InMemoryKeyedStream<>(
+                () -> List.of(1, 2).iterator(),
+                v -> "k"
+        );
+
+        KeyedProcessFunction<String, Integer, String> fn = new KeyedProcessFunction<>() {
+            @Override
+            public void processElement(String key, Integer value, Context ctx, Collector<String> out) {
+                out.collect("e:" + value);
+                ctx.registerEventTimeTimer(ctx.currentWatermark() + 1);
+            }
+
+            @Override
+            public void onEventTime(long timestamp, String key, Context ctx, Collector<String> out) {
+                out.collect("et:" + timestamp);
+            }
+        };
+
+        List<String> out = new ArrayList<>();
+        keyed.process(fn).addSink(out::add);
+
+        assertEquals(List.of("e:1", "et:1", "e:2", "et:2"), out);
+    }
+
+    @Test
+    void processDeduplicatesPendingTimers() {
+        InMemoryKeyedStream<String, Integer> keyed = new InMemoryKeyedStream<>(
+                () -> List.of(1).iterator(),
+                v -> "k"
+        );
+
+        KeyedProcessFunction<String, Integer, String> fn = new KeyedProcessFunction<>() {
+            @Override
+            public void processElement(String key, Integer value, Context ctx, Collector<String> out) {
+                ctx.registerProcessingTimeTimer(5);
+                ctx.registerProcessingTimeTimer(5);
+            }
+
+            @Override
+            public void onProcessingTime(long timestamp, String key, Context ctx, Collector<String> out) {
+                out.collect("pt:" + timestamp);
+            }
+        };
+
+        List<String> out = new ArrayList<>();
+        keyed.process(fn).addSink(out::add);
+
+        assertEquals(List.of("pt:5"), out);
+    }
+}

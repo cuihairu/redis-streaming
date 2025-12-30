@@ -23,6 +23,24 @@ public interface KeyedProcessFunction<K, I, O> extends Serializable {
     void processElement(K key, I value, Context ctx, Collector<O> out) throws Exception;
 
     /**
+     * Called when a processing-time timer fires.
+     *
+     * <p>Default no-op to keep implementations source/binary compatible.</p>
+     */
+    default void onProcessingTime(long timestamp, K key, Context ctx, Collector<O> out) throws Exception {
+        // no-op
+    }
+
+    /**
+     * Called when an event-time timer fires.
+     *
+     * <p>Default no-op to keep implementations source/binary compatible.</p>
+     */
+    default void onEventTime(long timestamp, K key, Context ctx, Collector<O> out) throws Exception {
+        // no-op
+    }
+
+    /**
      * Context for accessing state and timers
      */
     interface Context {
