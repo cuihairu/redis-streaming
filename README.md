@@ -16,6 +16,8 @@
 - **⚙️ 配置中心 (Config)** - 基于 Redis 的分布式配置管理，支持配置版本化、变更通知、历史记录
 - **💾 状态管理 (State)** - Redis 支持的分布式状态存储，支持 ValueState、MapState、ListState、SetState
 - **✅ 检查点机制 (Checkpoint)** - 分布式检查点协调，支持故障恢复
+- **💧 Watermark** - WatermarkStrategy + 生成器（有序/乱序），可与 runtime 结合使用（event-time）
+- **🪟 窗口分配器 (Window)** - 滚动/滑动/会话窗口 + 触发器（runtime 当前仅使用分配器）
 - **⏰ 窗口聚合 (Aggregation)** - 基于时间窗口的实时聚合，支持 PV/UV、TopK、分位数计算
 - **🔗 流式 Join (Join)** - 时间窗口内的流-流 Join 操作
 - **🔄 CDC 集成 (CDC)** - MySQL Binlog、PostgreSQL 逻辑复制、数据库轮询
@@ -29,8 +31,6 @@
 
 ### 🚧 部分实现
 - **🌊 流处理运行时 (Runtime)** - 最小可用的 in-memory runtime（单线程，用于 tests/examples）
-- **💧 Watermark** - 生成器已实现，可与 aggregation 模块配合使用
-- **🪟 窗口分配器 (Window)** - 窗口逻辑已实现，可与 runtime/core 的 WindowAssigner 配合使用
 
 ## 📦 模块架构
 
@@ -58,6 +58,24 @@
 **实现状态**: 🚧 最小可用（In-Memory，单线程）
 
 **说明**: 当前提供最小可用的 in-memory runtime（主要用于 tests/examples）：`StreamExecutionEnvironment` + 基础算子链（`map/filter/flatMap/keyBy/addSink`）与基础 keyed state（`getState/process/reduce`），并支持 timers / watermarks / in-memory checkpointing。详见 `runtime/README.md`。
+
+**Event-time Watermark 示例**（从元素中提取事件时间）：
+```java
+import io.github.cuihairu.redis.streaming.runtime.StreamExecutionEnvironment;
+import io.github.cuihairu.redis.streaming.watermark.WatermarkStrategy;
+import java.time.Duration;
+
+record Event(long ts, String value) {}
+
+var env = StreamExecutionEnvironment.getExecutionEnvironment();
+var strategy = WatermarkStrategy.<Event>forBoundedOutOfOrderness(Duration.ofSeconds(5))
+    .withTimestampAssigner((e, recordTs) -> e.ts());
+
+env.fromElements(new Event(10, "a"), new Event(20, "b"))
+    .assignTimestampsAndWatermarks(strategy.getTimestampAssigner(), strategy.createWatermarkGenerator())
+    .keyBy(e -> "k")
+    .process(/* ... */);
+```
 
 ### **Tier 2: 基础设施层**
 
@@ -176,31 +194,30 @@ List<ConfigHistory> history = configService.getHistory("app.properties", "DEFAUL
 #### **watermark** - 水位线机制
 事件时间处理，处理乱序数据。
 
-**实现状态**: 🚧 部分完成 - 生成器已实现，待集成
+**实现状态**: ✅ 完成 - 可与 runtime 结合使用（event-time）
 
 **职责：**
 - Watermark 生成（有序、乱序）
 - 延迟数据处理
-- 时间戳分配
+- 时间戳分配（`TimestampAssigner`）
 - 多种 Watermark 策略
 
-**关键类**: `AscendingTimestampWatermarkGenerator.java`, `BoundedOutOfOrdernessWatermarkGenerator.java` (3 个文件)
+**关键类**: `WatermarkStrategy.java`, `AscendingTimestampWatermarkGenerator.java`, `BoundedOutOfOrdernessWatermarkGenerator.java`
 
 ### **Tier 3: 功能模块层**
 
 #### **window** - 窗口操作
 各种窗口类型和触发器，支持基于时间和计数的窗口。
 
-**实现状态**: 🚧 部分完成 - 窗口逻辑已实现，待集成到流处理运行时
+**实现状态**: ✅ 完成 - 窗口分配器 + 触发器（runtime 当前仅使用分配器）
 
 **职责：**
 - 滚动窗口（Tumbling）
 - 滑动窗口（Sliding）
 - 会话窗口（Session）
-- 计数窗口（Count）
-- 窗口触发器和淘汰器
+- 触发器（EventTime / ProcessingTime / Count）
 
-**关键类**: `TumblingWindow.java`, `SlidingWindow.java`, `SessionWindow.java`, `EventTimeTrigger.java` (8 个文件)
+**关键类**: `TumblingWindow.java`, `SlidingWindow.java`, `SessionWindow.java`, `EventTimeTrigger.java`, `ProcessingTimeTrigger.java`, `CountTrigger.java`
 
 #### **aggregation** - 聚合函数
 丰富的聚合函数库和窗口聚合支持，基于 Redis 实现。
@@ -219,7 +236,7 @@ List<ConfigHistory> history = configService.getHistory("app.properties", "DEFAUL
 #### **table** - 流表二元性
 KTable 和 KStream，支持流表互转和表操作。
 
-**实现状态**: 🚧 部分完成 - 内存版已实现，Redis 持久化版开发中
+**实现状态**: ✅ 完成 - InMemoryKTable + RedisKTable
 
 **职责：**
 - KTable - 可更新的表
@@ -227,7 +244,7 @@ KTable 和 KStream，支持流表互转和表操作。
 - 流表转换
 - 表操作（map, filter, join）
 
-**关键类**: `KTable.java` (127行), `InMemoryKTable.java` (157行), `StreamTableConverter.java` (5 个文件)
+**关键类**: `KTable.java`, `InMemoryKTable.java`, `RedisKTable.java`, `StreamTableConverter.java`
 
 #### **join** - Join 操作
 时间窗口内的流式 Join，支持多种 Join 类型。
@@ -259,30 +276,32 @@ KTable 和 KStream，支持流表互转和表操作。
 #### **sink** - 数据输出连接器
 多种数据汇连接器。
 
-**实现状态**: 🚧 部分完成 - 基础连接器已实现，企业级连接器开发中
+**实现状态**: ✅ 完成 - 可用连接器已实现
 
 **职责：**
 - PrintSink - 控制台输出
 - FileSink - 文件输出
 - CollectionSink - 集合输出
+- RedisStreamSink - Redis List 输出
+- RedisHashSink - Redis Hash 输出
+- KafkaSink - Kafka 输出
 
-**关键类**: `PrintSink.java` (91行), `FileSink.java`, `CollectionSink.java` (3 个文件)
-
-**待开发**: Elasticsearch Sink, HBase Sink, Kafka Sink
+**关键类**: `KafkaSink.java`, `RedisStreamSink.java`, `RedisHashSink.java`, `PrintSink.java`
 
 #### **source** - 数据输入连接器
 多种数据源连接器。
 
-**实现状态**: 🚧 部分完成 - 基础连接器已实现，企业级连接器开发中
+**实现状态**: ✅ 完成 - 可用连接器已实现
 
 **职责：**
 - CollectionSource - 集合数据源
 - FileSource - 文件数据源
 - GeneratorSource - 测试数据生成
+- RedisListSource - Redis List 数据源
+- HttpApiSource - HTTP API 轮询数据源
+- KafkaSource - Kafka 数据源
 
-**关键类**: `CollectionSource.java` (44行), `FileSource.java`, `GeneratorSource.java` (3 个文件)
-
-**待开发**: IoT Device Source, HTTP API Source, Kafka Source
+**关键类**: `KafkaSource.java`, `HttpApiSource.java`, `RedisListSource.java`, `CollectionSource.java`
 
 ### **Tier 4: 高级功能层**
 
@@ -296,42 +315,40 @@ KTable 和 KStream，支持流表互转和表操作。
 - 死信队列管理
 - 故障策略（重试、跳过、DLQ）
 - 失败元素追踪
+- 去重（Bloom Filter / Set / Windowed）
+- 限流（滑动窗口、令牌桶、漏桶；Redis/InMemory）
 
-**关键类**: `RetryExecutor.java` (94行), `RetryPolicy.java`, `DeadLetterQueue.java` (6 个文件)
-
-**待开发**: Bloom Filter 去重、Exactly-once 语义、背压控制
+**关键类**: `RetryExecutor.java`, `RedisDeadLetterService.java`, `BloomFilterDeduplicator.java`, `RedisSlidingWindowRateLimiter.java`
 
 #### **cep** - 复杂事件处理
 模式匹配和复杂事件检测。
 
-**实现状态**: 🚧 部分完成 - 基础模式匹配已实现，高级操作开发中
+**实现状态**: ✅ 完成 - 支持 Kleene closure / contiguity / 高级序列匹配
 
 **职责：**
 - 模式定义（Pattern Builder）
-- 序列检测（简单模式）
-- 时间约束（超时检测）
-- 事件匹配
+- 序列检测（PatternSequence / PatternSequenceMatcher）
+- Kleene closure（*, +, ?, {n}, {n,m}）
+- 邻接约束（STRICT / RELAXED / NON_DETERMINISTIC）
+- 时间窗口约束（within）
 
-**关键类**: `PatternMatcher.java` (127行), `Pattern.java`, `PatternBuilder.java` (5 个文件)
-
-**待开发**: Kleene closure、复杂条件组合、followedBy/within 操作符
+**关键类**: `PatternSequenceMatcher.java`, `PatternSequence.java`, `PatternQuantifier.java`, `PatternConfig.java`
 
 ### **Tier 5: 集成层**
 
 #### **metrics** - 监控指标
 监控指标收集和暴露。
 
-**实现状态**: 🚧 部分完成 - 指标收集已实现，Prometheus 集成开发中
+**实现状态**: ✅ 完成 - Prometheus Exporter + Collector
 
 **职责：**
 - 指标收集（Counter, Gauge, Histogram, Timer）
 - 内存指标存储
 - 指标注册管理
 - 计时器支持
+- Prometheus 导出（HTTP）
 
-**关键类**: `MetricCollector.java` (93行), `InMemoryMetricCollector.java`, `MetricRegistry.java` (6 个文件)
-
-**待开发**: Prometheus Exporter、Micrometer 集成、流处理指标暴露
+**关键类**: `PrometheusExporter.java`, `PrometheusMetricCollector.java`, `MetricRegistry.java`
 
 #### **spring-boot-starter** - Spring Boot 集成
 Spring Boot 自动配置和集成。
@@ -350,14 +367,16 @@ Spring Boot 自动配置和集成。
 #### **examples** - 示例代码
 各种使用示例和最佳实践。
 
-**实现状态**: 🚧 部分完成 - 基础示例已提供
+**实现状态**: ✅ 基础示例已提供
 
 **职责：**
 - 服务注册发现示例
 - 消息队列示例
-- 综合流处理示例
+- 限流示例
+- 聚合示例
+- 综合流处理示例（in-memory runtime）
 
-**关键类**: `ServiceRegistryExample.java`, `MessageQueueExample.java`, `ComprehensiveStreamingExample.java` (3 个文件)
+**关键类**: `ServiceRegistryExample.java`, `CustomPrefixExample.java`, `MessageQueueExample.java`, `RateLimitExample.java`, `StreamAggregationExample.java`, `ComprehensiveStreamingExample.java`
 
 ## 🎯 快速开始
 
@@ -588,77 +607,72 @@ connector.start();
 
 ### 📊 模块完成情况总览
 
-**已完成**: 17/20 模块（85.0%）✅
-**部分完成**: 2/20 模块（10.0%）🚧
-**未开始**: 1/20 模块（5.0%）📋
+**已完成**: 19/20 模块（95.0%）✅
+**部分完成**: 1/20 模块（5.0%）🚧
+**未开始**: 0/20 模块（0.0%）
 
 ---
 
 ### ✅ 已完成模块（生产可用）
 
 #### Tier 1: 核心抽象层
-- [x] **core** - 核心 API 定义 (24 个文件)
+- [x] **core** - 核心 API 定义
   - 完整的流处理 API 抽象
   - 状态、检查点、水位线、窗口抽象
 
 #### Tier 2: 基础设施层
-- [x] **mq** - 消息队列 (9 个文件)
+- [x] **mq** - 消息队列
   - Redis Streams 完整实现
   - 消费者组、DLQ、异步支持
-- [x] **registry** - 服务注册发现 (25 个文件)
+- [x] **registry** - 服务注册发现
   - 服务注册、发现、健康检查
   - 多协议支持（HTTP/HTTPS/TCP/WebSocket/gRPC）
   - **Metadata 比较运算符过滤**（`>`, `>=`, `<`, `<=`, `!=`, `==`）
   - 基于权重、CPU、延迟等智能负载均衡
-- [x] **config** - 配置中心 (10 个文件)
+- [x] **config** - 配置中心
   - 配置发布、获取、删除
   - 配置版本化和历史记录
   - 配置变更通知（Redis Pub/Sub）
   - 配置监听器和热加载
-- [x] **state** - 状态管理 (7 个文件)
+- [x] **state** - 状态管理
   - 4 种状态类型（Value、Map、List、Set）
   - Redis 持久化
-- [x] **checkpoint** - 检查点 (5 个文件)
+- [x] **checkpoint** - 检查点
   - 分布式协调、快照、恢复
-- [x] **watermark** - 水位线 (3 个文件)
+- [x] **watermark** - 水位线
   - 水位线生成器实现
-- [x] **window** - 窗口分配 (8 个文件)
+- [x] **window** - 窗口分配
   - 滚动、滑动、会话窗口
 
 #### Tier 3: 功能模块层
-- [x] **aggregation** - 聚合函数 (12 个文件)
+- [x] **aggregation** - 聚合函数
   - 窗口聚合、PV/UV、TopK
-- [x] **table** - 流表二元性 (6 个文件)
+- [x] **table** - 流表二元性
   - 内存版 & Redis 持久化版 KTable
-- [x] **join** - Join 操作 (6 个文件)
+- [x] **join** - Join 操作
   - 时间窗口 Join、4 种 Join 类型
-- [x] **cdc** - CDC (13 个文件)
+- [x] **cdc** - CDC
   - MySQL、PostgreSQL、轮询 CDC
-- [x] **sink** - 输出连接器 (6 个文件)
+- [x] **sink** - 输出连接器
   - Kafka Sink、Redis Stream/Hash Sink
-- [x] **source** - 输入连接器 (6 个文件)
+- [x] **source** - 输入连接器
   - Kafka Source、HTTP API Source、Redis List Source
 
 #### Tier 4: 高级功能层
-- [x] **cep** - 复杂事件处理 (9 个文件)
+- [x] **cep** - 复杂事件处理
   - Kleene closure、高级模式操作
-- [x] **reliability** - 可靠性保证 (10 个文件)
-  - 重试机制、DLQ、Bloom Filter 去重
+- [x] **reliability** - 可靠性保证
+  - 重试机制、DLQ、去重、限流
 
 #### Tier 5: 集成层
-- [x] **metrics** - 监控指标 (8 个文件)
+- [x] **metrics** - 监控指标
   - Prometheus Exporter、指标收集器
-- [x] **spring-boot-starter** - Spring Boot 集成 (6 个文件)
+- [x] **spring-boot-starter** - Spring Boot 集成
   - 完整自动配置、注解支持
 
 ---
 
 ### 🚧 部分完成模块
-
-#### Tier 5: 集成层
-- [ ] **examples** - 示例代码 (3 个文件)
-  - ✅ 基础示例已实现
-  - 🚧 需要更多综合示例
 
 #### Tier 1: 核心抽象层
 - [ ] **runtime** - 流处理运行时引擎
@@ -723,7 +737,7 @@ connector.start();
 
 **当前版本**: 0.1.0
 **最后更新**: 2025-12-30
-**完成度**: 18/20 模块完成（90.0%），2/20 模块部分完成（10.0%）
+**完成度**: 19/20 模块完成（95.0%），1/20 模块部分完成（5.0%）
 
 ### 📝 版本说明
 
