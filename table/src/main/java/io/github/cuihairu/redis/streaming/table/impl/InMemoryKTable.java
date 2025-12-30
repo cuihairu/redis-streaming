@@ -107,15 +107,11 @@ public class InMemoryKTable<K, V> implements KTable<K, V> {
 
     @Override
     public <VO, VR> KTable<K, VR> join(KTable<K, VO> other, BiFunction<V, VO, VR> joiner) {
-        if (!(other instanceof InMemoryKTable)) {
-            throw new UnsupportedOperationException("Can only join with InMemoryKTable");
-        }
-
-        InMemoryKTable<K, VO> otherTable = (InMemoryKTable<K, VO>) other;
+        Map<K, VO> otherState = resolveJoinState(other);
         InMemoryKTable<K, VR> result = new InMemoryKTable<>();
 
         state.forEach((key, value) -> {
-            VO otherValue = otherTable.get(key);
+            VO otherValue = otherState.get(key);
             if (otherValue != null) {
                 VR joinedValue = joiner.apply(value, otherValue);
                 result.put(key, joinedValue);
@@ -127,20 +123,30 @@ public class InMemoryKTable<K, V> implements KTable<K, V> {
 
     @Override
     public <VO, VR> KTable<K, VR> leftJoin(KTable<K, VO> other, BiFunction<V, VO, VR> joiner) {
-        if (!(other instanceof InMemoryKTable)) {
-            throw new UnsupportedOperationException("Can only join with InMemoryKTable");
-        }
-
-        InMemoryKTable<K, VO> otherTable = (InMemoryKTable<K, VO>) other;
+        Map<K, VO> otherState = resolveJoinState(other);
         InMemoryKTable<K, VR> result = new InMemoryKTable<>();
 
         state.forEach((key, value) -> {
-            VO otherValue = otherTable.get(key);
+            VO otherValue = otherState.get(key);
             VR joinedValue = joiner.apply(value, otherValue);
             result.put(key, joinedValue);
         });
 
         return result;
+    }
+
+    private <VO> Map<K, VO> resolveJoinState(KTable<K, VO> other) {
+        if (other instanceof InMemoryKTable<?, ?>) {
+            @SuppressWarnings("unchecked")
+            InMemoryKTable<K, VO> otherTable = (InMemoryKTable<K, VO>) other;
+            return otherTable.getState();
+        }
+        if (other instanceof RedisKTable<?, ?>) {
+            @SuppressWarnings("unchecked")
+            RedisKTable<K, VO> otherTable = (RedisKTable<K, VO>) other;
+            return otherTable.getState();
+        }
+        throw new UnsupportedOperationException("Can only join with InMemoryKTable or RedisKTable");
     }
 
     @Override

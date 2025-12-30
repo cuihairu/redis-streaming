@@ -225,6 +225,94 @@ class RedisKTableTest {
     }
 
     @Test
+    void testJoinWithInMemoryRightTable() {
+        table.put("key1", "value1");
+        table.put("key2", "value2");
+        table.put("key3", "value3");
+
+        InMemoryKTable<String, String> right = new InMemoryKTable<>();
+        right.put("key1", "other1");
+        right.put("key2", "other2");
+        right.put("key4", "other4");
+
+        KTable<String, String> joined = table.join(right, (v1, v2) -> v1 + "+" + v2);
+        assertTrue(joined instanceof RedisKTable);
+
+        RedisKTable<String, String> joinedTable = (RedisKTable<String, String>) joined;
+        assertEquals(2, joinedTable.size());
+        assertEquals("value1+other1", joinedTable.get("key1"));
+        assertEquals("value2+other2", joinedTable.get("key2"));
+        assertNull(joinedTable.get("key3"));
+        assertNull(joinedTable.get("key4"));
+
+        joinedTable.delete();
+    }
+
+    @Test
+    void testLeftJoinWithInMemoryRightTable() {
+        table.put("key1", "value1");
+        table.put("key2", "value2");
+        table.put("key3", "value3");
+
+        InMemoryKTable<String, String> right = new InMemoryKTable<>();
+        right.put("key1", "other1");
+        right.put("key2", "other2");
+
+        KTable<String, String> joined = table.leftJoin(right, (v1, v2) -> v1 + "+" + (v2 == null ? "null" : v2));
+        assertTrue(joined instanceof RedisKTable);
+
+        RedisKTable<String, String> joinedTable = (RedisKTable<String, String>) joined;
+        assertEquals(3, joinedTable.size());
+        assertEquals("value1+other1", joinedTable.get("key1"));
+        assertEquals("value2+other2", joinedTable.get("key2"));
+        assertEquals("value3+null", joinedTable.get("key3"));
+
+        joinedTable.delete();
+    }
+
+    @Test
+    void testInMemoryJoinWithRedisRightTable() {
+        InMemoryKTable<String, String> left = new InMemoryKTable<>();
+        left.put("key1", "value1");
+        left.put("key2", "value2");
+        left.put("key3", "value3");
+
+        table.put("key1", "other1");
+        table.put("key2", "other2");
+        table.put("key4", "other4");
+
+        KTable<String, String> joined = left.join(table, (v1, v2) -> v1 + "+" + v2);
+        assertTrue(joined instanceof InMemoryKTable);
+
+        InMemoryKTable<String, String> joinedTable = (InMemoryKTable<String, String>) joined;
+        assertEquals(2, joinedTable.size());
+        assertEquals("value1+other1", joinedTable.get("key1"));
+        assertEquals("value2+other2", joinedTable.get("key2"));
+        assertNull(joinedTable.get("key3"));
+        assertNull(joinedTable.get("key4"));
+    }
+
+    @Test
+    void testInMemoryLeftJoinWithRedisRightTable() {
+        InMemoryKTable<String, String> left = new InMemoryKTable<>();
+        left.put("key1", "value1");
+        left.put("key2", "value2");
+        left.put("key3", "value3");
+
+        table.put("key1", "other1");
+        table.put("key2", "other2");
+
+        KTable<String, String> joined = left.leftJoin(table, (v1, v2) -> v1 + "+" + (v2 == null ? "null" : v2));
+        assertTrue(joined instanceof InMemoryKTable);
+
+        InMemoryKTable<String, String> joinedTable = (InMemoryKTable<String, String>) joined;
+        assertEquals(3, joinedTable.size());
+        assertEquals("value1+other1", joinedTable.get("key1"));
+        assertEquals("value2+other2", joinedTable.get("key2"));
+        assertEquals("value3+null", joinedTable.get("key3"));
+    }
+
+    @Test
     void testPersistence() {
         table.put("key1", "value1");
         table.put("key2", "value2");

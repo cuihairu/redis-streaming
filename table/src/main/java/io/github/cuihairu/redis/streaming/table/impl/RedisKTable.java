@@ -231,11 +231,19 @@ public class RedisKTable<K, V> implements KTable<K, V> {
 
     @Override
     public <VO, VR> KTable<K, VR> join(KTable<K, VO> other, BiFunction<V, VO, VR> joiner) {
-        if (!(other instanceof RedisKTable)) {
-            throw new UnsupportedOperationException("Can only join with RedisKTable");
+        Map<K, VO> otherState = null;
+        RedisKTable<K, VO> otherTable = null;
+        if (other instanceof RedisKTable<?, ?>) {
+            @SuppressWarnings("unchecked")
+            RedisKTable<K, VO> t = (RedisKTable<K, VO>) other;
+            otherTable = t;
+        } else if (other instanceof InMemoryKTable<?, ?>) {
+            @SuppressWarnings("unchecked")
+            InMemoryKTable<K, VO> t = (InMemoryKTable<K, VO>) other;
+            otherState = t.getState();
+        } else {
+            throw new UnsupportedOperationException("Can only join with RedisKTable or InMemoryKTable");
         }
-
-        RedisKTable<K, VO> otherTable = (RedisKTable<K, VO>) other;
         String newTableName = tableName + ":join:" + System.currentTimeMillis();
 
         try {
@@ -243,7 +251,7 @@ public class RedisKTable<K, V> implements KTable<K, V> {
             Class<VR> inferred = null;
             Map<K, V> state = getState();
             for (Map.Entry<K, V> entry : state.entrySet()) {
-                VO otherValue = otherTable.get(entry.getKey());
+                VO otherValue = otherTable != null ? otherTable.get(entry.getKey()) : otherState.get(entry.getKey());
                 if (otherValue != null) {
                     VR joinedValue = joiner.apply(entry.getValue(), otherValue);
                     temp.put(entry.getKey(), joinedValue);
@@ -269,11 +277,19 @@ public class RedisKTable<K, V> implements KTable<K, V> {
 
     @Override
     public <VO, VR> KTable<K, VR> leftJoin(KTable<K, VO> other, BiFunction<V, VO, VR> joiner) {
-        if (!(other instanceof RedisKTable)) {
-            throw new UnsupportedOperationException("Can only join with RedisKTable");
+        Map<K, VO> otherState = null;
+        RedisKTable<K, VO> otherTable = null;
+        if (other instanceof RedisKTable<?, ?>) {
+            @SuppressWarnings("unchecked")
+            RedisKTable<K, VO> t = (RedisKTable<K, VO>) other;
+            otherTable = t;
+        } else if (other instanceof InMemoryKTable<?, ?>) {
+            @SuppressWarnings("unchecked")
+            InMemoryKTable<K, VO> t = (InMemoryKTable<K, VO>) other;
+            otherState = t.getState();
+        } else {
+            throw new UnsupportedOperationException("Can only join with RedisKTable or InMemoryKTable");
         }
-
-        RedisKTable<K, VO> otherTable = (RedisKTable<K, VO>) other;
         String newTableName = tableName + ":leftJoin:" + System.currentTimeMillis();
 
         try {
@@ -281,7 +297,7 @@ public class RedisKTable<K, V> implements KTable<K, V> {
             Class<VR> inferred = null;
             Map<K, V> state = getState();
             for (Map.Entry<K, V> entry : state.entrySet()) {
-                VO otherValue = otherTable.get(entry.getKey());
+                VO otherValue = otherTable != null ? otherTable.get(entry.getKey()) : otherState.get(entry.getKey());
                 VR joinedValue = joiner.apply(entry.getValue(), otherValue);
                 temp.put(entry.getKey(), joinedValue);
                 if (inferred == null && joinedValue != null) {
