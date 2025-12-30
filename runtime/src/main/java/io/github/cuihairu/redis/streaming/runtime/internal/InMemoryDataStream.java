@@ -3,6 +3,8 @@ package io.github.cuihairu.redis.streaming.runtime.internal;
 import io.github.cuihairu.redis.streaming.api.stream.DataStream;
 import io.github.cuihairu.redis.streaming.api.stream.KeyedStream;
 import io.github.cuihairu.redis.streaming.api.stream.StreamSink;
+import io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator;
+import io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator.WatermarkOutput;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,6 +20,7 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
     private static final Logger log = LoggerFactory.getLogger(InMemoryDataStream.class);
 
     private final Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier;
+    private final WatermarkState watermarkState;
 
     public InMemoryDataStream(Supplier<Iterator<T>> iteratorSupplier) {
         Objects.requireNonNull(iteratorSupplier, "iteratorSupplier");
@@ -35,14 +38,25 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
                 return new InMemoryRecord<>(it.next(), timestamp++);
             }
         };
+        this.watermarkState = null;
     }
 
     private InMemoryDataStream(Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier, boolean unused) {
+        this(recordIteratorSupplier, null);
+    }
+
+    private InMemoryDataStream(Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier, WatermarkState watermarkState) {
         this.recordIteratorSupplier = Objects.requireNonNull(recordIteratorSupplier, "recordIteratorSupplier");
+        this.watermarkState = watermarkState;
     }
 
     public static <T> InMemoryDataStream<T> fromRecords(Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier) {
         return new InMemoryDataStream<>(recordIteratorSupplier, true);
+    }
+
+    static <T> InMemoryDataStream<T> fromRecords(Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier,
+                                                 WatermarkState watermarkState) {
+        return new InMemoryDataStream<>(recordIteratorSupplier, watermarkState);
     }
 
     @Override
@@ -78,7 +92,7 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
                 InMemoryRecord<T> record = it.next();
                 return new InMemoryRecord<>(mapper.apply(record.value()), record.timestamp());
             }
-        });
+        }, watermarkState);
     }
 
     @Override
@@ -119,7 +133,7 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
                 next = null;
                 return out;
             }
-        });
+        }, watermarkState);
     }
 
     @Override
@@ -148,13 +162,13 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
                 }
                 return new InMemoryRecord<>(current.next(), currentTimestamp);
             }
-        });
+        }, watermarkState);
     }
 
     @Override
     public <K> KeyedStream<K, T> keyBy(Function<T, K> keySelector) {
         Objects.requireNonNull(keySelector, "keySelector");
-        return new InMemoryKeyedStream<>(recordIteratorSupplier, keySelector, true);
+        return new InMemoryKeyedStream<>(recordIteratorSupplier, keySelector, watermarkState);
     }
 
     @Override
@@ -179,5 +193,44 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
     public DataStream<T> print(String prefix) {
         String p = prefix == null ? "" : prefix;
         return addSink(v -> log.info("{}{}", p, v));
+    }
+
+    @Override
+    public DataStream<T> assignTimestampsAndWatermarks(WatermarkGenerator<T> watermarkGenerator) {
+        Objects.requireNonNull(watermarkGenerator, "watermarkGenerator");
+        WatermarkState state = new WatermarkState();
+        WatermarkOutput output = new WatermarkOutput() {
+            @Override
+            public void emitWatermark(io.github.cuihairu.redis.streaming.api.watermark.Watermark watermark) {
+                state.emit(watermark);
+            }
+
+            @Override
+            public void markIdle() {
+                state.markIdle();
+            }
+
+            @Override
+            public void markActive() {
+                state.markActive();
+            }
+        };
+
+        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
+            private final Iterator<InMemoryRecord<T>> it = recordIteratorSupplier.get();
+
+            @Override
+            public boolean hasNext() {
+                return it.hasNext();
+            }
+
+            @Override
+            public InMemoryRecord<T> next() {
+                InMemoryRecord<T> record = it.next();
+                watermarkGenerator.onEvent(record.value(), record.timestamp(), output);
+                watermarkGenerator.onPeriodicEmit(output);
+                return record;
+            }
+        }, state);
     }
 }

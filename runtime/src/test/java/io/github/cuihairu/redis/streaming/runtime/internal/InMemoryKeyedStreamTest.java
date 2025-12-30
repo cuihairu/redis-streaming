@@ -2,6 +2,8 @@ package io.github.cuihairu.redis.streaming.runtime.internal;
 
 import io.github.cuihairu.redis.streaming.api.stream.KeyedProcessFunction;
 import io.github.cuihairu.redis.streaming.api.stream.ReduceFunction;
+import io.github.cuihairu.redis.streaming.runtime.StreamExecutionEnvironment;
+import io.github.cuihairu.redis.streaming.watermark.generators.AscendingTimestampWatermarkGenerator;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -152,5 +154,35 @@ class InMemoryKeyedStreamTest {
         keyed.process(fn).addSink(out::add);
 
         assertEquals(List.of("pt:5"), out);
+    }
+
+    @Test
+    void eventTimeTimerFiresWhenWatermarkAdvances() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        List<String> out = new ArrayList<>();
+        env.<String>addSource(ctx -> {
+                    ctx.collectWithTimestamp("e1", 10);
+                    ctx.collectWithTimestamp("e2", 20);
+                })
+                .assignTimestampsAndWatermarks(new AscendingTimestampWatermarkGenerator<>())
+                .keyBy(v -> "k")
+                .process(new KeyedProcessFunction<String, String, String>() {
+                    @Override
+                    public void processElement(String key, String value, Context ctx, Collector<String> out) {
+                        out.collect("e:" + value);
+                        if ("e1".equals(value)) {
+                            ctx.registerEventTimeTimer(15);
+                        }
+                    }
+
+                    @Override
+                    public void onEventTime(long timestamp, String key, Context ctx, Collector<String> out) {
+                        out.collect("et:" + timestamp);
+                    }
+                })
+                .addSink(out::add);
+
+        assertEquals(List.of("e:e1", "et:15", "e:e2"), out);
     }
 }

@@ -2,6 +2,7 @@ package io.github.cuihairu.redis.streaming.api.stream;
 
 import java.util.function.Function;
 import java.util.function.Predicate;
+import io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator;
 
 /**
  * DataStream represents a stream of elements of the same type.
@@ -68,4 +69,16 @@ public interface DataStream<T> {
      * @return This DataStream for chaining
      */
     DataStream<T> print(String prefix);
+
+    /**
+     * Assign watermarks to this stream.
+     *
+     * <p>Note: Not all runtime implementations support this operation.</p>
+     *
+     * @param watermarkGenerator Watermark generator
+     * @return A stream with watermark tracking enabled
+     */
+    default DataStream<T> assignTimestampsAndWatermarks(WatermarkGenerator<T> watermarkGenerator) {
+        throw new UnsupportedOperationException("This runtime does not support watermark assignment");
+    }
 }

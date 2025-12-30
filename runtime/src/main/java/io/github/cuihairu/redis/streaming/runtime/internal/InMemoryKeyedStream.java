@@ -26,6 +26,7 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
 
     private final InMemoryKeyedStateStore<K> stateStore;
     private final Supplier<Iterator<KeyedRecord<K, T>>> keyedIteratorSupplier;
+    private final WatermarkState watermarkState;
 
     public InMemoryKeyedStream(Supplier<Iterator<T>> iteratorSupplier, Function<T, K> keySelector) {
         this(new InMemoryKeyedStateStore<>(), () -> new Iterator<>() {
@@ -42,12 +43,12 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
                 T v = it.next();
                 return new KeyedRecord<>(Objects.requireNonNull(keySelector, "keySelector").apply(v), v, timestamp++);
             }
-        });
+        }, null);
     }
 
     InMemoryKeyedStream(Supplier<Iterator<InMemoryRecord<T>>> recordIteratorSupplier,
                         Function<T, K> keySelector,
-                        boolean unused) {
+                        WatermarkState watermarkState) {
         this(new InMemoryKeyedStateStore<>(), () -> new Iterator<>() {
             private final Iterator<InMemoryRecord<T>> it =
                     Objects.requireNonNull(recordIteratorSupplier, "recordIteratorSupplier").get();
@@ -63,13 +64,15 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
                 T value = record.value();
                 return new KeyedRecord<>(Objects.requireNonNull(keySelector, "keySelector").apply(value), value, record.timestamp());
             }
-        });
+        }, watermarkState);
     }
 
     private InMemoryKeyedStream(InMemoryKeyedStateStore<K> stateStore,
-                                Supplier<Iterator<KeyedRecord<K, T>>> keyedIteratorSupplier) {
+                                Supplier<Iterator<KeyedRecord<K, T>>> keyedIteratorSupplier,
+                                WatermarkState watermarkState) {
         this.stateStore = Objects.requireNonNull(stateStore, "stateStore");
         this.keyedIteratorSupplier = Objects.requireNonNull(keyedIteratorSupplier, "keyedIteratorSupplier");
+        this.watermarkState = watermarkState;
     }
 
     @Override
@@ -89,7 +92,7 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
                 stateStore.setCurrentKey(r.key());
                 return new KeyedRecord<>(r.key(), mapper.apply(r.value()), r.timestamp());
             }
-        });
+        }, watermarkState);
     }
 
     @Override
@@ -111,14 +114,14 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
                     if (!inputDrained && in.hasNext()) {
                         KeyedRecord<K, T> record = in.next();
                         currentTimestamp = record.timestamp();
-                        timerQueue.fireDueTimers(currentTimestamp);
+                        timerQueue.fireDueTimers();
                         stateStore.setCurrentKey(record.key());
                         try {
                             processFunction.processElement(record.key(), record.value(), ctx, out);
                         } catch (Exception e) {
                             throw new RuntimeException("Keyed process function failed", e);
                         }
-                        timerQueue.fireDueTimers(currentTimestamp);
+                        timerQueue.fireDueTimers();
                         continue;
                     }
 
@@ -142,7 +145,14 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
 
             private final class TimerQueue {
                 private long seq = 0L;
-                private final PriorityQueue<Timer<K>> timers = new PriorityQueue<>(
+                private final PriorityQueue<Timer<K>> processingTimers = new PriorityQueue<>(
+                        (a, b) -> {
+                            int c = Long.compare(a.timestamp(), b.timestamp());
+                            if (c != 0) return c;
+                            return Long.compare(a.seq(), b.seq());
+                        }
+                );
+                private final PriorityQueue<Timer<K>> eventTimers = new PriorityQueue<>(
                         (a, b) -> {
                             int c = Long.compare(a.timestamp(), b.timestamp());
                             if (c != 0) return c;
@@ -168,26 +178,37 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
                     if (!scheduled.add(timerKey)) {
                         return;
                     }
-                    timers.add(new Timer<>(seq++, key, timestamp, type));
-                }
-
-                void fireDueTimers(long upToTimestamp) {
-                    while (!timers.isEmpty() && timers.peek().timestamp() <= upToTimestamp) {
-                        Timer<K> timer = timers.poll();
-                        scheduled.remove(new TimerKey<>(timer.key(), timer.timestamp(), timer.type()));
-                        fire(timer);
+                    Timer<K> timer = new Timer<>(seq++, key, timestamp, type);
+                    if (type == TimerType.PROCESSING_TIME) {
+                        processingTimers.add(timer);
+                    } else {
+                        eventTimers.add(timer);
                     }
                 }
 
+                void fireDueTimers() {
+                    long processingTime = currentTimestamp;
+                    long watermark = currentWatermarkValue();
+                    fireDueTimersBy(processingTimers, processingTime);
+                    fireDueTimersBy(eventTimers, watermark);
+                }
+
                 void drainAllTimers() {
-                    while (!timers.isEmpty()) {
-                        Timer<K> timer = timers.poll();
+                    // End-of-input: advance watermark to max to flush event-time timers.
+                    fireDueTimersBy(processingTimers, Long.MAX_VALUE);
+                    fireDueTimersBy(eventTimers, Long.MAX_VALUE);
+                }
+
+                private void fireDueTimersBy(PriorityQueue<Timer<K>> queue, long upToTimestamp) {
+                    while (!queue.isEmpty() && queue.peek().timestamp() <= upToTimestamp) {
+                        Timer<K> timer = queue.poll();
                         scheduled.remove(new TimerKey<>(timer.key(), timer.timestamp(), timer.type()));
                         fire(timer);
                     }
                 }
 
                 private void fire(Timer<K> timer) {
+                    long previousTimestamp = currentTimestamp;
                     stateStore.setCurrentKey(timer.key());
                     currentTimestamp = timer.timestamp();
                     try {
@@ -197,8 +218,10 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
                         }
                     } catch (Exception e) {
                         throw new RuntimeException("Keyed process timer callback failed", e);
+                    } finally {
+                        currentTimestamp = previousTimestamp;
                     }
-                    fireDueTimers(currentTimestamp);
+                    fireDueTimers();
                 }
             }
 
@@ -210,7 +233,7 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
 
                 @Override
                 public long currentWatermark() {
-                    return currentTimestamp;
+                    return currentWatermarkValue();
                 }
 
                 @Override
@@ -222,6 +245,13 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
                 public void registerEventTimeTimer(long time) {
                     timerQueue.registerEventTimeTimer(time);
                 }
+            }
+
+            private long currentWatermarkValue() {
+                if (watermarkState == null) {
+                    return currentTimestamp;
+                }
+                return watermarkState.getWatermark();
             }
         });
     }
