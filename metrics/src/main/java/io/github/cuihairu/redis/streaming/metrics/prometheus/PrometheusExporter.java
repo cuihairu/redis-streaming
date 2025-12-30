@@ -31,10 +31,10 @@ public class PrometheusExporter implements AutoCloseable {
      * @throws IOException if the server fails to start
      */
     public PrometheusExporter(int port) throws IOException {
-        this.port = port;
         this.server = new HTTPServer(port);
-        log.info("Prometheus exporter started on port {}", port);
-        log.info("Metrics available at http://localhost:{}/metrics", port);
+        this.port = this.server.getPort();
+        log.info("Prometheus exporter started on port {}", this.port);
+        log.info("Metrics available at http://localhost:{}/metrics", this.port);
     }
 
     /**
