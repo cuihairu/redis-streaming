@@ -58,6 +58,48 @@ class PatternMatcherTest {
     }
 
     @Test
+    void testContiguousBreaksOnNonMatchingEvent() {
+        Pattern<Integer> even = Pattern.of(x -> x % 2 == 0);
+        PatternConfig<Integer> config = PatternConfig.<Integer>builder()
+                .pattern(even)
+                .allowEventReuse(true)
+                .contiguous(true)
+                .timeWindow(Duration.ofSeconds(10))
+                .build();
+
+        PatternMatcher<Integer> matcher = new PatternMatcher<>(config);
+
+        matcher.process(2, 1000);
+        assertTrue(matcher.getActiveSequenceCount() > 0);
+
+        matcher.process(3, 2000);
+        assertEquals(0, matcher.getActiveSequenceCount());
+
+        matcher.process(4, 3000);
+        assertTrue(matcher.getActiveSequenceCount() > 0);
+    }
+
+    @Test
+    void testNonContiguousDoesNotBreakOnNonMatchingEvent() {
+        Pattern<Integer> even = Pattern.of(x -> x % 2 == 0);
+        PatternConfig<Integer> config = PatternConfig.<Integer>builder()
+                .pattern(even)
+                .allowEventReuse(true)
+                .contiguous(false)
+                .timeWindow(Duration.ofSeconds(10))
+                .build();
+
+        PatternMatcher<Integer> matcher = new PatternMatcher<>(config);
+
+        matcher.process(2, 1000);
+        int before = matcher.getActiveSequenceCount();
+        assertTrue(before > 0);
+
+        matcher.process(3, 2000);
+        assertEquals(before, matcher.getActiveSequenceCount());
+    }
+
+    @Test
     void testTimeWindowExpiration() throws InterruptedException {
         Pattern<Integer> any = Pattern.of(x -> true);
         PatternConfig<Integer> config = PatternConfig.<Integer>builder()

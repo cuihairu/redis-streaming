@@ -160,6 +160,42 @@ class AdvancedCEPTest {
     }
 
     @Test
+    void testFollowedByAny_NonDeterministicProducesMultipleMatches() {
+        // Pattern: A followedByAny B (non-deterministic - allows multiple B matches for the same A)
+        PatternSequence<String> pattern = PatternSequence.<String>begin()
+            .where("A", Pattern.of(s -> s.equals("A")))
+            .followedByAny("B", Pattern.of(s -> s.equals("B")));
+
+        PatternSequenceMatcher<String> matcher = new PatternSequenceMatcher<>(pattern);
+
+        matcher.process("A", 1000);
+        List<PatternSequenceMatcher.CompleteMatch<String>> matches1 = matcher.process("B", 2000);
+        List<PatternSequenceMatcher.CompleteMatch<String>> matches2 = matcher.process("B", 3000);
+
+        assertEquals(1, matches1.size());
+        assertEquals(1, matches2.size());
+        assertEquals(2, matcher.getCompleteMatches().size());
+    }
+
+    @Test
+    void testFollowedBy_RelaxedDoesNotProduceMultipleMatches() {
+        // Pattern: A followedBy B (relaxed - should consume the first B and not keep waiting for more)
+        PatternSequence<String> pattern = PatternSequence.<String>begin()
+            .where("A", Pattern.of(s -> s.equals("A")))
+            .followedBy("B", Pattern.of(s -> s.equals("B")));
+
+        PatternSequenceMatcher<String> matcher = new PatternSequenceMatcher<>(pattern);
+
+        matcher.process("A", 1000);
+        List<PatternSequenceMatcher.CompleteMatch<String>> matches1 = matcher.process("B", 2000);
+        List<PatternSequenceMatcher.CompleteMatch<String>> matches2 = matcher.process("B", 3000);
+
+        assertEquals(1, matches1.size());
+        assertEquals(0, matches2.size());
+        assertEquals(1, matcher.getCompleteMatches().size());
+    }
+
+    @Test
     void testWithinTimeConstraint() {
         // Pattern: A followedBy B within 5 seconds
         PatternSequence<String> pattern = PatternSequence.<String>begin()

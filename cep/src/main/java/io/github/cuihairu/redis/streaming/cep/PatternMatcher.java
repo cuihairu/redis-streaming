@@ -33,6 +33,12 @@ public class PatternMatcher<T> {
         // Clean up expired sequences
         cleanupExpiredSequences(timestamp);
 
+        // If contiguous is required, any non-matching event breaks current sequences
+        if (config.isContiguous() && !config.getPattern().matches(event)) {
+            activeSequences.clear();
+            return completedSequences;
+        }
+
         // Check if event matches pattern
         if (config.getPattern().matches(event)) {
             // Create new sequence with this event

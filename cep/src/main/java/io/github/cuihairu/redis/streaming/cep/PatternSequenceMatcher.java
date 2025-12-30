@@ -104,13 +104,17 @@ public class PatternSequenceMatcher<T> {
             return results;
         }
 
+        PatternSequence.PatternStep<T> currentStep = patternSequence.getSteps().get(partial.currentStep);
+
         List<PartialMatch<T>> consumed = consumeEventAtFirstMatch(partial, event, timestamp);
         if (!consumed.isEmpty()) {
+            if (currentStep.getContiguityType() == PatternSequence.ContiguityType.NON_DETERMINISTIC) {
+                consumed.add(partial.copy());
+            }
             return consumed;
         }
 
-        PatternSequence.PatternStep<T> step = patternSequence.getSteps().get(partial.currentStep);
-        if (step.getContiguityType() != PatternSequence.ContiguityType.STRICT) {
+        if (currentStep.getContiguityType() != PatternSequence.ContiguityType.STRICT) {
             results.add(partial.copy());
         }
 
