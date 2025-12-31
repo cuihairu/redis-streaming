@@ -9,6 +9,7 @@ import io.github.cuihairu.redis.streaming.table.KTable;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RMap;
 import org.redisson.api.RedissonClient;
+import org.redisson.client.codec.StringCodec;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -60,7 +61,7 @@ public class RedisKTable<K, V> implements KTable<K, V> {
      * Get the Redis Hash for this table
      */
     private RMap<String, String> getMap() {
-        return redissonClient.getMap(tableName);
+        return redissonClient.getMap(tableName, StringCodec.INSTANCE);
     }
 
     /**
