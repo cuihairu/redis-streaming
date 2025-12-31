@@ -8,6 +8,8 @@ import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.PendingEntry;
+import org.redisson.api.RKeys;
+import org.redisson.api.RScript;
 import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
 import org.redisson.api.StreamGroup;
@@ -16,6 +18,7 @@ import org.redisson.api.StreamInfo;
 import org.redisson.client.codec.StringCodec;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -23,8 +26,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class RedisMessageQueueAdminBehaviorTest {
@@ -177,5 +182,98 @@ class RedisMessageQueueAdminBehaviorTest {
         assertEquals("c1", out.get(0).getConsumerName());
         assertEquals("c2", out.get(1).getConsumerName());
         assertFalse(out.get(0).getIdleTime().isNegative());
+    }
+
+    @Test
+    void rangeReverseParsesLuaResult() {
+        RedissonClient redisson = mock(RedissonClient.class);
+        TopicRegistry topicRegistry = mock(TopicRegistry.class);
+        TopicPartitionRegistry partitionRegistry = mock(TopicPartitionRegistry.class);
+        PayloadLifecycleManager payloadLifecycleManager = mock(PayloadLifecycleManager.class);
+
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        RStream<String, Object> stream = mock(RStream.class);
+        RScript script = mock(RScript.class);
+
+        when(partitionRegistry.getPartitionCount("t")).thenReturn(1);
+        when(redisson.getStream(eq(StreamKeys.partitionStream("t", 0)), eq(StringCodec.INSTANCE))).thenReturn((RStream) stream);
+        when(stream.isExists()).thenReturn(true);
+        when(redisson.getScript(eq(StringCodec.INSTANCE))).thenReturn(script);
+
+        List<Object> rows = List.of(
+                List.of("2-0", List.of("k1", "v1", "k2", "v2")),
+                List.of("1-0", List.of("x", "y"))
+        );
+        when(script.eval(
+                eq(RScript.Mode.READ_ONLY),
+                any(String.class),
+                eq(RScript.ReturnType.MULTI),
+                any(List.class),
+                any(),
+                any(),
+                any()
+        )).thenReturn(rows);
+
+        RedisMessageQueueAdmin admin = new RedisMessageQueueAdmin(redisson, topicRegistry, partitionRegistry, payloadLifecycleManager);
+        var out = admin.range("t", 0, null, null, 10, true);
+
+        assertEquals(2, out.size());
+        assertEquals("2-0", out.get(0).getId());
+        assertEquals(0, out.get(0).getPartitionId());
+        assertEquals(Map.of("k1", "v1", "k2", "v2"), out.get(0).getFields());
+    }
+
+    @Test
+    void trimQueueDeletesOldEntriesPerPartition() {
+        RedissonClient redisson = mock(RedissonClient.class);
+        TopicRegistry topicRegistry = mock(TopicRegistry.class);
+        TopicPartitionRegistry partitionRegistry = mock(TopicPartitionRegistry.class);
+        PayloadLifecycleManager payloadLifecycleManager = mock(PayloadLifecycleManager.class);
+
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        RStream<String, Object> s0 = mock(RStream.class);
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        RStream<String, Object> s1 = mock(RStream.class);
+
+        when(partitionRegistry.getPartitionCount("t")).thenReturn(2);
+        when(redisson.getStream(eq(StreamKeys.partitionStream("t", 0)), eq(StringCodec.INSTANCE))).thenReturn((RStream) s0);
+        when(redisson.getStream(eq(StreamKeys.partitionStream("t", 1)), eq(StringCodec.INSTANCE))).thenReturn((RStream) s1);
+
+        when(s0.isExists()).thenReturn(true);
+        when(s1.isExists()).thenReturn(true);
+        when(s0.size()).thenReturn(7L);
+        when(s1.size()).thenReturn(3L);
+
+        Map<StreamMessageId, Map<String, Object>> old = new java.util.LinkedHashMap<>();
+        old.put(new StreamMessageId(1, 0), Map.of("a", "1"));
+        old.put(new StreamMessageId(2, 0), Map.of("a", "2"));
+        @SuppressWarnings("deprecation")
+        Map<StreamMessageId, Map<String, Object>> toReturn = old;
+        when(s0.range(anyInt(), eq(StreamMessageId.MIN), eq(StreamMessageId.MAX))).thenReturn(toReturn);
+
+        RedisMessageQueueAdmin admin = new RedisMessageQueueAdmin(redisson, topicRegistry, partitionRegistry, payloadLifecycleManager);
+        long deleted = admin.trimQueue("t", 10);
+
+        assertEquals(2L, deleted);
+        for (StreamMessageId id : old.keySet()) {
+            verify(s0).remove(id);
+        }
+    }
+
+    @Test
+    void deleteTopicDeletesKeysAndPayloadHashes() {
+        RedissonClient redisson = mock(RedissonClient.class);
+        TopicRegistry topicRegistry = mock(TopicRegistry.class);
+        TopicPartitionRegistry partitionRegistry = mock(TopicPartitionRegistry.class);
+        PayloadLifecycleManager payloadLifecycleManager = mock(PayloadLifecycleManager.class);
+        RKeys keys = mock(RKeys.class);
+
+        when(partitionRegistry.getPartitionCount("t")).thenReturn(1);
+        when(redisson.getKeys()).thenReturn(keys);
+        when(keys.delete(anyString())).thenReturn(1L);
+        when(payloadLifecycleManager.cleanupTopicPayloadHashes("t")).thenReturn(3L);
+
+        RedisMessageQueueAdmin admin = new RedisMessageQueueAdmin(redisson, topicRegistry, partitionRegistry, payloadLifecycleManager);
+        assertTrue(admin.deleteTopic("t"));
     }
 }

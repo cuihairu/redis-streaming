@@ -87,4 +87,32 @@ public class LeaseManagerTest {
         mgr.releaseIfOwner("k", "owner");
         verify(bucket, never()).delete();
     }
+
+    @Test
+    public void testExceptionPathsAreBestEffort() {
+        RedissonClient client = mock(RedissonClient.class);
+
+        LeaseManager mgr = new LeaseManager(client);
+
+        when(client.getBucket(anyString(), any(Codec.class))).thenThrow(new RuntimeException("boom"));
+        assertFalse(mgr.tryAcquire("k", "owner", 10));
+        assertFalse(mgr.renewIfOwner("k", "owner", 10));
+        assertFalse(mgr.isOwner("k", "owner"));
+        assertDoesNotThrow(() -> mgr.releaseIfOwner("k", "owner"));
+
+        @SuppressWarnings("rawtypes")
+        RBucket bucket = mock(RBucket.class);
+        reset(client);
+        when(client.getBucket(anyString(), any(Codec.class))).thenReturn(bucket);
+
+        when(bucket.setIfAbsent(any())).thenThrow(new RuntimeException("boom"));
+        assertFalse(mgr.tryAcquire("k", "owner", 10));
+
+        reset(bucket);
+        when(client.getBucket(anyString(), any(Codec.class))).thenReturn(bucket);
+        when(bucket.get()).thenThrow(new RuntimeException("boom"));
+        assertFalse(mgr.renewIfOwner("k", "owner", 10));
+        assertFalse(mgr.isOwner("k", "owner"));
+        assertDoesNotThrow(() -> mgr.releaseIfOwner("k", "owner"));
+    }
 }
