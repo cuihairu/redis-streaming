@@ -91,8 +91,7 @@ class DatabasePollingCDCConnectorTest {
     @Test
     void testGetTablesBeforeStart() {
         DatabasePollingCDCConnector c = new DatabasePollingCDCConnector(configuration);
-        // getTables() throws NPE when tables field is null
-        assertThrows(NullPointerException.class, c::getTables);
+        assertTrue(c.getTables().isEmpty());
     }
 
     @Test
@@ -119,8 +118,7 @@ class DatabasePollingCDCConnectorTest {
     @Test
     void testIsDataSourceAvailableBeforeStart() {
         DatabasePollingCDCConnector c = new DatabasePollingCDCConnector(configuration);
-        // Should return false when dataSource is not initialized (throws NPE internally)
-        assertThrows(NullPointerException.class, c::isDataSourceAvailable);
+        assertFalse(c.isDataSourceAvailable());
     }
 
     @Test
@@ -777,8 +775,7 @@ class DatabasePollingCDCConnectorTest {
     @Test
     void testGetTablesAfterConstruction() {
         DatabasePollingCDCConnector c = new DatabasePollingCDCConnector(configuration);
-        // Before start, getTables() throws NPE because tables field is null
-        assertThrows(NullPointerException.class, c::getTables);
+        assertTrue(c.getTables().isEmpty());
     }
 
     @Test

@@ -167,7 +167,13 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
 
         List<String> result = new ArrayList<>();
         for (String table : tablesProperty.split(",")) {
-            result.add(table.trim());
+            if (table == null) {
+                continue;
+            }
+            String t = table.trim();
+            if (!t.isEmpty()) {
+                result.add(t);
+            }
         }
         return result;
     }
@@ -311,6 +317,9 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
      * Get tables being polled
      */
     public List<String> getTables() {
+        if (tables == null) {
+            return List.of();
+        }
         return new ArrayList<>(tables);
     }
 
@@ -339,6 +348,9 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
      * Check if data source is available
      */
     public boolean isDataSourceAvailable() {
+        if (dataSource == null) {
+            return false;
+        }
         try (Connection connection = dataSource.getConnection()) {
             return connection != null && !connection.isClosed();
         } catch (SQLException e) {
