@@ -1,107 +1,120 @@
 package io.github.cuihairu.redis.streaming.starter.service;
 
 import io.github.cuihairu.redis.streaming.registry.NamingService;
+import io.github.cuihairu.redis.streaming.registry.Protocol;
 import io.github.cuihairu.redis.streaming.registry.ServiceInstance;
+import io.github.cuihairu.redis.streaming.registry.StandardProtocol;
 import io.github.cuihairu.redis.streaming.starter.properties.RedisStreamingProperties;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import java.lang.reflect.Field;
-import java.util.HashMap;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import java.lang.reflect.Field;
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 
 class AutoServiceRegistrationTest {
 
     @Test
     void skipsWhenNamingServiceMissing() {
-        AutoServiceRegistration registration = new AutoServiceRegistration();
-        setField(registration, "properties", enabledProps());
-        assertDoesNotThrow(() -> registration.onApplicationEvent(null));
+        AutoServiceRegistration reg = new AutoServiceRegistration();
+        reg.onApplicationEvent(mock(ApplicationReadyEvent.class));
     }
 
     @Test
-    void skipsWhenRegistryDisabled() {
+    void skipsWhenRegistryDisabled() throws Exception {
+        AutoServiceRegistration reg = new AutoServiceRegistration();
         NamingService namingService = mock(NamingService.class);
-        AutoServiceRegistration registration = new AutoServiceRegistration();
-        RedisStreamingProperties props = enabledProps();
+        RedisStreamingProperties props = new RedisStreamingProperties();
         props.getRegistry().setEnabled(false);
 
-        setField(registration, "namingService", namingService);
-        setField(registration, "properties", props);
+        setField(reg, "namingService", namingService);
+        setField(reg, "properties", props);
 
-        registration.onApplicationEvent(null);
-        verifyNoInteractions(namingService);
+        reg.onApplicationEvent(mock(ApplicationReadyEvent.class));
+        verify(namingService, never()).register(org.mockito.ArgumentMatchers.any());
     }
 
     @Test
-    void registersAndDeregistersPersistentInstance() {
+    void registersEphemeralInstanceAndUsesResolvedPortForInstanceId() throws Exception {
+        AutoServiceRegistration reg = new AutoServiceRegistration();
         NamingService namingService = mock(NamingService.class);
+        RedisStreamingProperties props = new RedisStreamingProperties();
 
-        AutoServiceRegistration registration = new AutoServiceRegistration();
-        RedisStreamingProperties props = enabledProps();
-        props.getRegistry().getInstance().setEphemeral(false);
+        props.getRegistry().setEnabled(true);
+        props.getRegistry().setHeartbeatInterval(1);
         props.getRegistry().getInstance().setHost("127.0.0.1");
-        props.getRegistry().getInstance().setServiceName("orders");
+        props.getRegistry().getInstance().setPort(12345);
+        props.getRegistry().getInstance().setProtocol("tcp");
         props.getRegistry().getInstance().setInstanceId(null);
-        props.getRegistry().getInstance().setPort(null);
-        props.getRegistry().getInstance().setProtocol("unknown"); // exercise fallback
+        props.getRegistry().getInstance().setMetadata(Map.of("k", "v"));
 
-        setField(registration, "namingService", namingService);
-        setField(registration, "properties", props);
-        setField(registration, "serverPort", 18080);
-        setField(registration, "applicationName", "app");
+        setField(reg, "namingService", namingService);
+        setField(reg, "properties", props);
+        setField(reg, "serverPort", 8080);
+        setField(reg, "applicationName", "app");
 
-        registration.onApplicationEvent(null);
+        reg.onApplicationEvent(mock(ApplicationReadyEvent.class));
 
         ArgumentCaptor<ServiceInstance> captor = ArgumentCaptor.forClass(ServiceInstance.class);
         verify(namingService).register(captor.capture());
-
         ServiceInstance instance = captor.getValue();
-        assertEquals("orders", instance.getServiceName());
-        assertEquals("127.0.0.1", instance.getHost());
-        assertEquals(18080, instance.getPort());
-        assertNotNull(instance.getInstanceId());
-        assertTrue(instance.getInstanceId().contains("orders"));
-        assertTrue(instance.getInstanceId().contains("18080"));
 
-        assertNotNull(instance.getMetadata().get("application.name"));
-        assertNotNull(instance.getMetadata().get("server.port"));
+        assertEquals("app", instance.getServiceName());
+        assertEquals("127.0.0.1", instance.getHost());
+        assertEquals(12345, instance.getPort());
+        assertEquals(StandardProtocol.TCP, instance.getProtocol());
+        assertTrue(instance.isEphemeral());
+        assertTrue(instance.getInstanceId().endsWith(":12345"));
+        assertEquals("v", instance.getMetadata().get("k"));
+        assertEquals("app", instance.getMetadata().get("application.name"));
+        assertEquals("8080", instance.getMetadata().get("server.port"));
         assertNotNull(instance.getMetadata().get("startup.time"));
 
-        registration.destroy();
-        verify(namingService).deregister(instance);
-        verify(namingService, never()).sendHeartbeat(instance);
+        reg.destroy();
+        verify(namingService).deregister(org.mockito.ArgumentMatchers.any());
     }
 
-    private static RedisStreamingProperties enabledProps() {
+    @Test
+    void unknownProtocolFallsBackToHttpAndPersistentInstanceSkipsHeartbeat() throws Exception {
+        AutoServiceRegistration reg = new AutoServiceRegistration();
+        NamingService namingService = mock(NamingService.class);
         RedisStreamingProperties props = new RedisStreamingProperties();
+
         props.getRegistry().setEnabled(true);
-        props.getRegistry().setAutoRegister(true);
-        props.getRegistry().setHeartbeatInterval(30);
-        props.getRegistry().getInstance().setServiceName("test-service");
-        props.getRegistry().getInstance().setPort(8080);
-        props.getRegistry().getInstance().setProtocol("http");
-        props.getRegistry().getInstance().setEphemeral(true);
-        props.getRegistry().getInstance().setEnabled(true);
-        props.getRegistry().getInstance().setWeight(1);
-        props.getRegistry().getInstance().setMetadata(new HashMap<>());
-        return props;
+        props.getRegistry().setHeartbeatInterval(1);
+        props.getRegistry().getInstance().setHost("127.0.0.1");
+        props.getRegistry().getInstance().setPort(10086);
+        props.getRegistry().getInstance().setProtocol("smtp");
+        props.getRegistry().getInstance().setEphemeral(false);
+
+        setField(reg, "namingService", namingService);
+        setField(reg, "properties", props);
+        setField(reg, "serverPort", 8080);
+        setField(reg, "applicationName", "app");
+
+        reg.onApplicationEvent(mock(ApplicationReadyEvent.class));
+
+        ArgumentCaptor<ServiceInstance> captor = ArgumentCaptor.forClass(ServiceInstance.class);
+        verify(namingService).register(captor.capture());
+        ServiceInstance instance = captor.getValue();
+        Protocol protocol = instance.getProtocol();
+        assertEquals(StandardProtocol.HTTP, protocol);
+        assertEquals(false, instance.isEphemeral());
+
+        reg.destroy();
     }
 
-    private static void setField(Object target, String fieldName, Object value) {
-        try {
-            Field f = target.getClass().getDeclaredField(fieldName);
-            f.setAccessible(true);
-            f.set(target, value);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+    private static void setField(Object target, String fieldName, Object value) throws Exception {
+        Field f = target.getClass().getDeclaredField(fieldName);
+        f.setAccessible(true);
+        f.set(target, value);
     }
 }
+

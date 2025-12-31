@@ -69,9 +69,9 @@ public class AutoServiceRegistration implements ApplicationListener<ApplicationR
 
         // 构建服务实例
         String serviceName = resolveServiceName(instance.getServiceName());
-        String instanceId = resolveInstanceId(instance.getInstanceId(), serviceName);
         String host = resolveHost(instance.getHost());
         int port = resolvePort(instance.getPort());
+        String instanceId = resolveInstanceId(instance.getInstanceId(), serviceName, port);
         Protocol protocol = resolveProtocol(instance.getProtocol());
         boolean ephemeral = resolveEphemeral(instance.getEphemeral());
 
@@ -158,12 +158,11 @@ public class AutoServiceRegistration implements ApplicationListener<ApplicationR
         return applicationName;
     }
 
-    private String resolveInstanceId(String configuredId, String serviceName) {
+    private String resolveInstanceId(String configuredId, String serviceName, int port) {
         if (configuredId != null && !configuredId.trim().isEmpty()) {
             return configuredId;
         }
         // Generate instance ID using service name and server port
-        Integer port = resolvePort(null);
         return InstanceIdGenerator.generateInstanceId(serviceName, port);
     }
 
