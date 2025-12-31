@@ -17,8 +17,21 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
 
 class KafkaSourceTest {
+
+    @Test
+    void buildDefaultConsumerPropertiesSetsExpectedDefaults() {
+        Properties props = KafkaSource.buildDefaultConsumerProperties("localhost:9092", "g1");
+        assertEquals("localhost:9092", props.getProperty("bootstrap.servers"));
+        assertEquals("g1", props.getProperty("group.id"));
+        assertEquals("earliest", props.getProperty("auto.offset.reset"));
+        assertEquals("true", props.getProperty("enable.auto.commit"));
+    }
 
     @Test
     void pollReturnsDeserializedStringValues() {
@@ -74,6 +87,43 @@ class KafkaSourceTest {
         } finally {
             source.close();
         }
+    }
+
+    @Test
+    void seekToBeginningEnsuresAssignmentWhenInitiallyEmpty() {
+        MockConsumer<String, String> consumer = new MockConsumer<>(OffsetResetStrategy.EARLIEST);
+        TopicPartition tp = new TopicPartition("t", 0);
+        consumer.subscribe(List.of("t"));
+        consumer.updateBeginningOffsets(Map.of(tp, 0L));
+
+        consumer.schedulePollTask(() -> consumer.rebalance(List.of(tp)));
+
+        KafkaSource<String> source = new KafkaSource<>(consumer, "t", new ObjectMapper(), String.class, false);
+        try {
+            source.seekToBeginning();
+            assertFalse(consumer.assignment().isEmpty());
+        } finally {
+            source.close();
+        }
+    }
+
+    @Test
+    void consumeWrapsPollFailuresInRuntimeException() {
+        @SuppressWarnings("unchecked")
+        org.apache.kafka.clients.consumer.Consumer<String, String> consumer =
+                (org.apache.kafka.clients.consumer.Consumer<String, String>) mock(org.apache.kafka.clients.consumer.Consumer.class);
+        when(consumer.poll(any(Duration.class))).thenThrow(new RuntimeException("boom"));
+        when(consumer.assignment()).thenReturn(java.util.Collections.emptySet());
+
+        KafkaSource<String> source = new KafkaSource<>(consumer, "t", new ObjectMapper(), String.class, false);
+        try {
+            RuntimeException ex = assertThrows(RuntimeException.class, () -> source.consume(v -> {}));
+            assertTrue(ex.getMessage().contains("Kafka consumer error"));
+        } finally {
+            source.close();
+        }
+
+        verify(consumer).close();
     }
 
     private static <T> List<T> toList(Iterable<T> values) {

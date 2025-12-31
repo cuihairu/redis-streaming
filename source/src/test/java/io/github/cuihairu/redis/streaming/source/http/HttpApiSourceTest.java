@@ -15,7 +15,9 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -128,6 +130,55 @@ class HttpApiSourceTest {
         assertEquals("text/plain", requestHeaders.get().getFirst("Accept"));
     }
 
+    @Test
+    void pollInvokesHandlerAndCanBeStopped() throws Exception {
+        startServer(exchange -> respond(exchange, 200, "\"ok\""));
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/api";
+
+        HttpApiSource<String> source = new HttpApiSource<>(
+                url, String.class, new ObjectMapper(), Duration.ofMillis(20), Map.of());
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> out = new AtomicReference<>();
+        try {
+            source.poll(v -> {
+                out.set(v);
+                source.stop();
+                latch.countDown();
+            });
+            assertTrue(latch.await(3, java.util.concurrent.TimeUnit.SECONDS));
+            assertEquals("\"ok\"", out.get());
+            assertFalse(source.isRunning());
+        } finally {
+            source.close();
+        }
+    }
+
+    @Test
+    void pollListCallsHandlerForEachItemAndIgnoresHandlerExceptions() throws Exception {
+        startServer(exchange -> respond(exchange, 200, "[\"a\",\"b\"]"));
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/api";
+
+        HttpApiSource<String> source = new HttpApiSource<>(
+                url, String.class, new ObjectMapper(), Duration.ofMillis(20), Map.of());
+        CountDownLatch latch = new CountDownLatch(2);
+        AtomicInteger seen = new AtomicInteger(0);
+        try {
+            source.pollList(v -> {
+                int c = seen.incrementAndGet();
+                if (c == 1) {
+                    latch.countDown();
+                    throw new RuntimeException("boom");
+                }
+                latch.countDown();
+                source.stop();
+            });
+            assertTrue(latch.await(3, java.util.concurrent.TimeUnit.SECONDS));
+            assertEquals(2, seen.get());
+        } finally {
+            source.close();
+        }
+    }
+
     private void startServer(HttpHandler handler) throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/api", handler);
@@ -143,4 +194,3 @@ class HttpApiSourceTest {
         }
     }
 }
-

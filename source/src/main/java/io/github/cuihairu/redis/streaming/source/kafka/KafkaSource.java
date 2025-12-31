@@ -31,6 +31,22 @@ public class KafkaSource<T> implements AutoCloseable {
     private final Class<T> valueClass;
     private volatile boolean running = false;
 
+    static Properties buildDefaultConsumerProperties(String bootstrapServers, String groupId) {
+        Objects.requireNonNull(bootstrapServers, "Bootstrap servers cannot be null");
+        Objects.requireNonNull(groupId, "Group ID cannot be null");
+
+        Properties props = new Properties();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "true");
+        props.put(ConsumerConfig.AUTO_COMMIT_INTERVAL_MS_CONFIG, "1000");
+        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "500");
+        return props;
+    }
+
     /**
      * Create a Kafka source with default settings.
      *
@@ -62,29 +78,7 @@ public class KafkaSource<T> implements AutoCloseable {
             String topic,
             ObjectMapper objectMapper,
             Class<T> valueClass) {
-        Objects.requireNonNull(bootstrapServers, "Bootstrap servers cannot be null");
-        Objects.requireNonNull(groupId, "Group ID cannot be null");
-        Objects.requireNonNull(topic, "Topic cannot be null");
-        Objects.requireNonNull(objectMapper, "ObjectMapper cannot be null");
-        Objects.requireNonNull(valueClass, "Value class cannot be null");
-
-        this.topic = topic;
-        this.objectMapper = objectMapper;
-        this.valueClass = valueClass;
-
-        Properties props = new Properties();
-        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
-        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
-        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "true");
-        props.put(ConsumerConfig.AUTO_COMMIT_INTERVAL_MS_CONFIG, "1000");
-        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "500");
-
-        this.consumer = new KafkaConsumer<>(props);
-        this.consumer.subscribe(Collections.singletonList(topic));
-
+        this(buildDefaultConsumerProperties(bootstrapServers, groupId), topic, objectMapper, valueClass);
         log.info("Created Kafka source for topic: {} with group: {}", topic, groupId);
     }
 
@@ -101,25 +95,23 @@ public class KafkaSource<T> implements AutoCloseable {
             String topic,
             ObjectMapper objectMapper,
             Class<T> valueClass) {
-        Objects.requireNonNull(consumerProps, "Consumer properties cannot be null");
-        Objects.requireNonNull(topic, "Topic cannot be null");
-        Objects.requireNonNull(objectMapper, "ObjectMapper cannot be null");
-        Objects.requireNonNull(valueClass, "Value class cannot be null");
-
-        this.topic = topic;
-        this.objectMapper = objectMapper;
-        this.valueClass = valueClass;
-        this.consumer = new KafkaConsumer<>(consumerProps);
-        this.consumer.subscribe(Collections.singletonList(topic));
+        this(
+                new KafkaConsumer<>(Objects.requireNonNull(consumerProps, "Consumer properties cannot be null")),
+                Objects.requireNonNull(topic, "Topic cannot be null"),
+                Objects.requireNonNull(objectMapper, "ObjectMapper cannot be null"),
+                Objects.requireNonNull(valueClass, "Value class cannot be null"),
+                true
+        );
 
         log.info("Created Kafka source with custom properties for topic: {}", topic);
     }
 
-    KafkaSource(
+    public KafkaSource(
             org.apache.kafka.clients.consumer.Consumer<String, String> consumer,
             String topic,
             ObjectMapper objectMapper,
-            Class<T> valueClass) {
+            Class<T> valueClass,
+            boolean autoSubscribe) {
         Objects.requireNonNull(consumer, "Consumer cannot be null");
         Objects.requireNonNull(topic, "Topic cannot be null");
         Objects.requireNonNull(objectMapper, "ObjectMapper cannot be null");
@@ -129,6 +121,17 @@ public class KafkaSource<T> implements AutoCloseable {
         this.topic = topic;
         this.objectMapper = objectMapper;
         this.valueClass = valueClass;
+        if (autoSubscribe) {
+            this.consumer.subscribe(Collections.singletonList(topic));
+        }
+    }
+
+    KafkaSource(
+            org.apache.kafka.clients.consumer.Consumer<String, String> consumer,
+            String topic,
+            ObjectMapper objectMapper,
+            Class<T> valueClass) {
+        this(consumer, topic, objectMapper, valueClass, false);
     }
 
     /**

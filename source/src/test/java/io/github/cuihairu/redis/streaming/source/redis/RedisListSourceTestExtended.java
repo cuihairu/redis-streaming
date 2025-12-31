@@ -424,6 +424,54 @@ class RedisListSourceTestExtended {
         }
     }
 
+    // ===== poll execution Tests =====
+
+    @Test
+    void testPollDeliversElementAndCanStop() throws Exception {
+        when(mockList.remove(0)).thenReturn("v").thenThrow(new IndexOutOfBoundsException());
+
+        RedisListSource<String> source = new RedisListSource<>(
+                mockRedissonClient, "test-list", String.class);
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> seen = new AtomicReference<>();
+        try {
+            source.poll(v -> {
+                seen.set(v);
+                source.stop();
+                latch.countDown();
+            }, Duration.ofMillis(10));
+
+            assertTrue(source.isRunning());
+            assertTrue(latch.await(3, TimeUnit.SECONDS));
+            assertEquals("v", seen.get());
+        } finally {
+            source.close();
+        }
+    }
+
+    @Test
+    void testPollBatchDeliversNonEmptyBatchAndCanStop() throws Exception {
+        when(mockList.isEmpty()).thenReturn(false, false, true);
+        when(mockList.remove(0)).thenReturn("a", "b");
+
+        RedisListSource<String> source = new RedisListSource<>(
+                mockRedissonClient, "test-list", String.class);
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<List<String>> batch = new AtomicReference<>();
+        try {
+            source.pollBatch(b -> {
+                batch.set(b);
+                source.stop();
+                latch.countDown();
+            }, 10, Duration.ofMillis(10));
+
+            assertTrue(latch.await(3, TimeUnit.SECONDS));
+            assertEquals(List.of("a", "b"), batch.get());
+        } finally {
+            source.close();
+        }
+    }
+
     // ===== close Tests =====
 
     @Test
