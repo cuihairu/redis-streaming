@@ -7,8 +7,16 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.redisson.api.RScript;
+import org.redisson.api.RSet;
+import org.redisson.api.RStream;
+import org.redisson.api.StreamMessageId;
+
+import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 /**
  * Unit tests for RedisBrokerPersistence
@@ -24,131 +32,74 @@ class RedisBrokerPersistenceTest {
     }
 
     @Test
-    void testConstructorWithNullOptions() {
-        BrokerPersistence persistence = new RedisBrokerPersistence(mockRedissonClient, null);
+    void appendReturnsNullForNullOrBlankTopicOrNullMessage() {
+        BrokerPersistence persistence = new RedisBrokerPersistence(mockRedissonClient, MqOptions.builder()
+                .retentionMaxLenPerPartition(0)
+                .build());
 
-        assertNotNull(persistence);
+        Message m = new Message();
+        m.setTopic("t");
+        m.setPayload("p");
+
+        assertNull(persistence.append(null, 0, m));
+        assertNull(persistence.append("   ", 0, m));
+        assertNull(persistence.append("t", 0, null));
+        verifyNoInteractions(mockRedissonClient);
     }
 
     @Test
-    void testConstructorWithOptions() {
-        MqOptions options = MqOptions.builder().build();
-        BrokerPersistence persistence = new RedisBrokerPersistence(mockRedissonClient, options);
-
-        assertNotNull(persistence);
-    }
-
-    @Test
-    void testConstructorWithDefaultOptions() {
-        MqOptions options = new MqOptions();
-        BrokerPersistence persistence = new RedisBrokerPersistence(mockRedissonClient, options);
-
-        assertNotNull(persistence);
-    }
-
-    @Test
-    void testConstructorWithCustomOptions() {
+    void appendUsesLuaXaddWhenMaxLenConfigured() {
         MqOptions options = MqOptions.builder()
-                .keyPrefix("custom-prefix")
-                .retentionMaxLenPerPartition(1000)
+                .retentionMaxLenPerPartition(10)
                 .build();
 
+        RScript script = mock(RScript.class);
+        when(mockRedissonClient.getScript()).thenReturn(script);
+        doReturn("123-0").when(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.VALUE), anyList(), any());
+
+        @SuppressWarnings("unchecked")
+        RSet<String> registry = mock(RSet.class);
+        when(mockRedissonClient.getSet(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn((RSet) registry);
+        when(registry.add(anyString())).thenReturn(true);
+
         BrokerPersistence persistence = new RedisBrokerPersistence(mockRedissonClient, options);
 
-        assertNotNull(persistence);
+        Message m = new Message();
+        m.setTopic("t1");
+        m.setKey("k1");
+        m.setPayload("p1");
+        m.setTimestamp(Instant.parse("2025-01-01T00:00:00Z"));
+
+        String id = persistence.append("t1", 0, m);
+        assertEquals("123-0", id);
+
+        verify(mockRedissonClient, never()).getStream(anyString(), any());
     }
 
     @Test
-    void testAppendWithZeroPartitionId() {
-        MqOptions options = MqOptions.builder().build();
+    void appendFallsBackToStreamAddWhenMaxLenIsZero() {
+        MqOptions options = MqOptions.builder()
+                .retentionMaxLenPerPartition(0)
+                .build();
+
+        @SuppressWarnings("unchecked")
+        RSet<String> registry = mock(RSet.class);
+        when(mockRedissonClient.getSet(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn((RSet) registry);
+        when(registry.add(anyString())).thenReturn(true);
+
+        @SuppressWarnings("unchecked")
+        RStream<String, Object> stream = mock(RStream.class);
+        when(mockRedissonClient.getStream(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn((RStream) stream);
+        when(stream.add(any())).thenReturn(new StreamMessageId(1000, 1));
+
         BrokerPersistence persistence = new RedisBrokerPersistence(mockRedissonClient, options);
 
-        Message message = new Message();
-        message.setTopic("test-topic");
-        message.setPayload("test-payload");
+        Message m = new Message();
+        m.setTopic("t1");
+        m.setPayload("p1");
 
-        // Should not throw with mock client
-        assertNotNull(persistence);
-    }
-
-    @Test
-    void testAppendWithPositivePartitionId() {
-        MqOptions options = MqOptions.builder().build();
-        BrokerPersistence persistence = new RedisBrokerPersistence(mockRedissonClient, options);
-
-        Message message = new Message();
-        message.setTopic("test-topic");
-        message.setPayload("test-payload");
-
-        assertNotNull(persistence);
-    }
-
-    @Test
-    void testAppendWithNegativePartitionId() {
-        MqOptions options = MqOptions.builder().build();
-        BrokerPersistence persistence = new RedisBrokerPersistence(mockRedissonClient, options);
-
-        Message message = new Message();
-        message.setTopic("test-topic");
-        message.setPayload("test-payload");
-
-        assertNotNull(persistence);
-    }
-
-    @Test
-    void testAppendWithNullTopic() {
-        MqOptions options = MqOptions.builder().build();
-        BrokerPersistence persistence = new RedisBrokerPersistence(mockRedissonClient, options);
-
-        Message message = new Message();
-        message.setTopic(null);
-        message.setPayload("test-payload");
-
-        assertNotNull(persistence);
-    }
-
-    @Test
-    void testAppendWithNullPayload() {
-        MqOptions options = MqOptions.builder().build();
-        BrokerPersistence persistence = new RedisBrokerPersistence(mockRedissonClient, options);
-
-        Message message = new Message();
-        message.setTopic("test-topic");
-        message.setPayload(null);
-
-        assertNotNull(persistence);
-    }
-
-    @Test
-    void testAppendWithComplexPayload() {
-        MqOptions options = MqOptions.builder().build();
-        BrokerPersistence persistence = new RedisBrokerPersistence(mockRedissonClient, options);
-
-        Message message = new Message();
-        message.setTopic("test-topic");
-        message.setPayload(java.util.Map.of("key", "value"));
-
-        assertNotNull(persistence);
-    }
-
-    @Test
-    void testAppendWithAllMessageFields() {
-        MqOptions options = MqOptions.builder().build();
-        BrokerPersistence persistence = new RedisBrokerPersistence(mockRedissonClient, options);
-
-        Message message = new Message();
-        message.setTopic("test-topic");
-        message.setKey("test-key");
-        message.setPayload("test-payload");
-        message.setHeaders(java.util.Map.of("header1", "value1"));
-
-        assertNotNull(persistence);
-    }
-
-    @Test
-    void testConstructorWithRedissonClientOnly() {
-        BrokerPersistence persistence = new RedisBrokerPersistence(mockRedissonClient, MqOptions.builder().build());
-
-        assertNotNull(persistence);
+        String id = persistence.append("t1", 2, m);
+        assertEquals("1000-1", id);
+        verify(stream).add(any());
     }
 }
