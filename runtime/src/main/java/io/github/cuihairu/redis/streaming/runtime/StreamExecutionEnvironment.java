@@ -46,21 +46,19 @@ public final class StreamExecutionEnvironment {
     public <T> DataStream<T> fromCollection(Collection<T> elements) {
         Objects.requireNonNull(elements, "elements");
         List<T> copy = new ArrayList<>(elements);
-        return InMemoryDataStream.fromRecords(() -> {
-            final java.util.Iterator<T> it = copy.iterator();
-            return new java.util.Iterator<>() {
-                private long timestamp = 0L;
+        return InMemoryDataStream.fromRecords(() -> new java.util.Iterator<>() {
+            private final java.util.Iterator<T> iterator = copy.iterator();
+            private long timestamp = 0L;
 
-                @Override
-                public boolean hasNext() {
-                    return it.hasNext();
-                }
+            @Override
+            public boolean hasNext() {
+                return iterator.hasNext();
+            }
 
-                @Override
-                public InMemoryRecord<T> next() {
-                    return new InMemoryRecord<>(it.next(), timestamp++);
-                }
-            };
+            @Override
+            public InMemoryRecord<T> next() {
+                return new InMemoryRecord<>(iterator.next(), timestamp++);
+            }
         }, checkpointCoordinator);
     }
 
