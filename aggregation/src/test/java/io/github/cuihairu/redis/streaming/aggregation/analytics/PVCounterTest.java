@@ -2,6 +2,7 @@ package io.github.cuihairu.redis.streaming.aggregation.analytics;
 
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RScoredSortedSet;
+import org.redisson.api.RSet;
 import org.redisson.api.RedissonClient;
 
 import java.time.Duration;
@@ -23,7 +24,10 @@ class PVCounterTest {
         RedissonClient redisson = mock(RedissonClient.class);
         @SuppressWarnings("unchecked")
         RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
+        @SuppressWarnings("unchecked")
+        RSet<String> pages = mock(RSet.class);
         when(redisson.<String>getScoredSortedSet("p:pv:home")).thenReturn(sortedSet);
+        when(redisson.<String>getSet("p:pv:pages")).thenReturn(pages);
         when(sortedSet.size()).thenReturn(3);
 
         PVCounter counter = new PVCounter(redisson, "p", Duration.ofMinutes(10));
@@ -44,8 +48,11 @@ class PVCounterTest {
         RedissonClient redisson = mock(RedissonClient.class);
         @SuppressWarnings("unchecked")
         RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
+        @SuppressWarnings("unchecked")
+        RSet<String> pages = mock(RSet.class);
         when(redisson.<String>getScoredSortedSet("p:pv:home")).thenReturn(sortedSet);
         when(sortedSet.count(1000L, true, 2000L, false)).thenReturn(5);
+        when(redisson.<String>getSet("p:pv:pages")).thenReturn(pages);
 
         PVCounter counter = new PVCounter(redisson, "p", Duration.ofMinutes(10));
         try {
@@ -61,7 +68,10 @@ class PVCounterTest {
         RedissonClient redisson = mock(RedissonClient.class);
         @SuppressWarnings("unchecked")
         RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
+        @SuppressWarnings("unchecked")
+        RSet<String> pages = mock(RSet.class);
         when(redisson.<String>getScoredSortedSet("p:pv:home")).thenReturn(sortedSet);
+        when(redisson.<String>getSet("p:pv:pages")).thenReturn(pages);
 
         PVCounter counter = new PVCounter(redisson, "p", Duration.ofMinutes(10));
         try {

@@ -5,9 +5,12 @@ import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RedissonClient;
 import org.redisson.api.RScoredSortedSet;
+import org.redisson.api.RSet;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -22,19 +25,22 @@ public class PVCounter {
     private final String keyPrefix;
     private final Duration windowSize;
     private final ScheduledExecutorService cleanupExecutor;
+    private final String pagesIndexKey;
 
     public PVCounter(RedissonClient redissonClient, String keyPrefix, Duration windowSize) {
         this.redissonClient = redissonClient;
         this.keyPrefix = keyPrefix;
         this.windowSize = windowSize;
         this.cleanupExecutor = Executors.newScheduledThreadPool(1);
+        this.pagesIndexKey = keyPrefix + ":pv:pages";
 
         // Schedule cleanup of old data
+        long intervalMs = Math.max(1000L, windowSize.toMillis());
         this.cleanupExecutor.scheduleWithFixedDelay(
                 this::cleanupExpiredData,
-                windowSize.toMinutes(),
-                windowSize.toMinutes(),
-                TimeUnit.MINUTES
+                intervalMs,
+                intervalMs,
+                TimeUnit.MILLISECONDS
         );
     }
 
@@ -58,6 +64,7 @@ public class PVCounter {
     public long recordPageView(String page, Instant timestamp) {
         String key = getKeyForPage(page);
         RScoredSortedSet<String> sortedSet = redissonClient.getScoredSortedSet(key);
+        getPagesIndex().add(page);
 
         // Use timestamp as score, and a unique ID as value
         double score = timestamp.toEpochMilli();
@@ -84,6 +91,7 @@ public class PVCounter {
     public long getPageViewCount(String page) {
         String key = getKeyForPage(page);
         RScoredSortedSet<String> sortedSet = redissonClient.getScoredSortedSet(key);
+        getPagesIndex().add(page);
 
         // Remove old entries outside the window
         double cutoffTime = Instant.now().minus(windowSize).toEpochMilli();
@@ -115,6 +123,7 @@ public class PVCounter {
     public void resetPageViewCount(String page) {
         String key = getKeyForPage(page);
         redissonClient.getScoredSortedSet(key).clear();
+        getPagesIndex().remove(page);
         log.info("Reset PV count for page '{}'", page);
     }
 
@@ -124,9 +133,17 @@ public class PVCounter {
      * @return PV statistics
      */
     public PVStatistics getStatistics() {
-        // This is a simplified implementation
-        // In a real scenario, you'd want to track all pages in a separate set
-        return new PVStatistics(0, 0, Instant.now());
+        RSet<String> pages = getPagesIndex();
+        List<String> snapshot = new ArrayList<>(pages);
+        long totalViews = 0L;
+        for (String page : snapshot) {
+            try {
+                totalViews += getPageViewCount(page);
+            } catch (Exception e) {
+                log.debug("Failed to compute PV for page {}", page, e);
+            }
+        }
+        return new PVStatistics(snapshot.size(), totalViews, Instant.now());
     }
 
     /**
@@ -150,9 +167,28 @@ public class PVCounter {
     }
 
     private void cleanupExpiredData() {
-        log.debug("Cleaning up expired PV data older than {}", windowSize);
-        // This would be implemented with a more sophisticated approach
-        // tracking all active keys and cleaning them up
+        try {
+            double cutoffTime = Instant.now().minus(windowSize).toEpochMilli();
+            RSet<String> pages = getPagesIndex();
+            for (String page : new ArrayList<>(pages)) {
+                String key = getKeyForPage(page);
+                RScoredSortedSet<String> sortedSet = redissonClient.getScoredSortedSet(key);
+                try {
+                    sortedSet.removeRangeByScore(0, true, cutoffTime, true);
+                } catch (Exception ignore) {}
+                try {
+                    if (sortedSet.size() == 0) {
+                        pages.remove(page);
+                    }
+                } catch (Exception ignore) {}
+            }
+        } catch (Exception e) {
+            log.debug("Cleanup expired PV data failed", e);
+        }
+    }
+
+    private RSet<String> getPagesIndex() {
+        return redissonClient.getSet(pagesIndexKey);
     }
 
     /**
