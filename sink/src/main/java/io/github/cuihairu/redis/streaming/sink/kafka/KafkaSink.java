@@ -28,6 +28,20 @@ public class KafkaSink<T> implements AutoCloseable {
     private final ObjectMapper objectMapper;
     private final KeyExtractor<T> keyExtractor;
 
+    static Properties buildDefaultProducerProperties(String bootstrapServers) {
+        Objects.requireNonNull(bootstrapServers, "Bootstrap servers cannot be null");
+        Properties props = new Properties();
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        props.put(ProducerConfig.ACKS_CONFIG, "1");
+        props.put(ProducerConfig.RETRIES_CONFIG, 3);
+        props.put(ProducerConfig.LINGER_MS_CONFIG, 10);
+        props.put(ProducerConfig.BATCH_SIZE_CONFIG, 16384);
+        props.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "snappy");
+        return props;
+    }
+
     /**
      * Create a Kafka sink with default settings.
      *
@@ -51,25 +65,7 @@ public class KafkaSink<T> implements AutoCloseable {
             String topic,
             ObjectMapper objectMapper,
             KeyExtractor<T> keyExtractor) {
-        Objects.requireNonNull(bootstrapServers, "Bootstrap servers cannot be null");
-        Objects.requireNonNull(topic, "Topic cannot be null");
-        Objects.requireNonNull(objectMapper, "ObjectMapper cannot be null");
-
-        this.topic = topic;
-        this.objectMapper = objectMapper;
-        this.keyExtractor = keyExtractor;
-
-        Properties props = new Properties();
-        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        props.put(ProducerConfig.ACKS_CONFIG, "1");
-        props.put(ProducerConfig.RETRIES_CONFIG, 3);
-        props.put(ProducerConfig.LINGER_MS_CONFIG, 10);
-        props.put(ProducerConfig.BATCH_SIZE_CONFIG, 16384);
-        props.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "snappy");
-
-        this.producer = new KafkaProducer<>(props);
+        this(buildDefaultProducerProperties(bootstrapServers), topic, objectMapper, keyExtractor);
         log.info("Created Kafka sink for topic: {}", topic);
     }
 

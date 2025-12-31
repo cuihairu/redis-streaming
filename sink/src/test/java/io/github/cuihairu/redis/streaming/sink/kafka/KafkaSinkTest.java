@@ -2,6 +2,7 @@ package io.github.cuihairu.redis.streaming.sink.kafka;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.producer.MockProducer;
+import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
@@ -12,8 +13,20 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class KafkaSinkTest {
+
+    @Test
+    void buildDefaultProducerPropertiesSetsExpectedDefaults() {
+        Properties props = KafkaSink.buildDefaultProducerProperties("localhost:9092");
+        assertEquals("localhost:9092", props.getProperty("bootstrap.servers"));
+        assertEquals("snappy", props.getProperty("compression.type"));
+        assertEquals("1", props.getProperty("acks"));
+    }
 
     @Test
     void writeSendsRecordWithExtractedKey() {
@@ -176,6 +189,40 @@ class KafkaSinkTest {
         KafkaSink<String> sink = new KafkaSink<String>(producer, "t", new ObjectMapper(), null);
         try {
             assertThrows(NullPointerException.class, () -> sink.writeAsync(null));
+        } finally {
+            sink.close();
+        }
+    }
+
+    @Test
+    void writeWrapsProducerSendFailures() {
+        @SuppressWarnings("unchecked")
+        Producer<String, String> producer = (Producer<String, String>) mock(Producer.class);
+        when(producer.send(any(ProducerRecord.class))).thenThrow(new RuntimeException("boom"));
+
+        KafkaSink<String> sink = new KafkaSink<>(producer, "t", new ObjectMapper(), null);
+        try {
+            RuntimeException ex = assertThrows(RuntimeException.class, () -> sink.write("v"));
+            assertTrue(ex.getMessage().contains("Failed to write to Kafka"));
+        } finally {
+            sink.close();
+        }
+    }
+
+    @Test
+    void writeAsyncCompletesExceptionallyWhenCallbackReportsError() {
+        @SuppressWarnings("unchecked")
+        Producer<String, String> producer = (Producer<String, String>) mock(Producer.class);
+        doAnswer(inv -> {
+            org.apache.kafka.clients.producer.Callback cb = inv.getArgument(1);
+            cb.onCompletion(null, new RuntimeException("fail"));
+            return null;
+        }).when(producer).send(any(ProducerRecord.class), any(org.apache.kafka.clients.producer.Callback.class));
+
+        KafkaSink<String> sink = new KafkaSink<>(producer, "t", new ObjectMapper(), null);
+        try {
+            CompletableFuture<org.apache.kafka.clients.producer.RecordMetadata> f = sink.writeAsync("v");
+            assertTrue(f.isCompletedExceptionally());
         } finally {
             sink.close();
         }
