@@ -4,7 +4,7 @@
 
 [![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://www.oracle.com/java/)
 [![Redis](https://img.shields.io/badge/Redis-6.0+-red.svg)](https://redis.io/)
-[![Version](https://img.shields.io/badge/Version-0.1.0-blue.svg)](https://github.com/cuihairu/redis-streaming)
+[![Version](https://img.shields.io/badge/Version-0.1.1-blue.svg)](https://github.com/cuihairu/redis-streaming)
 [![codecov](https://codecov.io/gh/cuihairu/redis-streaming/branch/main/graph/badge.svg)](https://codecov.io/gh/cuihairu/redis-streaming)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
@@ -392,32 +392,32 @@ Spring Boot 自动配置和集成。
 ```gradle
 dependencies {
     // 消息队列
-    implementation 'io.github.cuihairu.redis-streaming:mq:0.1.0'
+    implementation 'io.github.cuihairu.redis-streaming:mq:0.1.1'
 
     // 服务注册发现（支持 metadata 比较运算符过滤）
-    implementation 'io.github.cuihairu.redis-streaming:registry:0.1.0'
+    implementation 'io.github.cuihairu.redis-streaming:registry:0.1.1'
 
     // 配置中心（版本化配置、变更通知）
-    implementation 'io.github.cuihairu.redis-streaming:config:0.1.0'
+    implementation 'io.github.cuihairu.redis-streaming:config:0.1.1'
 
     // 状态管理
-    implementation 'io.github.cuihairu.redis-streaming:state:0.1.0'
+    implementation 'io.github.cuihairu.redis-streaming:state:0.1.1'
 
     // 检查点
-    implementation 'io.github.cuihairu.redis-streaming:checkpoint:0.1.0'
+    implementation 'io.github.cuihairu.redis-streaming:checkpoint:0.1.1'
 
     // 窗口聚合
-    implementation 'io.github.cuihairu.redis-streaming:aggregation:0.1.0'
+    implementation 'io.github.cuihairu.redis-streaming:aggregation:0.1.1'
 
     // CDC
-    implementation 'io.github.cuihairu.redis-streaming:cdc:0.1.0'
+    implementation 'io.github.cuihairu.redis-streaming:cdc:0.1.1'
 }
 ```
 
 **Spring Boot 集成（推荐）：**
 ```gradle
 dependencies {
-    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.1.0'
+    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.1.1'
     // 自动引入 registry、config、mq 等核心模块
 }
 ```
@@ -703,7 +703,9 @@ List<ChangeEvent> events = connector.poll();
 
 ### 快速开始
 - [快速入门教程](QUICK_START.md) - 5分钟上手指南
-- [完成报告](COMPLETION_REPORT.md) - 项目开发完成报告
+- [运行示例](RUNNING_EXAMPLES.md) - 端到端示例与演示程序
+- [完成报告](COMPLETION_REPORT.md) - 模块完成度与覆盖率
+- [测试指南](TESTING.md) - 单元测试 / 集成测试
 
 ### 设计文档
 - [架构设计](docs/ARCHITECTURE.md) - 整体架构设计
@@ -738,13 +740,17 @@ List<ChangeEvent> events = connector.poll();
 
 ---
 
-**当前版本**: 0.1.0
-**最后更新**: 2025-12-30
+**当前版本**: 0.1.1（最新发布版本）
+**最后更新**: 2025-12-31
 **完成度**: 19/20 模块完成（95.0%），1/20 模块部分完成（5.0%）
 
 ### 📝 版本说明
 
-**0.1.0** (2025-01-12) - 初始版本
+**0.1.1** - 修复与质量增强
+- ✅ Registry/MQ/可靠性等模块若干稳定性修复
+- ✅ 文档与 CI 发布流程完善
+
+**0.1.0** - 初始版本
 - ✅ 核心 API 抽象：完整的流处理 API 定义（DataStream、KeyedStream、WindowedStream）
 - ✅ 基础设施完成：MQ、Registry（含 Metadata 比较运算符）、Config、State、Checkpoint、Watermark、Window
 - ✅ **服务注册发现增强**：支持 Metadata 比较运算符过滤（`>`, `>=`, `<`, `<=`, `!=`, `==`），智能负载均衡

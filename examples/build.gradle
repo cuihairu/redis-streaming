@@ -4,7 +4,7 @@ plugins {
 }
 
 application {
-    mainClass = 'io.github.cuihairu.redis.streaming.examples.registry.ServiceRegistryExample'
+    mainClass = (project.findProperty('mainClass') ?: 'io.github.cuihairu.redis.streaming.examples.registry.ServiceRegistryExample') as String
 }
 
 dependencies {

@@ -43,13 +43,13 @@ redis-cli ping
 ```gradle
 dependencies {
     // 方式1: 使用 Spring Boot Starter (推荐)
-    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.1.0'
+    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.1.1'
 
     // 方式2: 按需添加模块
-    implementation 'io.github.cuihairu.redis-streaming:mq:0.1.0'
-    implementation 'io.github.cuihairu.redis-streaming:registry:0.1.0'
-    implementation 'io.github.cuihairu.redis-streaming:aggregation:0.1.0'
-    implementation 'io.github.cuihairu.redis-streaming:cep:0.1.0'
+    implementation 'io.github.cuihairu.redis-streaming:mq:0.1.1'
+    implementation 'io.github.cuihairu.redis-streaming:registry:0.1.1'
+    implementation 'io.github.cuihairu.redis-streaming:aggregation:0.1.1'
+    implementation 'io.github.cuihairu.redis-streaming:cep:0.1.1'
 }
 ```
 
@@ -164,25 +164,28 @@ consumer.start();
 ### 示例 1: PV/UV 统计
 
 ```java
-import io.github.cuihairu.redis.streaming.aggregation.*;
+import io.github.cuihairu.redis.streaming.aggregation.analytics.PVCounter;
+import io.github.cuihairu.redis.streaming.aggregation.analytics.UVCounter;
+import java.time.Duration;
+import java.time.Instant;
 
-// 创建 PV 计数器
-PVCounter pvCounter = new PVCounter(redisson, "page_views");
+// 近 10 分钟窗口
+Duration window = Duration.ofMinutes(10);
 
-// 创建 UV 计数器
-UVCounter uvCounter = new UVCounter(redisson, "unique_visitors");
+PVCounter pvCounter = new PVCounter(redisson, "page_views", window);
+UVCounter uvCounter = new UVCounter(redisson, "unique_visitors", window);
 
 // 记录页面访问
 String pageUrl = "/index";
 String userId = "user_123";
-long timestamp = System.currentTimeMillis();
+Instant now = Instant.now();
 
-pvCounter.increment(pageUrl, timestamp);
-uvCounter.add(pageUrl, userId, timestamp);
+pvCounter.recordPageView(pageUrl, now);
+uvCounter.add(pageUrl, userId, now);
 
 // 获取统计结果
-long pv = pvCounter.get(pageUrl, timestamp);
-long uv = uvCounter.count(pageUrl, timestamp);
+long pv = pvCounter.getPageViewCount(pageUrl);
+long uv = uvCounter.count(pageUrl);
 
 System.out.println("PV: " + pv + ", UV: " + uv);
 ```
@@ -190,20 +193,20 @@ System.out.println("PV: " + pv + ", UV: " + uv);
 ### 示例 2: Top-K 热榜
 
 ```java
-import io.github.cuihairu.redis.streaming.aggregation.TopKAnalyzer;
+import io.github.cuihairu.redis.streaming.aggregation.analytics.TopKAnalyzer;
+import java.time.Duration;
+import java.util.List;
 
-// 创建 Top-K 分析器 (Top 10)
-TopKAnalyzer<String> topK = new TopKAnalyzer<>(
-    redisson, "hot_products", 10
-);
+Duration window = Duration.ofMinutes(10);
+TopKAnalyzer topK = new TopKAnalyzer(redisson, "hot_products", 10, window);
 
 // 添加数据
-topK.add("iPhone15", timestamp);
-topK.add("MacBook", timestamp);
-topK.add("iPad", timestamp);
+topK.recordItem("products", "iPhone15");
+topK.recordItem("products", "MacBook");
+topK.recordItem("products", "iPad");
 
 // 获取排行榜
-List<String> top10 = topK.getTopK(10, timestamp);
+List<TopKAnalyzer.TopKItem> top10 = topK.getTopK("products");
 System.out.println("热门商品: " + top10);
 ```
 
@@ -238,15 +241,25 @@ for (LoginEvent event : events) {
 
 ```java
 import io.github.cuihairu.redis.streaming.table.impl.RedisKTable;
+import io.github.cuihairu.redis.streaming.table.KTable;
+
+record User(String name, int age) {}
+record Profile(String city) {}
+record UserProfile(User user, Profile profile) {}
 
 // 创建 KTable
 RedisKTable<String, User> userTable = new RedisKTable<>(
     redisson, "users", String.class, User.class
 );
+RedisKTable<String, Profile> profileTable = new RedisKTable<>(
+    redisson, "profiles", String.class, Profile.class
+);
 
 // 插入/更新数据
 userTable.put("user1", new User("Alice", 30));
 userTable.put("user2", new User("Bob", 25));
+profileTable.put("user1", new Profile("Shanghai"));
+profileTable.put("user2", new Profile("Beijing"));
 
 // 查询
 User user = userTable.get("user1");
@@ -268,23 +281,23 @@ KTable<String, UserProfile> enriched = userTable.join(
 
 ```java
 import io.github.cuihairu.redis.streaming.metrics.prometheus.*;
-
-// 创建指标收集器
-PrometheusMetricCollector metrics = new PrometheusMetricCollector("myapp");
+import java.util.Map;
 
 // 启动 Exporter (暴露 /metrics)
-PrometheusExporter exporter = new PrometheusExporter(9090);
+try (PrometheusExporter exporter = new PrometheusExporter(9090)) {
+    PrometheusMetricCollector metrics = new PrometheusMetricCollector("myapp");
 
-// 记录指标
-metrics.incrementCounter("requests_total");
-metrics.setGauge("active_connections", 42);
-metrics.recordHistogram("request_duration_seconds", 0.25);
+    // 记录指标
+    metrics.incrementCounter("requests_total");
+    metrics.setGauge("active_connections", 42);
+    metrics.recordHistogram("request_duration_seconds", 0.25);
 
-// 带标签的指标
-Map<String, String> tags = Map.of("method", "GET", "status", "200");
-metrics.incrementCounter("http_requests", tags);
+    // 带标签的指标
+    Map<String, String> tags = Map.of("method", "GET", "status", "200");
+    metrics.incrementCounter("http_requests", tags);
 
-// 访问 http://localhost:9090/metrics 查看指标
+    // 访问 http://localhost:9090/metrics 查看指标
+}
 ```
 
 ### 示例 6: CDC 数据捕获
@@ -352,7 +365,7 @@ public class RedisManager {
 import io.github.cuihairu.redis.streaming.reliability.retry.*;
 
 RetryPolicy policy = RetryPolicy.builder()
-    .maxRetries(3)
+    .maxAttempts(3)
     .initialDelay(Duration.ofSeconds(1))
     .backoffMultiplier(2.0)
     .build();
@@ -488,8 +501,8 @@ try {
 - 📖 文档: [README.md](README.md)
 - 🐛 问题反馈: [GitHub Issues](https://github.com/cuihairu/redis-streaming/issues)
 - 💬 讨论: [GitHub Discussions](https://github.com/cuihairu/redis-streaming/discussions)
-- 📧 邮件: cuihairu@example.com
+- 📧 邮件: chuihairu@gmail.com
 
 ---
 
-**祝你使用愉快！🎉**
+**祝你使用愉快！**
