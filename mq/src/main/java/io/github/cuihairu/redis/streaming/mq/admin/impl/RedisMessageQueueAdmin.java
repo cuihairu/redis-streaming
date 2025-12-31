@@ -32,11 +32,22 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
     }
 
     public RedisMessageQueueAdmin(RedissonClient redissonClient, MqOptions options) {
-        this.redissonClient = redissonClient;
         String prefix = options != null ? options.getKeyPrefix() : TopicRegistry.DEFAULT_PREFIX;
+        MqOptions resolved = options != null ? options : io.github.cuihairu.redis.streaming.mq.config.MqOptions.builder().build();
+        this.redissonClient = redissonClient;
         this.topicRegistry = new TopicRegistry(redissonClient, prefix);
         this.partitionRegistry = new TopicPartitionRegistry(redissonClient);
-        this.payloadLifecycleManager = new PayloadLifecycleManager(redissonClient, options != null ? options : io.github.cuihairu.redis.streaming.mq.config.MqOptions.builder().build());
+        this.payloadLifecycleManager = new PayloadLifecycleManager(redissonClient, resolved);
+    }
+
+    RedisMessageQueueAdmin(RedissonClient redissonClient,
+                           TopicRegistry topicRegistry,
+                           TopicPartitionRegistry partitionRegistry,
+                           PayloadLifecycleManager payloadLifecycleManager) {
+        this.redissonClient = Objects.requireNonNull(redissonClient, "redissonClient");
+        this.topicRegistry = Objects.requireNonNull(topicRegistry, "topicRegistry");
+        this.partitionRegistry = Objects.requireNonNull(partitionRegistry, "partitionRegistry");
+        this.payloadLifecycleManager = Objects.requireNonNull(payloadLifecycleManager, "payloadLifecycleManager");
     }
 
     // ==================== 队列信息查询 ====================
@@ -122,7 +133,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
         try {
             RStream<String, Object> s0 = redissonClient.getStream(StreamKeys.partitionStream(topic, 0), org.redisson.client.codec.StringCodec.INSTANCE);
             if (s0.isExists()) return true;
-            int pc = new TopicPartitionRegistry(redissonClient).getPartitionCount(topic);
+            int pc = partitionRegistry.getPartitionCount(topic);
             if (pc <= 1) return s0.isExists();
             for (int i = 0; i < pc; i++) {
                 if (redissonClient.getStream(StreamKeys.partitionStream(topic, i), org.redisson.client.codec.StringCodec.INSTANCE).isExists()) return true;
