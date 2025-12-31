@@ -15,8 +15,10 @@ import org.redisson.api.RedissonClient;
 import org.redisson.api.StreamGroup;
 import org.redisson.api.StreamMessageId;
 import org.redisson.api.StreamInfo;
+import org.redisson.api.stream.StreamCreateGroupArgs;
 import org.redisson.client.codec.StringCodec;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -275,5 +277,171 @@ class RedisMessageQueueAdminBehaviorTest {
 
         RedisMessageQueueAdmin admin = new RedisMessageQueueAdmin(redisson, topicRegistry, partitionRegistry, payloadLifecycleManager);
         assertTrue(admin.deleteTopic("t"));
+    }
+
+    @Test
+    void getPendingCountSumsAcrossPartitions() {
+        RedissonClient redisson = mock(RedissonClient.class);
+        TopicRegistry topicRegistry = mock(TopicRegistry.class);
+        TopicPartitionRegistry partitionRegistry = mock(TopicPartitionRegistry.class);
+        PayloadLifecycleManager payloadLifecycleManager = mock(PayloadLifecycleManager.class);
+
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        RStream<String, Object> s0 = mock(RStream.class);
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        RStream<String, Object> s1 = mock(RStream.class);
+        StreamGroup g0 = mock(StreamGroup.class);
+        StreamGroup g1 = mock(StreamGroup.class);
+
+        when(partitionRegistry.getPartitionCount("t")).thenReturn(2);
+        when(redisson.getStream(eq(StreamKeys.partitionStream("t", 0)), eq(StringCodec.INSTANCE))).thenReturn((RStream) s0);
+        when(redisson.getStream(eq(StreamKeys.partitionStream("t", 1)), eq(StringCodec.INSTANCE))).thenReturn((RStream) s1);
+
+        when(s0.isExists()).thenReturn(true);
+        when(s1.isExists()).thenReturn(true);
+        when(g0.getName()).thenReturn("g");
+        when(g0.getPending()).thenReturn(2);
+        when(g1.getName()).thenReturn("g");
+        when(g1.getPending()).thenReturn(3);
+        when(s0.listGroups()).thenReturn(List.of(g0));
+        when(s1.listGroups()).thenReturn(List.of(g1));
+
+        RedisMessageQueueAdmin admin = new RedisMessageQueueAdmin(redisson, topicRegistry, partitionRegistry, payloadLifecycleManager);
+        assertEquals(5L, admin.getPendingCount("t", "g"));
+    }
+
+    @Test
+    void trimQueueByAgeRemovesIds() {
+        RedissonClient redisson = mock(RedissonClient.class);
+        TopicRegistry topicRegistry = mock(TopicRegistry.class);
+        TopicPartitionRegistry partitionRegistry = mock(TopicPartitionRegistry.class);
+        PayloadLifecycleManager payloadLifecycleManager = mock(PayloadLifecycleManager.class);
+
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        RStream<String, Object> s0 = mock(RStream.class);
+        when(partitionRegistry.getPartitionCount("t")).thenReturn(1);
+        when(redisson.getStream(eq(StreamKeys.partitionStream("t", 0)), eq(StringCodec.INSTANCE))).thenReturn((RStream) s0);
+        when(s0.isExists()).thenReturn(true);
+
+        Map<StreamMessageId, Map<String, Object>> old = new java.util.LinkedHashMap<>();
+        old.put(new StreamMessageId(1, 0), Map.of("a", "1"));
+        old.put(new StreamMessageId(2, 0), Map.of("a", "2"));
+        @SuppressWarnings("deprecation")
+        Map<StreamMessageId, Map<String, Object>> toReturn = old;
+        when(s0.range(anyInt(), eq(StreamMessageId.MIN), any(StreamMessageId.class))).thenReturn(toReturn);
+
+        RedisMessageQueueAdmin admin = new RedisMessageQueueAdmin(redisson, topicRegistry, partitionRegistry, payloadLifecycleManager);
+        long deleted = admin.trimQueueByAge("t", Duration.ofMinutes(5));
+
+        assertEquals(2L, deleted);
+        verify(s0).remove(new StreamMessageId(1, 0));
+        verify(s0).remove(new StreamMessageId(2, 0));
+    }
+
+    @Test
+    void deleteConsumerGroupRemovesAcrossKnownAndScannedKeys() {
+        RedissonClient redisson = mock(RedissonClient.class);
+        TopicRegistry topicRegistry = mock(TopicRegistry.class);
+        TopicPartitionRegistry partitionRegistry = mock(TopicPartitionRegistry.class);
+        PayloadLifecycleManager payloadLifecycleManager = mock(PayloadLifecycleManager.class);
+        RKeys keys = mock(RKeys.class);
+
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        RStream<String, Object> s0 = mock(RStream.class);
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        RStream<String, Object> sExtra = mock(RStream.class);
+
+        when(partitionRegistry.getPartitionCount("t")).thenReturn(1);
+        when(redisson.getKeys()).thenReturn(keys);
+        when(keys.getKeys()).thenReturn(List.of(StreamKeys.partitionStream("t", 0), StreamKeys.partitionStream("t", 9)));
+        when(redisson.getStream(eq(StreamKeys.partitionStream("t", 0)), eq(StringCodec.INSTANCE))).thenReturn((RStream) s0);
+        when(redisson.getStream(eq(StreamKeys.partitionStream("t", 9)), eq(StringCodec.INSTANCE))).thenReturn((RStream) sExtra);
+
+        when(s0.isExists()).thenReturn(true);
+        when(sExtra.isExists()).thenReturn(true);
+
+        RedisMessageQueueAdmin admin = new RedisMessageQueueAdmin(redisson, topicRegistry, partitionRegistry, payloadLifecycleManager);
+        assertTrue(admin.deleteConsumerGroup("t", "g"));
+        verify(s0).removeGroup("g");
+        verify(sExtra).removeGroup("g");
+    }
+
+    @Test
+    void resetConsumerGroupOffsetCreatesGroupAndHandlesBusyGroup() {
+        RedissonClient redisson = mock(RedissonClient.class);
+        TopicRegistry topicRegistry = mock(TopicRegistry.class);
+        TopicPartitionRegistry partitionRegistry = mock(TopicPartitionRegistry.class);
+        PayloadLifecycleManager payloadLifecycleManager = mock(PayloadLifecycleManager.class);
+
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        RStream<String, Object> s0 = mock(RStream.class);
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        RStream<String, Object> s1 = mock(RStream.class);
+
+        when(partitionRegistry.getPartitionCount("t")).thenReturn(2);
+        when(redisson.getStream(eq(StreamKeys.partitionStream("t", 0)), eq(StringCodec.INSTANCE))).thenReturn((RStream) s0);
+        when(redisson.getStream(eq(StreamKeys.partitionStream("t", 1)), eq(StringCodec.INSTANCE))).thenReturn((RStream) s1);
+
+        org.mockito.Mockito.doThrow(new RuntimeException("BUSYGROUP Consumer Group name already exists"))
+                .when(s1).createGroup(any(StreamCreateGroupArgs.class));
+
+        RedisMessageQueueAdmin admin = new RedisMessageQueueAdmin(redisson, topicRegistry, partitionRegistry, payloadLifecycleManager);
+        assertTrue(admin.resetConsumerGroupOffset("t", "g", "0"));
+        verify(s0).createGroup(any(StreamCreateGroupArgs.class));
+        verify(s1).createGroup(any(StreamCreateGroupArgs.class));
+    }
+
+    @Test
+    void updatePartitionCountDelegatesToRegistry() {
+        RedissonClient redisson = mock(RedissonClient.class);
+        TopicRegistry topicRegistry = mock(TopicRegistry.class);
+        TopicPartitionRegistry partitionRegistry = mock(TopicPartitionRegistry.class);
+        PayloadLifecycleManager payloadLifecycleManager = mock(PayloadLifecycleManager.class);
+
+        when(partitionRegistry.updatePartitionCount("t", 3)).thenReturn(true);
+
+        RedisMessageQueueAdmin admin = new RedisMessageQueueAdmin(redisson, topicRegistry, partitionRegistry, payloadLifecycleManager);
+        assertTrue(admin.updatePartitionCount("t", 3));
+    }
+
+    @Test
+    void listRecentParsesRowsAndSortsByTimestampDesc() {
+        RedissonClient redisson = mock(RedissonClient.class);
+        TopicRegistry topicRegistry = mock(TopicRegistry.class);
+        TopicPartitionRegistry partitionRegistry = mock(TopicPartitionRegistry.class);
+        PayloadLifecycleManager payloadLifecycleManager = mock(PayloadLifecycleManager.class);
+
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        RStream<String, Object> s0 = mock(RStream.class);
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        RStream<String, Object> s1 = mock(RStream.class);
+        RScript script = mock(RScript.class);
+
+        when(partitionRegistry.getPartitionCount("t")).thenReturn(2);
+        when(redisson.getStream(eq(StreamKeys.partitionStream("t", 0)), eq(StringCodec.INSTANCE))).thenReturn((RStream) s0);
+        when(redisson.getStream(eq(StreamKeys.partitionStream("t", 1)), eq(StringCodec.INSTANCE))).thenReturn((RStream) s1);
+        when(s0.isExists()).thenReturn(true);
+        when(s1.isExists()).thenReturn(true);
+        when(redisson.getScript(eq(StringCodec.INSTANCE))).thenReturn(script);
+
+        List<Object> rows0 = List.of(List.of("2-0", List.of("k", "v")));
+        List<Object> rows1 = List.of(List.of("5-0", List.of("x", "y")));
+        when(script.eval(
+                eq(RScript.Mode.READ_ONLY),
+                any(String.class),
+                eq(RScript.ReturnType.MULTI),
+                any(List.class),
+                any(),
+                any(),
+                any()
+        )).thenReturn(rows0, rows1);
+
+        RedisMessageQueueAdmin admin = new RedisMessageQueueAdmin(redisson, topicRegistry, partitionRegistry, payloadLifecycleManager);
+        var out = admin.listRecent("t", 10);
+
+        assertEquals(2, out.size());
+        assertEquals("5-0", out.get(0).getId()); // higher timestamp first
+        assertEquals(1, out.get(0).getPartitionId());
+        assertEquals(Map.of("x", "y"), out.get(0).getFields());
     }
 }
