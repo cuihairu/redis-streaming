@@ -28,7 +28,9 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
     private final AtomicLong binlogPosition = new AtomicLong(0);
     private String binlogFilename;
     private final Map<Long, TableMapEventData> tableMapEvents = new HashMap<>();
+    private final Map<Long, List<String>> tableColumnsById = new HashMap<>();
     private TableFilter tableFilter;
+    private MySQLColumnNameResolver columnNameResolver;
 
     public MySQLBinlogCDCConnector(CDCConfiguration configuration) {
         super(configuration);
@@ -60,6 +62,9 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
         // Build include/exclude filter (empty includes means allow all).
         this.tableFilter = TableFilter.from(configuration.getTableIncludes(), configuration.getTableExcludes());
 
+        // Best-effort schema resolver (for column names) to make events usable in production.
+        this.columnNameResolver = createColumnNameResolver(hostname, port, username, password);
+
         // Set starting position if specified
         if (binlogFilename != null) {
             this.binaryLogClient.setBinlogFilename(binlogFilename);
@@ -80,8 +85,15 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
         if (binaryLogClient != null && binaryLogClient.isConnected()) {
             binaryLogClient.disconnect();
         }
+        if (columnNameResolver != null) {
+            try {
+                columnNameResolver.close();
+            } catch (Exception ignore) {}
+            columnNameResolver = null;
+        }
         eventQueue.clear();
         tableMapEvents.clear();
+        tableColumnsById.clear();
     }
 
     @Override
@@ -177,6 +189,17 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
 
     private void handleTableMapEvent(TableMapEventData eventData) {
         tableMapEvents.put(eventData.getTableId(), eventData);
+        if (columnNameResolver == null) {
+            return;
+        }
+        try {
+            List<String> columns = columnNameResolver.resolve(eventData.getDatabase(), eventData.getTable());
+            if (columns != null && !columns.isEmpty()) {
+                tableColumnsById.put(eventData.getTableId(), columns);
+            }
+        } catch (Exception e) {
+            log.debug("Failed to resolve MySQL column names for {}.{}", eventData.getDatabase(), eventData.getTable(), e);
+        }
     }
 
     private void handleWriteRowsEvent(WriteRowsEventData eventData) {
@@ -191,8 +214,9 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
             return;
         }
 
+        List<String> columns = getOrResolveColumns(eventData.getTableId(), database, table);
         for (Serializable[] row : eventData.getRows()) {
-            Map<String, Object> afterData = convertRowToMap(row);
+            Map<String, Object> afterData = convertRowToMap(row, columns);
 
             ChangeEvent changeEvent = new ChangeEvent(
                     ChangeEvent.EventType.INSERT,
@@ -224,8 +248,9 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
         }
 
         for (Map.Entry<Serializable[], Serializable[]> row : eventData.getRows()) {
-            Map<String, Object> beforeData = convertRowToMap(row.getKey());
-            Map<String, Object> afterData = convertRowToMap(row.getValue());
+            List<String> columns = getOrResolveColumns(eventData.getTableId(), database, table);
+            Map<String, Object> beforeData = convertRowToMap(row.getKey(), columns);
+            Map<String, Object> afterData = convertRowToMap(row.getValue(), columns);
 
             ChangeEvent changeEvent = new ChangeEvent(
                     ChangeEvent.EventType.UPDATE,
@@ -256,8 +281,9 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
             return;
         }
 
+        List<String> columns = getOrResolveColumns(eventData.getTableId(), database, table);
         for (Serializable[] row : eventData.getRows()) {
-            Map<String, Object> beforeData = convertRowToMap(row);
+            Map<String, Object> beforeData = convertRowToMap(row, columns);
 
             ChangeEvent changeEvent = new ChangeEvent(
                     ChangeEvent.EventType.DELETE,
@@ -295,16 +321,28 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
         this.currentPosition = fn + ":" + binlogPosition.get();
     }
 
-    private Map<String, Object> convertRowToMap(Serializable[] row) {
+    private Map<String, Object> convertRowToMap(Serializable[] row, List<String> columns) {
         Map<String, Object> data = new HashMap<>();
+        List<String> names = columns != null ? columns : List.of();
         for (int i = 0; i < row.length; i++) {
-            data.put("col_" + i, row[i]); // In real implementation, use actual column names
+            if (i < names.size()) {
+                data.put(names.get(i), row[i]);
+            } else {
+                data.put("col_" + i, row[i]);
+            }
         }
         return data;
     }
 
     private String generateKey(Map<String, Object> data) {
-        // Simple key generation - in real implementation, use primary key columns
+        Object id = data.get("id");
+        if (id != null) {
+            return id.toString();
+        }
+        Object pk = data.get("pk");
+        if (pk != null) {
+            return pk.toString();
+        }
         return data.values().stream()
                 .filter(Objects::nonNull)
                 .map(Object::toString)
@@ -331,5 +369,46 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
      */
     public boolean isConnected() {
         return binaryLogClient != null && binaryLogClient.isConnected();
+    }
+
+    private List<String> getOrResolveColumns(long tableId, String database, String table) {
+        List<String> cached = tableColumnsById.get(tableId);
+        if (cached != null && !cached.isEmpty()) {
+            return cached;
+        }
+        if (columnNameResolver == null) {
+            return List.of();
+        }
+        try {
+            List<String> resolved = columnNameResolver.resolve(database, table);
+            if (resolved != null && !resolved.isEmpty()) {
+                tableColumnsById.put(tableId, resolved);
+                return resolved;
+            }
+        } catch (Exception e) {
+            log.debug("Failed to resolve MySQL column names for {}.{}", database, table, e);
+        }
+        return List.of();
+    }
+
+    private MySQLColumnNameResolver createColumnNameResolver(String hostname, int port, String username, String password) {
+        try {
+            Object enabledProp = configuration.getProperty("schema.resolve.columns", "true");
+            boolean enabled = Boolean.parseBoolean(String.valueOf(enabledProp));
+            if (!enabled) {
+                return null;
+            }
+
+            String url = (String) configuration.getProperty("schema.jdbc.url");
+            if (url == null || url.isBlank()) {
+                url = String.format("jdbc:mysql://%s:%d/information_schema", hostname, port);
+            }
+
+            int timeoutSeconds = Integer.parseInt(String.valueOf(configuration.getProperty("schema.query.timeout.seconds", "5")));
+            return new DriverManagerMySQLColumnNameResolver(url, username, password, timeoutSeconds);
+        } catch (Exception e) {
+            log.warn("MySQL schema resolver is disabled (failed to initialize): {}", e.getMessage());
+            return null;
+        }
     }
 }

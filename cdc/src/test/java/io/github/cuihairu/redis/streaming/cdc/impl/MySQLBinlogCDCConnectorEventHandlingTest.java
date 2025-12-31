@@ -38,6 +38,15 @@ class MySQLBinlogCDCConnectorEventHandlingTest {
         MySQLBinlogCDCConnector connector = new MySQLBinlogCDCConnector(config);
         connector.running.set(true);
         setField(connector, "binlogFilename", "mysql-bin.000001");
+        setField(connector, "columnNameResolver", new MySQLColumnNameResolver() {
+            @Override
+            public List<String> resolve(String database, String table) {
+                return List.of("id", "name");
+            }
+
+            @Override
+            public void close() {}
+        });
 
         long tableId = 1L;
         TableMapEventData tableMap = mock(TableMapEventData.class);
@@ -83,8 +92,8 @@ class MySQLBinlogCDCConnectorEventHandlingTest {
         assertEquals("db", first.getDatabase());
         assertEquals("t", first.getTable());
         assertNotNull(first.getAfterData());
-        assertEquals(1, first.getAfterData().get("col_0"));
-        assertEquals("a", first.getAfterData().get("col_1"));
+        assertEquals(1, first.getAfterData().get("id"));
+        assertEquals("a", first.getAfterData().get("name"));
 
         assertEquals("mysql-bin.000002", connector.getBinlogFilename());
         assertEquals("mysql-bin.000002:4", connector.getCurrentPosition());
