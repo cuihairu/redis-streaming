@@ -127,8 +127,10 @@ public class ConfigServiceIntegrationTest {
             // Test metadata
             ConfigCenter.ConfigMetadata metadata = configCenter.getConfigMetadata(dataId, group);
             assertNotNull(metadata);
-            assertEquals("1.0", metadata.getVersion());
-            assertEquals("Configuration for " + group + ":" + dataId, metadata.getDescription());
+            assertNotNull(metadata.getVersion());
+            assertEquals("test description", metadata.getDescription());
+            assertTrue(metadata.getCreateTime() > 0);
+            assertTrue(metadata.getLastModified() >= metadata.getCreateTime());
             assertTrue(metadata.getSize() > 0);
 
             // Test history - publish again to create history (first publish doesn't create history)
@@ -350,7 +352,11 @@ public class ConfigServiceIntegrationTest {
 
             ConfigCenter.ConfigMetadata metadata = configCenter.getConfigMetadata(dataId, group);
             assertNotNull(metadata);
+            assertNull(metadata.getVersion());
+            assertNull(metadata.getDescription());
             assertEquals(0, metadata.getSize());
+            assertEquals(0, metadata.getCreateTime());
+            assertEquals(0, metadata.getLastModified());
 
         } finally {
             configCenter.stop();
