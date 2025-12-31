@@ -11,6 +11,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -50,6 +51,19 @@ class UVCounterTest {
     }
 
     @Test
+    void addReturnsFalseForInvalidInputs() {
+        UVCounter counter = new UVCounter(mock(RedissonClient.class), "p", Duration.ofMinutes(3), Duration.ofMinutes(1));
+        try {
+            assertFalse(counter.add(" ", "u", Instant.now()));
+            assertFalse(counter.add("home", " ", Instant.now()));
+            assertFalse(counter.add(null, "u", Instant.now()));
+            assertFalse(counter.add("home", null, Instant.now()));
+        } finally {
+            counter.close();
+        }
+    }
+
+    @Test
     void countUsesCountWithAcrossBuckets() {
         RedissonClient redisson = mock(RedissonClient.class);
         @SuppressWarnings("unchecked")
@@ -63,6 +77,38 @@ class UVCounterTest {
         try {
             long out = counter.count("home", Instant.ofEpochMilli(180_000));
             assertEquals(7L, out);
+        } finally {
+            counter.close();
+        }
+    }
+
+    @Test
+    void countUsesBaseCountWhenSingleBucket() {
+        RedissonClient redisson = mock(RedissonClient.class);
+        @SuppressWarnings("unchecked")
+        RHyperLogLog<String> base = mock(RHyperLogLog.class);
+
+        when(redisson.<String>getHyperLogLog("p:uv:home:60000")).thenReturn(base);
+        when(base.count()).thenReturn(5L);
+
+        // window < bucket => range stays within a single bucket
+        UVCounter counter = new UVCounter(redisson, "p", Duration.ofSeconds(10), Duration.ofMinutes(1));
+        try {
+            long out = counter.count("home", Instant.ofEpochMilli(119_999));
+            assertEquals(5L, out);
+        } finally {
+            counter.close();
+        }
+    }
+
+    @Test
+    void countReturnsZeroForInvalidRange() {
+        UVCounter counter = new UVCounter(mock(RedissonClient.class), "p", Duration.ofMinutes(3), Duration.ofMinutes(1));
+        try {
+            assertEquals(0L, counter.count(" ", Instant.now(), Instant.now().plusSeconds(1)));
+            assertEquals(0L, counter.count("home", null, Instant.now()));
+            assertEquals(0L, counter.count("home", Instant.now(), null));
+            assertEquals(0L, counter.count("home", Instant.ofEpochMilli(2), Instant.ofEpochMilli(1)));
         } finally {
             counter.close();
         }
@@ -85,6 +131,34 @@ class UVCounterTest {
         try {
             counter.reset("home");
             verify(bucketIndex).clear();
+            verify(pages).remove("home");
+        } finally {
+            counter.close();
+        }
+    }
+
+    @Test
+    void cleanupRemovesExpiredBucketsAndDropsPageWhenEmpty() throws Exception {
+        RedissonClient redisson = mock(RedissonClient.class);
+        @SuppressWarnings("unchecked")
+        RSet<String> pages = mock(RSet.class);
+        @SuppressWarnings("unchecked")
+        RSet<String> bucketIndex = mock(RSet.class);
+
+        when(redisson.<String>getSet("p:uv:pages")).thenReturn(pages);
+        when(redisson.<String>getSet("p:uv:home:buckets")).thenReturn(bucketIndex);
+
+        when(pages.readAll()).thenReturn(Set.of("home"));
+        when(bucketIndex.readAll()).thenReturn(Set.of("p:uv:home:0", "p:uv:home:60000"));
+        when(bucketIndex.size()).thenReturn(0);
+
+        UVCounter counter = new UVCounter(redisson, "p", Duration.ofMinutes(1), Duration.ofMinutes(1));
+        try {
+            var m = UVCounter.class.getDeclaredMethod("cleanupExpiredData");
+            m.setAccessible(true);
+            m.invoke(counter);
+            verify(bucketIndex).remove("p:uv:home:0");
+            verify(bucketIndex).remove("p:uv:home:60000");
             verify(pages).remove("home");
         } finally {
             counter.close();

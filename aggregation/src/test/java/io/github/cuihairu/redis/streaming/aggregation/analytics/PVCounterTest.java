@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -38,6 +39,29 @@ class PVCounterTest {
             verify(sortedSet).add(eq(12345d), argThat(v -> v.startsWith("12345-")));
             verify(sortedSet).removeRangeByScore(eq(0d), eq(true), anyDouble(), eq(true));
             verify(sortedSet).size();
+        } finally {
+            counter.close();
+        }
+    }
+
+    @Test
+    void recordPageViewIgnoresBlankPage() {
+        PVCounter counter = new PVCounter(mock(RedissonClient.class), "p", Duration.ofMinutes(10));
+        try {
+            assertEquals(0L, counter.recordPageView(" ", Instant.ofEpochMilli(1)));
+            assertEquals(0L, counter.recordPageView(null, Instant.ofEpochMilli(1)));
+        } finally {
+            counter.close();
+        }
+    }
+
+    @Test
+    void getPageViewCountReturnsZeroForInvalidRange() {
+        PVCounter counter = new PVCounter(mock(RedissonClient.class), "p", Duration.ofMinutes(10));
+        try {
+            assertEquals(0L, counter.getPageViewCount("home", Instant.ofEpochMilli(10), Instant.ofEpochMilli(10)));
+            assertEquals(0L, counter.getPageViewCount("home", Instant.ofEpochMilli(20), Instant.ofEpochMilli(10)));
+            assertEquals(0L, counter.getPageViewCount(" ", Instant.ofEpochMilli(10), Instant.ofEpochMilli(20)));
         } finally {
             counter.close();
         }
@@ -77,6 +101,34 @@ class PVCounterTest {
         try {
             counter.resetPageViewCount("home");
             verify(sortedSet).clear();
+        } finally {
+            counter.close();
+        }
+    }
+
+    @Test
+    void getStatisticsSumsAcrossPages() {
+        RedissonClient redisson = mock(RedissonClient.class);
+        @SuppressWarnings("unchecked")
+        RSet<String> pages = mock(RSet.class);
+        @SuppressWarnings("unchecked")
+        RScoredSortedSet<String> home = mock(RScoredSortedSet.class);
+        @SuppressWarnings("unchecked")
+        RScoredSortedSet<String> cart = mock(RScoredSortedSet.class);
+
+        when(redisson.<String>getSet("p:pv:pages")).thenReturn(pages);
+        when(pages.readAll()).thenReturn(java.util.Set.of("home", "cart"));
+        when(redisson.<String>getScoredSortedSet("p:pv:home")).thenReturn(home);
+        when(redisson.<String>getScoredSortedSet("p:pv:cart")).thenReturn(cart);
+        when(home.size()).thenReturn(3);
+        when(cart.size()).thenReturn(2);
+
+        PVCounter counter = new PVCounter(redisson, "p", Duration.ofMinutes(10));
+        try {
+            PVCounter.PVStatistics s = counter.getStatistics();
+            assertEquals(2L, s.getTotalPages());
+            assertEquals(5L, s.getTotalViews());
+            assertNotNull(s.getTimestamp());
         } finally {
             counter.close();
         }

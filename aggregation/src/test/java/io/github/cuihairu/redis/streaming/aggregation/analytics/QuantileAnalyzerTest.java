@@ -13,6 +13,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -99,6 +100,81 @@ class QuantileAnalyzerTest {
         try {
             Double p50 = q.p50("lat");
             assertEquals(42.0, p50);
+        } finally {
+            q.close();
+        }
+    }
+
+    @Test
+    void quantileClampsToUpperBound() {
+        RedissonClient redisson = mock(RedissonClient.class);
+        @SuppressWarnings("unchecked")
+        RScoredSortedSet<String> time = mock(RScoredSortedSet.class);
+        @SuppressWarnings("unchecked")
+        RScoredSortedSet<String> value = mock(RScoredSortedSet.class);
+        @SuppressWarnings("unchecked")
+        RSet<String> metrics = mock(RSet.class);
+        @SuppressWarnings("unchecked")
+        ScoredEntry<String> entry = mock(ScoredEntry.class);
+
+        when(redisson.<String>getScoredSortedSet("p:quantile:lat:ts")).thenReturn(time);
+        when(redisson.<String>getScoredSortedSet("p:quantile:lat:v")).thenReturn(value);
+        when(redisson.<String>getSet("p:quantile:metrics")).thenReturn(metrics);
+
+        when(time.valueRange(anyDouble(), eq(true), anyDouble(), eq(true))).thenReturn(List.of());
+        when(time.size()).thenReturn(1);
+        when(value.size()).thenReturn(4);
+        when(entry.getScore()).thenReturn(99.0);
+        when(value.entryRange(3, 3)).thenReturn(List.of(entry)); // clamped to q=1 => rank 3
+
+        QuantileAnalyzer q = new QuantileAnalyzer(redisson, "p", Duration.ofMinutes(5));
+        try {
+            assertEquals(99.0, q.quantile("lat", 10.0));
+        } finally {
+            q.close();
+        }
+    }
+
+    @Test
+    void cleanupRemovesExpiredIdsAndDropsMetricWhenEmpty() throws Exception {
+        RedissonClient redisson = mock(RedissonClient.class);
+        @SuppressWarnings("unchecked")
+        RScoredSortedSet<String> time = mock(RScoredSortedSet.class);
+        @SuppressWarnings("unchecked")
+        RScoredSortedSet<String> value = mock(RScoredSortedSet.class);
+        @SuppressWarnings("unchecked")
+        RSet<String> metrics = mock(RSet.class);
+
+        when(redisson.<String>getScoredSortedSet("p:quantile:m:ts")).thenReturn(time);
+        when(redisson.<String>getScoredSortedSet("p:quantile:m:v")).thenReturn(value);
+        when(redisson.<String>getSet("p:quantile:metrics")).thenReturn(metrics);
+
+        when(time.valueRange(anyDouble(), eq(true), anyDouble(), eq(true))).thenReturn(List.of("id1", "id2"));
+        when(time.size()).thenReturn(0);
+        when(value.size()).thenReturn(0);
+
+        QuantileAnalyzer q = new QuantileAnalyzer(redisson, "p", Duration.ofMinutes(5));
+        try {
+            var m = QuantileAnalyzer.class.getDeclaredMethod("cleanupExpiredMetric", String.class);
+            m.setAccessible(true);
+            m.invoke(q, "m");
+
+            verify(time).removeAll(List.of("id1", "id2"));
+            verify(value).removeAll(List.of("id1", "id2"));
+            verify(metrics).remove("m");
+        } finally {
+            q.close();
+        }
+    }
+
+    @Test
+    void recordIgnoresBlankMetric() {
+        RedissonClient redisson = mock(RedissonClient.class);
+        QuantileAnalyzer q = new QuantileAnalyzer(redisson, "p", Duration.ofMinutes(5));
+        try {
+            q.record(" ", 1.0, Instant.ofEpochMilli(1));
+            q.record(null, 1.0, Instant.ofEpochMilli(1));
+            assertTrue(true);
         } finally {
             q.close();
         }

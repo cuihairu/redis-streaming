@@ -62,13 +62,17 @@ public class PVCounter {
      * @return the current count for this page
      */
     public long recordPageView(String page, Instant timestamp) {
+        if (page == null || page.isBlank()) {
+            return 0L;
+        }
+        Instant ts = timestamp != null ? timestamp : Instant.now();
         String key = getKeyForPage(page);
         RScoredSortedSet<String> sortedSet = redissonClient.getScoredSortedSet(key);
         getPagesIndex().add(page);
 
         // Use timestamp as score, and a unique ID as value
-        double score = timestamp.toEpochMilli();
-        String value = timestamp.toEpochMilli() + "-" + System.nanoTime();
+        double score = ts.toEpochMilli();
+        String value = ts.toEpochMilli() + "-" + System.nanoTime();
 
         sortedSet.add(score, value);
 
@@ -77,7 +81,7 @@ public class PVCounter {
         sortedSet.removeRangeByScore(0, true, cutoffTime, true);
 
         long count = sortedSet.size();
-        log.debug("Recorded PV for page '{}' at {}, current count: {}", page, timestamp, count);
+        log.debug("Recorded PV for page '{}' at {}, current count: {}", page, ts, count);
 
         return count;
     }
@@ -89,6 +93,9 @@ public class PVCounter {
      * @return the current count
      */
     public long getPageViewCount(String page) {
+        if (page == null || page.isBlank()) {
+            return 0L;
+        }
         String key = getKeyForPage(page);
         RScoredSortedSet<String> sortedSet = redissonClient.getScoredSortedSet(key);
         getPagesIndex().add(page);
@@ -109,6 +116,9 @@ public class PVCounter {
      * @return the count within the time range
      */
     public long getPageViewCount(String page, Instant start, Instant end) {
+        if (page == null || page.isBlank() || start == null || end == null || !end.isAfter(start)) {
+            return 0L;
+        }
         String key = getKeyForPage(page);
         RScoredSortedSet<String> sortedSet = redissonClient.getScoredSortedSet(key);
 
@@ -121,6 +131,9 @@ public class PVCounter {
      * @param page the page identifier
      */
     public void resetPageViewCount(String page) {
+        if (page == null || page.isBlank()) {
+            return;
+        }
         String key = getKeyForPage(page);
         redissonClient.getScoredSortedSet(key).clear();
         getPagesIndex().remove(page);
@@ -134,7 +147,7 @@ public class PVCounter {
      */
     public PVStatistics getStatistics() {
         RSet<String> pages = getPagesIndex();
-        List<String> snapshot = new ArrayList<>(pages);
+        List<String> snapshot = new ArrayList<>(pages.readAll());
         long totalViews = 0L;
         for (String page : snapshot) {
             try {
@@ -170,7 +183,7 @@ public class PVCounter {
         try {
             double cutoffTime = Instant.now().minus(windowSize).toEpochMilli();
             RSet<String> pages = getPagesIndex();
-            for (String page : new ArrayList<>(pages)) {
+            for (String page : pages.readAll()) {
                 String key = getKeyForPage(page);
                 RScoredSortedSet<String> sortedSet = redissonClient.getScoredSortedSet(key);
                 try {
