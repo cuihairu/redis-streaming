@@ -155,13 +155,13 @@ configService.publishConfig("app.properties", "DEFAULT_GROUP",
     "Updated database configuration");
 
 // 监听配置变更
-configService.addListener("app.properties", "DEFAULT_GROUP", (dataId, group, content) -> {
-    System.out.println("Configuration changed: " + content);
+configService.addListener("app.properties", "DEFAULT_GROUP", (dataId, group, content, version) -> {
+    System.out.println("Configuration changed (v" + version + "): " + content);
     // 自动重新加载配置
 });
 
 // 查询历史版本
-List<ConfigHistory> history = configService.getHistory("app.properties", "DEFAULT_GROUP", 10);
+List<ConfigHistory> history = configService.getConfigHistory("app.properties", "DEFAULT_GROUP", 10);
 ```
 
 #### **state** - 状态管理
@@ -359,10 +359,10 @@ Spring Boot 自动配置和集成。
 - 自动配置（Registry、Discovery、ConfigService）
 - 配置属性绑定
 - Bean 自动装配
-- 注解支持（@EnableStreaming, @ServiceChangeListener）
+- 注解支持（@EnableRedisStreaming, @ServiceChangeListener, @ConfigChangeListener）
 - 自动服务注册
 
-**关键类**: `StreamingAutoConfiguration.java` (106行), `StreamingProperties.java`, `@EnableStreaming.java` (6 个文件)
+**关键类**: `RedisStreamingAutoConfiguration.java`, `RedisStreamingProperties.java`, `@EnableRedisStreaming.java`
 
 #### **examples** - 示例代码
 各种使用示例和最佳实践。
@@ -503,15 +503,15 @@ System.out.println("Database config: " + dbConfig);
 
 // 监听配置变更（自动热加载）
 configService.addListener("database.config", "DEFAULT_GROUP",
-    (dataId, group, content) -> {
-        System.out.println("Configuration updated: " + content);
+    (dataId, group, content, version) -> {
+        System.out.println("Configuration updated (v" + version + "): " + content);
         // 重新加载数据库连接池等
         reloadDatabaseConnection(content);
     }
 );
 
 // 查询历史版本
-List<ConfigHistory> history = configService.getHistory("database.config", "DEFAULT_GROUP", 5);
+List<ConfigHistory> history = configService.getConfigHistory("database.config", "DEFAULT_GROUP", 5);
 for (ConfigHistory h : history) {
     System.out.println("Version " + h.getVersion() + ": " + h.getDescription());
 }
@@ -524,20 +524,20 @@ configService.removeConfig("database.config", "DEFAULT_GROUP");
 ```java
 import io.github.cuihairu.redis.streaming.mq.*;
 
-// 生产者
-MessageProducer producer = MessageQueueFactory.createProducer(
-    redissonClient, "order-events"
-);
-producer.send(new Message("order-123", orderData));
+MessageQueueFactory mq = new MessageQueueFactory(redissonClient);
 
-// 消费者
-MessageConsumer consumer = MessageQueueFactory.createConsumer(
-    redissonClient, "order-events", "order-processor-group"
-);
-consumer.consume(message -> {
+// 生产者：发送消息（topic=order-events，key=order-123）
+MessageProducer producer = mq.createProducer();
+producer.send(new Message("order-events", "order-123", orderData)).join();
+
+// 消费者：订阅并启动消费
+MessageConsumer consumer = mq.createConsumer("order-processor-1");
+consumer.subscribe("order-events", "order-processor-group", message -> {
+    Object payload = message.getPayload();
     // 处理消息
     return MessageHandleResult.SUCCESS;
 });
+consumer.start();
 ```
 
 #### 窗口聚合
@@ -579,12 +579,15 @@ CDCConfiguration config = CDCConfigurationBuilder.builder()
 // 创建 CDC 连接器
 CDCConnector connector = new MySQLBinlogCDCConnector(config);
 
-// 监听变更事件
-connector.addListener(event -> {
-    System.out.println("Change detected: " + event);
+connector.setEventListener(new CDCEventListener() {
+    @Override
+    public void onEventsCapture(String connectorName, int eventCount) {
+        System.out.println("Captured events: " + eventCount);
+    }
 });
 
-connector.start();
+connector.start().join();
+List<ChangeEvent> events = connector.poll();
 ```
 
 ## 📊 技术栈

@@ -24,7 +24,7 @@ docker run -d -p 6379:6379 --name redis redis:7-alpine
 
 **使用 Docker Compose**:
 ```bash
-cd streaming
+cd redis-streaming
 docker-compose up -d
 ```
 
@@ -81,24 +81,21 @@ public class QuickStart {
 ```java
 import io.github.cuihairu.redis.streaming.mq.*;
 
-// 创建生产者
-MessageProducer producer = MessageQueueFactory.createProducer(
-    redisson, "hello-queue"
-);
+MessageQueueFactory mq = new MessageQueueFactory(redisson);
+MessageProducer producer = mq.createProducer();
 
-// 发送消息
-producer.send(new Message("msg-1", "Hello, Streaming!"));
+// 发送消息（topic=hello-queue）
+producer.send(new Message("hello-queue", "Hello, Streaming!")).join();
 
-// 创建消费者
-MessageConsumer consumer = MessageQueueFactory.createConsumer(
-    redisson, "hello-queue", "consumer-group"
-);
-
-// 消费消息
-consumer.consume(message -> {
-    System.out.println("收到消息: " + message.getData());
+// 创建消费者并订阅
+MessageConsumer consumer = mq.createConsumer("consumer-1");
+consumer.subscribe("hello-queue", "consumer-group", message -> {
+    System.out.println("收到消息: " + message.getPayload());
     return MessageHandleResult.SUCCESS;
 });
+
+// 启动消费
+consumer.start();
 ```
 
 ## 核心概念
@@ -308,13 +305,15 @@ CDCConfiguration config = CDCConfigurationBuilder.builder()
 // 创建 CDC 连接器
 CDCConnector cdc = new MySQLBinlogCDCConnector(config);
 
-// 监听变更事件
-cdc.addListener(event -> {
-    System.out.println("捕获到变更: " + event);
-    // 处理数据变更
+cdc.setEventListener(new CDCEventListener() {
+    @Override
+    public void onEventsCapture(String connectorName, int eventCount) {
+        System.out.println("捕获到变更事件数: " + eventCount);
+    }
 });
 
-cdc.start();
+cdc.start().join();
+List<ChangeEvent> events = cdc.poll();
 ```
 
 ## 最佳实践
