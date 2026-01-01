@@ -493,4 +493,622 @@ class MqOptionsTest {
         // Then
         assertEquals(120, options.getTrimIntervalSec());
     }
+
+    // ==================== Additional Branch Coverage Tests ====================
+
+    @Test
+    void testBuilderWithRebalanceIntervalSec() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .rebalanceIntervalSec(10)
+            .build();
+
+        // Then
+        assertEquals(10, options.getRebalanceIntervalSec());
+    }
+
+    @Test
+    void testBuilderWithRebalanceIntervalSecZeroClampedToOne() {
+        // Given & When - branch: Math.max(1, v) with v=0
+        MqOptions options = MqOptions.builder()
+            .rebalanceIntervalSec(0)
+            .build();
+
+        // Then
+        assertEquals(1, options.getRebalanceIntervalSec());
+    }
+
+    @Test
+    void testBuilderWithRenewIntervalSec() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .renewIntervalSec(2)
+            .build();
+
+        // Then
+        assertEquals(2, options.getRenewIntervalSec());
+    }
+
+    @Test
+    void testBuilderWithRenewIntervalSecZeroClampedToOne() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .renewIntervalSec(0)
+            .build();
+
+        // Then
+        assertEquals(1, options.getRenewIntervalSec());
+    }
+
+    @Test
+    void testBuilderWithPendingScanIntervalSec() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .pendingScanIntervalSec(60)
+            .build();
+
+        // Then
+        assertEquals(60, options.getPendingScanIntervalSec());
+    }
+
+    @Test
+    void testBuilderWithPendingScanIntervalSecZeroClampedToOne() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .pendingScanIntervalSec(0)
+            .build();
+
+        // Then
+        assertEquals(1, options.getPendingScanIntervalSec());
+    }
+
+    @Test
+    void testBuilderWithClaimIdleMsZeroAllowed() {
+        // Given & When - branch: Math.max(0, v) allows 0
+        MqOptions options = MqOptions.builder()
+            .claimIdleMs(0)
+            .build();
+
+        // Then
+        assertEquals(0, options.getClaimIdleMs());
+    }
+
+    @Test
+    void testBuilderWithClaimIdleMsNegativeClampedToZero() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .claimIdleMs(-1000)
+            .build();
+
+        // Then
+        assertEquals(0, options.getClaimIdleMs());
+    }
+
+    @Test
+    void testBuilderWithClaimBatchSizeZeroClampedToOne() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .claimBatchSize(0)
+            .build();
+
+        // Then
+        assertEquals(1, options.getClaimBatchSize());
+    }
+
+    @Test
+    void testBuilderWithMaxInFlightPositive() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .maxInFlight(1000)
+            .build();
+
+        // Then
+        assertEquals(1000, options.getMaxInFlight());
+    }
+
+    @Test
+    void testBuilderWithMaxInFlightZeroAllowed() {
+        // Given & When - branch: Math.max(0, v) allows 0 (disabled)
+        MqOptions options = MqOptions.builder()
+            .maxInFlight(0)
+            .build();
+
+        // Then
+        assertEquals(0, options.getMaxInFlight());
+    }
+
+    @Test
+    void testBuilderWithMaxInFlightNegativeClampedToZero() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .maxInFlight(-100)
+            .build();
+
+        // Then
+        assertEquals(0, options.getMaxInFlight());
+    }
+
+    @Test
+    void testBuilderWithMaxLeasedPartitionsPerConsumerPositive() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .maxLeasedPartitionsPerConsumer(16)
+            .build();
+
+        // Then
+        assertEquals(16, options.getMaxLeasedPartitionsPerConsumer());
+    }
+
+    @Test
+    void testBuilderWithMaxLeasedPartitionsPerConsumerZeroAllowed() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .maxLeasedPartitionsPerConsumer(0)
+            .build();
+
+        // Then
+        assertEquals(0, options.getMaxLeasedPartitionsPerConsumer());
+    }
+
+    @Test
+    void testBuilderWithMaxLeasedPartitionsPerConsumerNegativeClampedToZero() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .maxLeasedPartitionsPerConsumer(-5)
+            .build();
+
+        // Then
+        assertEquals(0, options.getMaxLeasedPartitionsPerConsumer());
+    }
+
+    @Test
+    void testBuilderWithRetryMaxAttemptsZeroClampedToOne() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .retryMaxAttempts(0)
+            .build();
+
+        // Then
+        assertEquals(1, options.getRetryMaxAttempts());
+    }
+
+    @Test
+    void testBuilderWithRetryBaseBackoffMsZeroAllowed() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .retryBaseBackoffMs(0)
+            .build();
+
+        // Then
+        assertEquals(0, options.getRetryBaseBackoffMs());
+    }
+
+    @Test
+    void testBuilderWithRetryBaseBackoffMsNegativeClampedToZero() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .retryBaseBackoffMs(-500)
+            .build();
+
+        // Then
+        assertEquals(0, options.getRetryBaseBackoffMs());
+    }
+
+    @Test
+    void testBuilderWithRetryMaxBackoffMsZeroAllowed() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .retryMaxBackoffMs(0)
+            .build();
+
+        // Then
+        assertEquals(0, options.getRetryMaxBackoffMs());
+    }
+
+    @Test
+    void testBuilderWithRetryMaxBackoffMsNegativeClampedToZero() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .retryMaxBackoffMs(-1000)
+            .build();
+
+        // Then
+        assertEquals(0, options.getRetryMaxBackoffMs());
+    }
+
+    @Test
+    void testBuilderWithRetryMoverBatchZeroClampedToOne() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .retryMoverBatch(0)
+            .build();
+
+        // Then
+        assertEquals(1, options.getRetryMoverBatch());
+    }
+
+    @Test
+    void testBuilderWithRetryMoverIntervalSec() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .retryMoverIntervalSec(5)
+            .build();
+
+        // Then
+        assertEquals(5, options.getRetryMoverIntervalSec());
+    }
+
+    @Test
+    void testBuilderWithRetryMoverIntervalSecZeroClampedToOne() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .retryMoverIntervalSec(0)
+            .build();
+
+        // Then
+        assertEquals(1, options.getRetryMoverIntervalSec());
+    }
+
+    @Test
+    void testBuilderWithRetryLockWaitMsPositive() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .retryLockWaitMs(200)
+            .build();
+
+        // Then
+        assertEquals(200, options.getRetryLockWaitMs());
+    }
+
+    @Test
+    void testBuilderWithRetryLockWaitMsZeroAllowed() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .retryLockWaitMs(0)
+            .build();
+
+        // Then
+        assertEquals(0, options.getRetryLockWaitMs());
+    }
+
+    @Test
+    void testBuilderWithRetryLockWaitMsNegativeClampedToZero() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .retryLockWaitMs(-50)
+            .build();
+
+        // Then
+        assertEquals(0, options.getRetryLockWaitMs());
+    }
+
+    @Test
+    void testBuilderWithRetryLockLeaseMsPositive() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .retryLockLeaseMs(1000)
+            .build();
+
+        // Then
+        assertEquals(1000, options.getRetryLockLeaseMs());
+    }
+
+    @Test
+    void testBuilderWithRetryLockLeaseMsZeroAllowed() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .retryLockLeaseMs(0)
+            .build();
+
+        // Then
+        assertEquals(0, options.getRetryLockLeaseMs());
+    }
+
+    @Test
+    void testBuilderWithRetryLockLeaseMsNegativeClampedToZero() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .retryLockLeaseMs(-100)
+            .build();
+
+        // Then
+        assertEquals(0, options.getRetryLockLeaseMs());
+    }
+
+    @Test
+    void testBuilderWithKeyPrefixEmptyStringIgnored() {
+        // Given & When - branch: v.isBlank() with empty string
+        MqOptions options = MqOptions.builder()
+            .keyPrefix("")
+            .build();
+
+        // Then
+        assertEquals("streaming:mq", options.getKeyPrefix());
+    }
+
+    @Test
+    void testBuilderWithStreamKeyPrefixNullIgnored() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .streamKeyPrefix(null)
+            .build();
+
+        // Then
+        assertEquals("stream:topic", options.getStreamKeyPrefix());
+    }
+
+    @Test
+    void testBuilderWithStreamKeyPrefixEmptyIgnored() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .streamKeyPrefix("")
+            .build();
+
+        // Then
+        assertEquals("stream:topic", options.getStreamKeyPrefix());
+    }
+
+    @Test
+    void testBuilderWithStreamKeyPrefixWhitespaceIgnored() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .streamKeyPrefix("  \t\n  ")
+            .build();
+
+        // Then
+        assertEquals("stream:topic", options.getStreamKeyPrefix());
+    }
+
+    @Test
+    void testBuilderWithConsumerNamePrefixNullIgnored() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .consumerNamePrefix(null)
+            .build();
+
+        // Then
+        assertEquals("consumer-", options.getConsumerNamePrefix());
+    }
+
+    @Test
+    void testBuilderWithConsumerNamePrefixEmptyIgnored() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .consumerNamePrefix("")
+            .build();
+
+        // Then
+        assertEquals("consumer-", options.getConsumerNamePrefix());
+    }
+
+    @Test
+    void testBuilderWithDlqConsumerSuffixEmptyAllowed() {
+        // Given & When - branch: v != null allows empty string (special case)
+        MqOptions options = MqOptions.builder()
+            .dlqConsumerSuffix("")
+            .build();
+
+        // Then - empty string is allowed for DLQ suffix
+        assertEquals("", options.getDlqConsumerSuffix());
+    }
+
+    @Test
+    void testBuilderWithDefaultConsumerGroupNullIgnored() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .defaultConsumerGroup(null)
+            .build();
+
+        // Then
+        assertEquals("default-group", options.getDefaultConsumerGroup());
+    }
+
+    @Test
+    void testBuilderWithDefaultConsumerGroupEmptyIgnored() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .defaultConsumerGroup("")
+            .build();
+
+        // Then
+        assertEquals("default-group", options.getDefaultConsumerGroup());
+    }
+
+    @Test
+    void testBuilderWithDefaultDlqGroupNullIgnored() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .defaultDlqGroup(null)
+            .build();
+
+        // Then
+        assertEquals("dlq-group", options.getDefaultDlqGroup());
+    }
+
+    @Test
+    void testBuilderWithDefaultDlqGroupEmptyIgnored() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .defaultDlqGroup("")
+            .build();
+
+        // Then
+        assertEquals("dlq-group", options.getDefaultDlqGroup());
+    }
+
+    @Test
+    void testBuilderWithRetentionMsZeroAllowed() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .retentionMs(0)
+            .build();
+
+        // Then
+        assertEquals(0, options.getRetentionMs());
+    }
+
+    @Test
+    void testBuilderWithRetentionMsNegativeClampedToZero() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .retentionMs(-1000)
+            .build();
+
+        // Then
+        assertEquals(0, options.getRetentionMs());
+    }
+
+    @Test
+    void testBuilderWithTrimIntervalSecZeroClampedToOne() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .trimIntervalSec(0)
+            .build();
+
+        // Then
+        assertEquals(1, options.getTrimIntervalSec());
+    }
+
+    @Test
+    void testBuilderWithDlqRetentionMaxLenPositive() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .dlqRetentionMaxLen(10000)
+            .build();
+
+        // Then
+        assertEquals(10000, options.getDlqRetentionMaxLen());
+    }
+
+    @Test
+    void testBuilderWithDlqRetentionMsZeroAllowed() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .dlqRetentionMs(0)
+            .build();
+
+        // Then
+        assertEquals(0, options.getDlqRetentionMs());
+    }
+
+    @Test
+    void testBuilderWithDlqRetentionMsNegativeClampedToZero() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .dlqRetentionMs(-5000)
+            .build();
+
+        // Then
+        assertEquals(0, options.getDlqRetentionMs());
+    }
+
+    @Test
+    void testBuilderWithAckDeletePolicyMixedCaseToLowercase() {
+        // Given & When - branch: toLowerCase() with mixed case
+        MqOptions options = MqOptions.builder()
+            .ackDeletePolicy("ImMedIate")
+            .build();
+
+        // Then
+        assertEquals("immediate", options.getAckDeletePolicy());
+    }
+
+    @Test
+    void testBuilderWithAckDeletePolicyNullIgnored() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .ackDeletePolicy(null)
+            .build();
+
+        // Then
+        assertEquals("none", options.getAckDeletePolicy());
+    }
+
+    @Test
+    void testBuilderWithAckDeletePolicyEmptyIgnored() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .ackDeletePolicy("")
+            .build();
+
+        // Then
+        assertEquals("none", options.getAckDeletePolicy());
+    }
+
+    @Test
+    void testBuilderWithAckDeletePolicyWhitespaceIgnored() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .ackDeletePolicy("   ")
+            .build();
+
+        // Then
+        assertEquals("none", options.getAckDeletePolicy());
+    }
+
+    @Test
+    void testBuilderWithAcksetTtlSecZeroClampedToOne() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .acksetTtlSec(0)
+            .build();
+
+        // Then
+        assertEquals(1, options.getAcksetTtlSec());
+    }
+
+    @Test
+    void testBuilderWithAcksetTtlSecNegativeClampedToOne() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .acksetTtlSec(-100)
+            .build();
+
+        // Then
+        assertEquals(1, options.getAcksetTtlSec());
+    }
+
+    @Test
+    void testBuilderWithLeaseTtlSecondsZeroClampedToOne() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .leaseTtlSeconds(0)
+            .build();
+
+        // Then
+        assertEquals(1, options.getLeaseTtlSeconds());
+    }
+
+    @Test
+    void testBuilderWithSchedulerThreadsZeroClampedToOne() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .schedulerThreads(0)
+            .build();
+
+        // Then
+        assertEquals(1, options.getSchedulerThreads());
+    }
+
+    @Test
+    void testBuilderWithConsumerBatchCountZeroClampedToOne() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .consumerBatchCount(0)
+            .build();
+
+        // Then
+        assertEquals(1, options.getConsumerBatchCount());
+    }
+
+    @Test
+    void testBuilderWithConsumerPollTimeoutMsZeroAllowed() {
+        // Given & When
+        MqOptions options = MqOptions.builder()
+            .consumerPollTimeoutMs(0)
+            .build();
+
+        // Then
+        assertEquals(0, options.getConsumerPollTimeoutMs());
+    }
 }
