@@ -49,21 +49,31 @@ public final class RedisAtomicCheckpointListSink<T> implements CheckpointAwareSi
             "  if ams < bms then return false end \n" +
             "  return aseq > bseq \n" +
             "end \n" +
-            "local idkey = ARGV[1] \n" +
-            "local payload = ARGV[2] \n" +
-            "local group = ARGV[3] \n" +
-            "local msgid = ARGV[4] \n" +
-            "local ttl = tonumber(ARGV[5]) \n" +
-            "local seen = redis.call('SISMEMBER', KEYS[1], idkey) \n" +
-            "if seen == 0 then \n" +
-            "  redis.call('SADD', KEYS[1], idkey) \n" +
-            "  if ttl ~= nil and ttl > 0 then redis.call('EXPIRE', KEYS[1], ttl) end \n" +
-            "  redis.call('RPUSH', KEYS[2], payload) \n" +
+            "local group = ARGV[1] \n" +
+            "local ttl = tonumber(ARGV[2]) \n" +
+            "local maxid = nil \n" +
+            "local committed = 0 \n" +
+            "if ttl ~= nil and ttl > 0 then redis.call('EXPIRE', KEYS[1], ttl) end \n" +
+            "local i = 3 \n" +
+            "while i <= #ARGV do \n" +
+            "  local idkey = ARGV[i] \n" +
+            "  local payload = ARGV[i+1] \n" +
+            "  local msgid = ARGV[i+2] \n" +
+            "  local seen = redis.call('SISMEMBER', KEYS[1], idkey) \n" +
+            "  if seen == 0 then \n" +
+            "    redis.call('SADD', KEYS[1], idkey) \n" +
+            "    redis.call('RPUSH', KEYS[2], payload) \n" +
+            "    committed = committed + 1 \n" +
+            "  end \n" +
+            "  redis.call('XACK', KEYS[3], group, msgid) \n" +
+            "  if (not maxid) or is_greater(msgid, maxid) then maxid = msgid end \n" +
+            "  i = i + 3 \n" +
             "end \n" +
-            "redis.call('XACK', KEYS[3], group, msgid) \n" +
-            "local prev = redis.call('HGET', KEYS[4], group) \n" +
-            "if (not prev) or is_greater(msgid, prev) then redis.call('HSET', KEYS[4], group, msgid) end \n" +
-            "return seen";
+            "if maxid then \n" +
+            "  local prev = redis.call('HGET', KEYS[4], group) \n" +
+            "  if (not prev) or is_greater(maxid, prev) then redis.call('HSET', KEYS[4], group, maxid) end \n" +
+            "end \n" +
+            "return committed";
 
     private final RedissonClient redissonClient;
     private final ObjectMapper objectMapper;
@@ -105,12 +115,29 @@ public final class RedisAtomicCheckpointListSink<T> implements CheckpointAwareSi
         }
         long ttlSeconds = dedupTtl == null ? 0L : Math.max(0L, dedupTtl.toSeconds());
         RScript script = redissonClient.getScript(StringCodec.INSTANCE);
+
+        java.util.Map<String, java.util.List<RedisExactlyOnceRecord<T>>> groups = new java.util.HashMap<>();
         for (RedisExactlyOnceRecord<T> r : batch) {
-            String streamKey = StreamKeys.partitionStream(r.topic(), r.partitionId());
-            String frontierKey = StreamKeys.commitFrontier(r.topic(), r.partitionId());
+            String k = r.topic() + "|" + r.consumerGroup() + "|" + r.partitionId();
+            groups.computeIfAbsent(k, kk -> new java.util.ArrayList<>()).add(r);
+        }
+
+        for (java.util.List<RedisExactlyOnceRecord<T>> rs : groups.values()) {
+            if (rs.isEmpty()) continue;
+            RedisExactlyOnceRecord<T> first = rs.get(0);
+            String streamKey = StreamKeys.partitionStream(first.topic(), first.partitionId());
+            String frontierKey = StreamKeys.commitFrontier(first.topic(), first.partitionId());
+
+            java.util.List<Object> args = new java.util.ArrayList<>(2 + rs.size() * 3);
+            args.add(first.consumerGroup());
+            args.add(String.valueOf(ttlSeconds));
+            for (RedisExactlyOnceRecord<T> r : rs) {
+                args.add(r.idempotencyKey());
+                args.add(encode(r.value()));
+                args.add(r.messageId());
+            }
             script.eval(RScript.Mode.READ_WRITE, LUA, RScript.ReturnType.INTEGER,
-                    List.of(dedupSetKey, listKey, streamKey, frontierKey),
-                    r.idempotencyKey(), encode(r.value()), r.consumerGroup(), r.messageId(), String.valueOf(ttlSeconds));
+                    List.of(dedupSetKey, listKey, streamKey, frontierKey), args.toArray());
         }
     }
 
@@ -145,4 +172,3 @@ public final class RedisAtomicCheckpointListSink<T> implements CheckpointAwareSi
         return objectMapper.writeValueAsString(v);
     }
 }
-
