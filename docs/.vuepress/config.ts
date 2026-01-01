@@ -21,7 +21,6 @@ export default defineUserConfig({
   ],
   theme: defaultTheme({
     repo: 'cuihairu/redis-streaming',
-    docsDir: 'docs',
     navbar: [
       { text: '首页', link: '/' },
       { text: '快速开始', link: '/Quick-Start' },
