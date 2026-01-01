@@ -16,6 +16,8 @@ import io.github.cuihairu.redis.streaming.mq.admin.MessageQueueAdmin;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
 import io.github.cuihairu.redis.streaming.runtime.redis.sink.RedisIdempotentListSink;
 import io.github.cuihairu.redis.streaming.runtime.redis.sink.RedisCheckpointedIdempotentListSink;
+import io.github.cuihairu.redis.streaming.runtime.redis.sink.RedisAtomicCheckpointListSink;
+import io.github.cuihairu.redis.streaming.runtime.redis.sink.RedisExactlyOnceRecord;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.redisson.Redisson;
@@ -1430,6 +1432,102 @@ class RedisRuntimeIntegrationTest {
                 Thread.sleep(50);
             }
             assertEquals(0L, admin.getPendingCount(topic, group), "expected pending cleared after checkpoint ack");
+        } finally {
+            producer.close();
+            client.shutdown();
+        }
+    }
+
+    @Test
+    void atomicCheckpointRedisSinkCanCommitAndAckInSingleLuaScript() throws Exception {
+        RedissonClient client = createClient();
+        String topic = "rt-topic-" + UUID.randomUUID().toString().substring(0, 8);
+        String group = "rt-group-" + UUID.randomUUID().toString().substring(0, 8);
+        String jobName = "rt-job-" + UUID.randomUUID().toString().substring(0, 6);
+        String jobInstanceId = "inst-" + UUID.randomUUID().toString().substring(0, 6);
+        String checkpointKeyPrefix = "streaming:runtime:checkpoint:test:" + UUID.randomUUID().toString().substring(0, 6) + ":";
+
+        String tag = "rt-" + UUID.randomUUID().toString().substring(0, 6);
+        String dedupSetKey = "rt-test:atomic:{" + tag + "}:seen";
+        String listKey = "rt-test:atomic:{" + tag + "}:list";
+        client.getKeys().delete(dedupSetKey, listKey);
+
+        RedisRuntimeConfig cfg = RedisRuntimeConfig.builder()
+                .jobName(jobName)
+                .jobInstanceId(jobInstanceId)
+                .checkpointKeyPrefix(checkpointKeyPrefix)
+                .checkpointInterval(Duration.ZERO) // manual
+                .restoreFromLatestCheckpoint(false)
+                .deferAckUntilCheckpoint(true)
+                .ackDeferredMessagesOnCheckpoint(false) // sink will XACK in Lua
+                .mqOptions(MqOptions.builder()
+                        .workerThreads(1)
+                        .schedulerThreads(1)
+                        .consumerPollTimeoutMs(100)
+                        .build())
+                .build();
+
+        MessageQueueFactory mq = new MessageQueueFactory(client, cfg.getMqOptions());
+        MessageProducer producer = mq.createProducer();
+        MessageQueueAdmin admin = mq.createAdmin();
+
+        CountDownLatch processed = new CountDownLatch(1);
+        AtomicInteger partitionId = new AtomicInteger(-1);
+        java.util.concurrent.atomic.AtomicReference<String> messageId = new java.util.concurrent.atomic.AtomicReference<>();
+
+        RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(client, cfg);
+        env.fromMqTopicWithId("s1", topic, group)
+                .map(m -> {
+                    String pid = m.getHeaders() == null ? null : m.getHeaders().get(MqHeaders.PARTITION_ID);
+                    int p = pid == null ? -1 : Integer.parseInt(pid);
+                    partitionId.set(p);
+                    messageId.set(m.getId());
+                    processed.countDown();
+                    String idem = m.getHeaders() == null ? null : m.getHeaders().get(MqHeaders.ORIGINAL_MESSAGE_ID);
+                    if (idem == null || idem.isBlank()) {
+                        idem = m.getId();
+                    }
+                    return new RedisExactlyOnceRecord<>(topic, group, p, m.getId(), idem, (String) m.getPayload());
+                })
+                .addSink(new RedisAtomicCheckpointListSink<>(client, dedupSetKey, listKey, new ObjectMapper(), Duration.ofMinutes(10)));
+
+        try (RedisJobClient job = env.executeAsync()) {
+            producer.send(topic, "k1", "x").get(5, TimeUnit.SECONDS);
+            assertTrue(processed.await(15, TimeUnit.SECONDS));
+
+            assertEquals(0, client.getList(listKey, StringCodec.INSTANCE).size(),
+                    "atomic checkpoint sink should not commit side effects before checkpoint");
+            assertTrue(admin.getPendingCount(topic, group) >= 1, "expected pending when ack is deferred");
+
+            Checkpoint cp = job.triggerCheckpointNow();
+            assertNotNull(cp);
+
+            long deadline = System.currentTimeMillis() + 5000L;
+            while (System.currentTimeMillis() < deadline) {
+                if (client.getList(listKey, StringCodec.INSTANCE).size() >= 1) {
+                    break;
+                }
+                Thread.sleep(50);
+            }
+            assertEquals(1, client.getList(listKey, StringCodec.INSTANCE).size(),
+                    "atomic checkpoint sink should commit side effects on checkpoint complete");
+
+            long pendingDeadline = System.currentTimeMillis() + 5000L;
+            while (System.currentTimeMillis() < pendingDeadline) {
+                if (admin.getPendingCount(topic, group) <= 0) {
+                    break;
+                }
+                Thread.sleep(50);
+            }
+            assertEquals(0L, admin.getPendingCount(topic, group),
+                    "pending should be cleared by sink XACK even when runtime ackAll is disabled");
+
+            int pid = partitionId.get();
+            assertTrue(pid >= 0);
+            String mid = messageId.get();
+            assertNotNull(mid);
+            RMap<String, String> frontier = client.getMap(StreamKeys.commitFrontier(topic, pid), StringCodec.INSTANCE);
+            assertEquals(mid, frontier.get(group), "commit frontier should advance in the same Lua script");
         } finally {
             producer.close();
             client.shutdown();

@@ -82,6 +82,7 @@ This module also contains an experimental Redis-backed runtime that composes exi
 - Manual checkpointing (experimental): call `RedisJobClient.triggerCheckpointNow()` to force a stop-the-world checkpoint.
 - Job control (experimental): call `RedisJobClient.pause()/resume()` to pause/resume consumption, and `RedisJobClient.inFlight()` for a best-effort in-flight count.
 - End-to-end checkpoint (experimental): enable `RedisRuntimeConfig.deferAckUntilCheckpoint(true)` to defer MQ ACK until checkpoint completion, and optionally implement `CheckpointAwareSink` to commit buffered side effects on `onCheckpointComplete(...)`.
+- Redis-only atomic sink (experimental): use `RedisAtomicCheckpointListSink` + `RedisExactlyOnceRecord` with `deferAckUntilCheckpoint(true)` and `ackDeferredMessagesOnCheckpoint(false)` to atomically (Lua) commit sink + XACK + advance commit frontier.
 
 Limitations (current):
 - Windowed execution is not supported by Redis runtime yet.

@@ -95,6 +95,7 @@ Redis runtime 当前提供的是 “at-least-once + 更强对齐”的一致性�
 - Redis Cluster 下跨 slot key 无法在同一个 Lua 脚本原子执行（除非使用 hash tags 强制同槽位）。
 - 这类 exactly-once 仅在“sink 也在 Redis 内”时才成立。
 - 进一步增强（与 checkpoint 对齐）：可以将 sink side effects 延迟到 checkpoint 完成点，并在 checkpoint complete 之后统一提交（例如 `RedisCheckpointedIdempotentListSink` 这种 “commit-on-checkpoint” 模式）。
+- Redis-only 原子提交（单 Lua）：可以在 checkpoint complete 时用 Lua 将 “写入 sink + XACK + 推进 commit frontier” 打包成单脚本原子执行（参考：`RedisAtomicCheckpointListSink` + `RedisExactlyOnceRecord`）。
 
 ## 推荐落地路线（分阶段）
 

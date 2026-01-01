@@ -553,7 +553,11 @@ public final class RedisStreamExecutionEnvironment {
             }
 
             if (config.isDeferAckUntilCheckpoint()) {
-                deferredAcks.ackAll(redissonClient);
+                if (config.isAckDeferredMessagesOnCheckpoint()) {
+                    deferredAcks.ackAll(redissonClient);
+                } else {
+                    deferredAcks.clear();
+                }
             }
             return cp;
         } finally {
@@ -633,6 +637,18 @@ public final class RedisStreamExecutionEnvironment {
                 }
             }
             return out;
+        }
+
+        void clear() {
+            for (java.util.concurrent.ConcurrentHashMap<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>> per : byPipeline.values()) {
+                for (java.util.concurrent.ConcurrentLinkedQueue<String> q : per.values()) {
+                    try {
+                        q.clear();
+                    } catch (Exception ignore) {
+                    }
+                }
+            }
+            byPipeline.clear();
         }
 
         void ackAll(RedissonClient redissonClient) {

@@ -36,6 +36,7 @@ public final class RedisRuntimeConfig {
     private final Duration sinkDeduplicationTtl;
     private final String sinkDedupKeyPrefix;
     private final boolean deferAckUntilCheckpoint;
+    private final boolean ackDeferredMessagesOnCheckpoint;
     private final Duration checkpointInterval;
     private final boolean restoreFromLatestCheckpoint;
     private final String checkpointKeyPrefix;
@@ -69,6 +70,7 @@ public final class RedisRuntimeConfig {
         this.sinkDeduplicationTtl = b.sinkDeduplicationTtl == null ? Duration.ofDays(7) : b.sinkDeduplicationTtl;
         this.sinkDedupKeyPrefix = Objects.requireNonNull(b.sinkDedupKeyPrefix, "sinkDedupKeyPrefix");
         this.deferAckUntilCheckpoint = b.deferAckUntilCheckpoint;
+        this.ackDeferredMessagesOnCheckpoint = b.ackDeferredMessagesOnCheckpoint;
         this.checkpointInterval = b.checkpointInterval == null ? Duration.ZERO : b.checkpointInterval;
         this.restoreFromLatestCheckpoint = b.restoreFromLatestCheckpoint;
         this.checkpointKeyPrefix = Objects.requireNonNull(b.checkpointKeyPrefix, "checkpointKeyPrefix");
@@ -190,6 +192,16 @@ public final class RedisRuntimeConfig {
     }
 
     /**
+     * When {@link #isDeferAckUntilCheckpoint()} is enabled, whether the runtime should ACK deferred messages
+     * after {@code onCheckpointComplete()}.
+     *
+     * <p>Disable this if a Redis-only sink performs its own atomic {@code XACK} (e.g. via Lua) on checkpoint completion.</p>
+     */
+    public boolean isAckDeferredMessagesOnCheckpoint() {
+        return ackDeferredMessagesOnCheckpoint;
+    }
+
+    /**
      * Periodic checkpoint interval. {@link Duration#ZERO} disables periodic checkpoints.
      *
      * <p>Checkpoints are stored in Redis and include best-effort snapshots of (source offsets, state).</p>
@@ -264,6 +276,7 @@ public final class RedisRuntimeConfig {
         private Duration sinkDeduplicationTtl = Duration.ofDays(7);
         private String sinkDedupKeyPrefix = "streaming:runtime:sinkDedup:";
         private boolean deferAckUntilCheckpoint = false;
+        private boolean ackDeferredMessagesOnCheckpoint = true;
         private Duration checkpointInterval = Duration.ZERO;
         private boolean restoreFromLatestCheckpoint = false;
         private String checkpointKeyPrefix = "streaming:runtime:checkpoint:";
@@ -352,6 +365,11 @@ public final class RedisRuntimeConfig {
 
         public Builder deferAckUntilCheckpoint(boolean enabled) {
             this.deferAckUntilCheckpoint = enabled;
+            return this;
+        }
+
+        public Builder ackDeferredMessagesOnCheckpoint(boolean enabled) {
+            this.ackDeferredMessagesOnCheckpoint = enabled;
             return this;
         }
 

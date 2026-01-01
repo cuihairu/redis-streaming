@@ -264,6 +264,7 @@
   - [ ] v2.5：Outbox/WAL（Redis 内 outbox + 异步投递器），作为跨系统 exactly-once 的折中方案
   - [ ] v3：Redis-only exactly-once（Lua 原子写 sink + 更新 offsets + XACK；Redis Cluster 需同 hash slot）
     - [x] Redis-only commit-on-checkpoint sink：`RedisCheckpointedIdempotentListSink<T>`（checkpoint complete 后 flush side effects）（已实现：2026-01-01）
+    - [x] Redis-only atomic commit（单 Lua）：`RedisAtomicCheckpointListSink` + `RedisExactlyOnceRecord`（写 sink + XACK + commit frontier 原子提交）（已实现：2026-01-01）
 - [x] State 演进：state schema/versioning、兼容升级策略、回滚策略（已实现：2026-01-01）
   - [x] `StateDescriptor.schemaVersion`（默认 1）
   - [x] Redis runtime state schema 元数据与校验（`stateSchemaEvolutionEnabled` + `stateSchemaMismatchPolicy=FAIL/CLEAR/IGNORE`）
