@@ -15,7 +15,7 @@ export default defineUserConfig({
   bundler: viteBundler(),
   plugins: [
     markdownChartPlugin({
-      chart: true,
+      mermaid: true,
     }),
   ],
   theme: defaultTheme({
