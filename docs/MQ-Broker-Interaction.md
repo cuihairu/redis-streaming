@@ -30,29 +30,29 @@
 ```mermaid
 sequenceDiagram
   participant P as Producer
-  participant M as Meta/Registry
-  participant S as stream:topic:{t}:p:i
-  P->>M: ensure topic meta(partitions)
-  P->>P: i = hash(key)%P
-  P->>S: XADD payload, headers(partitionId=i)
+  participant M as MetaRegistry
+  participant S as stream_topic_t_p_i
+  P->>M: ensure topic meta partitions
+  P->>P: i = hash(key) % P
+  P->>S: XADD payload headers partitionId=i
 ```
 
 ## 消费/重试/死信
 ```mermaid
 sequenceDiagram
   participant W as Worker
-  participant S as stream:topic:{t}:p:i
+  participant S as stream_topic_t_p_i
   participant RB as ZSET retry bucket
   participant RH as Hash items
-  participant DL as stream:topic:{t}:dlq
+  participant DL as stream_topic_t_dlq
   W->>S: XREADGROUP
   alt success
     W->>S: XACK
   else retry
     W->>S: XACK
-    W->>RB: ZADD(now+backoff, itemKey)
-    W->>RH: HSET(itemKey, envelope)
-    Note over RB: 定时 Lua 搬运（ZRANGEBYSCORE -> XADD -> ZREM/DEL）
+    W->>RB: ZADD now+backoff itemKey
+    W->>RH: HSET itemKey envelope
+    Note over RB: Scheduled Lua move ZRANGEBYSCORE to XADD to ZREM DEL
   else dead
     W->>DL: XADD
     W->>S: XACK
@@ -64,13 +64,13 @@ sequenceDiagram
 sequenceDiagram
   participant C as Consumer Instance
   participant L as Lease Key
-  participant S as stream:topic:{t}:p:i
-  C->>L: SET NX EX (acquire)
+  participant S as stream_topic_t_p_i
+  C->>L: SET NX EX acquire
   loop renew
-    C->>L: EXPIRE (ttl)
+    C->>L: EXPIRE ttl
   end
-  Note over C: owner down -> ttl expire
-  C->>S: XAUTOCLAIM (or XPENDING+XCLAIM)
+  Note over C: owner down then ttl expire
+  C->>S: XAUTOCLAIM or XPENDING XCLAIM
 ```
 
 ## Kafka 对照表

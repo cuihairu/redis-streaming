@@ -19,34 +19,34 @@
 ## 架构图
 ```mermaid
 flowchart LR
-  subgraph 生产者
+  subgraph Producer
     P1(Producer 1)
     P2(Producer 2)
   end
   subgraph Redis
     direction TB
     META(Topic Meta/Registry)
-    P0[stream:topic:{t}:p:0]
-    P1s[stream:topic:{t}:p:1]
-    PNs[stream:topic:{t}:p:N-1]
-    DLQ[stream:topic:{t}:dlq]
+    P0[stream:topic:t:p:0]
+    P1s[stream:topic:t:p:1]
+    PNs[stream:topic:t:p:N-1]
+    DLQ[stream:topic:t:dlq]
     LEASE[Lease Keys]
     RETRY[Retry ZSET]
   end
-  subgraph 消费者组 g
+  subgraph ConsumerGroup
     C1(Consumer A)
     C2(Consumer B)
   end
-  P1 -->|hash(key)->分区| P0
-  P2 -->|hash(key)->分区| P1s
+  P1 -->|hash key to partition| P0
+  P2 -->|hash key to partition| P1s
   C1 -->|XREADGROUP| P0
   C2 -->|XREADGROUP| P1s
   C1 -.XAUTOCLAIM.-> P0
   C2 -.XAUTOCLAIM.-> P1s
-  C1 -.失败-> DLQ
-  C2 -.失败-> DLQ
-  C1 <-.租约.-> LEASE
-  C2 <-.租约.-> LEASE
+  C1 -.fail.-> DLQ
+  C2 -.fail.-> DLQ
+  C1 <-.lease.-> LEASE
+  C2 <-.lease.-> LEASE
   META --- P0
   META --- P1s
   META --- PNs

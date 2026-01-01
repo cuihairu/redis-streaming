@@ -8,7 +8,7 @@
 ## 逻辑架构
 ```mermaid
 flowchart TB
-  subgraph 应用
+  subgraph Application
     PD[Producer]
     CS[Consumer]
   end
