@@ -45,7 +45,13 @@ public class CDCManager {
         CDCConnector connector = connectors.remove(name);
         if (connector != null) {
             if (connector.isRunning()) {
-                connector.stop();
+                try {
+                    connector.stop()
+                            .orTimeout(10, TimeUnit.SECONDS)
+                            .join();
+                } catch (Exception e) {
+                    log.warn("Failed to stop removed CDC connector: {}", name, e);
+                }
             }
             log.info("Removed CDC connector: {}", name);
         }
