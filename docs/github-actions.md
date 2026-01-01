@@ -1,3 +1,3 @@
-# GitHub Actions / CI
+# CI/CD
 
-Moved to `docs/wiki/GitHub-Actions.md` (Chinese) and `docs/wiki/en/GitHub-Actions-en.md` (English).
+工作流配置详见 docs/github-actions.md。
