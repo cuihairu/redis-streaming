@@ -1,3 +1,3 @@
 # Troubleshooting
 
-See `docs/wiki/Troubleshooting.md` (Chinese) and `docs/wiki/en/Troubleshooting-en.md` (English).
+See [Troubleshooting.md](./Troubleshooting.md) (Chinese) and [en/Troubleshooting-en.md](./en/Troubleshooting-en.md) (English).

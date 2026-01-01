@@ -1,3 +1,3 @@
 # Redis MQ Design
 
-See `docs/wiki/MQ-Design.md` (Chinese) and `docs/wiki/en/MQ-Design-en.md` (English).
+See [MQ-Design.md](./MQ-Design.md) (Chinese) and [en/MQ-Design-en.md](./en/MQ-Design-en.md) (English).

@@ -6,7 +6,7 @@ Primary API surface lives in:
 Module-level guides/examples:
 - `README.md`
 - `RUNNING_EXAMPLES.md`
-- `docs/wiki/` (module docs, migrated from GitHub Wiki)
+- Module documentation (see sidebar navigation)
 
 Generate Javadoc locally:
 ```bash

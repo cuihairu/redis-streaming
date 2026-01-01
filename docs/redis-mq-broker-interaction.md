@@ -1,3 +1,3 @@
 # Redis MQ Broker Interaction
 
-See `docs/wiki/MQ-Broker-Interaction.md` (Chinese) and `docs/wiki/en/MQ-Broker-Interaction-en.md` (English).
+See [MQ-Broker-Interaction.md](./MQ-Broker-Interaction.md) (Chinese) and [en/MQ-Broker-Interaction-en.md](./en/MQ-Broker-Interaction-en.md) (English).
