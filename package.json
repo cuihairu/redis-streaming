@@ -1,0 +1,5 @@
+{
+  "devDependencies": {
+    "vuepress-plugin-md-enhance": "^2.0.0-rc.101"
+  }
+}
