@@ -214,6 +214,11 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
             // stop all workers
             workers.values().forEach(PartitionWorker::stop);
             workers.clear();
+            try {
+                MqMetrics.get().setInFlight(consumerName, inFlight.get(), options.getMaxInFlight());
+            } catch (Throwable ignore) {
+            }
+            subscriptions.forEach((topic, sub) -> publishPartitionMetrics(topic, sub.consumerGroup, computeEligiblePartitions(topic, sub.consumerGroup)));
         }
     }
 
@@ -324,7 +329,11 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                             message.getHeaders().put(io.github.cuihairu.redis.streaming.mq.MqHeaders.PARTITION_ID, Integer.toString(pidInt));
                             long start = System.nanoTime();
                             acquireInFlightPermit();
-                            inFlight.incrementAndGet();
+                            long nowInFlight = inFlight.incrementAndGet();
+                            try {
+                                MqMetrics.get().setInFlight(consumerName, nowInFlight, options.getMaxInFlight());
+                            } catch (Throwable ignore) {
+                            }
                             try {
                                 MessageHandleResult result = handler.handle(message);
                                 handleResultBroker(topic, group, id, partitionId, message, result, data);
@@ -336,7 +345,11 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                                 MqMetrics.get().recordHandleLatency(topic, pidInt, (System.nanoTime() - start) / 1_000_000);
                                 MqMetrics.get().incConsumed(topic, pidInt);
                             } finally {
-                                inFlight.decrementAndGet();
+                                long after = inFlight.decrementAndGet();
+                                try {
+                                    MqMetrics.get().setInFlight(consumerName, after, options.getMaxInFlight());
+                                } catch (Throwable ignore) {
+                                }
                                 releaseInFlightPermit();
                             }
                         }
@@ -374,7 +387,11 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                             message.getHeaders().put(io.github.cuihairu.redis.streaming.mq.MqHeaders.PARTITION_ID, Integer.toString(pidInt));
                             long start = System.nanoTime();
                             acquireInFlightPermit();
-                            inFlight.incrementAndGet();
+                            long nowInFlight = inFlight.incrementAndGet();
+                            try {
+                                MqMetrics.get().setInFlight(consumerName, nowInFlight, options.getMaxInFlight());
+                            } catch (Throwable ignore) {
+                            }
                             try {
                                 MessageHandleResult result = handler.handle(message);
                                 handleResult(stream, group, messageId, partitionId, message, result, data);
@@ -386,7 +403,11 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                                 MqMetrics.get().recordHandleLatency(topic, pidInt, (System.nanoTime() - start) / 1_000_000);
                                 MqMetrics.get().incConsumed(topic, pidInt);
                             } finally {
-                                inFlight.decrementAndGet();
+                                long after = inFlight.decrementAndGet();
+                                try {
+                                    MqMetrics.get().setInFlight(consumerName, after, options.getMaxInFlight());
+                                } catch (Throwable ignore) {
+                                }
                                 releaseInFlightPermit();
                             }
                         }
@@ -837,10 +858,18 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         if (inFlightLimiter == null) {
             return;
         }
+        long startNs = System.nanoTime();
         boolean interrupted = false;
         while (running.get() && !closed.get()) {
             try {
                 inFlightLimiter.acquire();
+                long waitMs = (System.nanoTime() - startNs) / 1_000_000;
+                if (waitMs > 0) {
+                    try {
+                        MqMetrics.get().recordBackpressureWait(consumerName, waitMs);
+                    } catch (Throwable ignore) {
+                    }
+                }
                 return;
             } catch (InterruptedException e) {
                 interrupted = true;
@@ -927,6 +956,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         if (!running.get() || closed.get()) return;
         subscriptions.forEach((topic, sub) -> {
             int pc = partitionRegistry.getPartitionCount(topic);
+            int eligibleCount = 0;
             for (int i = 0; i < pc; i++) {
                 if (sub.partitionModulo != null && sub.partitionRemainder != null) {
                     int mod = Math.max(1, sub.partitionModulo);
@@ -935,6 +965,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                         continue;
                     }
                 }
+                eligibleCount++;
                 PartitionKey pk = new PartitionKey(topic, sub.consumerGroup, i);
                 String leaseKey = StreamKeys.lease(topic, sub.consumerGroup, i);
                 // If we already own and have a worker, continue
@@ -961,11 +992,13 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                     log.info("Acquired partition {}-{} for group {}", topic, i, sub.consumerGroup);
                 }
             }
+            publishPartitionMetrics(topic, sub.consumerGroup, eligibleCount);
         });
     }
 
     private void renewLeases() {
         if (!running.get() || closed.get()) return;
+        Set<String> touched = new HashSet<>();
         workers.forEach((pk, w) -> {
             String leaseKey = StreamKeys.lease(pk.topic, pk.group, pk.partitionId);
             boolean ok = leaseManager.renewIfOwner(leaseKey, consumerName, options.getLeaseTtlSeconds());
@@ -975,7 +1008,53 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 workers.remove(pk);
                 log.info("Lost lease for {}", pk);
             }
+            touched.add(pk.topic + "|" + pk.group);
         });
+        subscriptions.forEach((topic, sub) -> touched.add(topic + "|" + sub.consumerGroup));
+        for (String key : touched) {
+            String[] parts = key.split("\\|", 2);
+            if (parts.length != 2) {
+                continue;
+            }
+            String topic = parts[0];
+            String group = parts[1];
+            int eligibleCount = computeEligiblePartitions(topic, group);
+            publishPartitionMetrics(topic, group, eligibleCount);
+        }
+    }
+
+    private int computeEligiblePartitions(String topic, String group) {
+        Subscription sub = subscriptions.get(topic);
+        if (sub == null || !Objects.equals(sub.consumerGroup, group)) {
+            return 0;
+        }
+        int pc = partitionRegistry.getPartitionCount(topic);
+        if (sub.partitionModulo == null || sub.partitionRemainder == null) {
+            return pc;
+        }
+        int mod = Math.max(1, sub.partitionModulo);
+        int rem = Math.max(0, sub.partitionRemainder);
+        int eligible = 0;
+        for (int i = 0; i < pc; i++) {
+            if ((i % mod) == (rem % mod)) {
+                eligible++;
+            }
+        }
+        return eligible;
+    }
+
+    private void publishPartitionMetrics(String topic, String group, int eligibleCount) {
+        try {
+            int leased = 0;
+            for (PartitionKey pk : workers.keySet()) {
+                if (Objects.equals(pk.topic, topic) && Objects.equals(pk.group, group)) {
+                    leased++;
+                }
+            }
+            MqMetrics.get().setEligiblePartitions(consumerName, topic, group, eligibleCount);
+            MqMetrics.get().setLeasedPartitions(consumerName, topic, group, leased);
+        } catch (Throwable ignore) {
+        }
     }
 
     private static class Subscription {

@@ -280,6 +280,7 @@
 ## P2：可扩展与性能
 - [x] 并行度模型（基础）：`pipelineParallelism(n)` + 分区固定分配（`partitionId % n`）以实现多子任务并行（已实现：2026-01-01）
 - [x] 背压（基础）：`MqOptions.maxInFlight(n)`（consumer 级全局并发上限，信号量限流）（已实现：2026-01-01）
+- [x] 并行度/背压追踪（基础）：in-flight、permit wait、eligible/leased partitions（MQ Micrometer 指标）（已实现：2026-01-01）
 - [ ] 资源模型：线程池/队列容量/批大小可配；安全默认值；压测基准与调优指南
 - [ ] Window 运行时支持（Redis runtime）：事件时间/水位线/触发器/迟到数据处理（明确语义）
 
