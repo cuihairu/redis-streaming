@@ -92,6 +92,86 @@ class CDCManagerTest {
     }
 
     @Test
+    void testRemoveConnectorIgnoresStopFailure() throws Exception {
+        // Given
+        CDCConnector bad = new CDCConnector() {
+            private final java.util.concurrent.atomic.AtomicBoolean running = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+            @Override
+            public CompletableFuture<Void> start() {
+                return CompletableFuture.runAsync(() -> running.set(true));
+            }
+
+            @Override
+            public CompletableFuture<Void> stop() {
+                running.set(false);
+                return CompletableFuture.failedFuture(new RuntimeException("stop failed"));
+            }
+
+            @Override
+            public List<ChangeEvent> poll() {
+                return List.of();
+            }
+
+            @Override
+            public void commit(String position) {
+            }
+
+            @Override
+            public boolean isRunning() {
+                return running.get();
+            }
+
+            @Override
+            public String getName() {
+                return "bad";
+            }
+
+            @Override
+            public CDCConfiguration getConfiguration() {
+                return CDCConfigurationBuilder.forDatabasePolling("bad")
+                        .jdbcUrl("jdbc:h2:mem:test")
+                        .username("sa")
+                        .password("")
+                        .build();
+            }
+
+            @Override
+            public void setEventListener(CDCEventListener listener) {
+            }
+
+            @Override
+            public CDCHealthStatus getHealthStatus() {
+                return CDCHealthStatus.unknown("n/a");
+            }
+
+            @Override
+            public CDCMetrics getMetrics() {
+                return new CDCMetrics();
+            }
+
+            @Override
+            public String getCurrentPosition() {
+                return null;
+            }
+
+            @Override
+            public void resetToPosition(String position) {
+            }
+        };
+        manager.addConnector(bad);
+        bad.start().get();
+
+        // When
+        CDCConnector removed = manager.removeConnector("bad");
+
+        // Then
+        assertThat(removed).isSameAs(bad);
+        assertThat(manager.getConnector("bad")).isNull();
+        assertThat(bad.isRunning()).isFalse();
+    }
+
+    @Test
     void testGetConnector() {
         // Given
         manager.addConnector(connector1);
