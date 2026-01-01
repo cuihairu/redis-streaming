@@ -218,6 +218,67 @@
 ### 12. io.github.cuihairu.redis.streaming.config.impl - 55%
 **关键问题：** 配置中心实现测试不足
 **未覆盖的关键类：**
+- `RedisConfigCenter` - 0% (14 个方法未覆盖)
+- `RedisConfigService` - 58% (3 个方法未覆盖)
+
+**建议添加的测试类型：**
+- [ ] **集成测试**（需要 Redis）
+  - 配置发布和订阅测试
+  - 配置版本管理测试
+  - 配置变更通知测试
+  - 配置历史查询测试
+  - 配置权限测试
+
+---
+
+### 13. io.github.cuihairu.redis.streaming.registry.impl - 55%
+**关键问题：** 服务注册实现测试不足
+**未覆盖的关键类：**
+- `RedisNamingService` - 44% (18 个方法未覆盖)
+- `RedisServiceProvider` - 48% (13 个方法未覆盖)
+- `RedisServiceConsumer` - 58% (16 个方法未覆盖)
+
+**建议添加的测试类型：**
+- [ ] **集成测试**
+  - 服务注册和发现测试
+  - 服务健康检查测试
+  - 服务元数据管理测试
+  - 服务实例过滤测试
+  - 命名服务解析测试
+
+---
+
+### 14. io.github.cuihairu.redis.streaming.mq.config - 62%
+**关键问题：** MQ 配置构建器分支覆盖不足
+**未覆盖的关键类：**
+- `MqOptions.Builder` - 49% (16 个方法未覆盖，22 个分支未覆盖)
+
+**建议添加的测试类型：**
+- [ ] **单元测试**
+  - 配置参数校验测试
+  - 默认值测试
+  - Builder 模式各种组合测试
+  - 必填参数缺失测试
+  - 参数范围校验测试
+
+---
+
+## 优先级 4：覆盖率 65%-70%（需要小幅提升）
+
+### 15. io.github.cuihairu.redis.streaming.table.impl - 65%
+**关键问题：** KTable 实现测试不足
+**未覆盖的关键类：**
+- `RedisKGroupedTable` - 0% (7 个方法未覆盖)
+- `RedisKTable` - 76% (6 个方法未覆盖)
+- `InMemoryKTable` - 93% (1 个方法未覆盖)
+
+**建议添加的测试类型：**
+- [ ] **集成测试**
+  - 分组表聚合测试
+  - 表 Join 测试
+  - 表更新传播测试
+  - 表状态持久化测试
+  - 表查询测试
 
 ---
 
@@ -225,6 +286,7 @@
 
 > 目标：将 `runtime` 从“最小可用单机运行时”逐步提升到可上线、可运维、可扩展的企业级运行时。
 > 范围：`runtime`（in-memory + Redis runtime）以及与 `mq/state/checkpoint/reliability/metrics` 的集成。
+> 状态：P0-P3 已完成（2026-01-01）；P4 为下一阶段（分布式/高可用/控制面）。
 
 ## P0：可上线稳定性（必须）
 - [x] Redis runtime `KeyedStream.map/reduce/sum`（已实现：2026-01-01）
@@ -300,67 +362,14 @@
   - [x] `RedisJobClient.diagnostics()`（best-effort runtime snapshot）
   - [x] Spring Boot Actuator health + `/actuator/prometheus` 指标导出（starter）
 - [x] 多环境部署：Docker/K8s 参考部署，滚动升级与回滚建议（已实现：2026-01-01）
-- `RedisConfigCenter` - 0% (14 个方法未覆盖)
-- `RedisConfigService` - 58% (3 个方法未覆盖)
 
-**建议添加的测试类型：**
-- [ ] **集成测试**（需要 Redis）
-  - 配置发布和订阅测试
-  - 配置版本管理测试
-  - 配置变更通知测试
-  - 配置历史查询测试
-  - 配置权限测试
-
----
-
-### 13. io.github.cuihairu.redis.streaming.registry.impl - 55%
-**关键问题：** 服务注册实现测试不足
-**未覆盖的关键类：**
-- `RedisNamingService` - 44% (18 个方法未覆盖)
-- `RedisServiceProvider` - 48% (13 个方法未覆盖)
-- `RedisServiceConsumer` - 58% (16 个方法未覆盖)
-
-**建议添加的测试类型：**
-- [ ] **集成测试**
-  - 服务注册和发现测试
-  - 服务健康检查测试
-  - 服务元数据管理测试
-  - 服务实例过滤测试
-  - 命名服务解析测试
-
----
-
-### 14. io.github.cuihairu.redis.streaming.mq.config - 62%
-**关键问题：** MQ 配置构建器分支覆盖不足
-**未覆盖的关键类：**
-- `MqOptions.Builder` - 49% (16 个方法未覆盖，22 个分支未覆盖)
-
-**建议添加的测试类型：**
-- [ ] **单元测试**
-  - 配置参数校验测试
-  - 默认值测试
-  - Builder 模式各种组合测试
-  - 必填参数缺失测试
-  - 参数范围校验测试
-
----
-
-## 优先级 4：覆盖率 65%-70%（需要小幅提升）
-
-### 15. io.github.cuihairu.redis.streaming.table.impl - 65%
-**关键问题：** KTable 实现测试不足
-**未覆盖的关键类：**
-- `RedisKGroupedTable` - 0% (7 个方法未覆盖)
-- `RedisKTable` - 76% (6 个方法未覆盖)
-- `InMemoryKTable` - 93% (1 个方法未覆盖)
-
-**建议添加的测试类型：**
-- [ ] **集成测试**
-  - 分组表聚合测试
-  - 表 Join 测试
-  - 表更新传播测试
-  - 表状态持久化测试
-  - 表查询测试
+## P4：分布式与高可用（下一阶段）
+- [ ] 多节点协调：leader election + fencing token（防止 split-brain / 双写）
+- [ ] 作业 HA：节点宕机自动接管（checkpoint/offset/state 一致性保证）
+- [ ] 动态伸缩：并行度变更、分区再均衡、checkpoint 向前兼容
+- [ ] 控制面：job submit/upgrade/rollback API、权限控制与审计
+- [ ] 多租户隔离：资源配额（线程/内存/in-flight）、指标维度隔离
+- [ ] 安全：Redis ACL/TLS、secret 管理、配置加密/脱敏
 
 ---
 
