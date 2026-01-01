@@ -1,7 +1,7 @@
 import { viteBundler } from '@vuepress/bundler-vite'
 import { defaultTheme } from '@vuepress/theme-default'
 import { defineUserConfig } from 'vuepress'
-import { mdEnhancePlugin } from 'vuepress-plugin-md-enhance'
+import { markdownChartPlugin } from '@vuepress/plugin-markdown-chart'
 
 const base =
   process.env.DOCS_BASE ??
@@ -14,9 +14,8 @@ export default defineUserConfig({
   base,
   bundler: viteBundler(),
   plugins: [
-    mdEnhancePlugin({
-      // 启用 Mermaid 图表支持
-      mermaid: true,
+    markdownChartPlugin({
+      chart: true,
     }),
   ],
   theme: defaultTheme({
