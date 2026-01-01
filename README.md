@@ -30,9 +30,7 @@
 - **🔌 Spring Boot 集成** - 完整的自动配置和注解支持
 - **📊 流表二元性 (Table)** - 内存版和 Redis 持久化版 KTable 已实现
 - **🎯 CEP** - 完整的复杂事件处理，支持 Kleene closure、高级模式操作
-
-### 🚧 部分实现
-- **🌊 流处理运行时 (Runtime)** - Redis-backed runtime（Redis Streams）+ 最小可用的 in-memory runtime（用于 tests/examples）
+- **🌊 流处理运行时 (Runtime)** - Redis-backed runtime（Redis Streams，单进程并行/水位线/窗口/checkpoint）+ in-memory runtime（tests/examples）
 
 ## 📦 模块架构
 
@@ -683,9 +681,10 @@ List<ChangeEvent> events = connector.poll();
 ### 🚧 部分完成模块
 
 #### Tier 1: 核心抽象层
-- [ ] **runtime** - 流处理运行时引擎
-  - 🚧 最小可用 In-Memory Runtime 已实现（用于 tests/examples）
-  - ✅ 已支持 timers / watermarks / in-memory checkpointing；窗口触发器与并行执行仍在规划，详见 `runtime/README.md`
+- [x] **runtime** - 流处理运行时引擎
+  - ✅ Redis runtime：`RedisStreamExecutionEnvironment`（Redis Streams，单进程并行/水位线/窗口/checkpoint）
+  - ✅ In-memory runtime：`StreamExecutionEnvironment`（用于 tests/examples）
+  - 注：checkpoint 为 stop-the-world（单进程），严格跨实例 barrier/分布式调度仍可进一步演进
 
 ---
 
@@ -693,9 +692,10 @@ List<ChangeEvent> events = connector.poll();
 
 #### 高优先级（可选增强）
 1. **Runtime 运行时引擎** - 统一流处理执行引擎
-   - Phase 1: 简单内存运行时（已实现）
-   - Phase 2: 分布式调度
-   - Phase 3: Window Trigger / 并行执行 / 端到端语义完善
+   - Phase 1: In-memory runtime（已实现）
+   - Phase 1.5: Redis runtime（已实现）
+   - Phase 2: 多实例协调/分布式调度与 barrier（可选）
+   - Phase 3: 严格端到端语义（2PC/outbox 等可选路线）
    - 注：当前独立模块已满足大部分使用场景
 
 #### 中优先级（功能增强）
@@ -746,8 +746,8 @@ List<ChangeEvent> events = connector.poll();
 ---
 
 **当前版本**: 0.1.1（最新发布版本）
-**最后更新**: 2025-12-31
-**完成度**: 19/20 模块完成（95.0%），1/20 模块部分完成（5.0%）
+**最后更新**: 2026-01-01
+**完成度**: 20/20 模块完成（100.0%）
 
 ### 📝 版本说明
 
@@ -766,4 +766,4 @@ List<ChangeEvent> events = connector.poll();
 - ✅ CEP 完成：复杂事件处理（含 Kleene closure、高级模式操作）
 - ✅ 监控集成：Prometheus Exporter、指标收集器
 - ✅ Spring Boot 自动配置（含 @ServiceChangeListener 注解支持）
-- 🚧 Runtime 模块：最小可用 in-memory runtime 已实现（timers/watermarks/checkpointing），用于 tests/examples；Trigger/并行执行仍在规划
+- ✅ Runtime 模块：Redis runtime + in-memory runtime（见 `runtime/` 与 `docs/`）
