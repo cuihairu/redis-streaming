@@ -4,7 +4,7 @@
 
 [![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://www.oracle.com/java/)
 [![Redis](https://img.shields.io/badge/Redis-6.0+-red.svg)](https://redis.io/)
-[![Version](https://img.shields.io/badge/Version-0.1.1-blue.svg)](https://github.com/cuihairu/redis-streaming)
+[![Version](https://img.shields.io/badge/Version-0.2.0-blue.svg)](https://github.com/cuihairu/redis-streaming)
 [![codecov](https://codecov.io/gh/cuihairu/redis-streaming/branch/main/graph/badge.svg)](https://codecov.io/gh/cuihairu/redis-streaming)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
@@ -395,32 +395,32 @@ Spring Boot 自动配置和集成。
 ```gradle
 dependencies {
     // 消息队列
-    implementation 'io.github.cuihairu.redis-streaming:mq:0.1.1'
+    implementation 'io.github.cuihairu.redis-streaming:mq:0.2.0'
 
     // 服务注册发现（支持 metadata 比较运算符过滤）
-    implementation 'io.github.cuihairu.redis-streaming:registry:0.1.1'
+    implementation 'io.github.cuihairu.redis-streaming:registry:0.2.0'
 
     // 配置中心（版本化配置、变更通知）
-    implementation 'io.github.cuihairu.redis-streaming:config:0.1.1'
+    implementation 'io.github.cuihairu.redis-streaming:config:0.2.0'
 
     // 状态管理
-    implementation 'io.github.cuihairu.redis-streaming:state:0.1.1'
+    implementation 'io.github.cuihairu.redis-streaming:state:0.2.0'
 
     // 检查点
-    implementation 'io.github.cuihairu.redis-streaming:checkpoint:0.1.1'
+    implementation 'io.github.cuihairu.redis-streaming:checkpoint:0.2.0'
 
     // 窗口聚合
-    implementation 'io.github.cuihairu.redis-streaming:aggregation:0.1.1'
+    implementation 'io.github.cuihairu.redis-streaming:aggregation:0.2.0'
 
     // CDC
-    implementation 'io.github.cuihairu.redis-streaming:cdc:0.1.1'
+    implementation 'io.github.cuihairu.redis-streaming:cdc:0.2.0'
 }
 ```
 
 **Spring Boot 集成（推荐）：**
 ```gradle
 dependencies {
-    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.1.1'
+    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
     // 自动引入 registry、config、mq 等核心模块
 }
 ```
@@ -613,8 +613,8 @@ List<ChangeEvent> events = connector.poll();
 
 ### 📊 模块完成情况总览
 
-**已完成**: 19/20 模块（95.0%）✅
-**部分完成**: 1/20 模块（5.0%）🚧
+**已完成**: 20/20 模块（100.0%）✅
+**部分完成**: 0/20 模块（0.0%）🚧
 **未开始**: 0/20 模块（0.0%）
 
 ---
@@ -625,6 +625,9 @@ List<ChangeEvent> events = connector.poll();
 - [x] **core** - 核心 API 定义
   - 完整的流处理 API 抽象
   - 状态、检查点、水位线、窗口抽象
+- [x] **runtime** - 流处理运行时引擎
+  - Redis runtime：`RedisStreamExecutionEnvironment`（Redis Streams，单进程并行/水位线/窗口/checkpoint）
+  - In-memory runtime：`StreamExecutionEnvironment`（用于 tests/examples）
 
 #### Tier 2: 基础设施层
 - [x] **mq** - 消息队列
@@ -678,25 +681,11 @@ List<ChangeEvent> events = connector.poll();
 
 ---
 
-### 🚧 部分完成模块
-
-#### Tier 1: 核心抽象层
-- [x] **runtime** - 流处理运行时引擎
-  - ✅ Redis runtime：`RedisStreamExecutionEnvironment`（Redis Streams，单进程并行/水位线/窗口/checkpoint）
-  - ✅ In-memory runtime：`StreamExecutionEnvironment`（用于 tests/examples）
-  - 注：checkpoint 为 stop-the-world（单进程），严格跨实例 barrier/分布式调度仍可进一步演进
-
----
-
 ### 🎯 下一步优先级
 
 #### 高优先级（可选增强）
-1. **Runtime 运行时引擎** - 统一流处理执行引擎
-   - Phase 1: In-memory runtime（已实现）
-   - Phase 1.5: Redis runtime（已实现）
-   - Phase 2: 多实例协调/分布式调度与 barrier（可选）
-   - Phase 3: 严格端到端语义（2PC/outbox 等可选路线）
-   - 注：当前独立模块已满足大部分使用场景
+1. **Runtime（下一阶段）** - 多实例协调/HA/控制面（leader election + fencing token、作业接管、动态伸缩等）
+2. **Exactly-once（跨系统）** - 2PC / Outbox-WAL（可选路线，见 `docs/exactly-once.md`）
 
 #### 中优先级（功能增强）
 2. **企业级连接器扩展**
@@ -745,11 +734,16 @@ List<ChangeEvent> events = connector.poll();
 
 ---
 
-**当前版本**: 0.1.1（最新发布版本）
+**当前版本**: 0.2.0（最新发布版本）
 **最后更新**: 2026-01-01
 **完成度**: 20/20 模块完成（100.0%）
 
 ### 📝 版本说明
+
+**0.2.0** - Runtime 企业级能力完成（单进程）+ 文档站上线
+- ✅ Redis runtime：并行度/背压、watermark/window、端到端 checkpoint（含 sink 协调与恢复）
+- ✅ Redis-only 原子提交 sink（Lua：写 sink + XACK + commit frontier），并提供 Exactly-once 路线说明（幂等/2PC/outbox）
+- ✅ 文档迁移至 `docs/`，VuePress + GitHub Pages（Actions）自动构建发布
 
 **0.1.1** - 修复与质量增强
 - ✅ Registry/MQ/可靠性等模块若干稳定性修复
