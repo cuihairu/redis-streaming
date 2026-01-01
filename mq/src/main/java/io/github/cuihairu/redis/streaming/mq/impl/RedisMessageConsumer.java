@@ -26,6 +26,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -53,6 +54,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
     private final MqOptions options;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final PayloadLifecycleManager payloadLifecycleManager;
+    private final Semaphore inFlightLimiter;
 
     public RedisMessageConsumer(RedissonClient redissonClient, String consumerName,
                                 TopicPartitionRegistry partitionRegistry,
@@ -71,6 +73,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 this.options.getRetryBaseBackoffMs(),
                 this.options.getRetryMaxBackoffMs());
         this.payloadLifecycleManager = new PayloadLifecycleManager(redissonClient, this.options);
+        this.inFlightLimiter = this.options.getMaxInFlight() > 0 ? new Semaphore(this.options.getMaxInFlight()) : null;
     }
 
     public RedisMessageConsumer(RedissonClient redissonClient, String consumerName,
@@ -90,6 +93,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 this.options.getRetryBaseBackoffMs(),
                 this.options.getRetryMaxBackoffMs());
         this.payloadLifecycleManager = new PayloadLifecycleManager(redissonClient, this.options);
+        this.inFlightLimiter = this.options.getMaxInFlight() > 0 ? new Semaphore(this.options.getMaxInFlight()) : null;
     }
 
     @Override
@@ -101,6 +105,13 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
     public void subscribe(String topic, String consumerGroup, MessageHandler handler) {
         if (closed.get()) {
             throw new IllegalStateException("Consumer is closed");
+        }
+
+        // Ensure topic meta exists so consumers can see the expected partition count even before any producer sends.
+        // This is important for deterministic partition pinning and multi-partition workloads.
+        try {
+            partitionRegistry.ensureTopic(topic, options.getDefaultPartitionCount());
+        } catch (Exception ignore) {
         }
 
         Subscription sub = new Subscription(topic, consumerGroup, handler);
@@ -149,6 +160,8 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
             if (sub != null) {
                 sub.batchOverride = opts.getBatchCount();
                 sub.timeoutOverrideMs = opts.getPollTimeoutMs();
+                sub.partitionModulo = opts.getPartitionModulo();
+                sub.partitionRemainder = opts.getPartitionRemainder();
             }
         }
     }
@@ -310,6 +323,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                             }
                             message.getHeaders().put(io.github.cuihairu.redis.streaming.mq.MqHeaders.PARTITION_ID, Integer.toString(pidInt));
                             long start = System.nanoTime();
+                            acquireInFlightPermit();
                             inFlight.incrementAndGet();
                             try {
                                 MessageHandleResult result = handler.handle(message);
@@ -323,6 +337,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                                 MqMetrics.get().incConsumed(topic, pidInt);
                             } finally {
                                 inFlight.decrementAndGet();
+                                releaseInFlightPermit();
                             }
                         }
                     } else {
@@ -358,6 +373,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                             }
                             message.getHeaders().put(io.github.cuihairu.redis.streaming.mq.MqHeaders.PARTITION_ID, Integer.toString(pidInt));
                             long start = System.nanoTime();
+                            acquireInFlightPermit();
                             inFlight.incrementAndGet();
                             try {
                                 MessageHandleResult result = handler.handle(message);
@@ -371,6 +387,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                                 MqMetrics.get().incConsumed(topic, pidInt);
                             } finally {
                                 inFlight.decrementAndGet();
+                                releaseInFlightPermit();
                             }
                         }
                     }
@@ -433,6 +450,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                                     throw ex;
                                 }
                                 try {
+                                    acquireInFlightPermit();
                                     inFlight.incrementAndGet();
                                     MessageHandleResult result = worker.handler.handle(message);
                                     handleResult(stream, pk.group, claimedId, pk.partitionId, message, result, data);
@@ -441,6 +459,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                                     handleFailedMessage(stream, pk.group, claimedId, pk.partitionId, message, data);
                                 } finally {
                                     inFlight.decrementAndGet();
+                                    releaseInFlightPermit();
                                 }
                             }
                         } catch (Exception e) {
@@ -814,6 +833,34 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         }
     }
 
+    private void acquireInFlightPermit() {
+        if (inFlightLimiter == null) {
+            return;
+        }
+        boolean interrupted = false;
+        while (running.get() && !closed.get()) {
+            try {
+                inFlightLimiter.acquire();
+                return;
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void releaseInFlightPermit() {
+        if (inFlightLimiter == null) {
+            return;
+        }
+        try {
+            inFlightLimiter.release();
+        } catch (Exception ignore) {
+        }
+    }
+
     // Compare Redis Stream ID strings like "ms-seq" lexicographically by numeric parts
     private int compareStreamId(String a, String b) {
         try {
@@ -881,6 +928,13 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         subscriptions.forEach((topic, sub) -> {
             int pc = partitionRegistry.getPartitionCount(topic);
             for (int i = 0; i < pc; i++) {
+                if (sub.partitionModulo != null && sub.partitionRemainder != null) {
+                    int mod = Math.max(1, sub.partitionModulo);
+                    int rem = Math.max(0, sub.partitionRemainder);
+                    if ((i % mod) != (rem % mod)) {
+                        continue;
+                    }
+                }
                 PartitionKey pk = new PartitionKey(topic, sub.consumerGroup, i);
                 String leaseKey = StreamKeys.lease(topic, sub.consumerGroup, i);
                 // If we already own and have a worker, continue
@@ -930,6 +984,8 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         final MessageHandler handler;
         Integer batchOverride; // nullable
         Long timeoutOverrideMs; // nullable
+        Integer partitionModulo; // nullable
+        Integer partitionRemainder; // nullable
 
         Subscription(String topic, String consumerGroup, MessageHandler handler) {
             this.topic = topic;

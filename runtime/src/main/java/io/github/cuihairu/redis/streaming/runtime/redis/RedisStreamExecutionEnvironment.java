@@ -203,75 +203,97 @@ public final class RedisStreamExecutionEnvironment {
 
             for (RedisPipelineDefinition def : pipelineDefinitions) {
                 RedisPipeline<?> p = def.freeze();
-                RedisPipelineRunner<?> runner = p.buildRunner();
-                runners.add(runner);
-                if (restoredCheckpointId != null) {
-                    runner.onCheckpointRestore(restoredCheckpointId);
-                }
+                int parallelism = Math.max(1, config.getPipelineParallelism());
+                for (int subtask = 0; subtask < parallelism; subtask++) {
+                    RedisPipelineRunner<?> runner = p.buildRunner();
+                    runners.add(runner);
+                    if (restoredCheckpointId != null) {
+                        runner.onCheckpointRestore(restoredCheckpointId);
+                    }
 
-                String consumerName = config.getJobName() + "-" + config.getJobInstanceId() + "-" + (consumers.size() + 1);
-                MessageConsumer consumer = mqFactory.createConsumer(consumerName);
-                consumers.add(consumer);
+                    String consumerName = config.getJobName() + "-" + config.getJobInstanceId() + "-" + (consumers.size() + 1);
+                    MessageConsumer consumer = mqFactory.createConsumer(consumerName);
+                    consumers.add(consumer);
 
-                if (config.isRestoreConsumerGroupFromCommitFrontier()) {
-                    ensureConsumerGroupStartsFromCommitFrontierIfMissing(
-                            partitionRegistry, script, ensureGroupLua, p.topic(), p.consumerGroup());
-                }
+                    if (config.isRestoreConsumerGroupFromCommitFrontier()) {
+                        ensureConsumerGroupStartsFromCommitFrontierIfMissing(
+                                partitionRegistry, script, ensureGroupLua, p.topic(), p.consumerGroup());
+                    }
 
-                MessageHandler handler = (Message m) -> {
-                    long startNs = System.nanoTime();
-                    try {
-                        boolean ok = runner.handle(m);
+                    MessageHandler handler = (Message m) -> {
+                        long startNs = System.nanoTime();
                         try {
-                            RedisRuntimeMetrics.get().recordHandleLatency(config.getJobName(), p.topic(), p.consumerGroup(),
-                                    (System.nanoTime() - startNs) / 1_000_000);
-                            if (ok) {
-                                RedisRuntimeMetrics.get().incHandleSuccess(config.getJobName(), p.topic(), p.consumerGroup());
-                            } else {
-                                RedisRuntimeMetrics.get().incHandleError(config.getJobName(), p.topic(), p.consumerGroup());
+                            boolean ok = runner.handle(m);
+                            try {
+                                RedisRuntimeMetrics.get().recordHandleLatency(config.getJobName(), p.topic(), p.consumerGroup(),
+                                        (System.nanoTime() - startNs) / 1_000_000);
+                                if (ok) {
+                                    RedisRuntimeMetrics.get().incHandleSuccess(config.getJobName(), p.topic(), p.consumerGroup());
+                                } else {
+                                    RedisRuntimeMetrics.get().incHandleError(config.getJobName(), p.topic(), p.consumerGroup());
+                                }
+                            } catch (Exception ignore) {
                             }
-                        } catch (Exception ignore) {
+                            if (!ok) {
+                                return MessageHandleResult.RETRY;
+                            }
+                            if (config.isDeferAckUntilCheckpoint()) {
+                                markDeferAck(m, deferredAcks, p.topic(), p.consumerGroup());
+                            }
+                            return MessageHandleResult.SUCCESS;
+                        } catch (Exception e) {
+                            annotateRuntimeError(m, p.consumerGroup(), e);
+                            try {
+                                RedisRuntimeMetrics.get().recordHandleLatency(config.getJobName(), p.topic(), p.consumerGroup(),
+                                        (System.nanoTime() - startNs) / 1_000_000);
+                                RedisRuntimeMetrics.get().incHandleError(config.getJobName(), p.topic(), p.consumerGroup());
+                            } catch (Exception ignore) {
+                            }
+                            try {
+                                String id = m == null ? null : m.getId();
+                                String key = m == null ? null : m.getKey();
+                                log.error("Redis runtime pipeline failed (jobName={}, topic={}, group={}, consumer={}, id={}, key={})",
+                                        config.getJobName(), p.topic(), p.consumerGroup(), consumerName, id, key, e);
+                            } catch (Exception ignore) {
+                                // best-effort logging only
+                            }
+                            return config.getProcessingErrorResult();
                         }
-                        if (!ok) {
-                            return MessageHandleResult.RETRY;
-                        }
-                        if (config.isDeferAckUntilCheckpoint()) {
-                            markDeferAck(m, deferredAcks, p.topic(), p.consumerGroup());
-                        }
-                        return MessageHandleResult.SUCCESS;
-                    } catch (Exception e) {
-                        annotateRuntimeError(m, p.consumerGroup(), e);
-                        try {
-                            RedisRuntimeMetrics.get().recordHandleLatency(config.getJobName(), p.topic(), p.consumerGroup(),
-                                    (System.nanoTime() - startNs) / 1_000_000);
-                            RedisRuntimeMetrics.get().incHandleError(config.getJobName(), p.topic(), p.consumerGroup());
-                        } catch (Exception ignore) {
-                        }
-                        try {
-                            String id = m == null ? null : m.getId();
-                            String key = m == null ? null : m.getKey();
-                            log.error("Redis runtime pipeline failed (jobName={}, topic={}, group={}, consumer={}, id={}, key={})",
-                                    config.getJobName(), p.topic(), p.consumerGroup(), consumerName, id, key, e);
-                        } catch (Exception ignore) {
-                            // best-effort logging only
-                        }
-                        return config.getProcessingErrorResult();
-                    }
-                };
+                    };
 
-                try {
-                    consumer.subscribe(p.topic(), p.consumerGroup(), handler, p.subscriptionOptions());
-                    consumer.start();
-                    try {
-                        RedisRuntimeMetrics.get().incPipelineStarted(config.getJobName(), p.topic(), p.consumerGroup());
-                    } catch (Exception ignore) {
+                    io.github.cuihairu.redis.streaming.mq.SubscriptionOptions opts = p.subscriptionOptions();
+                    if (parallelism > 1) {
+                        io.github.cuihairu.redis.streaming.mq.SubscriptionOptions.Builder b = io.github.cuihairu.redis.streaming.mq.SubscriptionOptions.builder();
+                        if (opts != null) {
+                            try {
+                                Integer bc = opts.getBatchCount();
+                                if (bc != null) b.batchCount(bc);
+                            } catch (Exception ignore) {
+                            }
+                            try {
+                                Long to = opts.getPollTimeoutMs();
+                                if (to != null) b.pollTimeoutMs(to);
+                            } catch (Exception ignore) {
+                            }
+                        }
+                        b.partitionModulo(parallelism).partitionRemainder(subtask);
+                        opts = b.build();
                     }
-                } catch (Exception e) {
+
                     try {
-                        RedisRuntimeMetrics.get().incPipelineStartFailed(config.getJobName(), p.topic(), p.consumerGroup());
-                    } catch (Exception ignore) {
+                        consumer.subscribe(p.topic(), p.consumerGroup(), handler, opts);
+                        consumer.start();
+                        try {
+                            RedisRuntimeMetrics.get().incPipelineStarted(config.getJobName(), p.topic(), p.consumerGroup());
+                        } catch (Exception ignore) {
+                        }
+                    } catch (Exception e) {
+                        try {
+                            RedisRuntimeMetrics.get().incPipelineStartFailed(config.getJobName(), p.topic(), p.consumerGroup());
+                        } catch (Exception ignore) {
+                        }
+                        throw e;
                     }
-                    throw e;
                 }
             }
 

@@ -37,6 +37,7 @@ public final class RedisRuntimeConfig {
     private final String sinkDedupKeyPrefix;
     private final boolean deferAckUntilCheckpoint;
     private final boolean ackDeferredMessagesOnCheckpoint;
+    private final int pipelineParallelism;
     private final Duration checkpointInterval;
     private final boolean restoreFromLatestCheckpoint;
     private final String checkpointKeyPrefix;
@@ -71,6 +72,10 @@ public final class RedisRuntimeConfig {
         this.sinkDedupKeyPrefix = Objects.requireNonNull(b.sinkDedupKeyPrefix, "sinkDedupKeyPrefix");
         this.deferAckUntilCheckpoint = b.deferAckUntilCheckpoint;
         this.ackDeferredMessagesOnCheckpoint = b.ackDeferredMessagesOnCheckpoint;
+        if (b.pipelineParallelism <= 0) {
+            throw new IllegalArgumentException("pipelineParallelism must be >= 1");
+        }
+        this.pipelineParallelism = b.pipelineParallelism;
         this.checkpointInterval = b.checkpointInterval == null ? Duration.ZERO : b.checkpointInterval;
         this.restoreFromLatestCheckpoint = b.restoreFromLatestCheckpoint;
         this.checkpointKeyPrefix = Objects.requireNonNull(b.checkpointKeyPrefix, "checkpointKeyPrefix");
@@ -202,6 +207,16 @@ public final class RedisRuntimeConfig {
     }
 
     /**
+     * Number of parallel consumer subtasks per pipeline within one process.
+     *
+     * <p>Redis runtime uses partition pinning (partitionId % parallelism) to deterministically split partitions
+     * across subtasks in the same consumer group.</p>
+     */
+    public int getPipelineParallelism() {
+        return pipelineParallelism;
+    }
+
+    /**
      * Periodic checkpoint interval. {@link Duration#ZERO} disables periodic checkpoints.
      *
      * <p>Checkpoints are stored in Redis and include best-effort snapshots of (source offsets, state).</p>
@@ -277,6 +292,7 @@ public final class RedisRuntimeConfig {
         private String sinkDedupKeyPrefix = "streaming:runtime:sinkDedup:";
         private boolean deferAckUntilCheckpoint = false;
         private boolean ackDeferredMessagesOnCheckpoint = true;
+        private int pipelineParallelism = 1;
         private Duration checkpointInterval = Duration.ZERO;
         private boolean restoreFromLatestCheckpoint = false;
         private String checkpointKeyPrefix = "streaming:runtime:checkpoint:";
@@ -370,6 +386,11 @@ public final class RedisRuntimeConfig {
 
         public Builder ackDeferredMessagesOnCheckpoint(boolean enabled) {
             this.ackDeferredMessagesOnCheckpoint = enabled;
+            return this;
+        }
+
+        public Builder pipelineParallelism(int parallelism) {
+            this.pipelineParallelism = parallelism;
             return this;
         }
 

@@ -8,10 +8,12 @@ import io.github.cuihairu.redis.streaming.api.stream.IdempotentRecord;
 import io.github.cuihairu.redis.streaming.api.stream.KeyedStream;
 import io.github.cuihairu.redis.streaming.api.stream.KeyedProcessFunction;
 import io.github.cuihairu.redis.streaming.mq.MessageQueueFactory;
+import io.github.cuihairu.redis.streaming.mq.Message;
 import io.github.cuihairu.redis.streaming.mq.MessageProducer;
 import io.github.cuihairu.redis.streaming.mq.DeadLetterQueueManager;
 import io.github.cuihairu.redis.streaming.mq.MessageHandleResult;
 import io.github.cuihairu.redis.streaming.mq.MqHeaders;
+import io.github.cuihairu.redis.streaming.mq.SubscriptionOptions;
 import io.github.cuihairu.redis.streaming.mq.admin.MessageQueueAdmin;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
 import io.github.cuihairu.redis.streaming.runtime.redis.sink.RedisIdempotentListSink;
@@ -22,6 +24,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.redisson.Redisson;
 import org.redisson.api.RAtomicLong;
+import org.redisson.api.RBucket;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
 import org.redisson.api.StreamMessageId;
@@ -1528,6 +1531,132 @@ class RedisRuntimeIntegrationTest {
             assertNotNull(mid);
             RMap<String, String> frontier = client.getMap(StreamKeys.commitFrontier(topic, pid), StringCodec.INSTANCE);
             assertEquals(mid, frontier.get(group), "commit frontier should advance in the same Lua script");
+        } finally {
+            producer.close();
+            client.shutdown();
+        }
+    }
+
+    @Test
+    void pipelineParallelismCanPinPartitionsAcrossConsumers() throws Exception {
+        RedissonClient client = createClient();
+        String topic = "rt-topic-" + UUID.randomUUID().toString().substring(0, 8);
+        String group = "rt-group-" + UUID.randomUUID().toString().substring(0, 8);
+
+        RedisRuntimeConfig cfg = RedisRuntimeConfig.builder()
+                .jobName("rt-job-" + UUID.randomUUID().toString().substring(0, 6))
+                .jobInstanceId("inst-" + UUID.randomUUID().toString().substring(0, 6))
+                .pipelineParallelism(2)
+                .mqOptions(MqOptions.builder()
+                        .defaultPartitionCount(2)
+                        .workerThreads(2)
+                        .schedulerThreads(1)
+                        .consumerPollTimeoutMs(100)
+                        .build())
+                .build();
+
+        MessageQueueFactory mq = new MessageQueueFactory(client, cfg.getMqOptions());
+        MessageProducer producer = mq.createProducer();
+
+        RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(client, cfg);
+
+        List<String> out = new CopyOnWriteArrayList<>();
+        CountDownLatch latch = new CountDownLatch(2);
+
+        env.fromMqTopicWithId("s1", topic, group)
+                .map(m -> (String) m.getPayload())
+                .addSink(v -> {
+                    out.add(v);
+                    latch.countDown();
+                });
+
+        try (RedisJobClient job = env.executeAsync()) {
+            // Wait for leases to be acquired by pinned consumers.
+            String lease0 = StreamKeys.lease(topic, group, 0);
+            String lease1 = StreamKeys.lease(topic, group, 1);
+            RBucket<String> b0 = client.getBucket(lease0, StringCodec.INSTANCE);
+            RBucket<String> b1 = client.getBucket(lease1, StringCodec.INSTANCE);
+
+            long deadline = System.currentTimeMillis() + 5000L;
+            while (System.currentTimeMillis() < deadline) {
+                String o0 = b0.get();
+                String o1 = b1.get();
+                if (o0 != null && o1 != null && !o0.equals(o1)) {
+                    break;
+                }
+                Thread.sleep(50);
+            }
+
+            assertNotNull(b0.get());
+            assertNotNull(b1.get());
+            assertNotEquals(b0.get(), b1.get(), "pinned consumers should own different partitions");
+
+            // Send one message to each partition.
+            Message m0 = new Message(topic, "k0", "a");
+            m0.setHeaders(new java.util.HashMap<>(java.util.Map.of(MqHeaders.FORCE_PARTITION_ID, "0")));
+            Message m1 = new Message(topic, "k1", "b");
+            m1.setHeaders(new java.util.HashMap<>(java.util.Map.of(MqHeaders.FORCE_PARTITION_ID, "1")));
+
+            producer.send(m0).get(5, TimeUnit.SECONDS);
+            producer.send(m1).get(5, TimeUnit.SECONDS);
+
+            assertTrue(latch.await(20, TimeUnit.SECONDS));
+            assertEquals(2, out.size());
+            assertTrue(out.containsAll(List.of("a", "b")));
+        } finally {
+            producer.close();
+            client.shutdown();
+        }
+    }
+
+    @Test
+    void mqMaxInFlightCanApplyBackpressureAcrossPartitions() throws Exception {
+        RedissonClient client = createClient();
+        String topic = "rt-topic-" + UUID.randomUUID().toString().substring(0, 8);
+        String group = "rt-group-" + UUID.randomUUID().toString().substring(0, 8);
+
+        RedisRuntimeConfig cfg = RedisRuntimeConfig.builder()
+                .jobName("rt-job-" + UUID.randomUUID().toString().substring(0, 6))
+                .jobInstanceId("inst-" + UUID.randomUUID().toString().substring(0, 6))
+                .mqOptions(MqOptions.builder()
+                        .defaultPartitionCount(2)
+                        .workerThreads(2)
+                        .schedulerThreads(1)
+                        .consumerPollTimeoutMs(100)
+                        .maxInFlight(1)
+                        .build())
+                .build();
+
+        MessageQueueFactory mq = new MessageQueueFactory(client, cfg.getMqOptions());
+        MessageProducer producer = mq.createProducer();
+
+        RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(client, cfg);
+
+        CountDownLatch started = new CountDownLatch(2);
+
+        env.fromMqTopicWithId("s1", topic, group, SubscriptionOptions.builder().batchCount(1).build())
+                .map(m -> (String) m.getPayload())
+                .addSink(v -> {
+                    started.countDown();
+                    try {
+                        Thread.sleep(400);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+
+        try (RedisJobClient job = env.executeAsync()) {
+            Message m0 = new Message(topic, "k0", "a");
+            m0.setHeaders(new java.util.HashMap<>(java.util.Map.of(MqHeaders.FORCE_PARTITION_ID, "0")));
+            Message m1 = new Message(topic, "k1", "b");
+            m1.setHeaders(new java.util.HashMap<>(java.util.Map.of(MqHeaders.FORCE_PARTITION_ID, "1")));
+
+            producer.send(m0).get(5, TimeUnit.SECONDS);
+            producer.send(m1).get(5, TimeUnit.SECONDS);
+
+            assertFalse(started.await(150, TimeUnit.MILLISECONDS),
+                    "maxInFlight=1 should prevent two concurrent sink invocations across partitions");
+            assertTrue(started.await(3, TimeUnit.SECONDS));
         } finally {
             producer.close();
             client.shutdown();
