@@ -9,6 +9,7 @@ This `docs/` directory exists to keep legacy links working and to provide stable
 - Deployment: `docs/DEPLOYMENT.md` (see also `wiki/Deployment.md`)
 - Performance: `docs/PERFORMANCE.md` (see also `wiki/Performance.md`)
 - API overview: `docs/API.md`
+- Exactly-once roadmap (Redis runtime): `docs/exactly-once.md`
 - CI/CD: `docs/github-actions.md` (see also `wiki/GitHub-Actions.md`)
 - Troubleshooting: `docs/troubleshooting.md` (see also `wiki/Troubleshooting.md`)
 - MQ design: `docs/redis-mq-design.md` (see also `wiki/MQ-Design.md`)
@@ -18,4 +19,3 @@ This `docs/` directory exists to keep legacy links working and to provide stable
 - Spring Boot starter: `docs/spring-boot-starter-guide.md` (see also `wiki/Spring-Boot-Starter.md`)
 - Publishing: `docs/maven-publish.md` (see also `PUBLISHING.md`)
 - Retention & ACK policy: `docs/retention-and-ack-policy.md`
-

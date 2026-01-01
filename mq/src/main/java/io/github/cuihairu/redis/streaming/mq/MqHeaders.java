@@ -18,4 +18,20 @@ public final class MqHeaders {
 
     /** Internal header carrying the missing payload reference key when available. */
     public static final String PAYLOAD_MISSING_REF = "x-payload-missing-ref";
+
+    /**
+     * Stable id for retries/replays: the first Stream entry id seen for this logical message.
+     *
+     * <p>On retries, MQ may re-enqueue the message with a new Redis Stream entry id; this header preserves the
+     * original id for correlation and deduplication.</p>
+     */
+    public static final String ORIGINAL_MESSAGE_ID = "x-original-message-id";
+
+    /**
+     * When set to "true", the consumer will not ACK on {@link io.github.cuihairu.redis.streaming.mq.MessageHandleResult#SUCCESS}.
+     *
+     * <p>Intended for runtimes that coordinate ACK with checkpoints; leaving a message pending is safe as long as
+     * checkpoints happen faster than the pending-claim timeout.</p>
+     */
+    public static final String DEFER_ACK = "x-defer-ack";
 }

@@ -15,6 +15,7 @@ import io.github.cuihairu.redis.streaming.registry.metrics.MetricsGlobal;
 import io.github.cuihairu.redis.streaming.reliability.dlq.DeadLetterService;
 import io.github.cuihairu.redis.streaming.reliability.metrics.RateLimitMetrics;
 import io.github.cuihairu.redis.streaming.reliability.metrics.ReliabilityMetrics;
+import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
 import io.github.cuihairu.redis.streaming.reliability.ratelimit.InMemorySlidingWindowRateLimiter;
 import io.github.cuihairu.redis.streaming.reliability.ratelimit.RateLimiter;
 import io.github.cuihairu.redis.streaming.reliability.ratelimit.RateLimiterRegistry;
@@ -155,6 +156,7 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
         var oldRetention = RetentionMetrics.get();
         var oldReliability = ReliabilityMetrics.get();
         var oldRateLimit = RateLimitMetrics.get();
+        var oldRuntime = RedisRuntimeMetrics.get();
 
         try {
             RedisStreamingAutoConfiguration auto = new RedisStreamingAutoConfiguration();
@@ -166,6 +168,10 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
             var mqCollector = cfg.mqMicrometerCollector(reg);
             cfg.installMqCollector(mqCollector);
             assertEquals(mqCollector, MqMetrics.get());
+
+            var rtCollector = cfg.redisRuntimeMicrometerCollector(reg);
+            cfg.installRedisRuntimeCollector(rtCollector);
+            assertEquals(rtCollector, RedisRuntimeMetrics.get());
 
             var retentionCollector = cfg.retentionMicrometerCollector(reg);
             cfg.installRetentionCollector(retentionCollector);
@@ -183,6 +189,7 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
             RetentionMetrics.setCollector(oldRetention);
             ReliabilityMetrics.setCollector(oldReliability);
             RateLimitMetrics.setCollector(oldRateLimit);
+            RedisRuntimeMetrics.setCollector(oldRuntime);
         }
     }
 
@@ -263,4 +270,3 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
         assertInstanceOf(InMemorySlidingWindowRateLimiter.class, rl);
     }
 }
-

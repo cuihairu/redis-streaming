@@ -66,7 +66,7 @@ public final class RedisPipeline<T> {
     }
 
     public RedisPipelineRunner<T> buildRunner() {
-        return new RedisPipelineRunner<>(config, redissonClient, objectMapper, operators, sinks);
+        return new RedisPipelineRunner<>(config, redissonClient, objectMapper, topic, consumerGroup, operators, sinks);
     }
 
     static List<StreamSink<Object>> copySinks(List<?> sinks) {
@@ -79,4 +79,3 @@ public final class RedisPipeline<T> {
         return out;
     }
 }
-

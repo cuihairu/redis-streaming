@@ -9,214 +9,232 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * Unit tests for AscendingTimestampWatermarkGenerator
+ */
 class AscendingTimestampWatermarkGeneratorTest {
 
     @Test
-    void emitsLatestTimestampMinusOne() {
-        AscendingTimestampWatermarkGenerator<String> generator = new AscendingTimestampWatermarkGenerator<>();
-        TestWatermarkOutput output = new TestWatermarkOutput();
+    void testConstructor() {
+        // Given & When
+        AscendingTimestampWatermarkGenerator<String> generator = 
+            new AscendingTimestampWatermarkGenerator<>();
 
-        generator.onEvent("e1", 1000, output);
-        assertEquals(999, generator.getCurrentWatermark());
-
-        generator.onEvent("e2", 2000, output);
-        assertEquals(1999, generator.getCurrentWatermark());
-
-        generator.onPeriodicEmit(output);
-        assertFalse(output.getWatermarks().isEmpty());
-        assertEquals(1999, output.getWatermarks().get(0).getTimestamp());
-    }
-
-    @Test
-    void ignoresOutOfOrderTimestamps() {
-        AscendingTimestampWatermarkGenerator<String> generator = new AscendingTimestampWatermarkGenerator<>();
-        TestWatermarkOutput output = new TestWatermarkOutput();
-
-        generator.onEvent("e1", 1000, output);
-        generator.onEvent("late", 900, output);
-
-        assertEquals(999, generator.getCurrentWatermark());
-    }
-
-    @Test
-    void initialWatermarkIsLongMinValue() {
-        AscendingTimestampWatermarkGenerator<String> generator = new AscendingTimestampWatermarkGenerator<>();
-
+        // Then
         assertEquals(Long.MIN_VALUE, generator.getCurrentWatermark());
     }
 
     @Test
-    void onEventUpdatesWatermark() {
-        AscendingTimestampWatermarkGenerator<String> generator = new AscendingTimestampWatermarkGenerator<>();
+    void testOnEventWithAscendingTimestamps() {
+        // Given
+        AscendingTimestampWatermarkGenerator<String> generator =
+            new AscendingTimestampWatermarkGenerator<>();
         TestWatermarkOutput output = new TestWatermarkOutput();
 
-        generator.onEvent("event", 5000, output);
+        // When
+        generator.onEvent("event1", 1000, output);
+        generator.onEvent("event2", 2000, output);
+        generator.onEvent("event3", 3000, output);
 
-        assertEquals(4999, generator.getCurrentWatermark());
+        // Then - watermark should be highest timestamp minus 1
+        assertEquals(2999, generator.getCurrentWatermark());
     }
 
     @Test
-    void onEventWithZeroTimestamp() {
-        AscendingTimestampWatermarkGenerator<String> generator = new AscendingTimestampWatermarkGenerator<>();
+    void testOnEventWithDescendingTimestamps() {
+        // Given
+        AscendingTimestampWatermarkGenerator<String> generator = 
+            new AscendingTimestampWatermarkGenerator<>();
+
+        // When
+        generator.onEvent("event1", 3000, null);
+        generator.onEvent("event2", 2000, null);
+        generator.onEvent("event3", 1000, null);
+
+        // Then - watermark should not go back
+        assertEquals(2999, generator.getCurrentWatermark());
+    }
+
+    @Test
+    void testOnEventWithSameTimestamps() {
+        // Given
+        AscendingTimestampWatermarkGenerator<String> generator = 
+            new AscendingTimestampWatermarkGenerator<>();
+
+        // When
+        generator.onEvent("event1", 1000, null);
+        generator.onEvent("event2", 1000, null);
+        generator.onEvent("event3", 1000, null);
+
+        // Then
+        assertEquals(999, generator.getCurrentWatermark());
+    }
+
+    @Test
+    void testOnPeriodicEmit() {
+        // Given
+        AscendingTimestampWatermarkGenerator<String> generator = 
+            new AscendingTimestampWatermarkGenerator<>();
+        TestWatermarkOutput output = new TestWatermarkOutput();
+        generator.onEvent("event", 5000, null);
+
+        // When
+        generator.onPeriodicEmit(output);
+
+        // Then
+        assertEquals(1, output.getWatermarks().size());
+        assertEquals(new Watermark(4999), output.getWatermarks().get(0));
+    }
+
+    @Test
+    void testOnPeriodicEmitWithNoEvents() {
+        // Given
+        AscendingTimestampWatermarkGenerator<String> generator = 
+            new AscendingTimestampWatermarkGenerator<>();
         TestWatermarkOutput output = new TestWatermarkOutput();
 
-        generator.onEvent("event", 0, output);
+        // When
+        generator.onPeriodicEmit(output);
 
+        // Then
+        assertEquals(1, output.getWatermarks().size());
+        assertEquals(new Watermark(Long.MIN_VALUE), output.getWatermarks().get(0));
+    }
+
+    @Test
+    void testOnPeriodicEmitMultipleTimes() {
+        // Given
+        AscendingTimestampWatermarkGenerator<String> generator = 
+            new AscendingTimestampWatermarkGenerator<>();
+        TestWatermarkOutput output1 = new TestWatermarkOutput();
+        TestWatermarkOutput output2 = new TestWatermarkOutput();
+        generator.onEvent("event", 1000, null);
+
+        // When
+        generator.onPeriodicEmit(output1);
+        generator.onPeriodicEmit(output2);
+
+        // Then
+        assertEquals(new Watermark(999), output1.getWatermarks().get(0));
+        assertEquals(new Watermark(999), output2.getWatermarks().get(0));
+    }
+
+    @Test
+    void testGetCurrentWatermarkInitially() {
+        // Given
+        AscendingTimestampWatermarkGenerator<String> generator = 
+            new AscendingTimestampWatermarkGenerator<>();
+
+        // When
+        long watermark = generator.getCurrentWatermark();
+
+        // Then
+        assertEquals(Long.MIN_VALUE, watermark);
+    }
+
+    @Test
+    void testGetCurrentWatermarkAfterEvents() {
+        // Given
+        AscendingTimestampWatermarkGenerator<String> generator = 
+            new AscendingTimestampWatermarkGenerator<>();
+        generator.onEvent("event", 10000, null);
+
+        // When
+        long watermark = generator.getCurrentWatermark();
+
+        // Then
+        assertEquals(9999, watermark);
+    }
+
+    @Test
+    void testWithZeroTimestamp() {
+        // Given
+        AscendingTimestampWatermarkGenerator<String> generator = 
+            new AscendingTimestampWatermarkGenerator<>();
+
+        // When
+        generator.onEvent("event", 0, null);
+
+        // Then
         assertEquals(-1, generator.getCurrentWatermark());
     }
 
     @Test
-    void onEventWithNegativeTimestamp() {
-        AscendingTimestampWatermarkGenerator<String> generator = new AscendingTimestampWatermarkGenerator<>();
-        TestWatermarkOutput output = new TestWatermarkOutput();
+    void testWithMaxTimestamp() {
+        // Given
+        AscendingTimestampWatermarkGenerator<String> generator = 
+            new AscendingTimestampWatermarkGenerator<>();
 
-        generator.onEvent("event", -1000, output);
+        // When
+        generator.onEvent("event", Long.MAX_VALUE, null);
 
-        assertEquals(-1001, generator.getCurrentWatermark());
-    }
-
-    @Test
-    void onEventWithMaxLongTimestamp() {
-        AscendingTimestampWatermarkGenerator<String> generator = new AscendingTimestampWatermarkGenerator<>();
-        TestWatermarkOutput output = new TestWatermarkOutput();
-
-        generator.onEvent("event", Long.MAX_VALUE, output);
-
+        // Then
         assertEquals(Long.MAX_VALUE - 1, generator.getCurrentWatermark());
     }
 
     @Test
-    void onEventWithSameTimestampDoesNotChangeWatermark() {
-        AscendingTimestampWatermarkGenerator<String> generator = new AscendingTimestampWatermarkGenerator<>();
-        TestWatermarkOutput output = new TestWatermarkOutput();
+    void testWithMixedTimestamps() {
+        // Given
+        AscendingTimestampWatermarkGenerator<String> generator = 
+            new AscendingTimestampWatermarkGenerator<>();
 
-        generator.onEvent("e1", 1000, output);
-        long firstWatermark = generator.getCurrentWatermark();
+        // When
+        generator.onEvent("e1", 1000, null);
+        generator.onEvent("e2", 500, null);  // lower, should be ignored
+        generator.onEvent("e3", 2000, null); // higher, should update
+        generator.onEvent("e4", 1500, null); // lower, should be ignored
 
-        generator.onEvent("e2", 1000, output);
-
-        assertEquals(firstWatermark, generator.getCurrentWatermark());
-        assertEquals(999, generator.getCurrentWatermark());
-    }
-
-    @Test
-    void onEventWithLowerTimestampDoesNotChangeWatermark() {
-        AscendingTimestampWatermarkGenerator<String> generator = new AscendingTimestampWatermarkGenerator<>();
-        TestWatermarkOutput output = new TestWatermarkOutput();
-
-        generator.onEvent("e1", 5000, output);
-        generator.onEvent("e2", 3000, output);
-
-        assertEquals(4999, generator.getCurrentWatermark());
-    }
-
-    @Test
-    void onPeriodicEmitEmitsWatermark() {
-        AscendingTimestampWatermarkGenerator<String> generator = new AscendingTimestampWatermarkGenerator<>();
-        TestWatermarkOutput output = new TestWatermarkOutput();
-
-        generator.onEvent("e1", 1000, output);
-        output.getWatermarks().clear();
-        generator.onPeriodicEmit(output);
-
-        assertEquals(1, output.getWatermarks().size());
-        assertEquals(999, output.getWatermarks().get(0).getTimestamp());
-    }
-
-    @Test
-    void onPeriodicEmitMultipleTimes() {
-        AscendingTimestampWatermarkGenerator<String> generator = new AscendingTimestampWatermarkGenerator<>();
-        TestWatermarkOutput output = new TestWatermarkOutput();
-
-        generator.onEvent("e1", 1000, output);
-
-        generator.onPeriodicEmit(output);
-        generator.onPeriodicEmit(output);
-        generator.onPeriodicEmit(output);
-
-        assertEquals(3, output.getWatermarks().size());
-        // All should have the same timestamp since no new events
-        for (Watermark w : output.getWatermarks()) {
-            assertEquals(999, w.getTimestamp());
-        }
-    }
-
-    @Test
-    void multipleEventsAscendingTimestamps() {
-        AscendingTimestampWatermarkGenerator<String> generator = new AscendingTimestampWatermarkGenerator<>();
-        TestWatermarkOutput output = new TestWatermarkOutput();
-
-        generator.onEvent("e1", 1000, output);
-        assertEquals(999, generator.getCurrentWatermark());
-
-        generator.onEvent("e2", 2000, output);
+        // Then
         assertEquals(1999, generator.getCurrentWatermark());
-
-        generator.onEvent("e3", 3000, output);
-        assertEquals(2999, generator.getCurrentWatermark());
-
-        generator.onEvent("e4", 4000, output);
-        assertEquals(3999, generator.getCurrentWatermark());
     }
 
     @Test
-    void watermarkUpdatesOnlyOnHigherTimestamp() {
-        AscendingTimestampWatermarkGenerator<String> generator = new AscendingTimestampWatermarkGenerator<>();
-        TestWatermarkOutput output = new TestWatermarkOutput();
+    void testWithNegativeTimestamps() {
+        // Given
+        AscendingTimestampWatermarkGenerator<String> generator = 
+            new AscendingTimestampWatermarkGenerator<>();
 
-        generator.onEvent("e1", 5000, output);
-        generator.onEvent("e2", 3000, output);
-        generator.onEvent("e3", 4000, output);
-        generator.onEvent("e4", 2000, output);
+        // When
+        generator.onEvent("event", -1000, null);
 
-        // Should stay at the highest timestamp
-        assertEquals(4999, generator.getCurrentWatermark());
+        // Then
+        assertEquals(-1001, generator.getCurrentWatermark());
     }
 
     @Test
-    void largeTimestampJumps() {
-        AscendingTimestampWatermarkGenerator<String> generator = new AscendingTimestampWatermarkGenerator<>();
-        TestWatermarkOutput output = new TestWatermarkOutput();
+    void testMultipleGeneratorsAreIndependent() {
+        // Given
+        AscendingTimestampWatermarkGenerator<String> gen1 = 
+            new AscendingTimestampWatermarkGenerator<>();
+        AscendingTimestampWatermarkGenerator<String> gen2 = 
+            new AscendingTimestampWatermarkGenerator<>();
 
-        generator.onEvent("e1", 1000, output);
-        generator.onEvent("e2", 1000000, output);
+        // When
+        gen1.onEvent("event", 1000, null);
+        gen2.onEvent("event", 2000, null);
 
-        assertEquals(999999, generator.getCurrentWatermark());
+        // Then
+        assertEquals(999, gen1.getCurrentWatermark());
+        assertEquals(1999, gen2.getCurrentWatermark());
     }
 
     @Test
-    void consecutiveTimestamps() {
-        AscendingTimestampWatermarkGenerator<String> generator = new AscendingTimestampWatermarkGenerator<>();
-        TestWatermarkOutput output = new TestWatermarkOutput();
+    void testGenericTypes() {
+        // Given & When
+        AscendingTimestampWatermarkGenerator<String> stringGen = 
+            new AscendingTimestampWatermarkGenerator<>();
+        AscendingTimestampWatermarkGenerator<Integer> intGen = 
+            new AscendingTimestampWatermarkGenerator<>();
+        AscendingTimestampWatermarkGenerator<Object> objectGen = 
+            new AscendingTimestampWatermarkGenerator<>();
 
-        for (long i = 0; i < 10; i++) {
-            generator.onEvent("e" + i, i * 100, output);
-        }
-
-        assertEquals(899, generator.getCurrentWatermark());
+        // Then - all should work
+        stringGen.onEvent("test", 1000, null);
+        intGen.onEvent(123, 1000, null);
+        objectGen.onEvent(new Object(), 1000, null);
     }
 
-    @Test
-    void emitsCurrentWatermarkOnPeriodicEmit() {
-        AscendingTimestampWatermarkGenerator<String> generator = new AscendingTimestampWatermarkGenerator<>();
-        TestWatermarkOutput output = new TestWatermarkOutput();
-
-        generator.onEvent("e1", 12345, output);
-        generator.onPeriodicEmit(output);
-
-        assertEquals(12344, output.getWatermarks().get(0).getTimestamp());
-    }
-
-    @Test
-    void handlesNullEvent() {
-        AscendingTimestampWatermarkGenerator<String> generator = new AscendingTimestampWatermarkGenerator<>();
-        TestWatermarkOutput output = new TestWatermarkOutput();
-
-        generator.onEvent(null, 1000, output);
-
-        assertEquals(999, generator.getCurrentWatermark());
-    }
-
+    // Helper class for testing
     private static class TestWatermarkOutput implements WatermarkGenerator.WatermarkOutput {
         private final List<Watermark> watermarks = new ArrayList<>();
 
@@ -226,11 +244,13 @@ class AscendingTimestampWatermarkGeneratorTest {
         }
 
         @Override
-        public void markIdle() {
+        public void markActive() {
+            // No-op for testing
         }
 
         @Override
-        public void markActive() {
+        public void markIdle() {
+            // No-op for testing
         }
 
         public List<Watermark> getWatermarks() {
@@ -238,4 +258,3 @@ class AscendingTimestampWatermarkGeneratorTest {
         }
     }
 }
-

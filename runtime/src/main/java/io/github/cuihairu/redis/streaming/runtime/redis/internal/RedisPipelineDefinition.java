@@ -47,6 +47,14 @@ public final class RedisPipelineDefinition {
         return !sinks.isEmpty();
     }
 
+    public String topic() {
+        return topic;
+    }
+
+    public String consumerGroup() {
+        return consumerGroup;
+    }
+
     public synchronized RedisPipeline<Object> freeze() {
         if (sinks.isEmpty()) {
             throw new IllegalStateException("No sinks registered for pipeline: " + topic + " group=" + consumerGroup);
@@ -54,4 +62,3 @@ public final class RedisPipelineDefinition {
         return RedisPipeline.forMqSource(config, redissonClient, objectMapper, topic, consumerGroup, subscriptionOptions, operators, sinks);
     }
 }
-

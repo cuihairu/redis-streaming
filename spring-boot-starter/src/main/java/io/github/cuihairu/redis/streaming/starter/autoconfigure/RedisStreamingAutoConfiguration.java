@@ -429,6 +429,26 @@ public class RedisStreamingAutoConfiguration {
         }
 
         @Bean
+        @ConditionalOnClass(name = {
+                "io.micrometer.core.instrument.MeterRegistry",
+                "io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics"
+        })
+        public io.github.cuihairu.redis.streaming.starter.metrics.RedisRuntimeMicrometerCollector redisRuntimeMicrometerCollector(
+                io.micrometer.core.instrument.MeterRegistry registry) {
+            return new io.github.cuihairu.redis.streaming.starter.metrics.RedisRuntimeMicrometerCollector(registry);
+        }
+
+        @Bean
+        @ConditionalOnClass(name = {
+                "io.micrometer.core.instrument.MeterRegistry",
+                "io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics"
+        })
+        public Object installRedisRuntimeCollector(io.github.cuihairu.redis.streaming.starter.metrics.RedisRuntimeMicrometerCollector collector) {
+            io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics.setCollector(collector);
+            return new Object();
+        }
+
+        @Bean
         @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
         public io.github.cuihairu.redis.streaming.starter.metrics.RetentionMicrometerCollector retentionMicrometerCollector(
                 io.micrometer.core.instrument.MeterRegistry registry) {

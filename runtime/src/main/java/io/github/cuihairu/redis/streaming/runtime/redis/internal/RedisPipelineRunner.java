@@ -1,13 +1,18 @@
 package io.github.cuihairu.redis.streaming.runtime.redis.internal;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.cuihairu.redis.streaming.api.stream.CheckpointAwareSink;
 import io.github.cuihairu.redis.streaming.api.stream.StreamSink;
 import io.github.cuihairu.redis.streaming.mq.Message;
+import io.github.cuihairu.redis.streaming.mq.MqHeaders;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisRuntimeConfig;
 import org.redisson.api.RedissonClient;
+import org.redisson.api.RSetCache;
+import org.redisson.client.codec.StringCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
@@ -16,6 +21,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+
+import static io.github.cuihairu.redis.streaming.mq.MqHeaders.PARTITION_ID;
 
 /**
  * Executes a frozen {@link RedisPipeline} using MQ callbacks.
@@ -28,6 +35,8 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
     private final RedisRuntimeConfig config;
     private final RedissonClient redissonClient;
     private final ObjectMapper objectMapper;
+    private final String topic;
+    private final String consumerGroup;
     private final List<RedisOperatorNode> operators;
     private final List<StreamSink<Object>> sinks;
 
@@ -46,11 +55,15 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
     public RedisPipelineRunner(RedisRuntimeConfig config,
                               RedissonClient redissonClient,
                               ObjectMapper objectMapper,
+                              String topic,
+                              String consumerGroup,
                               List<RedisOperatorNode> operators,
                               List<StreamSink<Object>> sinks) {
         this.config = Objects.requireNonNull(config, "config");
         this.redissonClient = Objects.requireNonNull(redissonClient, "redissonClient");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
+        this.topic = Objects.requireNonNull(topic, "topic");
+        this.consumerGroup = Objects.requireNonNull(consumerGroup, "consumerGroup");
         this.operators = List.copyOf(Objects.requireNonNull(operators, "operators"));
         this.sinks = List.copyOf(Objects.requireNonNull(sinks, "sinks"));
         ScheduledThreadPoolExecutor ex = new ScheduledThreadPoolExecutor(1);
@@ -79,8 +92,17 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
 
     private void emitFrom(int index, Object value, Context ctx) throws Exception {
         if (index >= operators.size()) {
-            for (StreamSink<Object> sink : sinks) {
+            for (int i = 0; i < sinks.size(); i++) {
+                StreamSink<Object> sink = sinks.get(i);
+                if (!config.isSinkDeduplicationEnabled()) {
+                    sink.invoke(value);
+                    continue;
+                }
+                if (!shouldInvokeSink(i, ctx)) {
+                    continue;
+                }
                 sink.invoke(value);
+                markSinkInvoked(i, ctx);
             }
             return;
         }
@@ -108,22 +130,146 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
         }
     }
 
+    private boolean shouldInvokeSink(int sinkIndex, Context ctx) {
+        if (ctx == null || ctx.message == null) {
+            return true;
+        }
+        int pid = ctx.partitionId;
+        if (pid < 0) {
+            return true;
+        }
+        String mid = stableMessageId(ctx.message);
+        if (mid == null || mid.isBlank()) {
+            return true;
+        }
+        try {
+            String key = sinkDedupKey(sinkIndex, pid);
+            RSetCache<String> set = redissonClient.getSetCache(key, StringCodec.INSTANCE);
+            return !set.contains(mid);
+        } catch (Exception ignore) {
+            return true;
+        }
+    }
+
+    private void markSinkInvoked(int sinkIndex, Context ctx) {
+        if (ctx == null || ctx.message == null) {
+            return;
+        }
+        int pid = ctx.partitionId;
+        if (pid < 0) {
+            return;
+        }
+        String mid = stableMessageId(ctx.message);
+        if (mid == null || mid.isBlank()) {
+            return;
+        }
+        try {
+            String key = sinkDedupKey(sinkIndex, pid);
+            RSetCache<String> set = redissonClient.getSetCache(key, StringCodec.INSTANCE);
+            Duration ttl = config.getSinkDeduplicationTtl();
+            if (ttl == null || ttl.isZero() || ttl.isNegative()) {
+                set.add(mid);
+            } else {
+                set.add(mid, ttl.toMillis(), TimeUnit.MILLISECONDS);
+            }
+        } catch (Exception ignore) {
+        }
+    }
+
+    private String stableMessageId(Message message) {
+        if (message == null) {
+            return null;
+        }
+        try {
+            if (message.getHeaders() != null) {
+                String orig = message.getHeaders().get(MqHeaders.ORIGINAL_MESSAGE_ID);
+                if (orig != null && !orig.isBlank()) {
+                    return orig;
+                }
+            }
+        } catch (Exception ignore) {
+        }
+        try {
+            return message.getId();
+        } catch (Exception ignore) {
+            return null;
+        }
+    }
+
+    private String sinkDedupKey(int sinkIndex, int partitionId) {
+        return config.getSinkDedupKeyPrefix()
+                + config.getJobName()
+                + ":topic:" + topic
+                + ":cg:" + consumerGroup
+                + ":sink:" + sinkIndex
+                + ":p:" + partitionId;
+    }
+
     @Override
     public void close() {
         timerExecutor.shutdownNow();
     }
 
+    public void onCheckpointStart(long checkpointId) throws Exception {
+        for (StreamSink<Object> sink : sinks) {
+            if (sink instanceof CheckpointAwareSink<?> s) {
+                @SuppressWarnings("unchecked")
+                CheckpointAwareSink<Object> cs = (CheckpointAwareSink<Object>) s;
+                cs.onCheckpointStart(checkpointId);
+            }
+        }
+    }
+
+    public void onCheckpointComplete(long checkpointId) throws Exception {
+        for (StreamSink<Object> sink : sinks) {
+            if (sink instanceof CheckpointAwareSink<?> s) {
+                @SuppressWarnings("unchecked")
+                CheckpointAwareSink<Object> cs = (CheckpointAwareSink<Object>) s;
+                cs.onCheckpointComplete(checkpointId);
+            }
+        }
+    }
+
+    public void onCheckpointAbort(long checkpointId, Throwable cause) {
+        for (StreamSink<Object> sink : sinks) {
+            if (sink instanceof CheckpointAwareSink<?> s) {
+                @SuppressWarnings("unchecked")
+                CheckpointAwareSink<Object> cs = (CheckpointAwareSink<Object>) s;
+                try {
+                    cs.onCheckpointAbort(checkpointId, cause);
+                } catch (Exception ignore) {
+                }
+            }
+        }
+    }
+
+    public void onCheckpointRestore(long checkpointId) throws Exception {
+        for (StreamSink<Object> sink : sinks) {
+            if (sink instanceof CheckpointAwareSink<?> s) {
+                @SuppressWarnings("unchecked")
+                CheckpointAwareSink<Object> cs = (CheckpointAwareSink<Object>) s;
+                cs.onCheckpointRestore(checkpointId);
+            }
+        }
+    }
+
     public final class Context {
         private final Message message;
         private final long eventTimeMs;
+        private final int partitionId;
 
         private Context(Message message, long processingTimeMs, long eventTimeMs) {
             this.message = message;
             this.eventTimeMs = eventTimeMs;
+            this.partitionId = extractPartitionId(message);
         }
 
         public Message message() {
             return message;
+        }
+
+        public int currentPartitionId() {
+            return partitionId;
         }
 
         public long currentProcessingTime() {
@@ -178,5 +324,23 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
     }
 
     private record EventTimer(long seq, long timestampMs, Runnable callback) {
+    }
+
+    private static int extractPartitionId(Message message) {
+        if (message == null) {
+            return -1;
+        }
+        try {
+            if (message.getHeaders() == null) {
+                return -1;
+            }
+            String v = message.getHeaders().get(PARTITION_ID);
+            if (v == null || v.isBlank()) {
+                return -1;
+            }
+            return Integer.parseInt(v);
+        } catch (Exception ignore) {
+            return -1;
+        }
     }
 }

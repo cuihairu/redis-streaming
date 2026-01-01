@@ -59,6 +59,12 @@ public class RedisCheckpointStorage implements CheckpointStorage {
         List<Checkpoint> checkpoints = new ArrayList<>();
         for (String key : keys.getKeys()) {
             if (key == null || !key.startsWith(keyPrefix)) continue;
+            String suffix = key.substring(keyPrefix.length());
+            // Only accept pure numeric checkpoint keys: {keyPrefix}{checkpointId}
+            // This avoids accidentally reading auxiliary keys that share the same prefix.
+            if (suffix.isBlank() || !suffix.chars().allMatch(Character::isDigit)) {
+                continue;
+            }
             RBucket<Checkpoint> bucket = redisson.getBucket(key);
             Checkpoint checkpoint = bucket.get();
             if (checkpoint != null) {

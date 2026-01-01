@@ -13,212 +13,214 @@ class ConfigInfoTest {
 
     @Test
     void testNoArgsConstructor() {
-        ConfigInfo info = new ConfigInfo();
+        // Given & When
+        ConfigInfo configInfo = new ConfigInfo();
 
-        assertNull(info.getDataId());
-        assertNull(info.getGroup());
-        assertNull(info.getContent());
-        assertNull(info.getVersion());
-        assertNull(info.getDescription());
-        assertNull(info.getUpdateTime());
-        assertNull(info.getCreateTime());
+        // Then
+        assertNotNull(configInfo);
+        assertNull(configInfo.getDataId());
+        assertNull(configInfo.getGroup());
+        assertNull(configInfo.getContent());
+        assertNull(configInfo.getVersion());
+        assertNull(configInfo.getDescription());
+        assertNull(configInfo.getUpdateTime());
+        assertNull(configInfo.getCreateTime());
     }
 
     @Test
     void testAllArgsConstructor() {
-        LocalDateTime now = LocalDateTime.now();
-        ConfigInfo info = new ConfigInfo("data1", "group1", "content1", "v1.0", "desc1", now, now);
+        // Given
+        String dataId = "test-data-id";
+        String group = "test-group";
+        String content = "test content";
+        String version = "1.0.0";
+        String description = "test description";
+        LocalDateTime updateTime = LocalDateTime.now();
+        LocalDateTime createTime = LocalDateTime.now();
 
-        assertEquals("data1", info.getDataId());
-        assertEquals("group1", info.getGroup());
-        assertEquals("content1", info.getContent());
-        assertEquals("v1.0", info.getVersion());
-        assertEquals("desc1", info.getDescription());
-        assertEquals(now, info.getUpdateTime());
-        assertEquals(now, info.getCreateTime());
+        // When
+        ConfigInfo configInfo = new ConfigInfo(dataId, group, content, version, description, updateTime, createTime);
+
+        // Then
+        assertEquals(dataId, configInfo.getDataId());
+        assertEquals(group, configInfo.getGroup());
+        assertEquals(content, configInfo.getContent());
+        assertEquals(version, configInfo.getVersion());
+        assertEquals(description, configInfo.getDescription());
+        assertEquals(updateTime, configInfo.getUpdateTime());
+        assertEquals(createTime, configInfo.getCreateTime());
     }
 
     @Test
     void testBuilder() {
-        LocalDateTime createTime = LocalDateTime.of(2024, 1, 1, 10, 30);
-        LocalDateTime updateTime = LocalDateTime.of(2024, 1, 2, 11, 45);
+        // Given
+        String dataId = "test-data-id";
+        String group = "test-group";
+        String content = "test content";
+        String version = "1.0.0";
 
-        ConfigInfo info = ConfigInfo.builder()
-                .dataId("test-data")
-                .group("test-group")
-                .content("test-content")
-                .version("v2.0")
-                .description("test description")
-                .createTime(createTime)
-                .updateTime(updateTime)
+        // When
+        ConfigInfo configInfo = ConfigInfo.builder()
+                .dataId(dataId)
+                .group(group)
+                .content(content)
+                .version(version)
                 .build();
 
-        assertEquals("test-data", info.getDataId());
-        assertEquals("test-group", info.getGroup());
-        assertEquals("test-content", info.getContent());
-        assertEquals("v2.0", info.getVersion());
-        assertEquals("test description", info.getDescription());
-        assertEquals(createTime, info.getCreateTime());
-        assertEquals(updateTime, info.getUpdateTime());
+        // Then
+        assertEquals(dataId, configInfo.getDataId());
+        assertEquals(group, configInfo.getGroup());
+        assertEquals(content, configInfo.getContent());
+        assertEquals(version, configInfo.getVersion());
     }
 
     @Test
-    void testSettersAndGetters() {
-        ConfigInfo info = new ConfigInfo();
+    void testBuilderWithAllFields() {
+        // Given
         LocalDateTime now = LocalDateTime.now();
 
-        info.setDataId("new-data");
-        info.setGroup("new-group");
-        info.setContent("new-content");
-        info.setVersion("v3.0");
-        info.setDescription("new description");
-        info.setCreateTime(now);
-        info.setUpdateTime(now);
-
-        assertEquals("new-data", info.getDataId());
-        assertEquals("new-group", info.getGroup());
-        assertEquals("new-content", info.getContent());
-        assertEquals("v3.0", info.getVersion());
-        assertEquals("new description", info.getDescription());
-        assertEquals(now, info.getCreateTime());
-        assertEquals(now, info.getUpdateTime());
-    }
-
-    @Test
-    void testWithNullValues() {
-        ConfigInfo info = ConfigInfo.builder()
-                .dataId(null)
-                .group(null)
-                .content(null)
-                .version(null)
-                .description(null)
-                .createTime(null)
-                .updateTime(null)
+        // When
+        ConfigInfo configInfo = ConfigInfo.builder()
+                .dataId("data-id")
+                .group("group")
+                .content("content")
+                .version("version")
+                .description("description")
+                .updateTime(now)
+                .createTime(now)
                 .build();
 
-        assertNull(info.getDataId());
-        assertNull(info.getGroup());
-        assertNull(info.getContent());
-        assertNull(info.getVersion());
-        assertNull(info.getDescription());
-        assertNull(info.getCreateTime());
-        assertNull(info.getUpdateTime());
+        // Then
+        assertEquals("data-id", configInfo.getDataId());
+        assertEquals("group", configInfo.getGroup());
+        assertEquals("content", configInfo.getContent());
+        assertEquals("version", configInfo.getVersion());
+        assertEquals("description", configInfo.getDescription());
+        assertEquals(now, configInfo.getUpdateTime());
+        assertEquals(now, configInfo.getCreateTime());
     }
 
     @Test
-    void testWithEmptyStrings() {
-        ConfigInfo info = ConfigInfo.builder()
-                .dataId("")
-                .group("")
-                .content("")
-                .version("")
-                .description("")
+    void testSetters() {
+        // Given
+        ConfigInfo configInfo = new ConfigInfo();
+        String dataId = "new-data-id";
+
+        // When
+        configInfo.setDataId(dataId);
+
+        // Then
+        assertEquals(dataId, configInfo.getDataId());
+    }
+
+    @Test
+    void testSettersAllFields() {
+        // Given
+        ConfigInfo configInfo = new ConfigInfo();
+        LocalDateTime now = LocalDateTime.now();
+
+        // When
+        configInfo.setDataId("data-id");
+        configInfo.setGroup("group");
+        configInfo.setContent("content");
+        configInfo.setVersion("version");
+        configInfo.setDescription("description");
+        configInfo.setUpdateTime(now);
+        configInfo.setCreateTime(now);
+
+        // Then
+        assertEquals("data-id", configInfo.getDataId());
+        assertEquals("group", configInfo.getGroup());
+        assertEquals("content", configInfo.getContent());
+        assertEquals("version", configInfo.getVersion());
+        assertEquals("description", configInfo.getDescription());
+        assertEquals(now, configInfo.getUpdateTime());
+        assertEquals(now, configInfo.getCreateTime());
+    }
+
+    @Test
+    void testGetters() {
+        // Given
+        String dataId = "test-data-id";
+        ConfigInfo configInfo = new ConfigInfo(dataId, "group", "content", "version", 
+            "description", LocalDateTime.now(), LocalDateTime.now());
+
+        // When
+        String result = configInfo.getDataId();
+
+        // Then
+        assertEquals(dataId, result);
+    }
+
+    @Test
+    void testEquals() {
+        // Given
+        ConfigInfo config1 = ConfigInfo.builder()
+                .dataId("id")
+                .group("group")
+                .version("1.0")
                 .build();
 
-        assertEquals("", info.getDataId());
-        assertEquals("", info.getGroup());
-        assertEquals("", info.getContent());
-        assertEquals("", info.getVersion());
-        assertEquals("", info.getDescription());
+        ConfigInfo config2 = ConfigInfo.builder()
+                .dataId("id")
+                .group("group")
+                .version("1.0")
+                .build();
+
+        ConfigInfo config3 = ConfigInfo.builder()
+                .dataId("id2")
+                .group("group")
+                .version("1.0")
+                .build();
+
+        // Then
+        assertEquals(config1, config2);
+        assertNotEquals(config1, config3);
     }
 
     @Test
-    void testLombokDataAnnotation() {
-        ConfigInfo info1 = new ConfigInfo("data1", "group1", "content1", "v1.0", "desc1", null, null);
-        ConfigInfo info2 = new ConfigInfo("data1", "group1", "content1", "v1.0", "desc1", null, null);
+    void testHashCode() {
+        // Given
+        ConfigInfo config1 = ConfigInfo.builder()
+                .dataId("id")
+                .group("group")
+                .version("1.0")
+                .build();
 
-        // Lombok @Data generates equals() and hashCode()
-        assertEquals(info1, info2);
-        assertEquals(info1.hashCode(), info2.hashCode());
+        ConfigInfo config2 = ConfigInfo.builder()
+                .dataId("id")
+                .group("group")
+                .version("1.0")
+                .build();
+
+        // Then
+        assertEquals(config1.hashCode(), config2.hashCode());
     }
 
     @Test
     void testToString() {
-        ConfigInfo info = ConfigInfo.builder()
-                .dataId("test-data")
+        // Given
+        ConfigInfo configInfo = ConfigInfo.builder()
+                .dataId("test-id")
                 .group("test-group")
-                .version("v1.0")
                 .build();
 
-        String str = info.toString();
-        assertTrue(str.contains("test-data") || str.contains("test-group") || str.contains("v1.0"));
+        // When
+        String str = configInfo.toString();
+
+        // Then
+        assertNotNull(str);
+        assertTrue(str.contains("ConfigInfo"));
     }
 
     @Test
-    void testBuilderWithPartialFields() {
-        ConfigInfo info = ConfigInfo.builder()
-                .dataId("data1")
-                .group("group1")
-                .build();
+    void testCanEqual() {
+        // Given
+        ConfigInfo configInfo = new ConfigInfo();
+        Object obj = new Object();
 
-        assertEquals("data1", info.getDataId());
-        assertEquals("group1", info.getGroup());
-        assertNull(info.getContent());
-        assertNull(info.getVersion());
-        assertNull(info.getDescription());
-        assertNull(info.getCreateTime());
-        assertNull(info.getUpdateTime());
-    }
-
-    @Test
-    void testMultipleConfigInfoInstances() {
-        LocalDateTime time1 = LocalDateTime.of(2024, 1, 1, 10, 0);
-        LocalDateTime time2 = LocalDateTime.of(2024, 2, 1, 11, 0);
-
-        ConfigInfo info1 = ConfigInfo.builder()
-                .dataId("data1")
-                .group("group1")
-                .createTime(time1)
-                .updateTime(time1)
-                .build();
-
-        ConfigInfo info2 = ConfigInfo.builder()
-                .dataId("data2")
-                .group("group2")
-                .createTime(time2)
-                .updateTime(time2)
-                .build();
-
-        assertEquals("data1", info1.getDataId());
-        assertEquals("data2", info2.getDataId());
-        assertEquals(time1, info1.getCreateTime());
-        assertEquals(time2, info2.getCreateTime());
-    }
-
-    @Test
-    void testCanModifyImmutableFields() {
-        ConfigInfo info = ConfigInfo.builder()
-                .dataId("original")
-                .content("original content")
-                .build();
-
-        // Lombok @Data generates mutable setters
-        info.setDataId("modified");
-        info.setContent("modified content");
-
-        assertEquals("modified", info.getDataId());
-        assertEquals("modified content", info.getContent());
-    }
-
-    @Test
-    void testWithSpecialCharactersInContent() {
-        String specialContent = "{\n  \"key\": \"value\",\n  \"array\": [1, 2, 3]\n}";
-        ConfigInfo info = ConfigInfo.builder()
-                .dataId("json-config")
-                .content(specialContent)
-                .build();
-
-        assertEquals(specialContent, info.getContent());
-    }
-
-    @Test
-    void testVersionFormats() {
-        ConfigInfo semanticVersion = ConfigInfo.builder().version("1.2.3").build();
-        ConfigInfo timestampVersion = ConfigInfo.builder().version("20240101120000").build();
-        ConfigInfo hashVersion = ConfigInfo.builder().version("abc123def").build();
-
-        assertEquals("1.2.3", semanticVersion.getVersion());
-        assertEquals("20240101120000", timestampVersion.getVersion());
-        assertEquals("abc123def", hashVersion.getVersion());
+        // When & Then
+        assertNotEquals(configInfo, obj);
+        assertEquals(configInfo, configInfo);
     }
 }

@@ -17,6 +17,7 @@ class StateDescriptorTest {
         String s = descriptor.toString();
         assertTrue(s.contains("name='count'"));
         assertTrue(s.contains("type=Integer"));
+        assertTrue(s.contains("schemaVersion=1"));
     }
 
     @Test
@@ -54,6 +55,24 @@ class StateDescriptorTest {
         assertTrue(s.contains("StateDescriptor"));
         assertTrue(s.contains("name='flag'"));
         assertTrue(s.contains("type=Boolean"));
+    }
+
+    @Test
+    void schemaVersionDefaultsToOne() {
+        StateDescriptor<String> descriptor = new StateDescriptor<>("v", String.class, "x");
+        assertEquals(1, descriptor.getSchemaVersion());
+    }
+
+    @Test
+    void schemaVersionCanBeProvided() {
+        StateDescriptor<Integer> descriptor = new StateDescriptor<>("count", Integer.class, 0, 2);
+        assertEquals(2, descriptor.getSchemaVersion());
+    }
+
+    @Test
+    void schemaVersionIsClampedToAtLeastOne() {
+        StateDescriptor<Integer> descriptor = new StateDescriptor<>("count", Integer.class, 0, 0);
+        assertEquals(1, descriptor.getSchemaVersion());
     }
 
     @Test
@@ -154,4 +173,3 @@ class StateDescriptorTest {
         assertEquals(0.0, descriptor.getDefaultValue());
     }
 }
-

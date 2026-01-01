@@ -218,6 +218,74 @@
 ### 12. io.github.cuihairu.redis.streaming.config.impl - 55%
 **关键问题：** 配置中心实现测试不足
 **未覆盖的关键类：**
+
+---
+
+# Runtime（企业级能力）待办清单
+
+> 目标：将 `runtime` 从“最小可用单机运行时”逐步提升到可上线、可运维、可扩展的企业级运行时。
+> 范围：`runtime`（in-memory + Redis runtime）以及与 `mq/state/checkpoint/reliability/metrics` 的集成。
+
+## P0：可上线稳定性（必须）
+- [x] Redis runtime `KeyedStream.map/reduce/sum`（已实现：2026-01-01）
+- [x] 失败策略可配置（异常时：RETRY/DEAD_LETTER/FAIL），并记录结构化错误日志（topic/group/id/key）
+- [x] Poison message 处理：支持直接进入 DLQ（配置 `processingErrorResult=DEAD_LETTER`），并附带错误上下文 headers
+- [x] 作业生命周期：`executeAsync`/`cancel` 幂等、可重试、启动失败自动清理，避免资源泄漏
+- [x] 作业运维控制（基础）：`RedisJobClient.pause()/resume()/inFlight()`（已实现：2026-01-01）
+- [x] 单元/集成测试基线：覆盖失败/DLQ、生命周期、key 语义等核心路径
+- [x] Consumer 命名稳定化：`jobName-jobInstanceId-{n}`（减少重启后 consumer group 垃圾）
+- [x] Redis runtime metrics 基础埋点（job/pipeline/handle success/error/latency）+ Spring Boot Starter Micrometer 安装
+
+## P1：一致性与容错（企业级核心）
+- [x] 状态 key 稳定化：支持显式 `sourceId`（`fromMqTopicWithId(...)`），并移除 operator/state 内部 UUID
+- [x] keyed state 按 partition 隔离（基于 MQ `partitionId` header）
+- [x] 端到端 Checkpoint：source offset + state + sink 协调，支持恢复（至少 at-least-once 可恢复）（已实现：2026-01-01）
+  - [x] source offset 恢复（基础）：consumer group 缺失时，从 MQ commit frontier（acked id）重建 group 起点，避免误删 group 后全量重放
+  - [x] 周期性 checkpoint（实验）：`checkpointInterval` 将 offsets+keyed state 快照保存到 Redis（可配置 `checkpointKeyPrefix`/`checkpointsToKeep`）
+  - [x] stop-the-world：checkpoint 时 pause consumer 并等待 in-flight drain（`checkpointDrainTimeout`）
+  - [x] restore from latest checkpoint（实验）：`restoreFromLatestCheckpoint=true` 启动前恢复 offsets+state
+  - [x] sink 去重（实验）：`sinkDeduplicationEnabled=true` 在重试/回放时避免重复调用 sink（基于 `x-original-message-id`）
+  - [x] 手动触发 checkpoint（实验）：`RedisJobClient.triggerCheckpointNow()`
+  - [x] checkpoint 协调 sink（实验）：`CheckpointAwareSink` + `deferAckUntilCheckpoint=true`（checkpoint complete 后 commit sink 并 ACK offsets）
+  - [x] sink restore hook：启动恢复时调用 `CheckpointAwareSink.onCheckpointRestore(checkpointId)`（已实现：2026-01-01）
+- [x] restore 策略：`deferAckUntilCheckpoint=true` 时仅从 `sinkCommitted=true` 的 checkpoint 恢复（已实现：2026-01-01）
+  - [x] 配置安全提示：defer-ack + `mq.claimIdleMs`/checkpoint interval/drain 不匹配时 WARN（已实现：2026-01-01）
+  - [x] sinkCommitted marker：checkpoint 提交后写入 marker key（避免与 checkpoint key 同前缀的辅助 key 被误读，并为后续原子化预留）（已实现：2026-01-01）
+- [x] Exactly-once 路线设计（可选）：事务性 sink / 幂等 sink / 两阶段提交（明确边界与限制）（已产出：`docs/exactly-once.md`，2026-01-01）
+  - [x] v1（推荐）：Exactly-once by Idempotency（定义幂等键规范 + 给出示例 sink）（已实现：2026-01-01）
+    - [x] `IdempotentRecord<T>`（稳定幂等键载体）（已实现：2026-01-01）
+    - [x] Redis 幂等 sink 示例：`RedisIdempotentListSink<T>`（Lua 原子去重 + RPUSH）（已实现：2026-01-01）
+    - [x] integration test：无 runtime dedup 时，幂等 sink 仍可防止重试重复写入（已实现：2026-01-01）
+  - [ ] v2：Two-Phase Commit Sink（2PC）API 设计与实现（类似 Flink 两阶段提交）
+    - [ ] core：新增 `TwoPhaseCommitSink` API（Txn 可序列化进 checkpoint）
+    - [ ] runtime：checkpoint 流程加入 `preCommit -> storeCheckpoint(txn) -> commit -> mark sinkCommitted -> ack`
+    - [ ] runtime：恢复流程加入 txn 补偿（`recoverAndCommit/recoverAndAbort`）
+    - [ ] integration tests：故障注入（checkpoint 已写入但 commit 未执行/commit 抛错）与恢复验证
+  - [ ] v2.5：Outbox/WAL（Redis 内 outbox + 异步投递器），作为跨系统 exactly-once 的折中方案
+  - [ ] v3：Redis-only exactly-once（Lua 原子写 sink + 更新 offsets + XACK；Redis Cluster 需同 hash slot）
+    - [x] Redis-only commit-on-checkpoint sink：`RedisCheckpointedIdempotentListSink<T>`（checkpoint complete 后 flush side effects）（已实现：2026-01-01）
+- [x] State 演进：state schema/versioning、兼容升级策略、回滚策略（已实现：2026-01-01）
+  - [x] `StateDescriptor.schemaVersion`（默认 1）
+  - [x] Redis runtime state schema 元数据与校验（`stateSchemaEvolutionEnabled` + `stateSchemaMismatchPolicy=FAIL/CLEAR/IGNORE`）
+  - [x] Checkpoint snapshot/restore state schema 元数据（避免恢复后 schema 丢失）
+  - [ ] 状态迁移工具/策略：提供在线迁移或离线重放方案（按业务自定义）
+- [ ] State 治理：TTL/清理策略、热点 key 保护、state size 上报与告警
+  - [x] State TTL：`RedisRuntimeConfig.stateTtl(...)`（对 keyed state Redis hash key 写入后 best-effort expire）
+  - [x] State size 上报（抽样）：`RedisRuntimeConfig.stateSizeReportEveryNStateWrites(n)`（每 N 次 state 写入上报一次 hash 字段数）
+  - [x] 热点 key 保护（基础）：`RedisRuntimeConfig.keyedStateShardCount(n)`（按 key hash 分片，降低单个 hash 过热/过大风险，默认 1 不启用）
+  - [x] 热点 key 告警（阈值+限频日志+指标）：`keyedStateHotKeyFieldsWarnThreshold`/`keyedStateHotKeyWarnInterval`
+  - [ ] 热点 key 处置（阈值/采样/限流/降级/DLQ）
+
+## P2：可扩展与性能
+- [ ] 并行度模型：多并行子任务/算子链并发，支持背压与限流
+- [ ] 资源模型：线程池/队列容量/批大小可配；安全默认值；压测基准与调优指南
+- [ ] Window 运行时支持（Redis runtime）：事件时间/水位线/触发器/迟到数据处理（明确语义）
+
+## P3：可观测与运维
+- [ ] Metrics 全链路：吞吐、延迟、pending、重试、DLQ、state 读写、定时器队列等
+- [ ] Trace/日志：可关联 messageId、jobName、operatorId；支持采样
+- [ ] 运行时诊断：健康检查、指标导出、运行时配置 dump、死锁/卡顿定位
+- [ ] 多环境部署：Docker/K8s 参考部署，滚动升级与回滚建议
 - `RedisConfigCenter` - 0% (14 个方法未覆盖)
 - `RedisConfigService` - 58% (3 个方法未覆盖)
 

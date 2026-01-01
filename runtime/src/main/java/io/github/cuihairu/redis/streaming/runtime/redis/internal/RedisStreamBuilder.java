@@ -14,6 +14,7 @@ import io.github.cuihairu.redis.streaming.mq.Message;
 import io.github.cuihairu.redis.streaming.mq.SubscriptionOptions;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisRuntimeConfig;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisStreamExecutionEnvironment;
+import org.redisson.api.RMap;
 import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,7 +22,6 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.UUID;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -35,6 +35,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
     private final RedisRuntimeConfig config;
     private final RedissonClient redissonClient;
     private final ObjectMapper objectMapper;
+    private final String streamId;
     private final String topic;
     private final String consumerGroup;
     private final SubscriptionOptions subscriptionOptions;
@@ -46,6 +47,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                               RedisRuntimeConfig config,
                               RedissonClient redissonClient,
                               ObjectMapper objectMapper,
+                              String streamId,
                               String topic,
                               String consumerGroup,
                               SubscriptionOptions subscriptionOptions,
@@ -54,6 +56,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
         this.config = Objects.requireNonNull(config, "config");
         this.redissonClient = Objects.requireNonNull(redissonClient, "redissonClient");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
+        this.streamId = Objects.requireNonNull(streamId, "streamId");
         this.topic = Objects.requireNonNull(topic, "topic");
         this.consumerGroup = Objects.requireNonNull(consumerGroup, "consumerGroup");
         this.subscriptionOptions = subscriptionOptions;
@@ -64,16 +67,18 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                                          RedisRuntimeConfig config,
                                                          RedissonClient redissonClient,
                                                          ObjectMapper objectMapper,
+                                                         String streamId,
                                                          String topic,
-                                                         String consumerGroup) {
-        return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, topic, consumerGroup, null, List.of());
+                                                         String consumerGroup,
+                                                         SubscriptionOptions subscriptionOptions) {
+        return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, List.of());
     }
 
     private RedisStreamBuilder<T> withOperator(RedisOperatorNode node) {
         List<RedisOperatorNode> next = new ArrayList<>(operators.size() + 1);
         next.addAll(operators);
         next.add(node);
-        return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, topic, consumerGroup, subscriptionOptions, next);
+        return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, next);
     }
 
     @Override
@@ -108,10 +113,13 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
     @Override
     public <K> KeyedStream<K, T> keyBy(Function<T, K> keySelector) {
         Objects.requireNonNull(keySelector, "keySelector");
-        String operatorId = "keyBy-" + UUID.randomUUID().toString().substring(0, 8);
+        String operatorId = streamId + "-keyBy-" + operators.size();
         RedisKeyedStateStore<K> store = new RedisKeyedStateStore<>(redissonClient, objectMapper,
-                config.getStateKeyPrefix(), config.getJobName(), operatorId);
-        return new RedisKeyedStreamBuilder<>(env, config, redissonClient, objectMapper, topic, consumerGroup,
+                config.getStateKeyPrefix(), config.getJobName(), topic, consumerGroup, operatorId, config.getStateTtl(),
+                config.getStateSizeReportEveryNStateWrites(), config.getKeyedStateShardCount(),
+                config.getKeyedStateHotKeyFieldsWarnThreshold(), config.getKeyedStateHotKeyWarnInterval(),
+                config.isStateSchemaEvolutionEnabled(), config.getStateSchemaMismatchPolicy());
+        return new RedisKeyedStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup,
                 subscriptionOptions, operators, keySelector, store, operatorId);
     }
 
@@ -162,6 +170,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
         private final RedisRuntimeConfig config;
         private final RedissonClient redissonClient;
         private final ObjectMapper objectMapper;
+        private final String streamId;
         private final String topic;
         private final String consumerGroup;
         private final SubscriptionOptions subscriptionOptions;
@@ -174,6 +183,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                        RedisRuntimeConfig config,
                                        RedissonClient redissonClient,
                                        ObjectMapper objectMapper,
+                                       String streamId,
                                        String topic,
                                        String consumerGroup,
                                        SubscriptionOptions subscriptionOptions,
@@ -185,6 +195,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
             this.config = config;
             this.redissonClient = redissonClient;
             this.objectMapper = objectMapper;
+            this.streamId = streamId;
             this.topic = topic;
             this.consumerGroup = consumerGroup;
             this.subscriptionOptions = subscriptionOptions;
@@ -197,12 +208,32 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
         @Override
         public <R> KeyedStream<K, R> map(Function<V, R> mapper) {
             Objects.requireNonNull(mapper, "mapper");
-            Function<R, K> inheritedKey = r -> {
-                // keep original key assignment independent of mapping (like Flink keyed stream)
-                throw new UnsupportedOperationException("KeyedStream.map() is not supported in Redis runtime yet");
+            List<RedisOperatorNode> ops = new ArrayList<>(upstreamOperators);
+            ops.add((value, ctx, emit) -> {
+                V v = castValue(value);
+                K key = currentKeyOrCompute(v);
+                int partitionId = ctx.currentPartitionId();
+                stateStore.setCurrentPartitionId(partitionId);
+                stateStore.setCurrentKey(key);
+                try {
+                    R mapped = mapper.apply(v);
+                    emit.emit(mapped);
+                } finally {
+                    stateStore.clearCurrentKey();
+                    stateStore.clearCurrentPartitionId();
+                }
+            });
+
+            Function<R, K> inheritedKeySelector = r -> {
+                K k = stateStore.currentKey();
+                if (k == null) {
+                    throw new IllegalStateException("No current key is set for keyed stream mapping");
+                }
+                return k;
             };
-            // NOTE: For now, keep Redis runtime keyed semantics focused on process/reduce/sum.
-            throw new UnsupportedOperationException("KeyedStream.map() is not supported in Redis runtime yet");
+
+            return new RedisKeyedStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup,
+                    subscriptionOptions, ops, inheritedKeySelector, stateStore, operatorId);
         }
 
         @Override
@@ -214,6 +245,8 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
             ops.add((value, ctx, emit) -> {
                 V v = castValue(value);
                 K key = keySelector.apply(v);
+                int partitionId = ctx.currentPartitionId();
+                stateStore.setCurrentPartitionId(partitionId);
                 stateStore.setCurrentKey(key);
                 try {
                     KeyedProcessFunction.Context kctx = new KeyedProcessFunction.Context() {
@@ -230,6 +263,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                         @Override
                         public void registerProcessingTimeTimer(long time) {
                             ctx.registerProcessingTimeTimer(time, () -> {
+                                stateStore.setCurrentPartitionId(partitionId);
                                 stateStore.setCurrentKey(key);
                                 try {
                                     processFunction.onProcessingTime(time, key, this,
@@ -244,6 +278,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                     throw new RuntimeException(e);
                                 } finally {
                                     stateStore.clearCurrentKey();
+                                    stateStore.clearCurrentPartitionId();
                                 }
                             });
                         }
@@ -251,6 +286,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                         @Override
                         public void registerEventTimeTimer(long time) {
                             ctx.registerEventTimeTimer(time, () -> {
+                                stateStore.setCurrentPartitionId(partitionId);
                                 stateStore.setCurrentKey(key);
                                 try {
                                     processFunction.onEventTime(time, key, this,
@@ -265,6 +301,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                     throw new RuntimeException(e);
                                 } finally {
                                     stateStore.clearCurrentKey();
+                                    stateStore.clearCurrentPartitionId();
                                 }
                             });
                         }
@@ -279,10 +316,11 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                     });
                 } finally {
                     stateStore.clearCurrentKey();
+                    stateStore.clearCurrentPartitionId();
                 }
             });
 
-            return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, topic, consumerGroup, subscriptionOptions, ops);
+            return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops);
         }
 
         @Override
@@ -292,12 +330,96 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
 
         @Override
         public DataStream<V> reduce(ReduceFunction<V> reducer) {
-            throw new UnsupportedOperationException("Keyed reduce is not supported by Redis runtime yet");
+            Objects.requireNonNull(reducer, "reducer");
+            String stateName = "__internal:reduce:" + operatorId + ":" + upstreamOperators.size();
+
+            List<RedisOperatorNode> ops = new ArrayList<>(upstreamOperators);
+            ops.add((value, ctx, emit) -> {
+                V v = castValue(value);
+                K key = currentKeyOrCompute(v);
+                int partitionId = ctx.currentPartitionId();
+                stateStore.setCurrentPartitionId(partitionId);
+                stateStore.setCurrentKey(key);
+                try {
+                    String field = stateStore.stateFieldForKey(key);
+                    RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, field);
+                    RMap<String, String> state = ref.map();
+                    String json = state.get(field);
+                    V current = null;
+                    if (json != null) {
+                        try {
+                            @SuppressWarnings("unchecked")
+                            Class<V> type = (Class<V>) v.getClass();
+                            current = objectMapper.readValue(json, type);
+                        } catch (Exception e) {
+                            throw new RuntimeException("Failed to deserialize reduce state", e);
+                        }
+                    }
+
+                    V reduced;
+                    try {
+                        reduced = current == null ? v : reducer.reduce(current, v);
+                    } catch (Exception e) {
+                        throw new RuntimeException("Reduce function failed", e);
+                    }
+
+                    if (reduced == null) {
+                        state.remove(field);
+                    } else {
+                        try {
+                            state.put(field, objectMapper.writeValueAsString(reduced));
+                        } catch (Exception e) {
+                            throw new RuntimeException("Failed to serialize reduce state", e);
+                        }
+                    }
+                    stateStore.touch(ref.redisKey(), stateName, state);
+                    emit.emit(reduced);
+                } finally {
+                    stateStore.clearCurrentKey();
+                    stateStore.clearCurrentPartitionId();
+                }
+            });
+
+            return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops);
         }
 
         @Override
         public DataStream<V> sum(Function<V, ? extends Number> fieldSelector) {
-            throw new UnsupportedOperationException("Keyed sum is not supported by Redis runtime yet");
+            Objects.requireNonNull(fieldSelector, "fieldSelector");
+            String stateName = "__internal:sum:" + operatorId + ":" + upstreamOperators.size();
+
+            List<RedisOperatorNode> ops = new ArrayList<>(upstreamOperators);
+            ops.add((value, ctx, emit) -> {
+                V v = castValue(value);
+                if (!(v instanceof Number numberValue)) {
+                    throw new UnsupportedOperationException(
+                            "Redis runtime sum() only supports Number elements, but got: " +
+                                    (v == null ? "null" : v.getClass().getName()));
+                }
+
+                K key = currentKeyOrCompute(v);
+                int partitionId = ctx.currentPartitionId();
+                stateStore.setCurrentPartitionId(partitionId);
+                stateStore.setCurrentKey(key);
+                try {
+                    String field = stateStore.stateFieldForKey(key);
+                    RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, field);
+                    RMap<String, String> state = ref.map();
+                    Number current = decodeNumber(state.get(field));
+                    Number next = addNumbers(current, fieldSelector.apply(v));
+                    state.put(field, encodeNumber(next));
+                    stateStore.touch(ref.redisKey(), stateName, state);
+
+                    @SuppressWarnings("unchecked")
+                    V out = (V) castToSameNumberType(next, numberValue);
+                    emit.emit(out);
+                } finally {
+                    stateStore.clearCurrentKey();
+                    stateStore.clearCurrentPartitionId();
+                }
+            });
+
+            return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops);
         }
 
         @Override
@@ -309,6 +431,68 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
         @SuppressWarnings("unchecked")
         private V castValue(Object o) {
             return (V) o;
+        }
+
+        private K currentKeyOrCompute(V v) {
+            K current = stateStore.currentKey();
+            if (current != null) {
+                return current;
+            }
+            return keySelector.apply(v);
+        }
+    }
+
+    private static Number addNumbers(Number a, Number b) {
+        if (b == null) {
+            return a == null ? 0L : a;
+        }
+        if (a == null) {
+            return b;
+        }
+        if (a instanceof Double || a instanceof Float || b instanceof Double || b instanceof Float) {
+            return a.doubleValue() + b.doubleValue();
+        }
+        return a.longValue() + b.longValue();
+    }
+
+    private static Number castToSameNumberType(Number value, Number sample) {
+        if (sample instanceof Integer) return value.intValue();
+        if (sample instanceof Long) return value.longValue();
+        if (sample instanceof Double) return value.doubleValue();
+        if (sample instanceof Float) return value.floatValue();
+        if (sample instanceof Short) return value.shortValue();
+        if (sample instanceof Byte) return value.byteValue();
+        return value;
+    }
+
+    private static String encodeNumber(Number number) {
+        if (number == null) {
+            return "l:0";
+        }
+        if (number instanceof Double || number instanceof Float) {
+            return "d:" + number.doubleValue();
+        }
+        return "l:" + number.longValue();
+    }
+
+    private static Number decodeNumber(String encoded) {
+        if (encoded == null || encoded.isBlank()) {
+            return 0L;
+        }
+        if (encoded.startsWith("d:")) {
+            return Double.parseDouble(encoded.substring(2));
+        }
+        if (encoded.startsWith("l:")) {
+            return Long.parseLong(encoded.substring(2));
+        }
+        try {
+            return Long.parseLong(encoded);
+        } catch (NumberFormatException e) {
+            try {
+                return Double.parseDouble(encoded);
+            } catch (NumberFormatException ignore) {
+                return 0L;
+            }
         }
     }
 }

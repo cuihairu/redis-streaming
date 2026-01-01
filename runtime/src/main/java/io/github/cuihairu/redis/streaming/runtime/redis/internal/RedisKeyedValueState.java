@@ -25,8 +25,10 @@ final class RedisKeyedValueState<K, T> implements ValueState<T> {
         if (key == null) {
             throw new IllegalStateException("No current key is set for keyed state access");
         }
-        String field = serializeKey(key);
-        RMap<String, String> map = store.stateMap(descriptor.getName());
+        String field = store.stateFieldForKey(key);
+        RedisKeyedStateStore.StateMapRef ref = store.stateMapRef(descriptor.getName(), field);
+        store.ensureSchema(ref, descriptor);
+        RMap<String, String> map = ref.map();
         String json = map.get(field);
         if (json == null) {
             return descriptor.getDefaultValue();
@@ -44,14 +46,18 @@ final class RedisKeyedValueState<K, T> implements ValueState<T> {
         if (key == null) {
             throw new IllegalStateException("No current key is set for keyed state access");
         }
-        String field = serializeKey(key);
-        RMap<String, String> map = store.stateMap(descriptor.getName());
+        String field = store.stateFieldForKey(key);
+        RedisKeyedStateStore.StateMapRef ref = store.stateMapRef(descriptor.getName(), field);
+        store.ensureSchema(ref, descriptor);
+        RMap<String, String> map = ref.map();
         if (value == null) {
             map.remove(field);
+            store.touch(ref.redisKey(), descriptor.getName(), map);
             return;
         }
         try {
             map.put(field, objectMapper.writeValueAsString(value));
+            store.touch(ref.redisKey(), descriptor.getName(), map);
         } catch (Exception e) {
             throw new RuntimeException("Failed to serialize state value for " + descriptor.getName(), e);
         }
@@ -63,21 +69,11 @@ final class RedisKeyedValueState<K, T> implements ValueState<T> {
         if (key == null) {
             throw new IllegalStateException("No current key is set for keyed state access");
         }
-        store.stateMap(descriptor.getName()).remove(serializeKey(key));
-    }
-
-    private String serializeKey(K key) {
-        try {
-            if (key instanceof String s) {
-                return "s:" + s;
-            }
-            if (key instanceof Number n) {
-                return "n:" + n;
-            }
-            return "j:" + objectMapper.writeValueAsString(key);
-        } catch (Exception e) {
-            return "t:" + String.valueOf(key);
-        }
+        String field = store.stateFieldForKey(key);
+        RedisKeyedStateStore.StateMapRef ref = store.stateMapRef(descriptor.getName(), field);
+        store.ensureSchema(ref, descriptor);
+        RMap<String, String> map = ref.map();
+        map.remove(field);
+        store.touch(ref.redisKey(), descriptor.getName(), map);
     }
 }
-

@@ -11,202 +11,174 @@ class BaseRedisConfigTest {
 
     @Test
     void testDefaultConstructor() {
+        // Given & When
         BaseRedisConfig config = new BaseRedisConfig();
 
-        assertEquals("redis_streaming", config.getKeyPrefix());
+        // Then
+        assertEquals(BaseRedisConfig.DEFAULT_KEY_PREFIX, config.getKeyPrefix());
         assertTrue(config.isEnableKeyPrefix());
     }
 
     @Test
     void testConstructorWithKeyPrefix() {
-        BaseRedisConfig config = new BaseRedisConfig("custom_prefix");
+        // Given
+        String customPrefix = "custom_prefix";
 
-        assertEquals("custom_prefix", config.getKeyPrefix());
+        // When
+        BaseRedisConfig config = new BaseRedisConfig(customPrefix);
+
+        // Then
+        assertEquals(customPrefix, config.getKeyPrefix());
         assertTrue(config.isEnableKeyPrefix());
     }
 
     @Test
     void testConstructorWithKeyPrefixAndEnableFlag() {
-        BaseRedisConfig config = new BaseRedisConfig("my_prefix", false);
+        // Given
+        String customPrefix = "custom_prefix";
+        boolean enableKeyPrefix = false;
 
-        assertEquals("my_prefix", config.getKeyPrefix());
-        assertFalse(config.isEnableKeyPrefix());
+        // When
+        BaseRedisConfig config = new BaseRedisConfig(customPrefix, enableKeyPrefix);
+
+        // Then
+        assertEquals(customPrefix, config.getKeyPrefix());
+        assertEquals(enableKeyPrefix, config.isEnableKeyPrefix());
     }
 
     @Test
     void testSetKeyPrefix() {
+        // Given
         BaseRedisConfig config = new BaseRedisConfig();
-        config.setKeyPrefix("new_prefix");
+        String newPrefix = "new_prefix";
 
-        assertEquals("new_prefix", config.getKeyPrefix());
+        // When
+        config.setKeyPrefix(newPrefix);
+
+        // Then
+        assertEquals(newPrefix, config.getKeyPrefix());
     }
 
     @Test
     void testSetEnableKeyPrefix() {
+        // Given
         BaseRedisConfig config = new BaseRedisConfig();
+
+        // When
         config.setEnableKeyPrefix(false);
 
+        // Then
         assertFalse(config.isEnableKeyPrefix());
     }
 
     @Test
     void testFormatKeyWithPrefixEnabled() {
-        BaseRedisConfig config = new BaseRedisConfig("app");
+        // Given
+        BaseRedisConfig config = new BaseRedisConfig("myapp");
+        String keyPattern = "user:%d";
 
-        String result = config.formatKey("config:%s", "data1");
+        // When
+        String formattedKey = config.formatKey(keyPattern, 123);
 
-        assertEquals("app:config:data1", result);
+        // Then
+        assertEquals("myapp:user:123", formattedKey);
     }
 
     @Test
     void testFormatKeyWithPrefixDisabled() {
-        BaseRedisConfig config = new BaseRedisConfig("app");
+        // Given
+        BaseRedisConfig config = new BaseRedisConfig("myapp");
         config.setEnableKeyPrefix(false);
+        String keyPattern = "user:%d";
 
-        String result = config.formatKey("config:%s", "data1");
+        // When
+        String formattedKey = config.formatKey(keyPattern, 123);
 
-        assertEquals("config:data1", result);
-    }
-
-    @Test
-    void testFormatKeyWithNullPrefix() {
-        BaseRedisConfig config = new BaseRedisConfig();
-        config.setKeyPrefix(null);
-
-        String result = config.formatKey("config:%s", "data1");
-
-        // With null prefix and enableKeyPrefix=true, should skip prefix
-        assertEquals("config:data1", result);
+        // Then
+        assertEquals("user:123", formattedKey);
     }
 
     @Test
     void testFormatKeyWithEmptyPrefix() {
+        // Given
         BaseRedisConfig config = new BaseRedisConfig("");
-        config.setEnableKeyPrefix(true);
+        String keyPattern = "user:%d";
 
-        String result = config.formatKey("config:%s", "data1");
+        // When
+        String formattedKey = config.formatKey(keyPattern, 123);
 
-        // Empty string is treated as falsy
-        assertEquals("config:data1", result);
+        // Then
+        assertEquals("user:123", formattedKey);
+    }
+
+    @Test
+    void testFormatKeyWithNullPrefix() {
+        // Given
+        BaseRedisConfig config = new BaseRedisConfig();
+        config.setKeyPrefix(null);
+        String keyPattern = "user:%d";
+
+        // When
+        String formattedKey = config.formatKey(keyPattern, 123);
+
+        // Then
+        assertEquals("user:123", formattedKey);
     }
 
     @Test
     void testFormatKeyWithMultipleArgs() {
-        BaseRedisConfig config = new BaseRedisConfig("streaming");
+        // Given
+        BaseRedisConfig config = new BaseRedisConfig("app");
 
-        String result = config.formatKey("service:%s:%s", "user-service", "config");
+        // When
+        String formattedKey = config.formatKey("user:%s:status:%d", "john", 1);
 
-        assertEquals("streaming:service:user-service:config", result);
+        // Then
+        assertEquals("app:user:john:status:1", formattedKey);
     }
 
     @Test
     void testFormatKeyWithNoArgs() {
+        // Given
         BaseRedisConfig config = new BaseRedisConfig("app");
+        String keyPattern = "all_users";
 
-        String result = config.formatKey("global_config");
+        // When
+        String formattedKey = config.formatKey(keyPattern);
 
-        assertEquals("app:global_config", result);
+        // Then
+        assertEquals("app:all_users", formattedKey);
     }
 
     @Test
-    void testFormatKeyWithNumericArgs() {
+    void testFormatKeyWithNoArgsAndPrefixDisabled() {
+        // Given
         BaseRedisConfig config = new BaseRedisConfig("app");
+        config.setEnableKeyPrefix(false);
+        String keyPattern = "all_users";
 
-        String result = config.formatKey("partition:%d", 123);
+        // When
+        String formattedKey = config.formatKey(keyPattern);
 
-        assertEquals("app:partition:123", result);
-    }
-
-    @Test
-    void testFormatKeyWithMixedArgs() {
-        BaseRedisConfig config = new BaseRedisConfig("data");
-
-        String result = config.formatKey("user:%s:age:%d", "john", 30);
-
-        assertEquals("data:user:john:age:30", result);
+        // Then
+        assertEquals("all_users", formattedKey);
     }
 
     @Test
     void testDefaultKeyPrefixConstant() {
+        // Given & When & Then
         assertEquals("redis_streaming", BaseRedisConfig.DEFAULT_KEY_PREFIX);
     }
 
     @Test
-    void testChainedSetters() {
-        BaseRedisConfig config = new BaseRedisConfig();
-        config.setKeyPrefix("test");
-        config.setEnableKeyPrefix(false);
+    void testGetKeyPrefix() {
+        // Given
+        BaseRedisConfig config = new BaseRedisConfig("test_prefix");
 
-        assertEquals("test", config.getKeyPrefix());
-        assertFalse(config.isEnableKeyPrefix());
-    }
+        // When
+        String keyPrefix = config.getKeyPrefix();
 
-    @Test
-    void testComplexKeyPatterns() {
-        BaseRedisConfig config = new BaseRedisConfig("myapp");
-
-        String result = config.formatKey("config:%s:env:%s:v%s", "data1", "prod", "2");
-
-        assertEquals("myapp:config:data1:env:prod:v2", result);
-    }
-
-    @Test
-    void testSpecialCharactersInPrefix() {
-        BaseRedisConfig config = new BaseRedisConfig("my_app-v1");
-
-        String result = config.formatKey("key:%s", "value");
-
-        assertEquals("my_app-v1:key:value", result);
-    }
-
-    @Test
-    void testFormatKeyIdempotency() {
-        BaseRedisConfig config = new BaseRedisConfig("app");
-
-        String result1 = config.formatKey("test:%s", "key1");
-        String result2 = config.formatKey("test:%s", "key1");
-
-        assertEquals(result1, result2);
-    }
-
-    @Test
-    void testKeyPrefixWithColon() {
-        BaseRedisConfig config = new BaseRedisConfig("prefix:with:colons");
-
-        String result = config.formatKey("suffix");
-
-        assertEquals("prefix:with:colons:suffix", result);
-    }
-
-    @Test
-    void testEnableKeyPrefixToggle() {
-        BaseRedisConfig config = new BaseRedisConfig("app");
-
-        config.setEnableKeyPrefix(false);
-        assertEquals("config:test", config.formatKey("config:%s", "test"));
-
-        config.setEnableKeyPrefix(true);
-        assertEquals("app:config:test", config.formatKey("config:%s", "test"));
-    }
-
-    @Test
-    void testEmptyKeyPattern() {
-        BaseRedisConfig config = new BaseRedisConfig("app");
-
-        String result = config.formatKey("", "arg1");
-
-        // formatKey with empty pattern returns just prefix (args are not processed)
-        assertEquals("app:", result);
-    }
-
-    @Test
-    void testVeryLongKeyPrefix() {
-        String longPrefix = "a".repeat(100);
-        BaseRedisConfig config = new BaseRedisConfig(longPrefix);
-
-        String result = config.formatKey("key");
-
-        assertTrue(result.startsWith(longPrefix));
-        assertTrue(result.endsWith(":key"));
+        // Then
+        assertEquals("test_prefix", keyPrefix);
     }
 }

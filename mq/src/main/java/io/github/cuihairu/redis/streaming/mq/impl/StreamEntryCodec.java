@@ -119,6 +119,11 @@ public final class StreamEntryCodec {
                 headers.putAll(MAPPER.readValue((String) headersVal, new TypeReference<Map<String, String>>(){}));
             } catch (Exception ignore) {}
         }
+        String orig = toStringOrNull(data.get("originalMessageId"));
+        if (orig != null && !orig.isBlank()
+                && !headers.containsKey(io.github.cuihairu.redis.streaming.mq.MqHeaders.ORIGINAL_MESSAGE_ID)) {
+            headers.put(io.github.cuihairu.redis.streaming.mq.MqHeaders.ORIGINAL_MESSAGE_ID, orig);
+        }
 
         // Handle payload - if headers indicate hash storage, or if a hash ref is present with empty/absent payload, try to load
         Object payload = data.get("payload");
