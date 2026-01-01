@@ -32,6 +32,9 @@ public class MqOptions {
     // Backpressure (global per consumer instance). 0 disables.
     private int maxInFlight = 0;
 
+    // Partition leasing: cap active leased partitions per consumer instance. 0 means default to workerThreads.
+    private int maxLeasedPartitionsPerConsumer = 0;
+
     // Retry policy
     private int retryMaxAttempts = 5;
     private long retryBaseBackoffMs = 1000;
@@ -86,6 +89,7 @@ public class MqOptions {
         public Builder claimIdleMs(long v){ o.claimIdleMs = Math.max(0, v); return this; }
         public Builder claimBatchSize(int v){ o.claimBatchSize = Math.max(1, v); return this; }
         public Builder maxInFlight(int v){ o.maxInFlight = Math.max(0, v); return this; }
+        public Builder maxLeasedPartitionsPerConsumer(int v){ o.maxLeasedPartitionsPerConsumer = Math.max(0, v); return this; }
         public Builder retryMaxAttempts(int v){ o.retryMaxAttempts = Math.max(1, v); return this; }
         public Builder retryBaseBackoffMs(long v){ o.retryBaseBackoffMs = Math.max(0, v); return this; }
         public Builder retryMaxBackoffMs(long v){ o.retryMaxBackoffMs = Math.max(0, v); return this; }

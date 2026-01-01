@@ -85,6 +85,7 @@ This module also contains an experimental Redis-backed runtime that composes exi
 - Redis-only atomic sink (experimental): use `RedisAtomicCheckpointListSink` + `RedisExactlyOnceRecord` with `deferAckUntilCheckpoint(true)` and `ackDeferredMessagesOnCheckpoint(false)` to atomically (Lua) commit sink + XACK + advance commit frontier.
 - Parallelism (experimental): set `RedisRuntimeConfig.pipelineParallelism(n)` to start N consumer subtasks per pipeline; partitions are deterministically pinned by `partitionId % n`.
 - Backpressure (MQ): set `MqOptions.maxInFlight(n)` to cap concurrent in-flight message handling per consumer instance.
+- Partition leasing cap (MQ): set `MqOptions.maxLeasedPartitionsPerConsumer(n)` to avoid acquiring more partition leases than a consumer can actively run (defaults to `workerThreads`).
 
 Limitations (current):
 - Windowed execution is not supported by Redis runtime yet.

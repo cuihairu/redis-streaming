@@ -25,6 +25,7 @@ public class MqMicrometerCollectorTest {
         c.recordBackpressureWait("c1", 7);
         c.setEligiblePartitions("c1", "t", "g", 2);
         c.setLeasedPartitions("c1", "t", "g", 1);
+        c.setMaxLeasedPartitions("c1", 8);
 
         assertEquals(2.0, registry.get("redis_streaming_mq_produced_total")
                 .tag("topic", "t").tag("partition", "0").counter().count(), 0.0001);
@@ -53,5 +54,7 @@ public class MqMicrometerCollectorTest {
                 .tag("consumer", "c1").tag("topic", "t").tag("group", "g").gauge().value(), 0.0001);
         assertEquals(1.0, registry.get("redis_streaming_mq_leased_partitions")
                 .tag("consumer", "c1").tag("topic", "t").tag("group", "g").gauge().value(), 0.0001);
+        assertEquals(8.0, registry.get("redis_streaming_mq_max_leased_partitions")
+                .tag("consumer", "c1").gauge().value(), 0.0001);
     }
 }

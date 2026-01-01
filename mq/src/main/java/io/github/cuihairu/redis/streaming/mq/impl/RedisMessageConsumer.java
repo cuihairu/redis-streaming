@@ -218,6 +218,10 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 MqMetrics.get().setInFlight(consumerName, inFlight.get(), options.getMaxInFlight());
             } catch (Throwable ignore) {
             }
+            try {
+                MqMetrics.get().setMaxLeasedPartitions(consumerName, getMaxLeasedPartitions());
+            } catch (Throwable ignore) {
+            }
             subscriptions.forEach((topic, sub) -> publishPartitionMetrics(topic, sub.consumerGroup, computeEligiblePartitions(topic, sub.consumerGroup)));
         }
     }
@@ -954,6 +958,11 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
 
     private void rebalanceAssignments() {
         if (!running.get() || closed.get()) return;
+        int maxLeased = getMaxLeasedPartitions();
+        try {
+            MqMetrics.get().setMaxLeasedPartitions(consumerName, maxLeased);
+        } catch (Throwable ignore) {
+        }
         subscriptions.forEach((topic, sub) -> {
             int pc = partitionRegistry.getPartitionCount(topic);
             int eligibleCount = 0;
@@ -966,6 +975,9 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                     }
                 }
                 eligibleCount++;
+                if (workers.size() >= maxLeased) {
+                    continue;
+                }
                 PartitionKey pk = new PartitionKey(topic, sub.consumerGroup, i);
                 String leaseKey = StreamKeys.lease(topic, sub.consumerGroup, i);
                 // If we already own and have a worker, continue
@@ -998,6 +1010,11 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
 
     private void renewLeases() {
         if (!running.get() || closed.get()) return;
+        int maxLeased = getMaxLeasedPartitions();
+        try {
+            MqMetrics.get().setMaxLeasedPartitions(consumerName, maxLeased);
+        } catch (Throwable ignore) {
+        }
         Set<String> touched = new HashSet<>();
         workers.forEach((pk, w) -> {
             String leaseKey = StreamKeys.lease(pk.topic, pk.group, pk.partitionId);
@@ -1021,6 +1038,14 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
             int eligibleCount = computeEligiblePartitions(topic, group);
             publishPartitionMetrics(topic, group, eligibleCount);
         }
+    }
+
+    private int getMaxLeasedPartitions() {
+        int cfg = options.getMaxLeasedPartitionsPerConsumer();
+        if (cfg > 0) {
+            return Math.max(1, cfg);
+        }
+        return Math.max(1, options.getWorkerThreads());
     }
 
     private int computeEligiblePartitions(String topic, String group) {

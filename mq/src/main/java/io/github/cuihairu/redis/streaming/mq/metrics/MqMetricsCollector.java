@@ -41,4 +41,9 @@ public interface MqMetricsCollector {
      * Optional: track leased (actively running) partitions for this consumer.
      */
     default void setLeasedPartitions(String consumerName, String topic, String consumerGroup, int leasedCount) {}
+
+    /**
+     * Optional: track configured max leased partitions per consumer instance.
+     */
+    default void setMaxLeasedPartitions(String consumerName, int maxLeasedPartitions) {}
 }

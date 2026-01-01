@@ -99,6 +99,11 @@ public class MqMicrometerCollector implements MqMetricsCollector {
                 "group", consumerGroup).set(Math.max(0L, leasedCount));
     }
 
+    @Override
+    public void setMaxLeasedPartitions(String consumerName, int maxLeasedPartitions) {
+        gauge("redis_streaming_mq_max_leased_partitions", "consumer", consumerName).set(Math.max(0L, maxLeasedPartitions));
+    }
+
     private Counter counter(Map<String, Counter> cache, String name, String topic, int pid) {
         String key = name + "|" + topic + "|" + pid;
         return cache.computeIfAbsent(key, k -> Counter.builder(name)
