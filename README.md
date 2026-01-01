@@ -10,6 +10,8 @@
 
 ## 🚀 核心特性
 
+文档站（GitHub Pages）：https://cuihairu.github.io/redis-streaming/
+
 ### ✅ 已实现功能
 - **📡 消息队列 (MQ)** - 基于 Redis Streams 的完整消息队列，支持消费者组、死信队列
 - **🔍 服务注册发现 (Registry)** - 完整的服务注册与发现，支持多协议健康检查 (HTTP/TCP/WebSocket)，**支持 metadata 比较运算符过滤**
@@ -17,7 +19,7 @@
 - **💾 状态管理 (State)** - Redis 支持的分布式状态存储，支持 ValueState、MapState、ListState、SetState
 - **✅ 检查点机制 (Checkpoint)** - 分布式检查点协调，支持故障恢复
 - **💧 Watermark** - WatermarkStrategy + 生成器（有序/乱序），可与 runtime 结合使用（event-time）
-- **🪟 窗口分配器 (Window)** - 滚动/滑动/会话窗口 + 触发器（runtime 当前仅使用分配器）
+- **🪟 窗口分配器 (Window)** - 滚动/滑动/会话窗口 + 触发器（Redis runtime 已支持基于 watermark 的窗口计算；复杂 trigger 语义可扩展）
 - **⏰ 窗口聚合 (Aggregation)** - 基于时间窗口的实时聚合，支持 PV/UV、TopK、分位数计算
 - **🔗 流式 Join (Join)** - 时间窗口内的流-流 Join 操作
 - **🔄 CDC 集成 (CDC)** - MySQL Binlog、PostgreSQL 逻辑复制、数据库轮询
@@ -30,7 +32,7 @@
 - **🎯 CEP** - 完整的复杂事件处理，支持 Kleene closure、高级模式操作
 
 ### 🚧 部分实现
-- **🌊 流处理运行时 (Runtime)** - 最小可用的 in-memory runtime（单线程，用于 tests/examples）
+- **🌊 流处理运行时 (Runtime)** - Redis-backed runtime（Redis Streams）+ 最小可用的 in-memory runtime（用于 tests/examples）
 
 ## 📦 模块架构
 
@@ -55,9 +57,12 @@
 #### **runtime** - 流处理运行时引擎
 统一流处理运行时执行引擎。
 
-**实现状态**: 🚧 最小可用（In-Memory，单线程）
+**实现状态**: ✅ Redis runtime（单进程并行 + checkpoint/窗口/水位线） + ✅ 最小 in-memory runtime
 
-**说明**: 当前提供最小可用的 in-memory runtime（主要用于 tests/examples）：`StreamExecutionEnvironment` + 基础算子链（`map/filter/flatMap/keyBy/addSink`）与基础 keyed state（`getState/process/reduce`），并支持 timers / watermarks / in-memory checkpointing。详见 `runtime/README.md`。
+**说明**: `runtime` 同时提供：
+- Redis runtime：`RedisStreamExecutionEnvironment`（Redis Streams 消费组驱动，Redis keyed state，stop-the-world checkpoint（实验），watermark/window/timer）
+- In-memory runtime：`StreamExecutionEnvironment`（主要用于 tests/examples）
+详见 `docs/`（VuePress）与 `runtime/README.md`。
 
 **Event-time Watermark 示例**（从元素中提取事件时间）：
 ```java
@@ -717,7 +722,7 @@ List<ChangeEvent> events = connector.poll();
 
 ### 开发指南
 - [开发文档](CLAUDE.md) - 开发者指南
-- [文档中心](docs/README.md) - 完整文档索引
+- [文档中心](docs/README.md) - 文档站点与索引（VuePress）
 
 ## 🤝 贡献
 

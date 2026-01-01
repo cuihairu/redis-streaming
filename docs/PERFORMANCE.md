@@ -1,4 +1,3 @@
 # Performance
 
-Moved to `wiki/Performance.md` (Chinese) and `wiki/Performance-en.md` (English).
-
+Moved to `docs/wiki/Performance.md` (Chinese) and `docs/wiki/en/Performance-en.md` (English).

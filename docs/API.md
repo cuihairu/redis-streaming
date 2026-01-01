@@ -6,10 +6,9 @@ Primary API surface lives in:
 Module-level guides/examples:
 - `README.md`
 - `RUNNING_EXAMPLES.md`
-- `wiki/` (module docs)
+- `docs/wiki/` (module docs, migrated from GitHub Wiki)
 
 Generate Javadoc locally:
 ```bash
 ./gradlew javadoc
 ```
-

@@ -1,4 +1,3 @@
 # Redis Registry Usage
 
-See `wiki/Registry-Guide.md` (Chinese) and `wiki/Registry-Guide-en.md` (English).
-
+See `docs/wiki/Registry-Guide.md` (Chinese) and `docs/wiki/en/Registry-Guide-en.md` (English).

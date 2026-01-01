@@ -1,4 +1,3 @@
 # Deployment
 
-Moved to `wiki/Deployment.md` (Chinese) and `wiki/Deployment-en.md` (English).
-
+Moved to `docs/wiki/Deployment.md` (Chinese) and `docs/wiki/en/Deployment-en.md` (English).

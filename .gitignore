@@ -70,3 +70,9 @@ docker-compose.override.yml
 # Source backups (do not commit)
 **/src/main/java.backup/
 **/src/test.backup/
+
+# VuePress docs
+docs/node_modules/
+docs/.vuepress/.cache/
+docs/.vuepress/.temp/
+docs/.vuepress/dist/

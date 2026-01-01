@@ -1,4 +1,3 @@
 # Architecture
 
-Moved to `wiki/Architecture.md` (Chinese) and `wiki/Architecture-en.md` (English).
-
+Moved to `docs/wiki/Architecture.md` (Chinese) and `docs/wiki/en/Architecture-en.md` (English).

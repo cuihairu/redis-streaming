@@ -1,4 +1,3 @@
 # Spring Boot Starter Guide
 
-See `wiki/Spring-Boot-Starter.md` and `wiki/Spring-Boot-Starter-en.md`.
-
+See `docs/wiki/Spring-Boot-Starter.md` and `docs/wiki/en/Spring-Boot-Starter-en.md`.

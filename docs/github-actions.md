@@ -1,4 +1,3 @@
 # GitHub Actions / CI
 
-Moved to `wiki/GitHub-Actions.md` (Chinese) and `wiki/GitHub-Actions-en.md` (English).
-
+Moved to `docs/wiki/GitHub-Actions.md` (Chinese) and `docs/wiki/en/GitHub-Actions-en.md` (English).
