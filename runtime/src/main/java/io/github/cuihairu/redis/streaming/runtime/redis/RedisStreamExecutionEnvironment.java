@@ -18,6 +18,7 @@ import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisPipelineRu
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisStreamBuilder;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisRuntimeCheckpointManager;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
+import org.slf4j.MDC;
 import io.github.cuihairu.redis.streaming.api.checkpoint.Checkpoint;
 import org.redisson.api.RMap;
 import org.redisson.api.RScript;
@@ -165,6 +166,7 @@ public final class RedisStreamExecutionEnvironment {
         }
         List<MessageConsumer> consumers = new ArrayList<>();
         List<RedisPipelineRunner<?>> runners = new ArrayList<>();
+        ScheduledExecutorService sharedTimerExecutor = null;
         TopicPartitionRegistry partitionRegistry = new TopicPartitionRegistry(redissonClient);
         RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
         RedisRuntimeCheckpointManager checkpointManager = new RedisRuntimeCheckpointManager(redissonClient, config);
@@ -172,7 +174,7 @@ public final class RedisStreamExecutionEnvironment {
         ScheduledExecutorService checkpointExecutor = null;
         AtomicBoolean checkpointing = new AtomicBoolean(false);
         DeferredAcks deferredAcks = new DeferredAcks();
-        Long restoredCheckpointId = null;
+        java.util.concurrent.atomic.AtomicReference<Long> restoredCheckpointIdRef = new java.util.concurrent.atomic.AtomicReference<>(null);
         warnDeferAckConfiguration();
         final String ensureGroupLua =
                 "local exists=false \n" +
@@ -193,8 +195,9 @@ public final class RedisStreamExecutionEnvironment {
                 try {
                     Checkpoint restored = checkpointManager.restoreFromLatestCheckpointOrNull(pipelineKeys);
                     if (restored != null) {
-                        restoredCheckpointId = restored.getCheckpointId();
-                        log.info("Restored Redis runtime job from checkpoint {} (jobName={})", restoredCheckpointId, config.getJobName());
+                        restoredCheckpointIdRef.set(restored.getCheckpointId());
+                        log.info("Restored Redis runtime job from checkpoint {} (jobName={})",
+                                restoredCheckpointIdRef.get(), config.getJobName());
                     }
                 } catch (Exception e) {
                     log.warn("Failed to restore Redis runtime job from latest checkpoint (jobName={})", config.getJobName(), e);
@@ -205,8 +208,15 @@ public final class RedisStreamExecutionEnvironment {
                 RedisPipeline<?> p = def.freeze();
                 int parallelism = Math.max(1, config.getPipelineParallelism());
                 for (int subtask = 0; subtask < parallelism; subtask++) {
-                    RedisPipelineRunner<?> runner = p.buildRunner();
+                    if (sharedTimerExecutor == null) {
+                        int threads = Math.max(1, config.getTimerThreads());
+                        ScheduledThreadPoolExecutor ex = new ScheduledThreadPoolExecutor(threads);
+                        ex.setRemoveOnCancelPolicy(true);
+                        sharedTimerExecutor = ex;
+                    }
+                    RedisPipelineRunner<?> runner = p.buildRunner(sharedTimerExecutor);
                     runners.add(runner);
+                    Long restoredCheckpointId = restoredCheckpointIdRef.get();
                     if (restoredCheckpointId != null) {
                         runner.onCheckpointRestore(restoredCheckpointId);
                     }
@@ -222,6 +232,27 @@ public final class RedisStreamExecutionEnvironment {
 
                     MessageHandler handler = (Message m) -> {
                         long startNs = System.nanoTime();
+                        boolean installMdc = config.isMdcEnabled() && shouldInstallMdc(m);
+                        if (installMdc) {
+                            try {
+                                MDC.put("rs.job", config.getJobName());
+                                MDC.put("rs.topic", p.topic());
+                                MDC.put("rs.group", p.consumerGroup());
+                                MDC.put("rs.consumer", consumerName);
+                                if (m != null) {
+                                    try { MDC.put("rs.id", m.getId()); } catch (Exception ignore) {}
+                                    try { MDC.put("rs.key", m.getKey()); } catch (Exception ignore) {}
+                                    try {
+                                        String pid = m.getHeaders() == null ? null : m.getHeaders().get(io.github.cuihairu.redis.streaming.mq.MqHeaders.PARTITION_ID);
+                                        if (pid != null) {
+                                            MDC.put("rs.partition", pid);
+                                        }
+                                    } catch (Exception ignore) {
+                                    }
+                                }
+                            } catch (Exception ignore) {
+                            }
+                        }
                         try {
                             boolean ok = runner.handle(m);
                             try {
@@ -258,6 +289,19 @@ public final class RedisStreamExecutionEnvironment {
                                 // best-effort logging only
                             }
                             return config.getProcessingErrorResult();
+                        } finally {
+                            if (installMdc) {
+                                try {
+                                    MDC.remove("rs.id");
+                                    MDC.remove("rs.key");
+                                    MDC.remove("rs.partition");
+                                    MDC.remove("rs.consumer");
+                                    MDC.remove("rs.group");
+                                    MDC.remove("rs.topic");
+                                    MDC.remove("rs.job");
+                                } catch (Exception ignore) {
+                                }
+                            }
                         }
                     };
 
@@ -299,7 +343,8 @@ public final class RedisStreamExecutionEnvironment {
 
             Duration interval = config.getCheckpointInterval();
             if (interval != null && !interval.isZero() && !interval.isNegative()) {
-                ScheduledThreadPoolExecutor ex = new ScheduledThreadPoolExecutor(1);
+                int threads = Math.max(1, config.getCheckpointThreads());
+                ScheduledThreadPoolExecutor ex = new ScheduledThreadPoolExecutor(threads);
                 ex.setRemoveOnCancelPolicy(true);
                 checkpointExecutor = ex;
                 long ms = Math.max(50L, interval.toMillis());
@@ -333,6 +378,12 @@ public final class RedisStreamExecutionEnvironment {
                 } catch (Exception ignore) {
                 }
             }
+            if (sharedTimerExecutor != null) {
+                try {
+                    sharedTimerExecutor.shutdownNow();
+                } catch (Exception ignore) {
+                }
+            }
             if (checkpointExecutor != null) {
                 try {
                     checkpointExecutor.shutdownNow();
@@ -344,6 +395,7 @@ public final class RedisStreamExecutionEnvironment {
         }
 
         ScheduledExecutorService finalCheckpointExecutor = checkpointExecutor;
+        ScheduledExecutorService finalSharedTimerExecutor = sharedTimerExecutor;
         return new RedisJobClient() {
             private final CountDownLatch stopped = new CountDownLatch(1);
             private final AtomicBoolean canceled = new AtomicBoolean(false);
@@ -377,6 +429,12 @@ public final class RedisStreamExecutionEnvironment {
                     for (RedisPipelineRunner<?> r : runners) {
                         try {
                             r.close();
+                        } catch (Exception ignore) {
+                        }
+                    }
+                    if (finalSharedTimerExecutor != null) {
+                        try {
+                            finalSharedTimerExecutor.shutdownNow();
                         } catch (Exception ignore) {
                         }
                     }
@@ -446,6 +504,49 @@ public final class RedisStreamExecutionEnvironment {
 	                return any ? total : -1L;
 	            }
 
+                @Override
+	                public Map<String, Object> diagnostics() {
+	                    Map<String, Object> out = new HashMap<>();
+                    out.put("jobName", config.getJobName());
+                    out.put("jobInstanceId", config.getJobInstanceId());
+                    out.put("pipelineParallelism", config.getPipelineParallelism());
+                    out.put("timerThreads", config.getTimerThreads());
+                    out.put("checkpointThreads", config.getCheckpointThreads());
+                    out.put("deferAckUntilCheckpoint", config.isDeferAckUntilCheckpoint());
+                    out.put("ackDeferredMessagesOnCheckpoint", config.isAckDeferredMessagesOnCheckpoint());
+                    out.put("checkpointIntervalMs", config.getCheckpointInterval() == null ? 0L : Math.max(0L, config.getCheckpointInterval().toMillis()));
+                    out.put("restoreFromLatestCheckpoint", config.isRestoreFromLatestCheckpoint());
+                    out.put("sinkDeduplicationEnabled", config.isSinkDeduplicationEnabled());
+                    out.put("sinkDeduplicationTtlMs", config.getSinkDeduplicationTtl() == null ? 0L : Math.max(0L, config.getSinkDeduplicationTtl().toMillis()));
+                    out.put("watermarkOutOfOrdernessMs", config.getWatermarkOutOfOrderness() == null ? 0L : Math.max(0L, config.getWatermarkOutOfOrderness().toMillis()));
+                    out.put("windowAllowedLatenessMs", config.getWindowAllowedLateness() == null ? 0L : Math.max(0L, config.getWindowAllowedLateness().toMillis()));
+                    out.put("eventTimeTimerMaxSize", config.getEventTimeTimerMaxSize());
+                    out.put("consumerCount", consumers.size());
+	                    out.put("runnerCount", runners.size());
+	                    out.put("inFlight", inFlight());
+	                    out.put("checkpointing", checkpointing.get());
+	                    out.put("restoredCheckpointId", restoredCheckpointIdRef.get());
+	                    try {
+	                        Checkpoint latest = checkpointManager.getLatestCheckpoint();
+	                        out.put("latestCheckpointId", latest == null ? null : latest.getCheckpointId());
+	                    } catch (Exception ignore) {
+                    }
+                    try {
+                        Checkpoint latestCommitted = checkpointManager.getLatestSinkCommittedCheckpoint();
+                        out.put("latestSinkCommittedCheckpointId", latestCommitted == null ? null : latestCommitted.getCheckpointId());
+                    } catch (Exception ignore) {
+                    }
+                    List<Map<String, Object>> pipelines = new ArrayList<>();
+                    for (RedisRuntimeCheckpointManager.PipelineKey pk : pipelineKeys) {
+                        Map<String, Object> p = new HashMap<>();
+                        p.put("topic", pk.topic());
+                        p.put("consumerGroup", pk.consumerGroup());
+                        pipelines.add(p);
+                    }
+                    out.put("pipelines", pipelines);
+                    return out;
+                }
+
 	            @Override
 	            public boolean awaitTermination(Duration timeout) throws InterruptedException {
 	                Duration t = timeout == null ? Duration.ZERO : timeout;
@@ -514,9 +615,15 @@ public final class RedisStreamExecutionEnvironment {
         }
 
         long checkpointId = checkpointManager.allocateCheckpointId();
+        long overallStartNs = System.nanoTime();
+        try {
+            RedisRuntimeMetrics.get().incCheckpointTriggered(config.getJobName());
+        } catch (Exception ignore) {
+        }
         try {
             Duration drainTimeout = config.getCheckpointDrainTimeout();
             long deadline = System.currentTimeMillis() + Math.max(0, drainTimeout == null ? 0 : drainTimeout.toMillis());
+            long drainStartNs = System.nanoTime();
             while (true) {
                 long total = 0;
 	                for (MessageConsumer c : consumers) {
@@ -536,6 +643,10 @@ public final class RedisStreamExecutionEnvironment {
                     break;
                 }
             }
+            try {
+                RedisRuntimeMetrics.get().recordCheckpointDrainDuration(config.getJobName(), (System.nanoTime() - drainStartNs) / 1_000_000);
+            } catch (Exception ignore) {
+            }
 
             for (RedisPipelineRunner<?> r : runners) {
                 try {
@@ -553,23 +664,41 @@ public final class RedisStreamExecutionEnvironment {
                 offsetsOverride = deferredAcks.snapshotOffsets();
             }
 
+            long storeStartNs = System.nanoTime();
             Checkpoint cp = checkpointManager.triggerCheckpoint(checkpointId, pipelineKeys, offsetsOverride);
+            try {
+                RedisRuntimeMetrics.get().recordCheckpointStoreDuration(config.getJobName(), (System.nanoTime() - storeStartNs) / 1_000_000);
+            } catch (Exception ignore) {
+            }
             if (cp == null) {
                 for (RedisPipelineRunner<?> r : runners) {
                     r.onCheckpointAbort(checkpointId, null);
+                }
+                try {
+                    RedisRuntimeMetrics.get().incCheckpointFailed(config.getJobName());
+                } catch (Exception ignore) {
                 }
                 return null;
             }
 
             try {
+                long sinkCommitStartNs = System.nanoTime();
                 for (RedisPipelineRunner<?> r : runners) {
                     r.onCheckpointComplete(checkpointId);
                 }
                 checkpointManager.markSinkCommitted(cp);
+                try {
+                    RedisRuntimeMetrics.get().recordCheckpointSinkCommitDuration(config.getJobName(), (System.nanoTime() - sinkCommitStartNs) / 1_000_000);
+                } catch (Exception ignore) {
+                }
             } catch (Exception e) {
                 log.error("Sink commit on checkpoint failed (jobName={}, checkpointId={})", config.getJobName(), checkpointId, e);
                 for (RedisPipelineRunner<?> r : runners) {
                     r.onCheckpointAbort(checkpointId, e);
+                }
+                try {
+                    RedisRuntimeMetrics.get().incCheckpointFailed(config.getJobName());
+                } catch (Exception ignore) {
                 }
                 return cp;
             }
@@ -581,14 +710,22 @@ public final class RedisStreamExecutionEnvironment {
                     deferredAcks.clear();
                 }
             }
+            try {
+                RedisRuntimeMetrics.get().incCheckpointCompleted(config.getJobName());
+            } catch (Exception ignore) {
+            }
             return cp;
         } finally {
+            try {
+                RedisRuntimeMetrics.get().recordCheckpointDuration(config.getJobName(), (System.nanoTime() - overallStartNs) / 1_000_000);
+            } catch (Exception ignore) {
+            }
             try {
                 for (MessageConsumer c : consumers) {
                     if (c instanceof PausableMessageConsumer pc) {
 	                        pc.resume();
-	                    }
-	                }
+                    }
+                }
 	            } catch (Exception ignore) {
             }
         }
@@ -826,6 +963,38 @@ public final class RedisStreamExecutionEnvironment {
         if (!usedStreamIds.add(streamId)) {
             throw new IllegalStateException("Duplicate sourceId/streamId: " + streamId);
         }
+    }
+
+    private boolean shouldInstallMdc(Message m) {
+        double r;
+        try {
+            r = config.getMdcSampleRate();
+        } catch (Exception ignore) {
+            r = 1.0d;
+        }
+        if (r >= 1.0d) {
+            return true;
+        }
+        if (r <= 0.0d) {
+            return false;
+        }
+        String id = null;
+        try {
+            if (m != null && m.getHeaders() != null) {
+                id = m.getHeaders().get(MqHeaders.ORIGINAL_MESSAGE_ID);
+            }
+        } catch (Exception ignore) {
+        }
+        try {
+            if ((id == null || id.isBlank()) && m != null) {
+                id = m.getId();
+            }
+        } catch (Exception ignore) {
+        }
+        int h = id == null ? System.identityHashCode(m) : id.hashCode();
+        int bucket = Math.floorMod(h, 10_000);
+        int threshold = (int) Math.floor(r * 10_000.0d);
+        return bucket < threshold;
     }
 
     private static String requireValidId(String id) {

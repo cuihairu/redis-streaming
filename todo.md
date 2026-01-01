@@ -282,14 +282,24 @@
 - [x] 背压（基础）：`MqOptions.maxInFlight(n)`（consumer 级全局并发上限，信号量限流）（已实现：2026-01-01）
 - [x] 并行度/背压追踪（基础）：in-flight、permit wait、eligible/leased partitions（MQ Micrometer 指标）（已实现：2026-01-01）
 - [x] 分区 lease 防超配（基础）：`MqOptions.maxLeasedPartitionsPerConsumer(n)`（默认=workerThreads，避免拿到 lease 但线程不足导致分区饿死）（已实现：2026-01-01）
-- [ ] 资源模型：线程池/队列容量/批大小可配；安全默认值；压测基准与调优指南
-- [ ] Window 运行时支持（Redis runtime）：事件时间/水位线/触发器/迟到数据处理（明确语义）
+- [x] 资源模型：线程池/队列容量/批大小可配；安全默认值；压测基准与调优指南（已实现：2026-01-01）
+  - [x] `timerThreads`/`checkpointThreads` 资源隔离（避免每 runner 创建线程池）
+  - [x] `eventTimeTimerMaxSize` 上限保护（防止 event-time timer 队列无界增长）
+- [x] Window 运行时支持（Redis runtime）：事件时间/水位线/触发器/迟到数据处理（明确语义）（已实现：2026-01-01）
+  - [x] watermark：`watermarkOutOfOrderness`（允许乱序；watermark=maxEventTime-outOfOrderness）
+  - [x] late：`windowAllowedLateness`（final fire 延后到 windowEnd+lateness）
+  - [x] per-record 开销上限：`windowMaxFiresPerRecord`
 
 ## P3：可观测与运维
-- [ ] Metrics 全链路：吞吐、延迟、pending、重试、DLQ、state 读写、定时器队列等
-- [ ] Trace/日志：可关联 messageId、jobName、operatorId；支持采样
-- [ ] 运行时诊断：健康检查、指标导出、运行时配置 dump、死锁/卡顿定位
-- [ ] 多环境部署：Docker/K8s 参考部署，滚动升级与回滚建议
+- [x] Metrics 全链路：吞吐、延迟、pending、重试、DLQ、state 读写、定时器队列等（已实现：2026-01-01）
+  - [x] runtime：`redis_streaming_runtime_*`（checkpoint/state/window/watermark/timer/handler）
+  - [x] mq/reliability/retention：Micrometer collector + Spring Boot auto-install
+- [x] Trace/日志：可关联 messageId、jobName、operatorId；支持采样（已实现：2026-01-01）
+  - [x] `mdcEnabled` + `mdcSampleRate`（MDC keys：`rs.job/rs.topic/rs.group/rs.consumer/rs.id/rs.key/rs.partition`）
+- [x] 运行时诊断：健康检查、指标导出、运行时配置 dump、死锁/卡顿定位（已实现：2026-01-01）
+  - [x] `RedisJobClient.diagnostics()`（best-effort runtime snapshot）
+  - [x] Spring Boot Actuator health + `/actuator/prometheus` 指标导出（starter）
+- [x] 多环境部署：Docker/K8s 参考部署，滚动升级与回滚建议（已实现：2026-01-01）
 - `RedisConfigCenter` - 0% (14 个方法未覆盖)
 - `RedisConfigService` - 58% (3 个方法未覆盖)
 

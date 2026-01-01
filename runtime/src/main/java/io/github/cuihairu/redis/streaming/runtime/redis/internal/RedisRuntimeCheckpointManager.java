@@ -10,12 +10,15 @@ import org.redisson.api.RKeys;
 import org.redisson.api.RMap;
 import org.redisson.api.RBucket;
 import org.redisson.api.RScript;
+import org.redisson.api.RScoredSortedSet;
 import org.redisson.api.RSet;
 import org.redisson.api.RedissonClient;
+import org.redisson.api.RType;
 import org.redisson.client.codec.StringCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Serializable;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -37,6 +40,45 @@ public final class RedisRuntimeCheckpointManager {
     private static final String SNAPSHOT_KEY_STATE_SCHEMA = "runtime:stateSchema";
     private static final String SNAPSHOT_KEY_META = "runtime:meta";
     private static final String SINK_COMMITTED_MARKER_PREFIX = "runtime:sinkCommitted:";
+
+    public enum RedisStateType {
+        MAP,
+        ZSET
+    }
+
+    public static final class RedisStateValue implements Serializable {
+        private static final long serialVersionUID = 1L;
+
+        private final RedisStateType type;
+        private final Map<String, String> map;
+        private final Map<String, Double> zset;
+
+        private RedisStateValue(RedisStateType type, Map<String, String> map, Map<String, Double> zset) {
+            this.type = type;
+            this.map = map;
+            this.zset = zset;
+        }
+
+        public static RedisStateValue ofMap(Map<String, String> map) {
+            return new RedisStateValue(RedisStateType.MAP, map, null);
+        }
+
+        public static RedisStateValue ofZset(Map<String, Double> zset) {
+            return new RedisStateValue(RedisStateType.ZSET, null, zset);
+        }
+
+        public RedisStateType type() {
+            return type;
+        }
+
+        public Map<String, String> map() {
+            return map;
+        }
+
+        public Map<String, Double> zset() {
+            return zset;
+        }
+    }
 
     private final RedissonClient redissonClient;
     private final RedisRuntimeConfig config;
@@ -252,8 +294,8 @@ public final class RedisRuntimeCheckpointManager {
         return out;
     }
 
-    private Map<String, Map<String, String>> snapshotState() {
-        Map<String, Map<String, String>> out = new HashMap<>();
+    private Map<String, RedisStateValue> snapshotState() {
+        Map<String, RedisStateValue> out = new HashMap<>();
         String indexKey = config.getStateKeyPrefix() + ":" + config.getJobName() + ":stateKeys";
         RSet<String> index = redissonClient.getSet(indexKey, StringCodec.INSTANCE);
         List<String> keys = new ArrayList<>();
@@ -273,10 +315,41 @@ public final class RedisRuntimeCheckpointManager {
                     }
                     continue;
                 }
-                RMap<String, String> map = redissonClient.<String, String>getMap(k, StringCodec.INSTANCE);
-                Map<String, String> data = map.readAllMap();
-                if (data != null && !data.isEmpty()) {
-                    out.put(k, new HashMap<>(data));
+                RType type = null;
+                try {
+                    type = rkeys.getType(k);
+                } catch (Exception ignore) {
+                }
+                if (type == RType.ZSET) {
+                    RScoredSortedSet<String> set = redissonClient.getScoredSortedSet(k, StringCodec.INSTANCE);
+                    Map<String, Double> data = new HashMap<>();
+                    for (org.redisson.client.protocol.ScoredEntry<String> e : set.entryRange(0, -1)) {
+                        if (e == null || e.getValue() == null) {
+                            continue;
+                        }
+                        data.put(e.getValue(), e.getScore());
+                    }
+                    if (data != null && !data.isEmpty()) {
+                        out.put(k, RedisStateValue.ofZset(data));
+                    } else {
+                        try {
+                            index.remove(k);
+                        } catch (Exception ignore) {
+                        }
+                    }
+                } else if (type == RType.MAP || type == null) {
+                    RMap<String, String> map = redissonClient.<String, String>getMap(k, StringCodec.INSTANCE);
+                    Map<String, String> data = map.readAllMap();
+                    if (data != null && !data.isEmpty()) {
+                        out.put(k, RedisStateValue.ofMap(new HashMap<>(data)));
+                    } else {
+                        try {
+                            index.remove(k);
+                        } catch (Exception ignore) {
+                        }
+                    }
+                } else {
+                    log.debug("Skip snapshot for unsupported state key type {}: {}", String.valueOf(type), k);
                 }
             } catch (Exception e) {
                 log.debug("Failed to snapshot state key {}", k, e);
@@ -349,9 +422,32 @@ public final class RedisRuntimeCheckpointManager {
     }
 
     private void restoreState(Checkpoint checkpoint) {
-        @SuppressWarnings("unchecked")
-        Map<String, Map<String, String>> state = checkpoint.getStateSnapshot().getState(SNAPSHOT_KEY_STATE);
-        if (state == null) {
+        Object raw = checkpoint.getStateSnapshot().getState(SNAPSHOT_KEY_STATE);
+        if (!(raw instanceof Map<?, ?> rawMap)) {
+            return;
+        }
+        Map<String, RedisStateValue> state = new HashMap<>();
+        for (Map.Entry<?, ?> e : rawMap.entrySet()) {
+            if (!(e.getKey() instanceof String redisKey)) {
+                continue;
+            }
+            Object v = e.getValue();
+            if (v instanceof RedisStateValue sv) {
+                state.put(redisKey, sv);
+                continue;
+            }
+            if (v instanceof Map<?, ?> m) {
+                Map<String, String> data = new HashMap<>();
+                for (Map.Entry<?, ?> me : m.entrySet()) {
+                    if (me.getKey() == null || me.getValue() == null) {
+                        continue;
+                    }
+                    data.put(String.valueOf(me.getKey()), String.valueOf(me.getValue()));
+                }
+                state.put(redisKey, RedisStateValue.ofMap(data));
+            }
+        }
+        if (state.isEmpty()) {
             return;
         }
         @SuppressWarnings("unchecked")
@@ -385,19 +481,36 @@ public final class RedisRuntimeCheckpointManager {
         }
 
         Duration ttl = config.getStateTtl();
-        for (Map.Entry<String, Map<String, String>> e : state.entrySet()) {
+        for (Map.Entry<String, RedisStateValue> e : state.entrySet()) {
             String redisKey = e.getKey();
-            Map<String, String> data = e.getValue();
-            if (redisKey == null || redisKey.isBlank() || data == null || data.isEmpty()) {
+            RedisStateValue value = e.getValue();
+            if (redisKey == null || redisKey.isBlank() || value == null || value.type() == null) {
                 continue;
             }
             try {
-                RMap<String, String> map = redissonClient.<String, String>getMap(redisKey, StringCodec.INSTANCE);
-                map.putAll(data);
-                if (ttl != null && !ttl.isZero() && !ttl.isNegative()) {
-                    try {
-                        map.expire(ttl);
-                    } catch (Exception ignore) {
+                if (value.type() == RedisStateType.ZSET) {
+                    Map<String, Double> data = value.zset();
+                    if (data != null && !data.isEmpty()) {
+                        RScoredSortedSet<String> set = redissonClient.getScoredSortedSet(redisKey, StringCodec.INSTANCE);
+                        set.addAll(data);
+                        if (ttl != null && !ttl.isZero() && !ttl.isNegative()) {
+                            try {
+                                set.expire(ttl);
+                            } catch (Exception ignore) {
+                            }
+                        }
+                    }
+                } else {
+                    Map<String, String> data = value.map();
+                    if (data != null && !data.isEmpty()) {
+                        RMap<String, String> map = redissonClient.<String, String>getMap(redisKey, StringCodec.INSTANCE);
+                        map.putAll(data);
+                        if (ttl != null && !ttl.isZero() && !ttl.isNegative()) {
+                            try {
+                                map.expire(ttl);
+                            } catch (Exception ignore) {
+                            }
+                        }
                     }
                 }
                 try {

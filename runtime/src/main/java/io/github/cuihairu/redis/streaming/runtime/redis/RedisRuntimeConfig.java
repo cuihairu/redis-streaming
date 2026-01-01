@@ -38,6 +38,14 @@ public final class RedisRuntimeConfig {
     private final boolean deferAckUntilCheckpoint;
     private final boolean ackDeferredMessagesOnCheckpoint;
     private final int pipelineParallelism;
+    private final int timerThreads;
+    private final int checkpointThreads;
+    private final int eventTimeTimerMaxSize;
+    private final Duration watermarkOutOfOrderness;
+    private final Duration windowAllowedLateness;
+    private final int windowMaxFiresPerRecord;
+    private final boolean mdcEnabled;
+    private final double mdcSampleRate;
     private final Duration checkpointInterval;
     private final boolean restoreFromLatestCheckpoint;
     private final String checkpointKeyPrefix;
@@ -76,6 +84,35 @@ public final class RedisRuntimeConfig {
             throw new IllegalArgumentException("pipelineParallelism must be >= 1");
         }
         this.pipelineParallelism = b.pipelineParallelism;
+        if (b.timerThreads <= 0) {
+            throw new IllegalArgumentException("timerThreads must be >= 1");
+        }
+        this.timerThreads = b.timerThreads;
+        if (b.checkpointThreads <= 0) {
+            throw new IllegalArgumentException("checkpointThreads must be >= 1");
+        }
+        this.checkpointThreads = b.checkpointThreads;
+        if (b.eventTimeTimerMaxSize < 0) {
+            throw new IllegalArgumentException("eventTimeTimerMaxSize must be >= 0");
+        }
+        this.eventTimeTimerMaxSize = b.eventTimeTimerMaxSize;
+        this.watermarkOutOfOrderness = b.watermarkOutOfOrderness == null ? Duration.ZERO : b.watermarkOutOfOrderness;
+        if (this.watermarkOutOfOrderness.isNegative()) {
+            throw new IllegalArgumentException("watermarkOutOfOrderness must be >= 0");
+        }
+        this.windowAllowedLateness = b.windowAllowedLateness == null ? Duration.ZERO : b.windowAllowedLateness;
+        if (this.windowAllowedLateness.isNegative()) {
+            throw new IllegalArgumentException("windowAllowedLateness must be >= 0");
+        }
+        if (b.windowMaxFiresPerRecord <= 0) {
+            throw new IllegalArgumentException("windowMaxFiresPerRecord must be >= 1");
+        }
+        this.windowMaxFiresPerRecord = b.windowMaxFiresPerRecord;
+        this.mdcEnabled = b.mdcEnabled;
+        if (Double.isNaN(b.mdcSampleRate) || b.mdcSampleRate < 0.0d || b.mdcSampleRate > 1.0d) {
+            throw new IllegalArgumentException("mdcSampleRate must be in [0, 1]");
+        }
+        this.mdcSampleRate = b.mdcSampleRate;
         this.checkpointInterval = b.checkpointInterval == null ? Duration.ZERO : b.checkpointInterval;
         this.restoreFromLatestCheckpoint = b.restoreFromLatestCheckpoint;
         this.checkpointKeyPrefix = Objects.requireNonNull(b.checkpointKeyPrefix, "checkpointKeyPrefix");
@@ -217,6 +254,72 @@ public final class RedisRuntimeConfig {
     }
 
     /**
+     * Shared timer thread pool size used by Redis runtime for processing-time timers.
+     *
+     * <p>Resource model: avoid creating one thread per pipeline runner.</p>
+     */
+    public int getTimerThreads() {
+        return timerThreads;
+    }
+
+    /**
+     * Thread count for periodic checkpoint scheduling/execution within one process.
+     *
+     * <p>Note: checkpoint execution is still serialized per job via an atomic guard.</p>
+     */
+    public int getCheckpointThreads() {
+        return checkpointThreads;
+    }
+
+    /**
+     * Max in-memory event-time timer queue size per pipeline runner. 0 means unlimited.
+     *
+     * <p>This protects the runtime from unbounded growth when user logic registers too many event-time timers.</p>
+     */
+    public int getEventTimeTimerMaxSize() {
+        return eventTimeTimerMaxSize;
+    }
+
+    /**
+     * Max out-of-orderness for event-time watermarks.
+     *
+     * <p>Watermark is computed as {@code maxObservedEventTime - watermarkOutOfOrderness}.</p>
+     */
+    public Duration getWatermarkOutOfOrderness() {
+        return watermarkOutOfOrderness;
+    }
+
+    /**
+     * Allowed lateness for window operators (best-effort).
+     *
+     * <p>Redis runtime delays final window firing until {@code windowEnd + windowAllowedLateness}.</p>
+     */
+    public Duration getWindowAllowedLateness() {
+        return windowAllowedLateness;
+    }
+
+    /**
+     * Max number of window firings processed per record (to bound per-record work).
+     */
+    public int getWindowMaxFiresPerRecord() {
+        return windowMaxFiresPerRecord;
+    }
+
+    /**
+     * Whether to install per-message MDC keys (job/topic/group/consumer/id/key/partition) around handler execution.
+     */
+    public boolean isMdcEnabled() {
+        return mdcEnabled;
+    }
+
+    /**
+     * Sampling rate for MDC installation (when {@link #isMdcEnabled()} is true). Range: [0, 1].
+     */
+    public double getMdcSampleRate() {
+        return mdcSampleRate;
+    }
+
+    /**
      * Periodic checkpoint interval. {@link Duration#ZERO} disables periodic checkpoints.
      *
      * <p>Checkpoints are stored in Redis and include best-effort snapshots of (source offsets, state).</p>
@@ -293,6 +396,14 @@ public final class RedisRuntimeConfig {
         private boolean deferAckUntilCheckpoint = false;
         private boolean ackDeferredMessagesOnCheckpoint = true;
         private int pipelineParallelism = 1;
+        private int timerThreads = 1;
+        private int checkpointThreads = 1;
+        private int eventTimeTimerMaxSize = 100_000;
+        private Duration watermarkOutOfOrderness = Duration.ZERO;
+        private Duration windowAllowedLateness = Duration.ZERO;
+        private int windowMaxFiresPerRecord = 256;
+        private boolean mdcEnabled = false;
+        private double mdcSampleRate = 1.0d;
         private Duration checkpointInterval = Duration.ZERO;
         private boolean restoreFromLatestCheckpoint = false;
         private String checkpointKeyPrefix = "streaming:runtime:checkpoint:";
@@ -391,6 +502,46 @@ public final class RedisRuntimeConfig {
 
         public Builder pipelineParallelism(int parallelism) {
             this.pipelineParallelism = parallelism;
+            return this;
+        }
+
+        public Builder timerThreads(int threads) {
+            this.timerThreads = threads;
+            return this;
+        }
+
+        public Builder checkpointThreads(int threads) {
+            this.checkpointThreads = threads;
+            return this;
+        }
+
+        public Builder eventTimeTimerMaxSize(int maxSize) {
+            this.eventTimeTimerMaxSize = maxSize;
+            return this;
+        }
+
+        public Builder watermarkOutOfOrderness(Duration outOfOrderness) {
+            this.watermarkOutOfOrderness = outOfOrderness == null ? Duration.ZERO : outOfOrderness;
+            return this;
+        }
+
+        public Builder windowAllowedLateness(Duration allowedLateness) {
+            this.windowAllowedLateness = allowedLateness == null ? Duration.ZERO : allowedLateness;
+            return this;
+        }
+
+        public Builder windowMaxFiresPerRecord(int max) {
+            this.windowMaxFiresPerRecord = max;
+            return this;
+        }
+
+        public Builder mdcEnabled(boolean enabled) {
+            this.mdcEnabled = enabled;
+            return this;
+        }
+
+        public Builder mdcSampleRate(double sampleRate) {
+            this.mdcSampleRate = sampleRate;
             return this;
         }
 

@@ -22,6 +22,8 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
+
 import static io.github.cuihairu.redis.streaming.mq.MqHeaders.PARTITION_ID;
 
 /**
@@ -41,6 +43,8 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
     private final List<StreamSink<Object>> sinks;
 
     private final ScheduledExecutorService timerExecutor;
+    private final boolean closeTimerExecutor;
+    private final AtomicLong maxEventTimeMs = new AtomicLong(Long.MIN_VALUE);
     private final AtomicLong watermarkMs = new AtomicLong(Long.MIN_VALUE);
     private final Object eventTimerLock = new Object();
     private final PriorityQueue<EventTimer> eventTimers = new PriorityQueue<>(
@@ -51,6 +55,7 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
             }
     );
     private long timerSeq = 0L;
+    private final AtomicLong lastEventTimeTimerOverflowWarnAtMs = new AtomicLong(0L);
 
     public RedisPipelineRunner(RedisRuntimeConfig config,
                               RedissonClient redissonClient,
@@ -59,6 +64,18 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
                               String consumerGroup,
                               List<RedisOperatorNode> operators,
                               List<StreamSink<Object>> sinks) {
+        this(config, redissonClient, objectMapper, topic, consumerGroup, operators, sinks, null, true);
+    }
+
+    public RedisPipelineRunner(RedisRuntimeConfig config,
+                              RedissonClient redissonClient,
+                              ObjectMapper objectMapper,
+                              String topic,
+                              String consumerGroup,
+                              List<RedisOperatorNode> operators,
+                              List<StreamSink<Object>> sinks,
+                              ScheduledExecutorService timerExecutor,
+                              boolean closeTimerExecutor) {
         this.config = Objects.requireNonNull(config, "config");
         this.redissonClient = Objects.requireNonNull(redissonClient, "redissonClient");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
@@ -66,9 +83,15 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
         this.consumerGroup = Objects.requireNonNull(consumerGroup, "consumerGroup");
         this.operators = List.copyOf(Objects.requireNonNull(operators, "operators"));
         this.sinks = List.copyOf(Objects.requireNonNull(sinks, "sinks"));
-        ScheduledThreadPoolExecutor ex = new ScheduledThreadPoolExecutor(1);
-        ex.setRemoveOnCancelPolicy(true);
-        this.timerExecutor = ex;
+        if (timerExecutor != null) {
+            this.timerExecutor = timerExecutor;
+            this.closeTimerExecutor = closeTimerExecutor;
+        } else {
+            ScheduledThreadPoolExecutor ex = new ScheduledThreadPoolExecutor(1);
+            ex.setRemoveOnCancelPolicy(true);
+            this.timerExecutor = ex;
+            this.closeTimerExecutor = true;
+        }
     }
 
     public boolean handle(Message message) throws Exception {
@@ -77,7 +100,7 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
         }
         long now = System.currentTimeMillis();
         long eventTime = extractEventTimeMs(message, now);
-        watermarkMs.updateAndGet(prev -> Math.max(prev, eventTime));
+        updateWatermark(eventTime);
         Context ctx = new Context(message, now, eventTime);
 
         emitFrom(0, message, ctx);
@@ -88,6 +111,28 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
     private long extractEventTimeMs(Message message, long fallback) {
         Instant ts = message.getTimestamp();
         return ts == null ? fallback : ts.toEpochMilli();
+    }
+
+    private void updateWatermark(long eventTimeMs) {
+        maxEventTimeMs.updateAndGet(prev -> Math.max(prev, eventTimeMs));
+        long max = maxEventTimeMs.get();
+        long outOfOrdernessMs = 0L;
+        try {
+            if (config.getWatermarkOutOfOrderness() != null) {
+                outOfOrdernessMs = Math.max(0L, config.getWatermarkOutOfOrderness().toMillis());
+            }
+        } catch (Exception ignore) {
+        }
+        long candidate = max;
+        if (outOfOrdernessMs > 0 && candidate != Long.MIN_VALUE) {
+            candidate = candidate - outOfOrdernessMs;
+        }
+        final long wmCandidate = candidate;
+        watermarkMs.updateAndGet(prev -> Math.max(prev, wmCandidate));
+        try {
+            RedisRuntimeMetrics.get().setWatermarkMs(config.getJobName(), topic, consumerGroup, watermarkMs.get());
+        } catch (Exception ignore) {
+        }
     }
 
     private void emitFrom(int index, Object value, Context ctx) throws Exception {
@@ -118,6 +163,10 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
             synchronized (eventTimerLock) {
                 next = eventTimers.peek();
                 if (next == null || next.timestampMs > watermark) {
+                    try {
+                        RedisRuntimeMetrics.get().setEventTimeTimerQueueSize(config.getJobName(), topic, consumerGroup, eventTimers.size());
+                    } catch (Exception ignore) {
+                    }
                     return;
                 }
                 eventTimers.poll();
@@ -207,7 +256,9 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
 
     @Override
     public void close() {
-        timerExecutor.shutdownNow();
+        if (closeTimerExecutor) {
+            timerExecutor.shutdownNow();
+        }
     }
 
     public void onCheckpointStart(long checkpointId) throws Exception {
@@ -309,7 +360,26 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
 
         public void registerEventTimeTimer(long triggerTimeMs, Runnable callback) {
             synchronized (eventTimerLock) {
+                int max = 0;
+                try {
+                    max = Math.max(0, config.getEventTimeTimerMaxSize());
+                } catch (Exception ignore) {
+                }
+                if (max > 0 && eventTimers.size() >= max) {
+                    long now = System.currentTimeMillis();
+                    long prev = lastEventTimeTimerOverflowWarnAtMs.get();
+                    if (prev <= 0 || now - prev >= 60_000L) {
+                        lastEventTimeTimerOverflowWarnAtMs.set(now);
+                        log.warn("Redis runtime event-time timer queue is full; dropping timer registration (jobName={}, topic={}, group={}, maxSize={})",
+                                config.getJobName(), topic, consumerGroup, max);
+                    }
+                    return;
+                }
                 eventTimers.add(new EventTimer(timerSeq++, triggerTimeMs, callback));
+                try {
+                    RedisRuntimeMetrics.get().setEventTimeTimerQueueSize(config.getJobName(), topic, consumerGroup, eventTimers.size());
+                } catch (Exception ignore) {
+                }
             }
         }
 

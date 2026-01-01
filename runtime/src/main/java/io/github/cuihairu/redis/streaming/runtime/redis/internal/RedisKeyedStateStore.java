@@ -5,6 +5,7 @@ import io.github.cuihairu.redis.streaming.api.state.StateDescriptor;
 import io.github.cuihairu.redis.streaming.api.state.ValueState;
 import org.redisson.api.RMap;
 import org.redisson.api.RedissonClient;
+import org.redisson.api.RKeys;
 import org.redisson.api.RSet;
 import org.redisson.client.codec.StringCodec;
 import org.slf4j.Logger;
@@ -13,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.time.Duration;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
@@ -266,6 +268,75 @@ public final class RedisKeyedStateStore<K> {
                             jobName, topic, consumerGroup, operatorId, stateName, pid, size, redisKey);
                 }
             }
+        } catch (Exception ignore) {
+        }
+    }
+
+    /**
+     * Register a non-map Redis state key for checkpoint snapshot/restore.
+     *
+     * <p>Used for auxiliary runtime state (e.g., window indexes) stored as non-hash Redis types.</p>
+     */
+    void registerStateKey(String redisKey) {
+        if (redisKey == null || redisKey.isBlank()) {
+            return;
+        }
+        try {
+            stateKeyIndex.add(redisKey);
+        } catch (Exception ignore) {
+        }
+        Duration ttl = stateTtl;
+        if (ttl == null || ttl.isZero() || ttl.isNegative()) {
+            return;
+        }
+        try {
+            RKeys keys = redissonClient.getKeys();
+            keys.expire(redisKey, ttl.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (Exception ignore) {
+        }
+    }
+
+    void recordKeyedStateRead(String stateName, long millis) {
+        Integer pid = currentPartitionId();
+        if (pid == null || pid < 0) {
+            return;
+        }
+        try {
+            RedisRuntimeMetrics.get().incKeyedStateRead(jobName, topic, consumerGroup, operatorId, stateName, pid);
+        } catch (Exception ignore) {
+        }
+        if (millis >= 0) {
+            try {
+                RedisRuntimeMetrics.get().recordKeyedStateReadLatency(jobName, topic, consumerGroup, operatorId, stateName, pid, millis);
+            } catch (Exception ignore) {
+            }
+        }
+    }
+
+    void recordKeyedStateWrite(String stateName, long millis) {
+        Integer pid = currentPartitionId();
+        if (pid == null || pid < 0) {
+            return;
+        }
+        try {
+            RedisRuntimeMetrics.get().incKeyedStateWrite(jobName, topic, consumerGroup, operatorId, stateName, pid);
+        } catch (Exception ignore) {
+        }
+        if (millis >= 0) {
+            try {
+                RedisRuntimeMetrics.get().recordKeyedStateWriteLatency(jobName, topic, consumerGroup, operatorId, stateName, pid, millis);
+            } catch (Exception ignore) {
+            }
+        }
+    }
+
+    void recordKeyedStateDelete(String stateName) {
+        Integer pid = currentPartitionId();
+        if (pid == null || pid < 0) {
+            return;
+        }
+        try {
+            RedisRuntimeMetrics.get().incKeyedStateDelete(jobName, topic, consumerGroup, operatorId, stateName, pid);
         } catch (Exception ignore) {
         }
     }

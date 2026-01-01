@@ -15,7 +15,7 @@ The goal is to keep the core APIs small and composable, while shipping productio
 
 ### Core APIs
 - `core`: Streaming API definitions (DataStream / KeyedStream / WindowedStream), window & watermark contracts, state descriptors.
-- `runtime`: **Minimal in-memory runtime** used for deterministic unit tests and lightweight examples (single-process, non-distributed).
+- `runtime`: Redis-backed runtime (`RedisStreamExecutionEnvironment`) on top of Redis Streams + a minimal in-memory runtime for deterministic tests/examples.
 
 ### Infrastructure Modules
 - `mq`: Redis Streams based MQ (topics, partitions, consumer groups, retry/DLQ, retention & ACK policy).
@@ -42,10 +42,10 @@ The goal is to keep the core APIs small and composable, while shipping productio
 - `examples`: Runnable demos (not published as a library artifact).
 
 ## Runtime Status (Intentional Scope)
-`runtime` is currently designed as a **test/example runtime**, not a distributed stream engine:
-- ✅ Deterministic iteration over in-memory records for unit tests
-- ✅ Timers / watermarks / basic in-memory checkpointing primitives used by examples
-- 🚧 Parallelism / distributed scheduling / end-to-end exactly-once semantics are not implemented yet
+`runtime` includes two runtimes with intentionally different scope:
+- ✅ In-memory runtime: deterministic unit tests / examples (single-thread)
+- ✅ Redis runtime: Redis Streams consumer groups + Redis keyed state + checkpoint (experimental) + window/watermark/timers (best-effort)
+- ⚠️ Checkpoint is stop-the-world per process (not cross-instance barrier); strict end-to-end exactly-once across external sinks still requires idempotency/2PC/outbox designs
 
 If you need a distributed engine, you can still reuse most infrastructure/operator modules (`mq`, `registry`, `state`, `reliability`, etc.) independently.
 
@@ -53,4 +53,3 @@ If you need a distributed engine, you can still reuse most infrastructure/operat
 - Unit tests: `./gradlew test` (no Redis required)
 - Integration tests: `docker-compose up -d && ./gradlew integrationTest && docker-compose down`
 - Coverage report: `./gradlew jacocoRootReport` → `build/reports/jacoco/jacocoRootReport/html/index.html`
-

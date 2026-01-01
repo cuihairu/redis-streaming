@@ -11,7 +11,7 @@ This report summarizes the current implementation status of each Gradle submodul
 
 ### Core & Runtime
 - `core`: ✅ API abstractions complete; unit coverage maintained.
-- `runtime`: 🚧 Minimal in-memory runtime for tests/examples; not a distributed runtime (no parallelism/fault-tolerant operators yet).
+- `runtime`: ✅ Redis-backed runtime (Redis Streams) with in-process parallelism, stop-the-world checkpoint (experimental), Redis keyed state, watermark/timers/window support; plus minimal in-memory runtime for tests/examples.
 
 ### Infrastructure
 - `mq`: ✅ Redis Streams MQ with partitions, consumer groups, retry/DLQ, retention & ACK policy (see `docs/retention-and-ack-policy.md`).
@@ -39,4 +39,3 @@ This report summarizes the current implementation status of each Gradle submodul
 ## Known Constraints / Non-Goals (current)
 - `runtime` is intentionally minimal and single-process: designed for deterministic tests and lightweight examples.
 - Integration tests require Redis; they are excluded from `test` by design and must be run via `integrationTest`.
-

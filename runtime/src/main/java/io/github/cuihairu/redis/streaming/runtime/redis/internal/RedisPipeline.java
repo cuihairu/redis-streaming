@@ -69,6 +69,10 @@ public final class RedisPipeline<T> {
         return new RedisPipelineRunner<>(config, redissonClient, objectMapper, topic, consumerGroup, operators, sinks);
     }
 
+    public RedisPipelineRunner<T> buildRunner(java.util.concurrent.ScheduledExecutorService timerExecutor) {
+        return new RedisPipelineRunner<>(config, redissonClient, objectMapper, topic, consumerGroup, operators, sinks, timerExecutor, false);
+    }
+
     static List<StreamSink<Object>> copySinks(List<?> sinks) {
         List<StreamSink<Object>> out = new ArrayList<>();
         for (Object s : sinks) {

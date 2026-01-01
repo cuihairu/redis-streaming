@@ -29,7 +29,9 @@ final class RedisKeyedValueState<K, T> implements ValueState<T> {
         RedisKeyedStateStore.StateMapRef ref = store.stateMapRef(descriptor.getName(), field);
         store.ensureSchema(ref, descriptor);
         RMap<String, String> map = ref.map();
+        long startNs = System.nanoTime();
         String json = map.get(field);
+        store.recordKeyedStateRead(descriptor.getName(), (System.nanoTime() - startNs) / 1_000_000);
         if (json == null) {
             return descriptor.getDefaultValue();
         }
@@ -51,13 +53,18 @@ final class RedisKeyedValueState<K, T> implements ValueState<T> {
         store.ensureSchema(ref, descriptor);
         RMap<String, String> map = ref.map();
         if (value == null) {
+            long startNs = System.nanoTime();
             map.remove(field);
             store.touch(ref.redisKey(), descriptor.getName(), map);
+            store.recordKeyedStateDelete(descriptor.getName());
+            store.recordKeyedStateWrite(descriptor.getName(), (System.nanoTime() - startNs) / 1_000_000);
             return;
         }
         try {
+            long startNs = System.nanoTime();
             map.put(field, objectMapper.writeValueAsString(value));
             store.touch(ref.redisKey(), descriptor.getName(), map);
+            store.recordKeyedStateWrite(descriptor.getName(), (System.nanoTime() - startNs) / 1_000_000);
         } catch (Exception e) {
             throw new RuntimeException("Failed to serialize state value for " + descriptor.getName(), e);
         }
@@ -73,7 +80,10 @@ final class RedisKeyedValueState<K, T> implements ValueState<T> {
         RedisKeyedStateStore.StateMapRef ref = store.stateMapRef(descriptor.getName(), field);
         store.ensureSchema(ref, descriptor);
         RMap<String, String> map = ref.map();
+        long startNs = System.nanoTime();
         map.remove(field);
         store.touch(ref.redisKey(), descriptor.getName(), map);
+        store.recordKeyedStateDelete(descriptor.getName());
+        store.recordKeyedStateWrite(descriptor.getName(), (System.nanoTime() - startNs) / 1_000_000);
     }
 }

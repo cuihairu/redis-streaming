@@ -3,6 +3,7 @@ package io.github.cuihairu.redis.streaming.runtime.redis;
 import io.github.cuihairu.redis.streaming.api.checkpoint.Checkpoint;
 
 import java.time.Duration;
+import java.util.Map;
 
 /**
  * Handle for a running Redis-backed streaming job.
@@ -54,6 +55,15 @@ public interface RedisJobClient extends AutoCloseable {
      */
     default long inFlight() {
         return -1L;
+    }
+
+    /**
+     * Best-effort diagnostics snapshot for ops/troubleshooting.
+     *
+     * <p>Content is intentionally lightweight and may vary across runtime versions.</p>
+     */
+    default Map<String, Object> diagnostics() {
+        return Map.of();
     }
 
     /**
