@@ -123,6 +123,8 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
         props.getMq().setSchedulerThreads(4);
         props.getMq().setConsumerBatchCount(12);
         props.getMq().setConsumerPollTimeoutMs(250);
+        props.getMq().setMaxInFlight(7);
+        props.getMq().setMaxLeasedPartitionsPerConsumer(3);
         props.getMq().setKeyPrefix("mq:");
         props.getMq().setStreamKeyPrefix("stream:");
         props.getMq().setDefaultConsumerGroup("g1");
@@ -148,6 +150,8 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
         assertEquals("none", opts.getAckDeletePolicy());
         assertEquals(456, opts.getDlqRetentionMaxLen());
         assertEquals(888, opts.getDlqRetentionMs());
+        assertEquals(7, opts.getMaxInFlight());
+        assertEquals(3, opts.getMaxLeasedPartitionsPerConsumer());
     }
 
     @Test

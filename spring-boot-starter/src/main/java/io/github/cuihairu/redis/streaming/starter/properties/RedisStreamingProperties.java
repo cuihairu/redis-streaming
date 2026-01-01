@@ -318,6 +318,12 @@ public class RedisStreamingProperties {
         /** claim 批大小 */
         private int claimBatchSize = 50;
 
+        /** 背压：每个 consumer 实例最大并发处理中消息数（0=关闭） */
+        private int maxInFlight = 0;
+
+        /** 分区 lease 上限：每个 consumer 实例最多持有多少分区（0=默认=workerThreads） */
+        private int maxLeasedPartitionsPerConsumer = 0;
+
         /** 最大重试次数 */
         private int retryMaxAttempts = 5;
 

@@ -271,6 +271,8 @@ public class RedisStreamingAutoConfiguration {
                     .pendingScanIntervalSec(p.getPendingScanIntervalSec())
                     .claimIdleMs(p.getClaimIdleMs())
                     .claimBatchSize(p.getClaimBatchSize())
+                    .maxInFlight(p.getMaxInFlight())
+                    .maxLeasedPartitionsPerConsumer(p.getMaxLeasedPartitionsPerConsumer())
                     .retryMaxAttempts(p.getRetryMaxAttempts())
                     .retryBaseBackoffMs(p.getRetryBaseBackoffMs())
                     .retryMaxBackoffMs(p.getRetryMaxBackoffMs())
