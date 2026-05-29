@@ -48,9 +48,10 @@ public class ClientHealthChecker {
         if (running) {
             return;
         }
-        
+
         running = true;
-        scheduler.scheduleWithFixedDelay(this::checkHealth, 0, checkInterval, timeUnit);
+        checkHealth();
+        scheduler.scheduleWithFixedDelay(this::checkHealth, checkInterval, checkInterval, timeUnit);
         logger.info("Started health checker for service instance: {}", serviceInstance.getInstanceId());
     }
     
