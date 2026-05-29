@@ -198,7 +198,7 @@
 
 ---
 
-### 11. io.github.cuihairu.redis.streaming.reliability.dlq - 51%
+### 11. io.github.cuihairu.redis.streaming.mq.dlq - 51%
 **关键问题：** 死信队列功能测试不足
 **未覆盖的关键类：**
 - `RedisDeadLetterAdmin` - 0% (10 个方法未覆盖)

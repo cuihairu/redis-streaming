@@ -113,7 +113,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                             if (messages != null && !messages.isEmpty()) stream = streamString;
                         } catch (Exception ignore) {}
                     }
-                    if ((messages == null || messages.isEmpty()) && Boolean.getBoolean("reliability.dlq.test.readAllIds")) {
+                    if ((messages == null || messages.isEmpty()) && Boolean.getBoolean("mq.dlq.test.readAllIds")) {
                         try {
                             messages = streamDefault.readGroup(s.group, consumerName,
                                     StreamReadGroupArgs.greaterThan(StreamMessageId.MIN).count(10).timeout(Duration.ofMillis(200)));
@@ -133,7 +133,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                         Map<String, Object> data = e.getValue();
                         DeadLetterEntry entry = DeadLetterCodec.parseEntry(id.toString(), data);
                         try {
-                            long holdMs = Long.getLong("reliability.dlq.test.holdBeforeHandleMs", 0L);
+                            long holdMs = Long.getLong("mq.dlq.test.holdBeforeHandleMs", 0L);
                             if (holdMs > 0) { try { Thread.sleep(holdMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); } }
                             DeadLetterConsumer.HandleResult r = s.handler.handle(entry);
                             switch (r) {
