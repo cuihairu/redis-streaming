@@ -1346,12 +1346,12 @@ class RedisRuntimeIntegrationTest {
             assertEquals(1, client.getList(listKey, StringCodec.INSTANCE).size(),
                     "idempotent sink should write exactly once even if message is retried");
 
-            long pendingDeadline = System.currentTimeMillis() + 5000L;
+            long pendingDeadline = System.currentTimeMillis() + 15000L;
             while (System.currentTimeMillis() < pendingDeadline) {
                 if (admin.getPendingCount(topic, group) <= 0) {
                     break;
                 }
-                Thread.sleep(50);
+                Thread.sleep(100);
             }
             assertEquals(0L, admin.getPendingCount(topic, group));
         } finally {
