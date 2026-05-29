@@ -10,7 +10,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 服务实例的默认实现
+ * Default implementation of service instance
  */
 @Data
 @Builder
@@ -19,70 +19,70 @@ import java.util.Map;
 public class DefaultServiceInstance implements ServiceInstance {
     
     /**
-     * 服务名称
+     * Service name
      */
     private String serviceName;
     
     /**
-     * 实例ID
+     * Instance ID
      */
     private String instanceId;
     
     /**
-     * 主机地址
+     * Host address
      */
     private String host;
     
     /**
-     * 端口号
+     * Port number
      */
     private int port;
     
     /**
-     * 协议
+     * Protocol
      */
     @Builder.Default
     private Protocol protocol = StandardProtocol.HTTP;
     
     /**
-     * 是否启用
+     * Whether enabled
      */
     @Builder.Default
     private boolean enabled = true;
     
     /**
-     * 是否健康
+     * Whether healthy
      */
     @Builder.Default
     private boolean healthy = true;
     
     /**
-     * 权重
+     * Weight
      */
     @Builder.Default
     private int weight = 1;
     
     /**
-     * 元数据
+     * Metadata
      */
     @Builder.Default
     private Map<String, String> metadata = new HashMap<>();
     
     /**
-     * 最后心跳时间
+     * Last heartbeat time
      */
     private LocalDateTime lastHeartbeatTime;
     
     /**
-     * 注册时间
+     * Registration time
      */
     @Builder.Default
     private LocalDateTime registrationTime = LocalDateTime.now();
 
     /**
-     * 是否为临时实例
-     * true: 临时实例，依赖客户端心跳，超时自动删除
-     * false: 永久实例，服务端健康检查，只标记不删除
+     * Whether this is an ephemeral instance
+     * true: ephemeral instance, relies on client heartbeats, automatically removed on timeout
+     * false: persistent instance, server-side health checking, only marks unhealthy without removal
      */
     @Builder.Default
     private boolean ephemeral = true;

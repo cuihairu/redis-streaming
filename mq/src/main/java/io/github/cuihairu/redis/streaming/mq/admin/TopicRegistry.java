@@ -7,9 +7,9 @@ import org.redisson.api.RedissonClient;
 import java.util.Set;
 
 /**
- * Topic Registry - 维护所有活跃 topic 的注册表
+ * Topic Registry - maintains a registry of all active topics
  * <p>
- * 使用 Redis Set 来追踪所有活跃的 topic，避免使用 keys/scan 命令
+ * Uses a Redis Set to track all active topics, avoiding the use of keys/scan commands
  * </p>
  */
 @Slf4j
@@ -42,10 +42,10 @@ public class TopicRegistry {
     }
 
     /**
-     * 注册一个 topic
+     * Register a topic
      *
-     * @param topic topic 名称
-     * @return 是否是新注册的 topic
+     * @param topic topic name
+     * @return whether this is a newly registered topic
      */
     public boolean registerTopic(String topic) {
         try {
@@ -64,10 +64,10 @@ public class TopicRegistry {
     }
 
     /**
-     * 取消注册一个 topic
+     * Unregister a topic
      *
-     * @param topic topic 名称
-     * @return 是否成功移除
+     * @param topic topic name
+     * @return whether the topic was successfully removed
      */
     public boolean unregisterTopic(String topic) {
         try {
@@ -86,10 +86,10 @@ public class TopicRegistry {
     }
 
     /**
-     * 检查 topic 是否已注册
+     * Check if a topic is registered
      *
-     * @param topic topic 名称
-     * @return 是否已注册
+     * @param topic topic name
+     * @return whether the topic is registered
      */
     public boolean isTopicRegistered(String topic) {
         try {
@@ -102,9 +102,9 @@ public class TopicRegistry {
     }
 
     /**
-     * 获取所有已注册的 topics
+     * Get all registered topics
      *
-     * @return topic 集合
+     * @return set of topic names
      */
     public Set<String> getAllTopics() {
         try {
@@ -117,9 +117,9 @@ public class TopicRegistry {
     }
 
     /**
-     * 获取已注册的 topic 数量
+     * Get the count of registered topics
      *
-     * @return topic 数量
+     * @return number of registered topics
      */
     public int getTopicCount() {
         try {
@@ -132,7 +132,7 @@ public class TopicRegistry {
     }
 
     /**
-     * 清空所有注册的 topics
+     * Clear all registered topics
      */
     public void clearRegistry() {
         try {

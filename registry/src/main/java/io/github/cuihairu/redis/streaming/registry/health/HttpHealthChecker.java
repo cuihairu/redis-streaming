@@ -13,8 +13,8 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 
 /**
- * HTTP/HTTPS协议健康检查器
- * 专门用于HTTP/HTTPS协议的健康检查
+ * HTTP/HTTPS protocol health checker
+ * Dedicated health checker for HTTP/HTTPS protocols
  */
 public class HttpHealthChecker implements HealthChecker {
     
@@ -56,13 +56,13 @@ public class HttpHealthChecker implements HealthChecker {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             return response.statusCode() >= 200 && response.statusCode() < 400;
         } catch (Exception e) {
-            // 如果健康检查端点不可用，回退到TCP检查
+            // If health check endpoint is unavailable, fall back to TCP check
             return checkTcpConnectivity(serviceInstance);
         }
     }
     
     /**
-     * TCP连通性检查
+     * TCP connectivity check
      */
     private boolean checkTcpConnectivity(ServiceInstance serviceInstance) {
         try (Socket socket = new Socket()) {

@@ -5,16 +5,16 @@ import io.github.cuihairu.redis.streaming.mq.MessageConsumer;
 import io.github.cuihairu.redis.streaming.mq.MessageHandleResult;
 import io.github.cuihairu.redis.streaming.mq.MessageHandler;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
-import io.github.cuihairu.redis.streaming.reliability.dlq.DeadLetterConsumer;
-import io.github.cuihairu.redis.streaming.reliability.dlq.DeadLetterEntry;
-import io.github.cuihairu.redis.streaming.reliability.dlq.RedisDeadLetterConsumer;
+import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterConsumer;
+import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterEntry;
+import io.github.cuihairu.redis.streaming.mq.dlq.RedisDeadLetterConsumer;
 import org.redisson.api.RedissonClient;
 
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 
-/** Adapter to expose reliability DLQ consumer as MQ MessageConsumer. */
+/** Adapter to expose DLQ consumer as MQ MessageConsumer. */
 @lombok.extern.slf4j.Slf4j
 public class DlqConsumerAdapter implements MessageConsumer {
     private final DeadLetterConsumer delegate;
@@ -23,13 +23,11 @@ public class DlqConsumerAdapter implements MessageConsumer {
 
     public DlqConsumerAdapter(RedissonClient client, String consumerName, MqOptions options) {
         this.client = client;
-        // Provide a robust replay handler: publish back to original partition using StringCodec
-        io.github.cuihairu.redis.streaming.reliability.dlq.ReplayHandler replay = (topic, partitionId, payload, headers, maxRetries) -> {
+        io.github.cuihairu.redis.streaming.mq.dlq.ReplayHandler replay = (topic, partitionId, payload, headers, maxRetries) -> {
             try {
                 String key = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, partitionId);
                 org.redisson.api.RStream<String, Object> p = client.getStream(key, org.redisson.client.codec.StringCodec.INSTANCE);
                 java.util.Map<String,Object> d = new java.util.HashMap<>();
-                // Normalize values to strings for StringCodec/stream fields
                 d.put("payload", (payload instanceof String) ? payload : toJson(payload));
                 d.put("timestamp", java.time.Instant.now().toString());
                 d.put("retryCount", "0");
@@ -39,7 +37,6 @@ public class DlqConsumerAdapter implements MessageConsumer {
                 if (headers != null && !headers.isEmpty()) d.put("headers", toJson(headers));
                 boolean ok = p.add(org.redisson.api.stream.StreamAddArgs.entries(d)) != null;
                 try { log.info("Adapter proactive replay: key={}, ok={}, size={}", key, ok, p.size()); } catch (Exception ignore) {}
-                // Visibility check + one retry for flakiness
                 try {
                     boolean visible = p.isExists() && p.size() > 0;
                     if (!visible) { Thread.sleep(50); ok = p.add(org.redisson.api.stream.StreamAddArgs.entries(d)) != null; }
@@ -50,8 +47,7 @@ public class DlqConsumerAdapter implements MessageConsumer {
         this.delegate = new RedisDeadLetterConsumer(client, consumerName,
                 options != null ? options.getDefaultDlqGroup() : "dlq-group",
                 replay);
-        // configure DLQ stream prefix to match MQ if needed
-        io.github.cuihairu.redis.streaming.reliability.dlq.DlqKeys.configure(
+        io.github.cuihairu.redis.streaming.mq.dlq.DlqKeys.configure(
                 options != null ? options.getStreamKeyPrefix() : "stream:topic");
     }
 
@@ -82,7 +78,6 @@ public class DlqConsumerAdapter implements MessageConsumer {
             case SUCCESS:
                 return DeadLetterConsumer.HandleResult.SUCCESS;
             case RETRY: {
-                // Proactively replay once here to ensure visibility even if delegate replay path is delayed
                 try {
                     int pid = e.getPartitionId();
                     String topic = e.getOriginalTopic();

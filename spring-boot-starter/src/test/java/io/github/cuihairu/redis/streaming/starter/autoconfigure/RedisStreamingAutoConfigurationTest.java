@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class RedisStreamingAutoConfigurationTest {
 
-    // 测试 RedisStreamingProperties 配置绑定
+    // Test RedisStreamingProperties configuration binding
     private final ApplicationContextRunner propertiesRunner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(RedisStreamingPropertiesConfig.class));
 

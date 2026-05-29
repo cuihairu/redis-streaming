@@ -13,11 +13,11 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * Spring Boot Starter使用示例
+ * Spring Boot Starter usage example
  */
 @Slf4j
 @SpringBootApplication
-@EnableRedisStreaming  // 启用Streaming框架
+@EnableRedisStreaming  // Enable Streaming framework
 @RestController
 public class StreamingStarterExample {
     
@@ -31,7 +31,7 @@ public class StreamingStarterExample {
     }
     
     /**
-     * 监听用户服务变更
+     * Listen for user service changes
      */
     @ServiceChangeListener(services = {"user-service"})
     public void onUserServiceChange(String serviceName, String action, ServiceInstance instance, List<ServiceInstance> allInstances) {
@@ -39,12 +39,12 @@ public class StreamingStarterExample {
     }
     
     /**
-     * 监听数据库配置变更
+     * Listen for database configuration changes
      */
     @ConfigChangeListener(dataId = "database.config", group = "production")
     public void onDatabaseConfigChange(String dataId, String group, String content, String version) {
         log.info("数据库配置变更: {}:{} -> 版本 {}", group, dataId, version);
         log.info("新配置内容: {}", content);
-        // 可以在这里重新加载数据库连接等
+        // You can reload database connections here, etc.
     }
 }

@@ -17,7 +17,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Redis Streams 消息队列管理实现
+ * Redis Streams message queue admin implementation
  */
 @Slf4j
 public class RedisMessageQueueAdmin implements MessageQueueAdmin {
@@ -50,7 +50,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
         this.payloadLifecycleManager = Objects.requireNonNull(payloadLifecycleManager, "payloadLifecycleManager");
     }
 
-    // ==================== 队列信息查询 ====================
+    // ==================== Queue Information Queries ====================
 
     @Override
     public QueueInfo getQueueInfo(String topic) {
@@ -117,8 +117,8 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
     @Override
     public List<String> listAllTopics() {
         try {
-            // 使用 TopicRegistry 获取所有已注册的 topics
-            // 避免使用 keys/scan 命令，提高生产环境性能
+            // Use TopicRegistry to get all registered topics
+            // Avoid using keys/scan commands for better production performance
             Set<String> topics = topicRegistry.getAllTopics();
             return new ArrayList<>(topics);
 
@@ -145,7 +145,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
         }
     }
 
-    // ==================== 消费者组管理 ====================
+    // ==================== Consumer Group Management ====================
 
     @Override
     public List<ConsumerGroupInfo> getConsumerGroups(String topic) {
@@ -262,7 +262,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
         }
     }
 
-    // ==================== Pending 消息管理 ====================
+    // ==================== Pending Message Management ====================
 
     @Override
     public List<PendingMessage> getPendingMessages(String topic, String group, int limit) {
@@ -346,7 +346,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
         }
     }
 
-    // ==================== 运维操作 ====================
+    // ==================== Operations ====================
 
     @Override
     public long trimQueue(String topic, long maxLen) {
@@ -549,7 +549,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
         }
     }
 
-    // ==================== 原始消息窥视（只读） ====================
+    // ==================== Raw Message Peek (Read-Only) ====================
 
     @Override
     public List<MessageEntry> listRecent(String topic, int perPartitionCount) {
@@ -590,7 +590,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
                     }
                 }
             }
-            // 按 id 时间戳部分降序
+            // Sort by id timestamp part in descending order
             all.sort((a, b) -> {
                 long ta = Long.parseLong(a.getId().split("-")[0]);
                 long tb = Long.parseLong(b.getId().split("-")[0]);

@@ -1,8 +1,8 @@
 package io.github.cuihairu.redis.streaming.config;
 
 /**
- * 配置服务Redis配置
- * 包含配置服务专用的Redis键模式和配置
+ * Configuration service Redis configuration
+ * Contains Redis key patterns and settings specific to the configuration service
  */
 public class ConfigServiceConfig extends BaseRedisConfig {
     /**
@@ -31,44 +31,44 @@ public class ConfigServiceConfig extends BaseRedisConfig {
     }
     
     /**
-     * 获取配置键
-     * 
-     * @param group 配置组
-     * @param dataId 配置ID
-     * @return 配置键
+     * Get configuration key
+     *
+     * @param group configuration group
+     * @param dataId configuration ID
+     * @return configuration key
      */
     public String getConfigKey(String group, String dataId) {
         return formatKey("config:%s:%s", sanitize(group), sanitize(dataId));
     }
     
     /**
-     * 获取配置订阅者列表键
-     * 
-     * @param group 配置组
-     * @param dataId 配置ID
-     * @return 配置订阅者列表键
+     * Get configuration subscribers list key
+     *
+     * @param group configuration group
+     * @param dataId configuration ID
+     * @return configuration subscribers list key
      */
     public String getConfigSubscribersKey(String group, String dataId) {
         return formatKey("config_subscribers:%s:%s", sanitize(group), sanitize(dataId));
     }
     
     /**
-     * 获取配置历史键
-     * 
-     * @param group 配置组
-     * @param dataId 配置ID
-     * @return 配置历史键
+     * Get configuration history key
+     *
+     * @param group configuration group
+     * @param dataId configuration ID
+     * @return configuration history key
      */
     public String getConfigHistoryKey(String group, String dataId) {
         return formatKey("config_history:%s:%s", sanitize(group), sanitize(dataId));
     }
     
     /**
-     * 获取配置变更通道键
-     * 
-     * @param group 配置组
-     * @param dataId 配置ID
-     * @return 配置变更通道键
+     * Get configuration change channel key
+     *
+     * @param group configuration group
+     * @param dataId configuration ID
+     * @return configuration change channel key
      */
     public String getConfigChangeChannelKey(String group, String dataId) {
         return formatKey("config_change:%s:%s", sanitize(group), sanitize(dataId));

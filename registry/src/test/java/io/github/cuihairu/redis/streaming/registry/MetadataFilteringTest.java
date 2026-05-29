@@ -15,7 +15,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * 测试根据 metadata 过滤查询服务实例
+ * Test filtering and querying service instances by metadata
  */
 @Tag("integration")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -43,7 +43,7 @@ public class MetadataFilteringTest {
 
     @BeforeEach
     public void setup() {
-        // 清理测试数据
+        // Clean up test data
         redissonClient.getKeys().flushdb();
 
         serviceProvider = new RedisServiceProvider(redissonClient);
@@ -72,7 +72,7 @@ public class MetadataFilteringTest {
     @Order(1)
     @DisplayName("测试根据单个 metadata 字段过滤")
     public void testFilterBySingleMetadata() throws InterruptedException {
-        // 注册 3 个实例，不同版本
+        // Register 3 instances with different versions
         Map<String, String> metadata1 = new HashMap<>();
         metadata1.put("version", "1.0.0");
         metadata1.put("region", "us-east-1");
@@ -114,7 +114,7 @@ public class MetadataFilteringTest {
         serviceProvider.register(instance3);
         Thread.sleep(500);
 
-        // 过滤：version = "1.0.0"
+        // Filter: version = "1.0.0"
         Map<String, String> filter = new HashMap<>();
         filter.put("version", "1.0.0");
 
@@ -123,7 +123,7 @@ public class MetadataFilteringTest {
         assertEquals(2, filtered.size());
         assertTrue(filtered.stream().allMatch(i -> "1.0.0".equals(i.getMetadata().get("version"))));
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(instance1);
         serviceProvider.deregister(instance2);
         serviceProvider.deregister(instance3);
@@ -133,7 +133,7 @@ public class MetadataFilteringTest {
     @Order(2)
     @DisplayName("测试根据多个 metadata 字段过滤（AND 关系）")
     public void testFilterByMultipleMetadata() throws InterruptedException {
-        // 注册 3 个实例
+        // Register 3 instances
         Map<String, String> metadata1 = new HashMap<>();
         metadata1.put("version", "1.0.0");
         metadata1.put("region", "us-east-1");
@@ -178,7 +178,7 @@ public class MetadataFilteringTest {
         serviceProvider.register(instance3);
         Thread.sleep(500);
 
-        // 过滤：version = "1.0.0" AND zone = "zone-a"
+        // Filter: version = "1.0.0" AND zone = "zone-a"
         Map<String, String> filter = new HashMap<>();
         filter.put("version", "1.0.0");
         filter.put("zone", "zone-a");
@@ -190,7 +190,7 @@ public class MetadataFilteringTest {
         assertEquals("1.0.0", filtered.get(0).getMetadata().get("version"));
         assertEquals("zone-a", filtered.get(0).getMetadata().get("zone"));
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(instance1);
         serviceProvider.deregister(instance2);
         serviceProvider.deregister(instance3);
@@ -200,7 +200,7 @@ public class MetadataFilteringTest {
     @Order(3)
     @DisplayName("测试空 metadata 过滤条件（返回所有实例）")
     public void testFilterWithEmptyMetadata() throws InterruptedException {
-        // 注册 2 个实例
+        // Register 2 instances
         Map<String, String> metadata1 = new HashMap<>();
         metadata1.put("version", "1.0.0");
 
@@ -223,17 +223,17 @@ public class MetadataFilteringTest {
         serviceProvider.register(instance2);
         Thread.sleep(500);
 
-        // 空过滤条件
+        // Empty filter condition
         Map<String, String> emptyFilter = new HashMap<>();
         List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", emptyFilter);
 
         assertEquals(2, filtered.size());
 
-        // null 过滤条件
+        // Null filter condition
         filtered = serviceConsumer.discoverByMetadata("test-service", null);
         assertEquals(2, filtered.size());
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(instance1);
         serviceProvider.deregister(instance2);
     }
@@ -242,7 +242,7 @@ public class MetadataFilteringTest {
     @Order(4)
     @DisplayName("测试不匹配的 metadata 过滤（返回空列表）")
     public void testFilterWithNoMatch() throws InterruptedException {
-        // 注册实例
+        // Register instance
         Map<String, String> metadata = new HashMap<>();
         metadata.put("version", "1.0.0");
         metadata.put("region", "us-east-1");
@@ -258,7 +258,7 @@ public class MetadataFilteringTest {
         serviceProvider.register(instance);
         Thread.sleep(500);
 
-        // 过滤：version = "2.0.0"（不存在）
+        // Filter: version = "2.0.0" (does not exist)
         Map<String, String> filter = new HashMap<>();
         filter.put("version", "2.0.0");
 
@@ -266,7 +266,7 @@ public class MetadataFilteringTest {
 
         assertEquals(0, filtered.size());
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(instance);
     }
 
@@ -274,7 +274,7 @@ public class MetadataFilteringTest {
     @Order(5)
     @DisplayName("测试通过 NamingService 使用 metadata 过滤")
     public void testFilterThroughNamingService() throws InterruptedException {
-        // 注册实例
+        // Register instance
         Map<String, String> metadata1 = new HashMap<>();
         metadata1.put("version", "1.0.0");
         metadata1.put("region", "us-east-1");
@@ -303,7 +303,7 @@ public class MetadataFilteringTest {
         namingService.register(instance2);
         Thread.sleep(500);
 
-        // 通过 NamingService 过滤
+        // Filter through NamingService
         Map<String, String> filter = new HashMap<>();
         filter.put("version", "1.0.0");
 
@@ -312,11 +312,11 @@ public class MetadataFilteringTest {
         assertEquals(1, filtered.size());
         assertEquals("instance-1", filtered.get(0).getInstanceId());
 
-        // 测试获取健康实例
+        // Test getting healthy instances
         List<ServiceInstance> healthyFiltered = namingService.getHealthyInstancesByMetadata("test-service", filter);
         assertEquals(1, healthyFiltered.size());
 
-        // 清理
+        // Clean up
         namingService.deregister(instance1);
         namingService.deregister(instance2);
     }
@@ -325,7 +325,7 @@ public class MetadataFilteringTest {
     @Order(6)
     @DisplayName("测试只返回健康且匹配的实例")
     public void testFilterHealthyInstancesOnly() throws InterruptedException {
-        // 注册 2 个实例，一个健康一个不健康
+        // Register 2 instances, one healthy and one unhealthy
         Map<String, String> metadata = new HashMap<>();
         metadata.put("version", "1.0.0");
 
@@ -344,7 +344,7 @@ public class MetadataFilteringTest {
                 .instanceId("instance-2")
                 .host("192.168.1.101")
                 .port(8081)
-                .healthy(false)  // 不健康
+                .healthy(false)  // Unhealthy
                 .enabled(true)
                 .metadata(metadata)
                 .build();
@@ -353,20 +353,20 @@ public class MetadataFilteringTest {
         serviceProvider.register(instance2);
         Thread.sleep(500);
 
-        // 过滤条件
+        // Filter condition
         Map<String, String> filter = new HashMap<>();
         filter.put("version", "1.0.0");
 
-        // 获取所有匹配的实例（包括不健康的）
+        // Get all matching instances (including unhealthy ones)
         List<ServiceInstance> all = serviceConsumer.discoverByMetadata("test-service", filter);
         assertEquals(2, all.size());
 
-        // 只获取健康的匹配实例
+        // Get only healthy matching instances
         List<ServiceInstance> healthy = serviceConsumer.discoverHealthyByMetadata("test-service", filter);
         assertEquals(1, healthy.size());
         assertTrue(healthy.get(0).isHealthy());
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(instance1);
         serviceProvider.deregister(instance2);
     }

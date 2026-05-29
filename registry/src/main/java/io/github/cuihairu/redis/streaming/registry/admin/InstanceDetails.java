@@ -6,7 +6,7 @@ import lombok.Getter;
 import java.util.Map;
 
 /**
- * 实例详细信息
+ * Instance detailed information
  */
 @Data
 public class InstanceDetails {
@@ -30,14 +30,14 @@ public class InstanceDetails {
         this.instanceId = instanceId;
     }
     /**
-     * 计算心跳延迟（毫秒）
+     * Calculate heartbeat delay (milliseconds)
      */
     public long getHeartbeatDelay() {
         return System.currentTimeMillis() - lastHeartbeatTime;
     }
 
     /**
-     * 检查实例是否超时
+     * Check if the instance is expired
      */
     public boolean isExpired(long timeoutMs) {
         return getHeartbeatDelay() > timeoutMs;

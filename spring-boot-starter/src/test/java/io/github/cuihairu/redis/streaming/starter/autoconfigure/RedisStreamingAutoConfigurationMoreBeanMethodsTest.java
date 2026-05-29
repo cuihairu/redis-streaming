@@ -12,7 +12,7 @@ import io.github.cuihairu.redis.streaming.registry.NamingService;
 import io.github.cuihairu.redis.streaming.registry.ServiceDiscovery;
 import io.github.cuihairu.redis.streaming.registry.metrics.MetricsConfig;
 import io.github.cuihairu.redis.streaming.registry.metrics.MetricsGlobal;
-import io.github.cuihairu.redis.streaming.reliability.dlq.DeadLetterService;
+import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterService;
 import io.github.cuihairu.redis.streaming.reliability.metrics.RateLimitMetrics;
 import io.github.cuihairu.redis.streaming.reliability.metrics.ReliabilityMetrics;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;

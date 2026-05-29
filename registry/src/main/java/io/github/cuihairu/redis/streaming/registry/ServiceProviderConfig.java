@@ -4,19 +4,19 @@ import lombok.Getter;
 import lombok.Setter;
 
 /**
- * 服务提供者Redis配置
- * 包含服务提供者专用的Redis键模式和配置
+ * Service provider Redis configuration
+ * Contains Redis key patterns and configuration specific to service providers
  */
 @Setter
 @Getter
 public class ServiceProviderConfig extends BaseRedisConfig {
 
     /**
-     * 心跳超时时间（秒，默认90秒）
+     * Heartbeat timeout in seconds (default 90 seconds)
      * -- GETTER --
-     *  获取心跳超时时间（秒）
+     *  Get the heartbeat timeout in seconds
      * -- SETTER --
-     *  设置心跳超时时间（秒）
+     *  Set the heartbeat timeout in seconds
      */
     private int heartbeatTimeoutSeconds = 90;
 
@@ -32,41 +32,41 @@ public class ServiceProviderConfig extends BaseRedisConfig {
         super(keyPrefix, enableKeyPrefix);
     }
     /**
-     * 获取服务实例键
+     * Get the service instance key
      *
-     * @param serviceName 服务名称
-     * @param instanceId 实例ID
-     * @return 服务实例键
+     * @param serviceName the service name
+     * @param instanceId the instance ID
+     * @return the service instance key
      */
     public String getServiceInstanceKey(String serviceName, String instanceId) {
         return getRegistryKeys().getServiceInstanceKey(serviceName, instanceId);
     }
 
     /**
-     * 获取服务实例列表键
+     * Get the service instances list key
      *
-     * @param serviceName 服务名称
-     * @return 服务实例列表键
+     * @param serviceName the service name
+     * @return the service instances list key
      */
     public String getServiceInstancesKey(String serviceName) {
         return getRegistryKeys().getServiceHeartbeatsKey(serviceName);
     }
 
     /**
-     * 获取心跳键
+     * Get the heartbeat key
      *
-     * @param serviceName 服务名称
-     * @return 心跳键
+     * @param serviceName the service name
+     * @return the heartbeat key
      */
     public String getHeartbeatKey(String serviceName) {
         return getRegistryKeys().getServiceHeartbeatsKey(serviceName);
     }
 
     /**
-     * 获取服务变更通道键
+     * Get the service change channel key
      *
-     * @param serviceName 服务名称
-     * @return 服务变更通道键
+     * @param serviceName the service name
+     * @return the service change channel key
      */
     public String getServiceChangeChannelKey(String serviceName) {
         return getRegistryKeys().getServiceChangeChannelKey(serviceName);

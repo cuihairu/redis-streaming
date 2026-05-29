@@ -4,19 +4,19 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 
 /**
- * 系统工具类
- * 提供系统相关信息的获取和缓存功能
+ * System utility class
+ * Provides system-related information retrieval and caching functionality
  */
 public class SystemUtils {
     private static volatile String cachedHostname = null;
     private static final Object lock = new Object();
     
     /**
-     * 获取本地主机名
-     * 带有缓存机制，避免重复调用系统API
-     * 
-     * @return 本地主机名
-     * @throws RuntimeException 如果无法获取主机名
+     * Get local hostname
+     * With caching mechanism to avoid repeated system API calls
+     *
+     * @return local hostname
+     * @throws RuntimeException if hostname cannot be obtained
      */
     public static String getLocalHostname() {
         if (cachedHostname != null) {
@@ -39,8 +39,8 @@ public class SystemUtils {
     }
     
     /**
-     * 清除主机名缓存
-     * 主要用于测试场景
+     * Clear hostname cache
+     * Primarily used for testing scenarios
      */
     public static void clearHostnameCache() {
         synchronized (lock) {

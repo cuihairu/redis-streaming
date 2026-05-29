@@ -1,18 +1,18 @@
 package io.github.cuihairu.redis.streaming.config;
 
 /**
- * 配置变更监听器
- * 监听配置的变更事件
+ * Configuration change listener
+ * Listens for configuration change events
  */
 public interface ConfigChangeListener {
     
     /**
-     * 配置变更事件
-     * 
-     * @param dataId 配置ID
-     * @param group 配置组
-     * @param content 新的配置内容
-     * @param version 配置版本
+     * Configuration change event
+     *
+     * @param dataId configuration ID
+     * @param group configuration group
+     * @param content new configuration content
+     * @param version configuration version
      */
     void onConfigChange(String dataId, String group, String content, String version);
 }

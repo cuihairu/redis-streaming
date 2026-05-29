@@ -7,48 +7,48 @@ import org.redisson.api.StreamMessageId;
 import java.time.Instant;
 
 /**
- * 队列信息
+ * Queue information
  */
 @Data
 @Builder
 public class QueueInfo {
     /**
-     * 队列名称
+     * Queue name
      */
     private String topic;
 
     /**
-     * 消息总数
+     * Total message count
      */
     private long length;
 
     /**
-     * 消费者组数量
+     * Consumer group count
      */
     private int consumerGroupCount;
 
     /**
-     * 第一条消息ID
+     * First message ID
      */
     private StreamMessageId firstMessageId;
 
     /**
-     * 最后一条消息ID
+     * Last message ID
      */
     private StreamMessageId lastMessageId;
 
     /**
-     * 队列创建时间（第一条消息的时间）
+     * Queue creation time (timestamp of the first message)
      */
     private Instant createdAt;
 
     /**
-     * 最后更新时间（最后一条消息的时间）
+     * Last update time (timestamp of the last message)
      */
     private Instant lastUpdatedAt;
 
     /**
-     * 队列是否存在
+     * Whether the queue exists
      */
     private boolean exists;
 }

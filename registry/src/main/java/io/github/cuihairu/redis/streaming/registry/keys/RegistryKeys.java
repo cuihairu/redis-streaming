@@ -5,26 +5,26 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * 注册中心统一Key管理
- * 只管理服务注册发现相关的Redis Key，配置中心的Key已迁移到config模块
+ * Unified key management for the registry
+ * Only manages Redis keys related to service registration and discovery; config center keys have been migrated to the config module
  */
 @Getter
 public class RegistryKeys {
 
     private static final Logger logger = LoggerFactory.getLogger(RegistryKeys.class);
 
-    // 默认前缀
+    // Default prefix
     private static final String DEFAULT_PREFIX = "registry";
 
-    // 服务注册发现Key模板
-    private static final String SERVICES_INDEX_TEMPLATE = "%s:services";                           // 一级：服务索引
-    private static final String SERVICE_HEARTBEATS_TEMPLATE = "%s:services:%s:heartbeats";         // 二级：心跳索引(ZSet)
-    private static final String SERVICE_INSTANCE_TEMPLATE = "%s:services:%s:instance:%s";          // 三级：实例详情(Hash)
-    private static final String SERVICE_CHANGE_CHANNEL_TEMPLATE = "%s:services:%s:changes";        // 服务变更通知频道
+    // Service registration and discovery key templates
+    private static final String SERVICES_INDEX_TEMPLATE = "%s:services";                           // Level 1: Service index
+    private static final String SERVICE_HEARTBEATS_TEMPLATE = "%s:services:%s:heartbeats";         // Level 2: Heartbeat index (ZSet)
+    private static final String SERVICE_INSTANCE_TEMPLATE = "%s:services:%s:instance:%s";          // Level 3: Instance details (Hash)
+    private static final String SERVICE_CHANGE_CHANNEL_TEMPLATE = "%s:services:%s:changes";        // Service change notification channel
 
     /**
      * -- GETTER --
-     *  获取前缀
+     *  Get the prefix
      */
     private final String keyPrefix;
 
@@ -37,19 +37,19 @@ public class RegistryKeys {
             keyPrefix.trim() : DEFAULT_PREFIX;
     }
 
-    // ==================== 服务注册相关Keys ====================
+    // ==================== Service registration related keys ====================
 
     /**
-     * 获取服务索引Key (Set)
-     * 存储所有注册的服务名称
+     * Get the service index key (Set)
+     * Stores all registered service names
      */
     public String getServicesIndexKey() {
         return String.format(SERVICES_INDEX_TEMPLATE, keyPrefix);
     }
 
     /**
-     * 获取服务心跳索引Key (ZSet)
-     * score=心跳时间戳, member=instanceId
+     * Get the service heartbeat index key (ZSet)
+     * score=heartbeat timestamp, member=instanceId
      */
     public String getServiceHeartbeatsKey(String serviceName) {
         validateServiceName(serviceName);
@@ -57,8 +57,8 @@ public class RegistryKeys {
     }
 
     /**
-     * 获取服务实例详情Key (Hash)
-     * 存储实例的完整信息，包括冗余的心跳时间
+     * Get the service instance details key (Hash)
+     * Stores the complete information of the instance, including redundant heartbeat time
      */
     public String getServiceInstanceKey(String serviceName, String instanceId) {
         validateServiceName(serviceName);
@@ -67,37 +67,37 @@ public class RegistryKeys {
     }
 
     /**
-     * 获取服务变更通知频道Key
+     * Get the service change notification channel key
      */
     public String getServiceChangeChannelKey(String serviceName) {
         validateServiceName(serviceName);
         return String.format(SERVICE_CHANGE_CHANNEL_TEMPLATE, keyPrefix, serviceName);
     }
 
-    // ==================== 实例ID安全处理方法 ====================
+    // ==================== Instance ID safety handling methods ====================
 
     /**
-     * 清理服务名中的不安全字符
-     * 将冒号和其他可能导致解析问题的字符替换为安全字符
+     * Sanitize unsafe characters in the service name
+     * Replaces colons and other characters that may cause parsing issues with safe characters
      */
     public static String sanitizeServiceName(String serviceName) {
         if (serviceName == null) {
             return null;
         }
 
-        // 替换冒号为下划线，保持可读性
-        // 空白字符替换为连字符
+        // Replace colons with underscores for readability
+        // Replace whitespace characters with hyphens
         return serviceName
-                .replace(":", "_")          // 冒号替换为下划线
-                .replace(" ", "-")          // 空格替换为连字符
-                .replace("\t", "-")         // 制表符替换为连字符
-                .replace("\n", "-")         // 换行符替换为连字符
+                .replace(":", "_")          // Replace colon with underscore
+                .replace(" ", "-")          // Replace space with hyphen
+                .replace("\t", "-")         // Replace tab with hyphen
+                .replace("\n", "-")         // Replace newline with hyphen
                 .replace("\r", "-");
     }
 
     /**
-     * 验证并清理服务名
-     * 如果包含不安全字符，会打印警告并返回清理后的名称
+     * Validate and sanitize the service name
+     * If it contains unsafe characters, prints a warning and returns the sanitized name
      */
     public static String validateAndSanitizeServiceName(String serviceName) {
         if (serviceName == null || serviceName.trim().isEmpty()) {
@@ -114,7 +114,7 @@ public class RegistryKeys {
     }
 
     /**
-     * 检查服务名是否安全（不包含可能导致解析问题的字符）
+     * Check if the service name is safe (does not contain characters that may cause parsing issues)
      */
     public static boolean isServiceNameSafe(String serviceName) {
         if (serviceName == null) {
@@ -129,27 +129,27 @@ public class RegistryKeys {
     }
 
     /**
-     * 清理实例ID中的不安全字符
-     * 将冒号和其他可能导致解析问题的字符替换为安全字符
+     * Sanitize unsafe characters in the instance ID
+     * Replaces colons and other characters that may cause parsing issues with safe characters
      */
     public static String sanitizeInstanceId(String instanceId) {
         if (instanceId == null) {
             return null;
         }
 
-        // 替换冒号为下划线，保持可读性
-        // 回车符替换为连字符
+        // Replace colons with underscores for readability
+        // Replace carriage return characters with hyphens
         return instanceId
-                .replace(":", "_")          // 冒号替换为下划线
-                .replace(" ", "-")          // 空格替换为连字符
-                .replace("\t", "-")         // 制表符替换为连字符
-                .replace("\n", "-")         // 换行符替换为连字符
+                .replace(":", "_")          // Replace colon with underscore
+                .replace(" ", "-")          // Replace space with hyphen
+                .replace("\t", "-")         // Replace tab with hyphen
+                .replace("\n", "-")         // Replace newline with hyphen
                 .replace("\r", "-");
     }
 
     /**
-     * 验证并清理实例ID
-     * 如果包含不安全字符，会打印警告并返回清理后的ID
+     * Validate and sanitize the instance ID
+     * If it contains unsafe characters, prints a warning and returns the sanitized ID
      */
     public static String validateAndSanitizeInstanceId(String instanceId) {
         if (instanceId == null || instanceId.trim().isEmpty()) {
@@ -166,7 +166,7 @@ public class RegistryKeys {
     }
 
     /**
-     * 检查实例ID是否安全（不包含可能导致解析问题的字符）
+     * Check if the instance ID is safe (does not contain characters that may cause parsing issues)
      */
     public static boolean isInstanceIdSafe(String instanceId) {
         if (instanceId == null) {
@@ -181,21 +181,21 @@ public class RegistryKeys {
     }
 
     /**
-     * 检查Key是否属于当前注册中心
+     * Check if the key belongs to the current registry
      */
     public boolean isRegistryKey(String key) {
         return key != null && key.startsWith(keyPrefix + ":");
     }
 
     /**
-     * 从完整的实例Key中提取服务名
+     * Extract the service name from a full instance key
      */
     public String extractServiceNameFromInstanceKey(String instanceKey) {
         if (!isRegistryKey(instanceKey)) {
             return null;
         }
 
-        // Key格式: prefix:services:serviceName:instance:instanceId
+        // Key format: prefix:services:serviceName:instance:instanceId
         String[] parts = instanceKey.split(":");
         if (parts.length >= 4 && "services".equals(parts[1]) && "instance".equals(parts[3])) {
             return parts[2];
@@ -204,14 +204,14 @@ public class RegistryKeys {
     }
 
     /**
-     * 从完整的实例Key中提取实例ID
+     * Extract the instance ID from a full instance key
      */
     public String extractInstanceIdFromInstanceKey(String instanceKey) {
         if (!isRegistryKey(instanceKey)) {
             return null;
         }
 
-        // Key格式: prefix:services:serviceName:instance:instanceId
+        // Key format: prefix:services:serviceName:instance:instanceId
         String[] parts = instanceKey.split(":");
         if (parts.length >= 5 && "services".equals(parts[1]) && "instance".equals(parts[3])) {
             return parts[4];
@@ -220,14 +220,14 @@ public class RegistryKeys {
     }
 
     /**
-     * 从心跳Key中提取服务名
+     * Extract the service name from a heartbeat key
      */
     public String extractServiceNameFromHeartbeatsKey(String heartbeatsKey) {
         if (!isRegistryKey(heartbeatsKey)) {
             return null;
         }
 
-        // Key格式: prefix:services:serviceName:heartbeats
+        // Key format: prefix:services:serviceName:heartbeats
         String[] parts = heartbeatsKey.split(":");
         if (parts.length >= 4 && "services".equals(parts[1]) && "heartbeats".equals(parts[3])) {
             return parts[2];
@@ -235,7 +235,7 @@ public class RegistryKeys {
         return null;
     }
 
-    // ==================== 验证方法 ====================
+    // ==================== Validation methods ====================
 
     private void validateServiceName(String serviceName) {
         if (serviceName == null || serviceName.trim().isEmpty()) {
@@ -257,10 +257,10 @@ public class RegistryKeys {
         }
     }
 
-    // ==================== 调试和监控方法 ====================
+    // ==================== Debug and monitoring methods ====================
 
     /**
-     * 获取所有Key模板（用于调试）
+     * Get all key templates (for debugging)
      */
     public String[] getAllKeyTemplates() {
         return new String[]{

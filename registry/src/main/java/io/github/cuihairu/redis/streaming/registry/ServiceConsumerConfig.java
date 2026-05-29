@@ -6,72 +6,72 @@ import lombok.Setter;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 服务消费者Redis配置
- * 包含服务消费者专用的Redis键模式和配置
+ * Service consumer Redis configuration
+ * Contains Redis key patterns and configuration specific to service consumers
  */
 @Setter
 @Getter
 public class ServiceConsumerConfig extends BaseRedisConfig {
 
     /**
-     * 是否启用健康检测（默认关闭）
-     * 当启用时，消费者会主动检测所发现服务的健康状态
+     * Whether to enable health checking (default off)
+     * When enabled, the consumer actively checks the health status of discovered services
      * -- GETTER --
-     *  是否启用健康检测
+     *  Whether health checking is enabled
      * -- SETTER --
-     *  设置是否启用健康检测
+     *  Set whether to enable health checking
      *
      */
     private boolean enableHealthCheck = false;
 
     /**
-     * 健康检测间隔（默认30秒）
+     * Health check interval (default 30 seconds)
      * -- GETTER --
-     *  获取健康检测间隔
+     *  Get the health check interval
      * -- SETTER --
-     *  设置健康检测间隔
+     *  Set the health check interval
      */
     private long healthCheckInterval = 30;
 
     /**
-     * 健康检测时间单位
+     * Health check time unit
      * -- GETTER --
-     *  获取健康检测时间单位
+     *  Get the health check time unit
      * -- SETTER --
-     *  设置健康检测时间单位
+     *  Set the health check time unit
      */
     private TimeUnit healthCheckTimeUnit = TimeUnit.SECONDS;
 
     /**
-     * 健康检测超时时间（毫秒，默认5秒）
+     * Health check timeout in milliseconds (default 5 seconds)
      * -- GETTER --
-     *  获取健康检测超时时间（毫秒）
+     *  Get the health check timeout in milliseconds
      * -- SETTER --
-     *  设置健康检测超时时间（毫秒）
+     *  Set the health check timeout in milliseconds
      */
     private int healthCheckTimeout = 5000;
 
     /**
-     * 心跳超时时间（秒，默认90秒）
+     * Heartbeat timeout in seconds (default 90 seconds)
      * -- GETTER --
-     *  获取心跳超时时间（秒）
+     *  Get the heartbeat timeout in seconds
      * -- SETTER --
-     *  设置心跳超时时间（秒）
+     *  Set the heartbeat timeout in seconds
      */
     private int heartbeatTimeoutSeconds = 90;
 
     /**
-     * 是否启用Admin管理功能（默认开启）
-     * Admin功能允许消费者对注册中心的服务进行管理操作，包括：
-     * - 手动下线服务实例
-     * - 修改服务实例状态
-     * - 查询服务实例详细信息
-     * - 调整服务实例权重等
-     * 注意：此配置仅影响消费者端的管理能力，不涉及服务提供者
+     * Whether to enable admin management features (default on)
+     * Admin features allow consumers to manage services in the registry, including:
+     * - Manual offline of service instances
+     * - Modify service instance status
+     * - Query service instance details
+     * - Adjust service instance weights, etc.
+     * Note: This configuration only affects consumer-side management capabilities, not service providers
      * -- GETTER --
-     *  是否启用Admin管理功能
+     *  Whether admin management features are enabled
      * -- SETTER --
-     *  设置是否启用Admin管理功能
+     *  Set whether to enable admin management features
      */
     private boolean enableAdminService = true;
 
@@ -87,41 +87,41 @@ public class ServiceConsumerConfig extends BaseRedisConfig {
         super(keyPrefix, enableKeyPrefix);
     }
     /**
-     * 获取服务实例键
+     * Get the service instance key
      *
-     * @param serviceName 服务名称
-     * @param instanceId 实例ID
-     * @return 服务实例键
+     * @param serviceName the service name
+     * @param instanceId the instance ID
+     * @return the service instance key
      */
     public String getServiceInstanceKey(String serviceName, String instanceId) {
         return getRegistryKeys().getServiceInstanceKey(serviceName, instanceId);
     }
 
     /**
-     * 获取服务实例列表键
+     * Get the service instances list key
      *
-     * @param serviceName 服务名称
-     * @return 服务实例列表键
+     * @param serviceName the service name
+     * @return the service instances list key
      */
     public String getServiceInstancesKey(String serviceName) {
         return getRegistryKeys().getServiceHeartbeatsKey(serviceName);
     }
 
     /**
-     * 获取心跳键
+     * Get the heartbeat key
      *
-     * @param serviceName 服务名称
-     * @return 心跳键
+     * @param serviceName the service name
+     * @return the heartbeat key
      */
     public String getHeartbeatKey(String serviceName) {
         return getRegistryKeys().getServiceHeartbeatsKey(serviceName);
     }
 
     /**
-     * 获取服务变更通道键
+     * Get the service change channel key
      *
-     * @param serviceName 服务名称
-     * @return 服务变更通道键
+     * @param serviceName the service name
+     * @return the service change channel key
      */
     public String getServiceChangeChannelKey(String serviceName) {
         return getRegistryKeys().getServiceChangeChannelKey(serviceName);

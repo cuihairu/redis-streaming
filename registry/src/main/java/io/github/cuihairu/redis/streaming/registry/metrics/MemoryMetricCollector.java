@@ -6,7 +6,7 @@ import java.lang.management.MemoryUsage;
 import java.util.Map;
 
 /**
- * 内存指标收集器
+ * Memory metric collector
  */
 public class MemoryMetricCollector implements MetricCollector {
 
@@ -21,7 +21,7 @@ public class MemoryMetricCollector implements MetricCollector {
         MemoryUsage heapUsage = memoryBean.getHeapMemoryUsage();
         MemoryUsage nonHeapUsage = memoryBean.getNonHeapMemoryUsage();
 
-        // 约定：内存百分比仍按 0~100 报出；消费端也可以根据 used/max 自行计算
+        // Convention: memory percentage is still reported as 0~100; consumers can also calculate from used/max
         double heapPct = heapUsage.getMax() > 0 ? (double) heapUsage.getUsed() / heapUsage.getMax() * 100 : 0;
         double nonHeapPct = nonHeapUsage.getMax() > 0 ? (double) nonHeapUsage.getUsed() / nonHeapUsage.getMax() * 100 : 0;
 

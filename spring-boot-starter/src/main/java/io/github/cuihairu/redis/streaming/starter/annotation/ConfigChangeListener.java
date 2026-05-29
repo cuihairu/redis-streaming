@@ -3,8 +3,8 @@ package io.github.cuihairu.redis.streaming.starter.annotation;
 import java.lang.annotation.*;
 
 /**
- * 配置变更监听器注解
- * 标记方法为配置变更事件处理器
+ * Configuration change listener annotation
+ * Marks a method as a configuration change event handler
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
@@ -12,17 +12,17 @@ import java.lang.annotation.*;
 public @interface ConfigChangeListener {
     
     /**
-     * 配置数据ID
+     * Configuration data ID
      */
     String dataId();
-    
+
     /**
-     * 配置组
+     * Configuration group
      */
     String group() default "DEFAULT_GROUP";
-    
+
     /**
-     * 是否自动刷新配置到对象
+     * Whether to automatically refresh configuration into the target object
      */
     boolean autoRefresh() default true;
 }

@@ -3,8 +3,8 @@ package io.github.cuihairu.redis.streaming.starter.annotation;
 import java.lang.annotation.*;
 
 /**
- * 服务变更监听器注解
- * 标记方法为服务变更事件处理器
+ * Service change listener annotation
+ * Marks a method as a service change event handler
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
@@ -12,12 +12,12 @@ import java.lang.annotation.*;
 public @interface ServiceChangeListener {
     
     /**
-     * 监听的服务名称
+     * Service names to listen to
      */
     String[] services() default {};
-    
+
     /**
-     * 监听的变更类型
+     * Change types to listen to
      */
     String[] actions() default {"added", "removed", "updated"};
 }

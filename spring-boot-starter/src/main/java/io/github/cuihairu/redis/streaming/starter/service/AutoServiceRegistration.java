@@ -20,8 +20,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 自动服务注册组件
- * 在应用启动时自动注册服务实例，并维护心跳
+ * Automatic service registration component
+ * Automatically registers a service instance on application startup and maintains heartbeat
  */
 @Slf4j
 @Component
@@ -67,7 +67,7 @@ public class AutoServiceRegistration implements ApplicationListener<ApplicationR
     private void registerService() throws Exception {
         RedisStreamingProperties.InstanceProperties instance = properties.getRegistry().getInstance();
 
-        // 构建服务实例
+        // Build service instance
         String serviceName = resolveServiceName(instance.getServiceName());
         String host = resolveHost(instance.getHost());
         int port = resolvePort(instance.getPort());
@@ -75,13 +75,13 @@ public class AutoServiceRegistration implements ApplicationListener<ApplicationR
         Protocol protocol = resolveProtocol(instance.getProtocol());
         boolean ephemeral = resolveEphemeral(instance.getEphemeral());
 
-        // 构建元数据
+        // Build metadata
         Map<String, String> metadata = new HashMap<>(instance.getMetadata());
         metadata.put("application.name", applicationName);
         metadata.put("server.port", String.valueOf(serverPort));
         metadata.put("startup.time", String.valueOf(System.currentTimeMillis()));
 
-        // 创建服务实例
+        // Create service instance
         currentInstance = DefaultServiceInstance.builder()
                 .serviceName(serviceName)
                 .instanceId(instanceId)
@@ -94,7 +94,7 @@ public class AutoServiceRegistration implements ApplicationListener<ApplicationR
                 .metadata(metadata)
                 .build();
 
-        // 注册服务
+        // Register service
         namingService.register(currentInstance);
         log.info("Registered {} service instance: {}:{} at {}:{}",
                 ephemeral ? "ephemeral" : "persistent", serviceName, instanceId, host, port);
@@ -105,7 +105,7 @@ public class AutoServiceRegistration implements ApplicationListener<ApplicationR
             return;
         }
 
-        // 只有临时实例需要心跳
+        // Only ephemeral instances require heartbeat
         if (!currentInstance.isEphemeral()) {
             log.info("Persistent instance detected, skipping heartbeat scheduler");
             return;
@@ -133,7 +133,7 @@ public class AutoServiceRegistration implements ApplicationListener<ApplicationR
     @PreDestroy
     public void destroy() {
         try {
-            // 停止心跳
+            // Stop heartbeat
             if (heartbeatExecutor != null) {
                 heartbeatExecutor.shutdown();
                 if (!heartbeatExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
@@ -141,7 +141,7 @@ public class AutoServiceRegistration implements ApplicationListener<ApplicationR
                 }
             }
 
-            // 注销服务
+            // Deregister service
             if (namingService != null && currentInstance != null) {
                 namingService.deregister(currentInstance);
                 log.info("Deregistered service instance: {}", currentInstance.getInstanceId());
@@ -181,7 +181,7 @@ public class AutoServiceRegistration implements ApplicationListener<ApplicationR
     }
 
     private boolean resolveEphemeral(Boolean configuredEphemeral) {
-        // 默认临时实例（与 Nacos 一致）
+        // Default to ephemeral instance (consistent with Nacos behavior)
         return configuredEphemeral != null ? configuredEphemeral : true;
     }
 

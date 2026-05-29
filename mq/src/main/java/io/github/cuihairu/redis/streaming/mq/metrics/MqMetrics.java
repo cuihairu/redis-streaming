@@ -23,6 +23,9 @@ public final class MqMetrics {
         @Override public void incRetried(String topic, int partitionId) {}
         @Override public void incDeadLetter(String topic, int partitionId) {}
         @Override public void recordHandleLatency(String topic, int partitionId, long millis) {}
+        @Override public void recordDlqReplay(String topic, int partitionId, boolean success, long durationNanos) {}
+        @Override public void incDlqDelete(String topic) {}
+        @Override public void incDlqClear(String topic, long count) {}
     }
 }
 

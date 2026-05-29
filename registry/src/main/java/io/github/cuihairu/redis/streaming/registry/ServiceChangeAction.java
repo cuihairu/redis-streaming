@@ -3,38 +3,38 @@ package io.github.cuihairu.redis.streaming.registry;
 import lombok.Getter;
 
 /**
- * 服务变更动作枚举
- * 定义服务实例变化的类型
+ * Service change action enum
+ * Defines the types of service instance changes
  */
 @Getter
 public enum ServiceChangeAction {
     /**
-     * 服务实例添加
+     * Service instance added
      */
     ADDED("added"),
 
     /**
-     * 服务实例移除
+     * Service instance removed
      */
     REMOVED("removed"),
 
     /**
-     * 服务实例更新
+     * Service instance updated
      */
     UPDATED("updated"),
 
     /**
-     * 当前状态（用于订阅时立即通知现有实例）
+     * Current state (used to immediately notify existing instances upon subscription)
      */
     CURRENT("current"),
 
     /**
-     * 健康状态恢复
+     * Health status recovered
      */
     HEALTH_RECOVERY("health_recovery"),
 
     /**
-     * 健康状态失败
+     * Health status failed
      */
     HEALTH_FAILURE("health_failure");
 
@@ -50,11 +50,11 @@ public enum ServiceChangeAction {
     }
 
     /**
-     * 从字符串值解析枚举
+     * Parse the enum from a string value
      *
-     * @param value 字符串值
-     * @return 对应的枚举值
-     * @throws IllegalArgumentException 如果值不匹配
+     * @param value the string value
+     * @return the corresponding enum value
+     * @throws IllegalArgumentException if the value does not match
      */
     public static ServiceChangeAction fromValue(String value) {
         for (ServiceChangeAction action : values()) {

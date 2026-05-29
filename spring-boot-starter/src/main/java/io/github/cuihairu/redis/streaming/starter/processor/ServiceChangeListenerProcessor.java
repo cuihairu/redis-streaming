@@ -18,25 +18,25 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * ServiceChangeListener 注解处理器
+ * ServiceChangeListener annotation processor
  * <p>
- * 扫描带有 @ServiceChangeListener 注解的方法，并自动注册为服务变更监听器
+ * Scans methods annotated with @ServiceChangeListener and automatically registers them as service change listeners
  * <p>
- * 支持的方法签名：
+ * Supported method signatures:
  * <pre>
- * // 完整参数
+ * // Full parameters
  * @ServiceChangeListener(services = {"user-service"})
  * void onServiceChange(String serviceName, ServiceChangeAction action, ServiceInstance instance, List&lt;ServiceInstance&gt; allInstances)
  *
- * // 简化参数 - 只关心实例
+ * // Simplified parameters - only cares about the instance
  * @ServiceChangeListener(services = {"user-service"})
  * void onServiceChange(ServiceInstance instance)
  *
- * // 简化参数 - 只关心动作和实例
+ * // Simplified parameters - only cares about the action and instance
  * @ServiceChangeListener(services = {"user-service"})
  * void onServiceChange(ServiceChangeAction action, ServiceInstance instance)
  *
- * // 使用 String action
+ * // Using String action
  * @ServiceChangeListener(services = {"user-service"})
  * void onServiceChange(String serviceName, String action, ServiceInstance instance, List&lt;ServiceInstance&gt; allInstances)
  * </pre>
@@ -70,21 +70,21 @@ public class ServiceChangeListenerProcessor implements BeanPostProcessor {
         Set<String> serviceSet = new HashSet<>(Arrays.asList(services));
         Set<String> actionSet = new HashSet<>(Arrays.asList(actions));
 
-        // 创建监听器适配器
+        // Create listener adapter
         io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListener listener =
                 (serviceName, action, instance, allInstances) -> {
-                    // 过滤服务名称
+                    // Filter by service name
                     if (!serviceSet.isEmpty() && !serviceSet.contains(serviceName)) {
                         return;
                     }
 
-                    // 过滤动作类型
+                    // Filter by action type
                     String actionName = action.name().toLowerCase();
                     if (!actionSet.isEmpty() && !contains(actionSet, actionName)) {
                         return;
                     }
 
-                    // 调用目标方法
+                    // Invoke target method
                     try {
                         invokeListenerMethod(bean, method, serviceName, action, instance, allInstances);
                     } catch (Exception e) {
@@ -92,9 +92,9 @@ public class ServiceChangeListenerProcessor implements BeanPostProcessor {
                     }
                 };
 
-        // 注册到 ServiceDiscovery (为每个服务或全局订阅)
+        // Register to ServiceDiscovery (for each service or global subscription)
         if (serviceSet.isEmpty()) {
-            // 如果没有指定服务，订阅所有服务（这需要特殊处理，暂时订阅到 "*"）
+            // If no service is specified, subscribe to all services (requires special handling, currently subscribes to "*" as a workaround)
             log.warn("Global service listener not fully supported yet, consider specifying services explicitly");
         } else {
             for (String serviceName : serviceSet) {
@@ -107,7 +107,7 @@ public class ServiceChangeListenerProcessor implements BeanPostProcessor {
     }
 
     /**
-     * 灵活调用监听方法，支持多种参数组合
+     * Flexibly invoke listener methods, supporting multiple parameter combinations
      */
     private void invokeListenerMethod(Object bean, Method method, String serviceName,
                                        ServiceChangeAction action, ServiceInstance instance,
@@ -119,7 +119,7 @@ public class ServiceChangeListenerProcessor implements BeanPostProcessor {
             Class<?> paramType = paramTypes[i];
 
             if (paramType == String.class) {
-                // 第一个 String 是 serviceName，第二个 String 是 action
+                // The first String is serviceName, the second String is action
                 if (i == 0 || (i > 0 && paramTypes[0] != String.class)) {
                     args[i] = serviceName;
                 } else {
@@ -142,7 +142,7 @@ public class ServiceChangeListenerProcessor implements BeanPostProcessor {
     }
 
     /**
-     * 检查集合中是否包含指定字符串（忽略大小写）
+     * Check if the set contains the specified string (case-insensitive)
      */
     private boolean contains(Set<String> set, String value) {
         return set.stream().anyMatch(s -> s.equalsIgnoreCase(value));

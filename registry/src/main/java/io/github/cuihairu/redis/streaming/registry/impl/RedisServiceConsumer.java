@@ -20,8 +20,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
- * 基于Redis的服务消费者实现
- * 支持健康检测和状态报告功能（通过配置开关启用）
+ * Redis-based service consumer implementation
+ * Supports health checking and status reporting (enabled via configuration)
  */
 public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
 
@@ -30,7 +30,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
     private final RedissonClient redissonClient;
     /**
      * -- GETTER --
-     *  获取配置
+     *  Get configuration
      *
      */
     @Getter
@@ -39,13 +39,13 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private RegistryLuaScriptExecutor luaExecutor;
 
-    // 监听器管理
+    // Listener management
     private final Map<String, Set<ServiceChangeListener>> listeners = new ConcurrentHashMap<>();
     private final Map<String, RTopic> subscriptions = new ConcurrentHashMap<>();
 
     /**
      * -- GETTER --
-     *  获取健康检测管理器
+     *  Get health check manager
      */
     @Getter
     private HealthCheckManager healthCheckManager;
@@ -63,20 +63,20 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
     }
 
     /**
-     * 初始化健康检测管理器（如果配置启用）
+     * Initialize health check manager (if configured to enable)
      */
     private void initializeHealthCheckManager() {
         if (config.isEnableHealthCheck()) {
-            // 创建标准健康检查器
+            // Create standard health checker
             StandardHealthChecker standardHealthChecker = new StandardHealthChecker();
 
-            // 注册协议特定的健康检查器（使用配置的超时时间）
+            // Register protocol-specific health checkers (using configured timeout)
             int timeout = config.getHealthCheckTimeout();
             HttpHealthChecker httpHealthChecker = new HttpHealthChecker(timeout, timeout, "/health");
             TcpHealthChecker tcpHealthChecker = new TcpHealthChecker(timeout);
             WebSocketHealthChecker webSocketHealthChecker = new WebSocketHealthChecker(timeout);
 
-            // 创建健康检测管理器
+            // Create health check manager
             this.healthCheckManager = new HealthCheckManager(
                 standardHealthChecker,
                 this::reportHealthStatus,
@@ -84,7 +84,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                 config.getHealthCheckTimeUnit()
             );
 
-            // 注册协议健康检查器
+            // Register protocol health checkers
             healthCheckManager.registerProtocolHealthChecker(StandardProtocol.HTTP, httpHealthChecker);
             healthCheckManager.registerProtocolHealthChecker(StandardProtocol.HTTPS, httpHealthChecker);
             healthCheckManager.registerProtocolHealthChecker(StandardProtocol.TCP, tcpHealthChecker);
@@ -96,14 +96,14 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
     }
 
     /**
-     * 报告健康状态变化
+     * Report health status changes
      */
     private void reportHealthStatus(String instanceId, boolean isHealthy) {
         ServiceInstance instance = discoveredInstances.get(instanceId);
         if (instance != null) {
             logger.info("Service instance {} health status changed to: {}", instanceId, isHealthy);
 
-            // 更新实例的健康状态
+            // Update instance health status
             if (instance instanceof DefaultServiceInstance) {
                 ServiceInstance updatedInstance = DefaultServiceInstance.builder()
                     .serviceName(instance.getServiceName())
@@ -112,7 +112,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                     .port(instance.getPort())
                     .protocol(instance.getProtocol())
                     .enabled(instance.isEnabled())
-                    .healthy(isHealthy)  // 更新健康状态
+                    .healthy(isHealthy)  // Update health status
                     .weight(instance.getWeight())
                     .metadata(instance.getMetadata())
                     .build();
@@ -120,13 +120,13 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                 discoveredInstances.put(instanceId, updatedInstance);
             }
 
-            // 触发服务变更事件
+            // Trigger service change event
             notifyHealthStatusChange(instance.getServiceName(), instanceId, isHealthy);
         }
     }
 
     /**
-     * 通知健康状态变化
+     * Notify health status changes
      */
     private void notifyHealthStatusChange(String serviceName, String instanceId, boolean isHealthy) {
         Set<ServiceChangeListener> serviceListeners = listeners.get(serviceName);
@@ -136,7 +136,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
             ServiceInstance instance = discoveredInstances.get(instanceId);
 
             if (instance != null) {
-                // 获取当前所有实例
+                // Get all current instances
                 List<ServiceInstance> allInstances = discover(serviceName);
 
                 for (ServiceChangeListener listener : serviceListeners) {
@@ -149,7 +149,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
             }
         }
     }
-    
+
     @Override
     public List<ServiceInstance> discover(String serviceName) {
         if (!running) {
@@ -157,11 +157,11 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
         }
 
         try {
-            // 使用三级存储结构获取服务实例
+            // Use three-level storage structure to get service instances
             String heartbeatsKey = config.getHeartbeatKey(serviceName);
             RScoredSortedSet<String> heartbeatsSet = redissonClient.getScoredSortedSet(heartbeatsKey, StringCodec.INSTANCE);
 
-            // 获取所有未过期的实例ID
+            // Get all non-expired instance IDs
             long currentTime = System.currentTimeMillis();
             long heartbeatTimeoutMs = config.getHeartbeatTimeoutSeconds() * 1000L;
             long expiredTime = currentTime - heartbeatTimeoutMs;
@@ -171,7 +171,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
 
             for (String instanceId : activeInstanceIds) {
                 try {
-                    // 从Hash结构获取实例详情（使用StringCodec以匹配Lua脚本）
+                    // Get instance details from Hash structure (using StringCodec to match Lua scripts)
                     String instanceKey = config.getServiceInstanceKey(serviceName, instanceId);
                     RMap<String, String> instanceMap = redissonClient.getMap(instanceKey, StringCodec.INSTANCE);
                     Map<String, String> instanceData = instanceMap.readAllMap();
@@ -181,10 +181,10 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                         if (instance != null) {
                             instances.add(instance);
 
-                            // 缓存发现的实例
+                            // Cache discovered instances
                             discoveredInstances.put(instanceId, instance);
 
-                            // 如果启用健康检测，注册健康检查器
+                            // If health checking is enabled, register health checker
                             if (config.isEnableHealthCheck() && healthCheckManager != null) {
                                 healthCheckManager.registerServiceInstance(instance);
                             }
@@ -222,28 +222,28 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
             return discover(serviceName);
         }
     }
-    
+
     @Override
     public List<ServiceInstance> discoverHealthy(String serviceName) {
         List<ServiceInstance> allInstances = discover(serviceName);
-        
-        // 过滤健康且启用的实例
+
+        // Filter healthy and enabled instances
         return allInstances.stream()
                 .filter(instance -> instance.isEnabled() && instance.isHealthy())
                 .filter(this::isInstanceHeartbeatValid)
                 .collect(Collectors.toList());
     }
-    
+
     @Override
     public void subscribe(String serviceName, ServiceChangeListener listener) {
         if (!running) {
             throw new IllegalStateException("ServiceDiscovery is not running");
         }
 
-        // 添加监听器
+        // Add listener
         listeners.computeIfAbsent(serviceName, k -> ConcurrentHashMap.newKeySet()).add(listener);
 
-        // 如果是第一个监听器，创建Redis订阅
+        // If this is the first listener, create Redis subscription
         if (!subscriptions.containsKey(serviceName)) {
             RTopic topic = redissonClient.getTopic(
                 config.getServiceChangeChannelKey(serviceName), new org.redisson.codec.JsonJacksonCodec());
@@ -256,11 +256,11 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
             logger.info("Subscribed to service changes for: {}", serviceName);
         }
 
-        // 立即通知当前的服务实例列表
+        // Immediately notify current service instance list
         try {
             List<ServiceInstance> currentInstances = discoverHealthy(serviceName);
             if (!currentInstances.isEmpty()) {
-                // 通知每个实例作为"current"事件
+                // Notify each instance as a "current" event
                 for (ServiceInstance instance : currentInstances) {
                     listener.onServiceChange(serviceName, ServiceChangeAction.CURRENT, instance, currentInstances);
                 }
@@ -269,14 +269,14 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
             logger.warn("Failed to notify current instances for service: {}", serviceName, e);
         }
     }
-    
+
     @Override
     public void unsubscribe(String serviceName, ServiceChangeListener listener) {
         Set<ServiceChangeListener> serviceListeners = listeners.get(serviceName);
         if (serviceListeners != null) {
             serviceListeners.remove(listener);
 
-            // 如果没有监听器了，取消Redis订阅
+            // If no listeners left, cancel Redis subscription
             if (serviceListeners.isEmpty()) {
                 listeners.remove(serviceName);
 
@@ -286,9 +286,9 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                     logger.info("Unsubscribed from service changes for: {}", serviceName);
                 }
 
-                // 移除健康检测
+                // Remove health checking
                 if (config.isEnableHealthCheck() && healthCheckManager != null) {
-                    // 移除该服务的所有实例的健康检查器
+                    // Remove health checkers for all instances of this service
                     discoveredInstances.entrySet().removeIf(entry -> {
                         ServiceInstance instance = entry.getValue();
                         if (serviceName.equals(instance.getServiceName())) {
@@ -301,7 +301,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
             }
         }
     }
-    
+
     @Override
     public void start() {
         if (running) {
@@ -310,7 +310,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
 
         running = true;
 
-        // 启动健康检测管理器
+        // Start health check manager
         if (config.isEnableHealthCheck() && healthCheckManager != null) {
             healthCheckManager.startAll();
         }
@@ -326,12 +326,12 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
 
         running = false;
 
-        // 停止健康检测
+        // Stop health checking
         if (healthCheckManager != null) {
             healthCheckManager.stopAll();
         }
 
-        // 清理所有订阅
+        // Clean up all subscriptions
         for (Map.Entry<String, RTopic> entry : subscriptions.entrySet()) {
             try {
                 entry.getValue().removeAllListeners();
@@ -346,14 +346,14 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
 
         logger.info("RedisServiceConsumer stopped");
     }
-    
+
     @Override
     public boolean isRunning() {
         return running;
     }
-    
+
     /**
-     * 处理服务变更事件
+     * Handle service change events
      */
     private void handleServiceChangeEvent(String serviceName, io.github.cuihairu.redis.streaming.registry.event.ServiceChangeEvent message) {
         try {
@@ -370,16 +370,16 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                 return;
             }
 
-            // 解析action
+            // Parse action
             ServiceChangeAction action = message.getAction();
 
-            // 获取当前所有健康的实例列表
+            // Get all current healthy instance list
             List<ServiceInstance> allInstances = discoverHealthy(serviceName);
 
-            // 构建变更的实例
+            // Build changed instance
             ServiceInstance changedInstance = null;
             if (action == ServiceChangeAction.REMOVED) {
-                // 对于删除事件，从消息快照构建实例信息
+                // For delete events, build instance info from message snapshot
                 var snap = message.getInstance();
                 if (snap != null) {
                     Map<String,String> data = new java.util.HashMap<>();
@@ -400,14 +400,14 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                     }
                 }
             } else {
-                // 对于添加和更新事件，从当前实例列表中查找
+                // For add and update events, find from current instance list
                 changedInstance = allInstances.stream()
                     .filter(instance -> instanceId.equals(instance.getInstanceId()))
                     .findFirst()
                     .orElse(null);
             }
 
-            // 通知所有监听器
+            // Notify all listeners
             for (ServiceChangeListener listener : serviceListeners) {
                 try {
                     listener.onServiceChange(serviceName, action, changedInstance, allInstances);
@@ -422,9 +422,9 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
             logger.error("Failed to handle service change event for: {}", serviceName, e);
         }
     }
-    
+
     /**
-     * 构建服务实例对象
+     * Build service instance object
      */
     private ServiceInstance buildServiceInstance(String serviceName, String instanceId, Map<String, String> data) {
         ServiceInstance si = InstanceEntryCodec.parseInstance(serviceName, instanceId, data);
@@ -433,25 +433,25 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
         }
         return si;
     }
-    
+
     /**
-     * 解析协议
+     * Parse protocol
      */
     private Protocol parseProtocol(String protocolName) {
         if (protocolName == null) {
             return StandardProtocol.HTTP;
         }
         try {
-            // 尝试按标准协议解析（与写入端一致）
+            // Try to parse as standard protocol (consistent with write side)
             return StandardProtocol.fromName(protocolName);
         } catch (IllegalArgumentException e) {
-            // 兜底为 HTTP，避免因为未知协议导致发现失败
+            // Fallback to HTTP to avoid discovery failure due to unknown protocol
             return StandardProtocol.HTTP;
         }
     }
-    
+
     /**
-     * 检查实例心跳是否有效
+     * Check if instance heartbeat is valid
      */
     private boolean isInstanceHeartbeatValid(ServiceInstance instance) {
         try {
@@ -480,7 +480,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
     }
 
     /**
-     * 列出所有服务名称
+     * List all service names
      */
     public List<String> listServices() {
         if (!running) {
@@ -498,7 +498,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
     }
 
     /**
-     * 手动触发服务发现
+     * Manually trigger service discovery
      */
     public void refreshServiceInstances(String serviceName) {
         if (running) {
@@ -507,73 +507,73 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
     }
 
     /**
-     * 获取实例的健康状态
+     * Get instance health status
      */
     public boolean isInstanceHealthy(String instanceId) {
         if (healthCheckManager != null) {
             return healthCheckManager.isInstanceHealthy(instanceId);
         }
 
-        // 如果没有启用健康检测，从缓存的实例中获取
+        // If health checking is not enabled, get from cached instances
         ServiceInstance instance = discoveredInstances.get(instanceId);
         return instance != null && instance.isHealthy();
     }
 
     /**
-     * 获取已发现的服务实例数量
+     * Get discovered service instance count
      */
     public int getDiscoveredInstanceCount() {
         return discoveredInstances.size();
     }
 
     /**
-     * 获取健康检查器数量
+     * Get health checker count
      */
     public int getActiveHealthCheckersCount() {
         return healthCheckManager != null ? healthCheckManager.getHealthCheckerCount() : 0;
     }
 
     /**
-     * 根据 metadata 过滤获取服务实例（支持比较运算符）
+     * Get service instances filtered by metadata (supports comparison operators)
      *
-     * @param serviceName 服务名称
-     * @param metadataFilters metadata过滤条件（AND关系），支持比较运算符：
+     * @param serviceName service name
+     * @param metadataFilters metadata filter conditions (AND relationship), supports comparison operators:
      * <ul>
-     *   <li>"field": "value" - 等于（默认）</li>
-     *   <li>"field:==": "value" - 等于（显式）</li>
-     *   <li>"field:!=": "value" - 不等于</li>
-     *   <li>"field:>": "value" - 大于</li>
-     *   <li>"field:>=": "value" - 大于等于</li>
-     *   <li>"field:&lt;": "value" - 小于</li>
-     *   <li>"field:&lt;=": "value" - 小于等于</li>
+     *   <li>"field": "value" - equals (default)</li>
+     *   <li>"field:==": "value" - equals (explicit)</li>
+     *   <li>"field:!=": "value" - not equals</li>
+     *   <li>"field:>": "value" - greater than</li>
+     *   <li>"field:>=": "value" - greater than or equals</li>
+     *   <li>"field:&lt;": "value" - less than</li>
+     *   <li>"field:&lt;=": "value" - less than or equals</li>
      * </ul>
      *
-     * <p>比较规则：</p>
+     * <p>Comparison rules:</p>
      * <ol>
-     *   <li>优先尝试数值比较（推荐用于 weight, age, cpu 等）</li>
-     *   <li>失败则使用字符串比较（字典序，谨慎使用）</li>
+     *   <li>Numeric comparison is attempted first (recommended for weight, age, cpu, etc.)</li>
+     *   <li>Falls back to string comparison (lexicographic order, use with caution)</li>
      * </ol>
      *
-     * <p>示例：</p>
+     * <p>Examples:</p>
      * <pre>
-     * // ✅ 推荐：数值比较
+     * // Recommended: numeric comparison
      * Map&lt;String, String&gt; filters = new HashMap&lt;&gt;();
-     * filters.put("weight:>=", "10");      // 权重 >= 10
-     * filters.put("cpu_usage:&lt;", "80");    // CPU使用率 &lt; 80
+     * filters.put("weight:>=", "10");      // weight >= 10
+     * filters.put("cpu_usage:&lt;", "80");    // CPU usage &lt; 80
      *
-     * // ✅ 推荐：字符串相等
-     * filters.put("region", "us-east-1");  // 精确匹配
-     * filters.put("status:!=", "down");    // 状态不等于
+     * // Recommended: string equality
+     * filters.put("region", "us-east-1");  // exact match
+     * filters.put("status:!=", "down");    // status not equals
      *
-     * // ⚠️ 谨慎：字符串大小比较（字典序）
-     * filters.put("zone:>", "zone-a");     // 字典序比较
+     * // Caution: string magnitude comparison (lexicographic order)
+     * filters.put("zone:>", "zone-a");     // lexicographic comparison
      *
-     * // ❌ 不支持：版本号比较（请使用精确匹配或版本标签）
-     * // filters.put("version:>=", "1.10.0");  // 错误！
-     * filters.put("version", "1.10.0");    // 正确：精确匹配
+     * // Not supported: version number comparison (use exact match or version tags)
+     * // filters.put("version:>=", "1.10.0");  // Wrong!
+     * filters.put("version", "1.10.0");    // Correct: exact match
      * </pre>
      *
-     * @return 匹配的服务实例列表
+     * @return list of matching service instances
      */
     @Override
     public List<ServiceInstance> discoverByMetadata(String serviceName, Map<String, String> metadataFilters) {
@@ -586,15 +586,15 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
         }
 
         try {
-            // 将 metadata 过滤条件转为 JSON
+            // Convert metadata filter conditions to JSON
             String metadataFiltersJson = objectMapper.writeValueAsString(metadataFilters);
 
-            // 使用 Lua 脚本执行过滤
+            // Use Lua script for filtering
             String heartbeatsKey = config.getHeartbeatKey(serviceName);
             long currentTime = System.currentTimeMillis();
             long heartbeatTimeoutMs = config.getHeartbeatTimeoutSeconds() * 1000L;
 
-            // 使用新接口（metadata-only），metricsFilters 传 null
+            // Use new interface (metadata-only), pass null for metricsFilters
             List<String> matchedInstanceIds = luaExecutor.executeGetInstancesByFilters(
                     heartbeatsKey,
                     config.getRegistryKeys().getKeyPrefix(),
@@ -605,7 +605,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                     null
             );
 
-            // 根据实例ID加载完整的实例信息
+            // Load complete instance information by instance ID
             List<ServiceInstance> instances = new ArrayList<>();
             for (String instanceId : matchedInstanceIds) {
                 try {
@@ -618,10 +618,10 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                         if (instance != null) {
                             instances.add(instance);
 
-                            // 缓存发现的实例
+                            // Cache discovered instances
                             discoveredInstances.put(instanceId, instance);
 
-                            // 如果启用健康检测，注册健康检查器
+                            // If health checking is enabled, register health checker
                             if (config.isEnableHealthCheck() && healthCheckManager != null) {
                                 healthCheckManager.registerServiceInstance(instance);
                             }
@@ -646,27 +646,27 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
     }
 
     /**
-     * 根据 metadata 过滤获取健康的服务实例
+     * Get healthy service instances filtered by metadata
      *
-     * @param serviceName 服务名称
-     * @param metadataFilters metadata过滤条件（AND关系）
-     * @return 匹配且健康的服务实例列表
+     * @param serviceName service name
+     * @param metadataFilters metadata filter conditions (AND relationship)
+     * @return list of matching and healthy service instances
      */
     @Override
     public List<ServiceInstance> discoverHealthyByMetadata(String serviceName, Map<String, String> metadataFilters) {
         List<ServiceInstance> allMatched = discoverByMetadata(serviceName, metadataFilters);
 
-        // 过滤健康且启用的实例
+        // Filter healthy and enabled instances
         return allMatched.stream()
                 .filter(instance -> instance.isEnabled() && instance.isHealthy())
                 .filter(this::isInstanceHeartbeatValid)
                 .collect(Collectors.toList());
     }
 
-    // ==================== 扩展：支持 metrics 过滤 ====================
+    // ==================== Extension: support metrics filtering ====================
 
     /**
-     * 使用 metadata 与 metrics 组合进行服务端过滤
+     * Use combined metadata and metrics for server-side filtering
      */
     public List<ServiceInstance> discoverByFilters(String serviceName,
                                                    Map<String, String> metadataFilters,
@@ -731,7 +731,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                 .filter(this::isInstanceHeartbeatValid)
                 .collect(Collectors.toList());
     }
-    // ==================== ServiceConsumer 接口实现（委托方法） ====================
+    // ==================== ServiceConsumer interface implementation (delegate methods) ====================
 
     /**
      * Get instances filtered by metadata (supports comparison operators)

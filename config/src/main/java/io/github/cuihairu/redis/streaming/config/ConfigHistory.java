@@ -8,8 +8,8 @@ import lombok.Builder;
 import java.time.LocalDateTime;
 
 /**
- * 配置历史记录
- * 用于存储配置的历史版本信息
+ * Configuration history record
+ * Used to store historical version information of configurations
  */
 @Data
 @NoArgsConstructor
@@ -18,37 +18,37 @@ import java.time.LocalDateTime;
 public class ConfigHistory {
     
     /**
-     * 配置ID
+     * Configuration ID
      */
     private String dataId;
-    
+
     /**
-     * 配置组
+     * Configuration group
      */
     private String group;
-    
+
     /**
-     * 历史配置内容
+     * Historical configuration content
      */
     private String content;
-    
+
     /**
-     * 历史版本号
+     * Historical version number
      */
     private String version;
-    
+
     /**
-     * 变更描述
+     * Change description
      */
     private String description;
-    
+
     /**
-     * 变更时间
+     * Change time
      */
     private LocalDateTime changeTime;
-    
+
     /**
-     * 操作人
+     * Operator
      */
     private String operator;
 }

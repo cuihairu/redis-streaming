@@ -1,4 +1,4 @@
-package io.github.cuihairu.redis.streaming.reliability.dlq;
+package io.github.cuihairu.redis.streaming.mq.dlq;
 
 import org.redisson.api.StreamMessageId;
 
@@ -20,4 +20,3 @@ public interface DeadLetterService {
 
     boolean replay(String originalTopic, StreamMessageId id);
 }
-

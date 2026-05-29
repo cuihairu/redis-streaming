@@ -4,7 +4,7 @@ import java.io.File;
 import java.util.Map;
 
 /**
- * 磁盘指标收集器
+ * Disk metric collector
  */
 public class DiskMetricCollector implements MetricCollector {
 
@@ -35,6 +35,6 @@ public class DiskMetricCollector implements MetricCollector {
 
     @Override
     public boolean isAvailable() {
-        return new File("/").exists(); // 简单检查
+        return new File("/").exists(); // Simple check
     }
 }

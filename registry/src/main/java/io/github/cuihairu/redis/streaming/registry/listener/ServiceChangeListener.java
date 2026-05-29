@@ -5,18 +5,18 @@ import io.github.cuihairu.redis.streaming.registry.ServiceInstance;
 import java.util.List;
 
 /**
- * 服务变更监听器
- * 监听服务实例的增加、删除和更新事件
+ * Service change listener
+ * Listens for service instance addition, removal, and update events
  */
 public interface ServiceChangeListener {
 
     /**
-     * 服务实例变更事件
+     * Service instance change event
      *
-     * @param serviceName 服务名称
-     * @param action 变更动作
-     * @param instance 变更的服务实例
-     * @param allInstances 当前所有服务实例
+     * @param serviceName the service name
+     * @param action the change action
+     * @param instance the changed service instance
+     * @param allInstances all current service instances
      */
     void onServiceChange(String serviceName, ServiceChangeAction action, ServiceInstance instance, List<ServiceInstance> allInstances);
 }

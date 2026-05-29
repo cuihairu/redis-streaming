@@ -1,29 +1,29 @@
 package io.github.cuihairu.redis.streaming.core.utils;
 
 /**
- * 实例ID生成器
- * 提供基于主机名和端口生成唯一实例ID的功能
+ * Instance ID generator
+ * Provides functionality to generate unique instance IDs based on hostname and port
  */
 public class InstanceIdGenerator {
     
     /**
-     * 根据服务名、主机名和端口生成实例ID
-     * 
-     * @param serviceName 服务名称
-     * @param host 主机地址
-     * @param port 端口号
-     * @return 实例ID，格式为 "serviceName-host:port"
+     * Generate instance ID based on service name, hostname, and port
+     *
+     * @param serviceName service name
+     * @param host host address
+     * @param port port number
+     * @return instance ID in the format "serviceName-host:port"
      */
     public static String generateInstanceId(String serviceName, String host, int port) {
         return serviceName + "-" + host + ":" + port;
     }
     
     /**
-     * 根据服务名和端口生成实例ID（使用本地主机名）
-     * 
-     * @param serviceName 服务名称
-     * @param port 端口号
-     * @return 实例ID，格式为 "serviceName-hostname:port"
+     * Generate instance ID based on service name and port (using local hostname)
+     *
+     * @param serviceName service name
+     * @param port port number
+     * @return instance ID in the format "serviceName-hostname:port"
      */
     public static String generateInstanceId(String serviceName, int port) {
         String hostname = SystemUtils.getLocalHostname();
@@ -31,11 +31,11 @@ public class InstanceIdGenerator {
     }
     
     /**
-     * 生成基于本地主机名的实例ID
-     * 
-     * @param serviceName 服务名称
-     * @param port 端口号
-     * @return 实例ID，格式为 "hostname:port"
+     * Generate instance ID based on local hostname
+     *
+     * @param serviceName service name
+     * @param port port number
+     * @return instance ID in the format "hostname:port"
      */
     public static String generateLocalInstanceId(String serviceName, int port) {
         String hostname = SystemUtils.getLocalHostname();

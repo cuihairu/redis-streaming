@@ -1,21 +1,21 @@
 package io.github.cuihairu.redis.streaming.registry.metrics;
 
 /**
- * 指标收集成本级别
+ * Metric collection cost level
  */
 public enum CollectionCost {
     /**
-     * 低开销，如内存使用率
+     * Low overhead, e.g., memory usage
      */
     LOW,
 
     /**
-     * 中等开销，如磁盘IO
+     * Medium overhead, e.g., disk I/O
      */
     MEDIUM,
 
     /**
-     * 高开销，如网络延迟测试
+     * High overhead, e.g., network latency testing
      */
     HIGH
 }

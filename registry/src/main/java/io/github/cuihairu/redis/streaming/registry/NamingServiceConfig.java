@@ -9,35 +9,35 @@ import java.util.concurrent.TimeUnit;
 public class NamingServiceConfig extends BaseRedisConfig {
 
     /**
-     * 是否启用健康检测（默认关闭）
-     * 适用于消费者角色
+     * Whether to enable health checking (default off)
+     * Applicable to the consumer role
      */
     private boolean enableHealthCheck = false;
 
     /**
-     * 健康检测间隔（默认30秒）
+     * Health check interval (default 30 seconds)
      */
     private long healthCheckInterval = 30;
 
     /**
-     * 健康检测时间单位
+     * Health check time unit
      */
     private TimeUnit healthCheckTimeUnit = TimeUnit.SECONDS;
 
     /**
-     * 健康检测超时时间（毫秒，默认5秒）
+     * Health check timeout in milliseconds (default 5 seconds)
      */
     private int healthCheckTimeout = 5000;
 
     /**
-     * 是否启用Admin管理功能（默认开启）
-     * Admin功能允许对注册中心的服务进行管理操作，包括：
-     * - 手动下线服务实例
-     * - 修改服务实例状态
-     * - 查询服务实例详细信息
-     * - 调整服务实例权重等
+     * Whether to enable admin management features (default on)
+     * Admin features allow management operations on services in the registry, including:
+     * - Manual offline of service instances
+     * - Modify service instance status
+     * - Query service instance details
+     * - Adjust service instance weights, etc.
      *
-     * NamingService同时扮演提供者和消费者角色，此配置主要控制消费者端的管理能力
+     * NamingService plays both provider and consumer roles; this configuration primarily controls consumer-side management capabilities
      */
     private boolean enableAdminService = true;
 
@@ -53,138 +53,138 @@ public class NamingServiceConfig extends BaseRedisConfig {
         setEnableKeyPrefix(enableKeyPrefix);
     }
 
-    // ==================== 健康检测配置 ====================
+    // ==================== Health check configuration ====================
 
     /**
-     * 是否启用健康检测
+     * Whether health checking is enabled
      *
-     * @return 如果启用返回true，否则返回false
+     * @return true if enabled, false otherwise
      */
     public boolean isEnableHealthCheck() {
         return enableHealthCheck;
     }
 
     /**
-     * 设置是否启用健康检测
+     * Set whether to enable health checking
      *
-     * @param enableHealthCheck 是否启用健康检测
+     * @param enableHealthCheck whether to enable health checking
      */
     public void setEnableHealthCheck(boolean enableHealthCheck) {
         this.enableHealthCheck = enableHealthCheck;
     }
 
     /**
-     * 获取健康检测间隔
+     * Get the health check interval
      *
-     * @return 健康检测间隔
+     * @return the health check interval
      */
     public long getHealthCheckInterval() {
         return healthCheckInterval;
     }
 
     /**
-     * 设置健康检测间隔
+     * Set the health check interval
      *
-     * @param healthCheckInterval 健康检测间隔
+     * @param healthCheckInterval the health check interval
      */
     public void setHealthCheckInterval(long healthCheckInterval) {
         this.healthCheckInterval = healthCheckInterval;
     }
 
     /**
-     * 获取健康检测时间单位
+     * Get the health check time unit
      *
-     * @return 健康检测时间单位
+     * @return the health check time unit
      */
     public TimeUnit getHealthCheckTimeUnit() {
         return healthCheckTimeUnit;
     }
 
     /**
-     * 设置健康检测时间单位
+     * Set the health check time unit
      *
-     * @param healthCheckTimeUnit 健康检测时间单位
+     * @param healthCheckTimeUnit the health check time unit
      */
     public void setHealthCheckTimeUnit(TimeUnit healthCheckTimeUnit) {
         this.healthCheckTimeUnit = healthCheckTimeUnit;
     }
 
     /**
-     * 获取健康检测超时时间（毫秒）
+     * Get the health check timeout in milliseconds
      *
-     * @return 健康检测超时时间
+     * @return the health check timeout
      */
     public int getHealthCheckTimeout() {
         return healthCheckTimeout;
     }
 
     /**
-     * 设置健康检测超时时间（毫秒）
+     * Set the health check timeout in milliseconds
      *
-     * @param healthCheckTimeout 健康检测超时时间
+     * @param healthCheckTimeout the health check timeout
      */
     public void setHealthCheckTimeout(int healthCheckTimeout) {
         this.healthCheckTimeout = healthCheckTimeout;
     }
 
-    // ==================== Admin管理功能配置 ====================
+    // ==================== Admin management feature configuration ====================
 
     /**
-     * 是否启用Admin管理功能
+     * Whether admin management features are enabled
      *
-     * @return 如果启用返回true，否则返回false
+     * @return true if enabled, false otherwise
      */
     public boolean isEnableAdminService() {
         return enableAdminService;
     }
 
     /**
-     * 设置是否启用Admin管理功能
+     * Set whether to enable admin management features
      *
-     * @param enableAdminService 是否启用Admin管理功能
+     * @param enableAdminService whether to enable admin management features
      */
     public void setEnableAdminService(boolean enableAdminService) {
         this.enableAdminService = enableAdminService;
     }
 
-    // ==================== Redis键管理方法 ====================
+    // ==================== Redis key management methods ====================
     
     /**
-     * 获取服务实例键
+     * Get the service instance key
      *
-     * @param serviceName 服务名称
-     * @param instanceId 实例ID
-     * @return 服务实例键
+     * @param serviceName the service name
+     * @param instanceId the instance ID
+     * @return the service instance key
      */
     public String getServiceInstanceKey(String serviceName, String instanceId) {
         return getRegistryKeys().getServiceInstanceKey(serviceName, instanceId);
     }
 
     /**
-     * 获取服务实例列表键
+     * Get the service instances list key
      *
-     * @param serviceName 服务名称
-     * @return 服务实例列表键
+     * @param serviceName the service name
+     * @return the service instances list key
      */
     public String getServiceInstancesKey(String serviceName) {
         return getRegistryKeys().getServiceHeartbeatsKey(serviceName);
     }
 
     /**
-     * 获取心跳键
+     * Get the heartbeat key
      *
-     * @param serviceName 服务名称
-     * @return 心跳键
+     * @param serviceName the service name
+     * @return the heartbeat key
      */
     public String getHeartbeatKey(String serviceName) {
         return getRegistryKeys().getServiceHeartbeatsKey(serviceName);
     }
 
     /**
-     * 获取服务变更通道键
+     * Get the service change channel key
      *
-     * @param serviceName 服务名称
-     * @return 服务变更通道键
+     * @param serviceName the service name
+     * @return the service change channel key
      */
     public String getServiceChangeChannelKey(String serviceName) {
         return getRegistryKeys().getServiceChangeChannelKey(serviceName);

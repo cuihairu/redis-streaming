@@ -2,7 +2,7 @@ package io.github.cuihairu.redis.streaming.starter.metrics;
 
 import io.github.cuihairu.redis.streaming.mq.admin.MessageQueueAdmin;
 import io.github.cuihairu.redis.streaming.mq.admin.model.QueueInfo;
-import io.github.cuihairu.redis.streaming.reliability.dlq.DeadLetterService;
+import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterService;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 

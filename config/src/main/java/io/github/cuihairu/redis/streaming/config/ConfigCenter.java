@@ -1,57 +1,57 @@
 package io.github.cuihairu.redis.streaming.config;
 
 /**
- * 配置中心接口
- * 参考Nacos Config Center设计，提供统一的配置管理能力
- * 
- * 这个接口整合了配置管理功能，为应用提供统一的配置访问入口
+ * Configuration center interface
+ * Inspired by Nacos Config Center design, providing unified configuration management capabilities
+ *
+ * This interface integrates configuration management functionality, providing a unified configuration access entry point for applications
  */
 public interface ConfigCenter extends ConfigManager {
     
     /**
-     * 检查配置是否存在
-     * 
-     * @param dataId 配置ID
-     * @param group 配置组
-     * @return 如果配置存在返回true，否则返回false
+     * Check if configuration exists
+     *
+     * @param dataId configuration ID
+     * @param group configuration group
+     * @return true if the configuration exists, false otherwise
      */
     boolean hasConfig(String dataId, String group);
     
     /**
-     * 获取配置的元数据信息
-     * 
-     * @param dataId 配置ID
-     * @param group 配置组
-     * @return 配置的元数据信息
+     * Get configuration metadata
+     *
+     * @param dataId configuration ID
+     * @param group configuration group
+     * @return configuration metadata
      */
     ConfigMetadata getConfigMetadata(String dataId, String group);
     
     /**
-     * 配置元数据信息
+     * Configuration metadata
      */
     interface ConfigMetadata {
         /**
-         * 获取配置版本
+         * Get configuration version
          */
         String getVersion();
-        
+
         /**
-         * 获取配置描述
+         * Get configuration description
          */
         String getDescription();
-        
+
         /**
-         * 获取创建时间
+         * Get creation time
          */
         long getCreateTime();
-        
+
         /**
-         * 获取最后更新时间
+         * Get last modified time
          */
         long getLastModified();
-        
+
         /**
-         * 获取配置大小（字节）
+         * Get configuration size in bytes
          */
         long getSize();
     }

@@ -5,103 +5,103 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 服务发现接口
- * 提供服务实例的发现和监听功能
+ * Service discovery interface
+ * Provides service instance discovery and listening capabilities
  */
 public interface ServiceDiscovery {
 
     /**
-     * 发现服务实例
+     * Discover service instances
      *
-     * @param serviceName 服务名称
-     * @return 服务实例列表
+     * @param serviceName the service name
+     * @return list of service instances
      */
     List<ServiceInstance> discover(String serviceName);
 
     /**
-     * 发现健康的服务实例
+     * Discover healthy service instances
      *
-     * @param serviceName 服务名称
-     * @return 健康的服务实例列表
+     * @param serviceName the service name
+     * @return list of healthy service instances
      */
     List<ServiceInstance> discoverHealthy(String serviceName);
 
     /**
-     * 根据 metadata 过滤获取服务实例（支持比较运算符）
+     * Discover service instances filtered by metadata (supports comparison operators)
      *
-     * @param serviceName 服务名称
-     * @param metadataFilters metadata过滤条件（AND关系），支持比较运算符：
+     * @param serviceName the service name
+     * @param metadataFilters metadata filter conditions (AND relationship), supports comparison operators:
      * <ul>
-     *   <li>"field": "value" - 等于（默认）</li>
-     *   <li>"field:==": "value" - 等于（显式）</li>
-     *   <li>"field:!=": "value" - 不等于</li>
-     *   <li>"field:>": "value" - 大于</li>
-     *   <li>"field:>=": "value" - 大于等于</li>
-     *   <li>"field:&lt;": "value" - 小于</li>
-     *   <li>"field:&lt;=": "value" - 小于等于</li>
+     *   <li>"field": "value" - equals (default)</li>
+     *   <li>"field:==": "value" - equals (explicit)</li>
+     *   <li>"field:!=": "value" - not equals</li>
+     *   <li>"field:>": "value" - greater than</li>
+     *   <li>"field:>=": "value" - greater than or equals</li>
+     *   <li>"field:&lt;": "value" - less than</li>
+     *   <li>"field:&lt;=": "value" - less than or equals</li>
      * </ul>
      *
-     * <p>比较规则：</p>
+     * <p>Comparison rules:</p>
      * <ol>
-     *   <li>优先尝试数值比较（推荐用于 weight, age, cpu 等）</li>
-     *   <li>失败则使用字符串比较（字典序，谨慎使用）</li>
+     *   <li>Numeric comparison is attempted first (recommended for weight, age, cpu, etc.)</li>
+     *   <li>Falls back to string comparison (lexicographic order, use with caution)</li>
      * </ol>
      *
-     * <p>示例：</p>
+     * <p>Examples:</p>
      * <pre>
-     * // ✅ 推荐：数值比较
+     * // Recommended: numeric comparison
      * Map&lt;String, String&gt; filters = new HashMap&lt;&gt;();
-     * filters.put("weight:>=", "10");      // 权重 >= 10
-     * filters.put("cpu_usage:&lt;", "80");    // CPU使用率 &lt; 80
+     * filters.put("weight:>=", "10");      // weight >= 10
+     * filters.put("cpu_usage:&lt;", "80");    // CPU usage &lt; 80
      *
-     * // ✅ 推荐：字符串相等
-     * filters.put("region", "us-east-1");  // 精确匹配
-     * filters.put("status:!=", "down");    // 状态不等于
+     * // Recommended: string equality
+     * filters.put("region", "us-east-1");  // exact match
+     * filters.put("status:!=", "down");    // status not equals
      * </pre>
      *
-     * @return 匹配的服务实例列表
+     * @return list of matching service instances
      */
     List<ServiceInstance> discoverByMetadata(String serviceName, Map<String, String> metadataFilters);
 
     /**
-     * 根据 metadata 过滤获取健康的服务实例
+     * Discover healthy service instances filtered by metadata
      *
-     * @param serviceName 服务名称
-     * @param metadataFilters metadata过滤条件（AND关系）
-     * @return 匹配且健康的服务实例列表
+     * @param serviceName the service name
+     * @param metadataFilters metadata filter conditions (AND relationship)
+     * @return list of matching and healthy service instances
      */
     List<ServiceInstance> discoverHealthyByMetadata(String serviceName, Map<String, String> metadataFilters);
 
     /**
-     * 订阅服务变更
+     * Subscribe to service changes
      *
-     * @param serviceName 服务名称
-     * @param listener 服务变更监听器
+     * @param serviceName the service name
+     * @param listener the service change listener
      */
     void subscribe(String serviceName, ServiceChangeListener listener);
 
     /**
-     * 取消订阅服务变更
+     * Unsubscribe from service changes
      *
-     * @param serviceName 服务名称
-     * @param listener 服务变更监听器
+     * @param serviceName the service name
+     * @param listener the service change listener
      */
     void unsubscribe(String serviceName, ServiceChangeListener listener);
 
     /**
-     * 启动服务发现
+     * Start service discovery
      */
     void start();
 
     /**
-     * 停止服务发现
+     * Stop service discovery
      */
     void stop();
 
     /**
-     * 检查服务发现是否正在运行
+     * Check if service discovery is running
      *
-     * @return 如果正在运行返回true，否则返回false
+     * @return true if running, false otherwise
      */
     boolean isRunning();
 }

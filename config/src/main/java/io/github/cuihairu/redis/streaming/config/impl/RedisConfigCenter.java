@@ -17,8 +17,8 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * 基于Redis的配置中心实现
- * 整合配置管理功能，提供统一的配置访问入口
+ * Redis-based configuration center implementation
+ * Integrates configuration management functionality, providing a unified configuration access entry point
  */
 public class RedisConfigCenter implements ConfigCenter {
     

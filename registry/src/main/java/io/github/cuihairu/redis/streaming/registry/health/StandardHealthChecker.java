@@ -13,8 +13,8 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 
 /**
- * 标准健康检查器实现
- * 提供基于协议的健康检查功能
+ * Standard health checker implementation
+ * Provides protocol-based health checking functionality
  */
 public class StandardHealthChecker implements HealthChecker {
     
@@ -23,7 +23,7 @@ public class StandardHealthChecker implements HealthChecker {
     private final int readTimeoutMs;
     
     public StandardHealthChecker() {
-        this(5000, 5000); // 默认5秒超时
+        this(5000, 5000); // Default 5 second timeout
     }
     
     public StandardHealthChecker(int connectTimeoutMs, int readTimeoutMs) {
@@ -48,18 +48,18 @@ public class StandardHealthChecker implements HealthChecker {
             case WSS:
                 return checkWebSocket(serviceInstance);
             default:
-                // 对于其他协议，默认检查端口连通性
+                // For other protocols, default to checking port connectivity
                 return checkTcp(serviceInstance);
         }
     }
     
     /**
-     * HTTP/HTTPS健康检查
+     * HTTP/HTTPS health check
      */
     private boolean checkHttp(ServiceInstance serviceInstance) throws Exception {
         try {
             URI uri = serviceInstance.getUri();
-            String checkUrl = uri.toString() + "/health"; // 默认检查/health端点
+            String checkUrl = uri.toString() + "/health"; // Default check /health endpoint
             
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(java.net.URI.create(checkUrl))
@@ -70,13 +70,13 @@ public class StandardHealthChecker implements HealthChecker {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             return response.statusCode() >= 200 && response.statusCode() < 400;
         } catch (Exception e) {
-            // 如果/health端点不可用，回退到TCP检查
+            // If /health endpoint is unavailable, fall back to TCP check
             return checkTcp(serviceInstance);
         }
     }
     
     /**
-     * TCP健康检查
+     * TCP health check
      */
     private boolean checkTcp(ServiceInstance serviceInstance) {
         try (Socket socket = new Socket()) {
@@ -88,10 +88,10 @@ public class StandardHealthChecker implements HealthChecker {
     }
     
     /**
-     * WebSocket健康检查
+     * WebSocket health check
      */
     private boolean checkWebSocket(ServiceInstance serviceInstance) {
-        // 对于WebSocket，先检查TCP连通性
+        // For WebSocket, first check TCP connectivity
         return checkTcp(serviceInstance);
     }
 }

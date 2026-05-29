@@ -10,12 +10,12 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 心跳状态管理器
+ * Heartbeat state manager
  *
- * <p>区分 metadata 和 metrics 的状态管理：</p>
+ * <p>Distinguishes metadata and metrics state management:</p>
  * <ul>
- *   <li>metadata: 静态业务元数据，几乎不变</li>
- *   <li>metrics: 动态监控指标，高频变化</li>
+ *   <li>metadata: Static business metadata, rarely changes</li>
+ *   <li>metrics: Dynamic monitoring indicators, high-frequency changes</li>
  * </ul>
  */
 public class HeartbeatStateManager {
@@ -30,42 +30,42 @@ public class HeartbeatStateManager {
     }
 
     /**
-     * 实例状态（区分 metadata 和 metrics）
+     * Instance state (distinguishes metadata and metrics)
      */
     private static class InstanceState {
-        // 时间戳
+        // Timestamps
         private long lastHeartbeatTime = 0;
-        private long lastMetadataUpdateTime = 0;  // metadata 最后更新时间
-        private long lastMetricsUpdateTime = 0;   // metrics 最后更新时间
+        private long lastMetadataUpdateTime = 0;  // Last metadata update time
+        private long lastMetricsUpdateTime = 0;   // Last metrics update time
 
-        // 内容哈希（用于变化检测）
-        private int metadataHash = 0;             // metadata 内容哈希
-        private int metricsHash = 0;              // metrics 内容哈希
+        // Content hash (for change detection)
+        private int metadataHash = 0;             // Metadata content hash
+        private int metricsHash = 0;              // Metrics content hash
 
-        // 健康状态
+        // Health status
         private Boolean lastHealthy = null;
 
-        // 统计信息
-        private long consecutiveHeartbeatOnlyCount = 0;  // 连续心跳次数（未更新数据）
+        // Statistics
+        private long consecutiveHeartbeatOnlyCount = 0;  // Consecutive heartbeat count (no data update)
 
-        // 并发控制
+        // Concurrency control
         private volatile boolean pendingHeartbeat = false;
 
-        // 最近一次已提交的 metrics 快照，用于阈值比较
+        // Last committed metrics snapshot, used for threshold comparison
         private Map<String, Object> lastMetricsSnapshot = new HashMap<>();
-        // 最近一次已提交的 metadata 快照（预留）
+        // Last committed metadata snapshot (reserved)
         private Map<String, Object> lastMetadataSnapshot = new HashMap<>();
     }
 
-    // ==================== 新的分离方法 ====================
+    // ==================== New separated methods ====================
 
     /**
-     * 检查是否需要更新 metrics
+     * Check if metrics need to be updated
      *
-     * @param serviceName 服务名
-     * @param instanceId 实例ID
-     * @param currentMetrics 当前 metrics 数据
-     * @return 更新决策
+     * @param serviceName service name
+     * @param instanceId instance ID
+     * @param currentMetrics current metrics data
+     * @return update decision
      */
     public UpdateDecision shouldUpdateMetrics(String serviceName, String instanceId,
                                               Map<String, Object> currentMetrics) {
@@ -73,17 +73,17 @@ public class HeartbeatStateManager {
         String stateKey = buildStateKey(serviceName, instanceId);
         InstanceState state = instanceStates.computeIfAbsent(stateKey, k -> new InstanceState());
 
-        // 1. 检查时间间隔（避免更新过于频繁）
+        // 1. Check time interval (avoid too frequent updates)
         long timeSinceLastUpdate = now - state.lastMetricsUpdateTime;
         if (timeSinceLastUpdate < config.getMetricsUpdateIntervalMs()) {
-            // 但仍需检查是否需要心跳
+            // But still need to check if heartbeat is needed
             if (now - state.lastHeartbeatTime >= config.getHeartbeatInterval().toMillis()) {
                 return UpdateDecision.HEARTBEAT_ONLY;
             }
             return UpdateDecision.NO_UPDATE;
         }
 
-        // 2. 检查内容是否变化（使用智能阈值）
+        // 2. Check if content has changed (using smart thresholds)
         int currentHash = calculateHash(currentMetrics);
         boolean hasSignificantChange = hasSignificantMetricsChange(
                 state.metricsHash, currentHash, currentMetrics, state);
@@ -94,14 +94,14 @@ public class HeartbeatStateManager {
             return UpdateDecision.METRICS_UPDATE;
         }
 
-        // 3. 强制更新检查（防止长时间不更新）
+        // 3. Force update check (prevent long periods without updates)
         if (state.consecutiveHeartbeatOnlyCount >= config.getForceUpdateThreshold()) {
             logger.debug("Metrics update triggered for {}:{} by force update threshold",
                     serviceName, instanceId);
             return UpdateDecision.METRICS_UPDATE;
         }
 
-        // 4. 只需要心跳
+        // 4. Only heartbeat needed
         if (now - state.lastHeartbeatTime >= config.getHeartbeatInterval().toMillis()) {
             return UpdateDecision.HEARTBEAT_ONLY;
         }
@@ -110,16 +110,16 @@ public class HeartbeatStateManager {
     }
 
     /**
-     * 检查是否需要更新 metadata（极少触发）
+     * Check if metadata needs to be updated (rarely triggered)
      *
-     * @param serviceName 服务名
-     * @param instanceId 实例ID
-     * @param currentMetadata 当前 metadata 数据
-     * @return 更新决策
+     * @param serviceName service name
+     * @param instanceId instance ID
+     * @param currentMetadata current metadata data
+     * @return update decision
      */
     public UpdateDecision shouldUpdateMetadata(String serviceName, String instanceId,
                                                Map<String, Object> currentMetadata) {
-        // 如果禁用了 metadata 变化检测，直接返回不更新
+        // If metadata change detection is disabled, return no update directly
         if (!config.isEnableMetadataChangeDetection()) {
             return UpdateDecision.NO_UPDATE;
         }
@@ -128,14 +128,14 @@ public class HeartbeatStateManager {
         String stateKey = buildStateKey(serviceName, instanceId);
         InstanceState state = instanceStates.computeIfAbsent(stateKey, k -> new InstanceState());
 
-        // 1. 检查最小更新间隔（metadata 变化应该很少，需要更长的间隔）
+        // 1. Check minimum update interval (metadata changes should be rare, needs longer interval)
         long timeSinceLastUpdate = now - state.lastMetadataUpdateTime;
         long intervalMs = config.getMetadataUpdateIntervalSeconds() * 1000L;
         if (intervalMs > 0 && timeSinceLastUpdate < intervalMs) {
             return UpdateDecision.NO_UPDATE;
         }
 
-        // 2. 检查内容是否确实变化
+        // 2. Check if content has actually changed
         int currentHash = calculateHash(currentMetadata);
         if (currentHash != state.metadataHash) {
             return UpdateDecision.METADATA_UPDATE;
@@ -144,25 +144,25 @@ public class HeartbeatStateManager {
         return UpdateDecision.NO_UPDATE;
     }
 
-    // ==================== 向后兼容的旧方法 ====================
+    // ==================== Backward compatible old methods ====================
 
     /**
-     * 检查是否需要更新（保持向后兼容）
+     * Check if update is needed (backward compatible)
      *
-     * @deprecated 此方法语义混乱，实际检查的是 metrics 变化。
-     *             请使用 {@link #shouldUpdateMetrics(String, String, Map)} 替代
+     * @deprecated This method has confused semantics, it actually checks metrics changes.
+     *             Use {@link #shouldUpdateMetrics(String, String, Map)} instead
      */
     @Deprecated
     public UpdateDecision shouldUpdate(String serviceName, String instanceId,
                                        Map<String, Object> currentMetadata, Boolean currentHealthy) {
-        // 委托给新方法，但保持旧的行为
+        // Delegate to new method, but keep old behavior
         return shouldUpdateMetrics(serviceName, instanceId, currentMetadata);
     }
 
-    // ==================== 标记方法 ====================
+    // ==================== Mark methods ====================
 
     /**
-     * 标记 metrics 更新完成
+     * Mark metrics update completed
      */
     public void markMetricsUpdateCompleted(String serviceName, String instanceId,
                                            Map<String, Object> metrics) {
@@ -170,17 +170,17 @@ public class HeartbeatStateManager {
         InstanceState state = instanceStates.get(stateKey);
         if (state != null) {
             state.lastMetricsUpdateTime = System.currentTimeMillis();
-            state.lastHeartbeatTime = state.lastMetricsUpdateTime;  // 更新时也算心跳
+            state.lastHeartbeatTime = state.lastMetricsUpdateTime;  // Update also counts as heartbeat
             state.metricsHash = calculateHash(metrics);
             state.consecutiveHeartbeatOnlyCount = 0;
             state.pendingHeartbeat = false;
-            // 存储 metrics 快照用于之后的阈值判断（浅拷贝足够）
+            // Store metrics snapshot for subsequent threshold judgment (shallow copy is sufficient)
             state.lastMetricsSnapshot = metrics != null ? new HashMap<>(metrics) : new HashMap<>();
         }
     }
 
     /**
-     * 标记 metadata 更新完成
+     * Mark metadata update completed
      */
     public void markMetadataUpdateCompleted(String serviceName, String instanceId,
                                             Map<String, Object> metadata) {
@@ -188,7 +188,7 @@ public class HeartbeatStateManager {
         InstanceState state = instanceStates.get(stateKey);
         if (state != null) {
             state.lastMetadataUpdateTime = System.currentTimeMillis();
-            state.lastHeartbeatTime = state.lastMetadataUpdateTime;  // 更新时也算心跳
+            state.lastHeartbeatTime = state.lastMetadataUpdateTime;  // Update also counts as heartbeat
             state.metadataHash = calculateHash(metadata);
             state.pendingHeartbeat = false;
             state.lastMetadataSnapshot = metadata != null ? new HashMap<>(metadata) : new HashMap<>();
@@ -196,7 +196,7 @@ public class HeartbeatStateManager {
     }
 
     /**
-     * 标记仅心跳更新完成
+     * Mark heartbeat-only update completed
      */
     public void markHeartbeatOnlyCompleted(String serviceName, String instanceId) {
         String stateKey = buildStateKey(serviceName, instanceId);
@@ -208,31 +208,31 @@ public class HeartbeatStateManager {
         }
     }
 
-    // ==================== 辅助方法 ====================
+    // ==================== Helper methods ====================
 
     /**
-     * 检查 metrics 是否有显著变化（智能阈值）
+     * Check if metrics have significant changes (smart thresholds)
      */
     private boolean hasSignificantMetricsChange(int oldHash, int newHash,
                                                 Map<String, Object> currentMetrics,
                                                 InstanceState state) {
-        // 首次收集
+        // First collection
         if (oldHash == 0) {
             return true;
         }
 
-        // 没有任何变化
+        // No change at all
         if (oldHash == newHash) {
             return false;
         }
 
-        // 若未配置阈值，hash 变化即认为需要更新
+        // If no thresholds configured, hash change means update needed
         Map<String, ChangeThreshold> thresholds = config.getChangeThresholds();
         if (thresholds == null || thresholds.isEmpty()) {
             return true;
         }
 
-        // 根据阈值逐项判断是否显著变化
+        // Evaluate each item against thresholds to determine significant change
         for (Map.Entry<String, ChangeThreshold> entry : thresholds.entrySet()) {
             String path = entry.getKey();
             ChangeThreshold threshold = entry.getValue();
@@ -249,12 +249,12 @@ public class HeartbeatStateManager {
             }
         }
 
-        // 没有任何一项达到阈值，认为不显著
+        // No items reached threshold, considered not significant
         return false;
     }
 
     /**
-     * 计算数据的哈希值
+     * Calculate hash value of data
      */
     private int calculateHash(Map<String, Object> data) {
         if (data == null || data.isEmpty()) {
@@ -264,7 +264,7 @@ public class HeartbeatStateManager {
     }
 
     /**
-     * 移除实例状态
+     * Remove instance state
      */
     public void removeInstanceState(String serviceName, String instanceId) {
         String stateKey = buildStateKey(serviceName, instanceId);
@@ -272,7 +272,7 @@ public class HeartbeatStateManager {
     }
 
     /**
-     * 获取实例状态（用于调试）
+     * Get instance state (for debugging)
      */
     public Map<String, Object> getInstanceStateInfo(String serviceName, String instanceId) {
         String stateKey = buildStateKey(serviceName, instanceId);
@@ -294,8 +294,8 @@ public class HeartbeatStateManager {
     }
 
     /**
-     * 构建状态 Key（serviceName:instanceId）
-     * 避免不同服务的相同 instanceId 冲突
+     * Build state key (serviceName:instanceId)
+     * Avoids conflicts between the same instanceId across different services
      */
     private String buildStateKey(String serviceName, String instanceId) {
         return serviceName + ":" + instanceId;

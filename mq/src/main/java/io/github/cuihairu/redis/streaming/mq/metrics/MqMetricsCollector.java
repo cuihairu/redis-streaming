@@ -46,4 +46,13 @@ public interface MqMetricsCollector {
      * Optional: track configured max leased partitions per consumer instance.
      */
     default void setMaxLeasedPartitions(String consumerName, int maxLeasedPartitions) {}
+
+    /** Record a DLQ replay attempt. */
+    default void recordDlqReplay(String topic, int partitionId, boolean success, long durationNanos) {}
+
+    /** Increment count of deleted DLQ entries. */
+    default void incDlqDelete(String topic) {}
+
+    /** Increment count of cleared DLQ entries. */
+    default void incDlqClear(String topic, long count) {}
 }

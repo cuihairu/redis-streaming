@@ -6,8 +6,8 @@ import io.github.cuihairu.redis.streaming.starter.autoconfigure.RedisStreamingAu
 import java.lang.annotation.*;
 
 /**
- * 启用Redis Streaming框架
- * 自动配置服务注册发现和配置管理功能
+ * Enable Redis Streaming framework
+ * Automatically configures service registration, discovery, and configuration management
  */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
@@ -16,17 +16,17 @@ import java.lang.annotation.*;
 public @interface EnableRedisStreaming {
 
     /**
-     * 是否启用服务注册
+     * Whether to enable service registry
      */
     boolean registry() default true;
 
     /**
-     * 是否启用服务发现
+     * Whether to enable service discovery
      */
     boolean discovery() default true;
 
     /**
-     * 是否启用配置服务
+     * Whether to enable configuration service
      */
     boolean config() default true;
 }

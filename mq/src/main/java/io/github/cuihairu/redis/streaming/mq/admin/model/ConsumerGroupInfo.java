@@ -7,38 +7,38 @@ import org.redisson.api.StreamMessageId;
 import java.util.List;
 
 /**
- * 消费者组信息
+ * Consumer group information
  */
 @Data
 @Builder
 public class ConsumerGroupInfo {
     /**
-     * 消费者组名称
+     * Consumer group name
      */
     private String name;
 
     /**
-     * 消费者数量
+     * Number of consumers
      */
     private int consumers;
 
     /**
-     * 待处理消息数（Pending）
+     * Pending message count
      */
     private long pending;
 
     /**
-     * 最后投递的消息ID
+     * Last delivered message ID
      */
     private StreamMessageId lastDeliveredId;
 
     /**
-     * 消费者列表
+     * Consumer list
      */
     private List<ConsumerInfo> consumerList;
 
     /**
-     * 总消费消息数（估算）
+     * Total consumed message count (estimated)
      */
     private long totalConsumed;
 }

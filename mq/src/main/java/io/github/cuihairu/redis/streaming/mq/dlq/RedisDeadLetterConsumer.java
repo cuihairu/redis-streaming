@@ -1,17 +1,15 @@
-package io.github.cuihairu.redis.streaming.reliability.dlq;
+package io.github.cuihairu.redis.streaming.mq.dlq;
 
+import io.github.cuihairu.redis.streaming.mq.metrics.MqMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
 import org.redisson.api.StreamMessageId;
 import org.redisson.api.stream.StreamAddArgs;
 import org.redisson.api.stream.StreamCreateGroupArgs;
-import org.redisson.api.stream.StreamReadArgs;
 import org.redisson.api.stream.StreamReadGroupArgs;
 
 import java.time.Duration;
-import java.time.Instant;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -20,8 +18,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Reliability DLQ consumer. Reads from {streamPrefix}:{topic}:dlq and handles entries.
- * Plain (XREAD) and group paths are supported. Deletion occurs only on success or explicit drop.
+ * DLQ consumer. Reads from {streamPrefix}:{topic}:dlq and handles entries.
  */
 @Slf4j
 public class RedisDeadLetterConsumer implements DeadLetterConsumer {
@@ -94,13 +91,11 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
             try {
                 for (Sub s : subs.values()) {
                     String dlq = DlqKeys.dlq(s.topic);
-                    // Try default codec first, then StringCodec as fallback
                     RStream<String, Object> streamDefault = redissonClient.getStream(dlq);
                     RStream<String, Object> streamString  = redissonClient.getStream(dlq, org.redisson.client.codec.StringCodec.INSTANCE);
                     RStream<String, Object> stream = streamDefault;
                     StreamMessageId last = lastIds.getOrDefault(s.topic, StreamMessageId.MIN);
 
-                    // 1) Prefer group path, then fallback to plain path
                     Map<StreamMessageId, Map<String, Object>> messages = java.util.Collections.emptyMap();
                     try {
                         streamDefault.createGroup(StreamCreateGroupArgs.name(s.group).id(StreamMessageId.MIN).makeStream());
@@ -118,7 +113,6 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                             if (messages != null && !messages.isEmpty()) stream = streamString;
                         } catch (Exception ignore) {}
                     }
-                    // Test hook: optionally fallback to reading from MIN to include pending/older messages
                     if ((messages == null || messages.isEmpty()) && Boolean.getBoolean("reliability.dlq.test.readAllIds")) {
                         try {
                             messages = streamDefault.readGroup(s.group, consumerName,
@@ -139,7 +133,6 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                         Map<String, Object> data = e.getValue();
                         DeadLetterEntry entry = DeadLetterCodec.parseEntry(id.toString(), data);
                         try {
-                            // Test hook: hold before invoking handler to widen observation windows in tests
                             long holdMs = Long.getLong("reliability.dlq.test.holdBeforeHandleMs", 0L);
                             if (holdMs > 0) { try { Thread.sleep(holdMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); } }
                             DeadLetterConsumer.HandleResult r = s.handler.handle(entry);
@@ -157,12 +150,10 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                                         } else {
                                             String topic = entry.getOriginalTopic();
                                             int pid = entry.getPartitionId();
-                                            // Write with StringCodec for stable field protocol
                                             RStream<String, Object> p = redissonClient.getStream("stream:topic:" + topic + ":p:" + pid, org.redisson.client.codec.StringCodec.INSTANCE);
                                             Map<String, Object> d = DeadLetterCodec.buildPartitionEntryFromDlq(data, topic, pid);
                                             p.add(StreamAddArgs.entries(d));
                                             ok = true;
-                                            // Visibility check + one retry
                                             try {
                                                 boolean visible = p.isExists() && p.size() > 0;
                                                 if (!visible) { Thread.sleep(50); p.add(StreamAddArgs.entries(d)); }
@@ -173,11 +164,10 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                                         log.error("DLQ replay failed", ex);
                                     } finally {
                                         try {
-                                            io.github.cuihairu.redis.streaming.reliability.metrics.ReliabilityMetrics.get()
+                                            MqMetrics.get()
                                                     .recordDlqReplay(entry.getOriginalTopic(), entry.getPartitionId(), ok,
                                                             System.nanoTime() - start);
                                         } catch (Exception ignore) {}
-                                        // Only ack when replay was successful; keep pending otherwise for redelivery
                                         if (ok) stream.ack(s.group, id);
                                     }
                                     break;
@@ -188,12 +178,8 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                             }
                         } catch (Exception ex) {
                             log.error("DLQ handler error for {}", id, ex);
-                            // Do not ack on handler exception; keep pending for redelivery/inspection
                         }
                     }
-
-                    // No plain fallback when a consumer group is used. This avoids racing with group delivery
-                    // and ensures entries flow through the consumer group's PEL for proper governance.
                 }
             } catch (Exception e) {
                 try { Thread.sleep(200); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }

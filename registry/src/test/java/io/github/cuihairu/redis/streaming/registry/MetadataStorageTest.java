@@ -18,10 +18,10 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Metadata 存储方式专项测试
- * 验证注册、心跳、读取三个环节的 metadata 存储一致性
+ * Metadata storage specialized tests
+ * Verifies metadata storage consistency across registration, heartbeat, and read operations
  *
- * 注意：当前使用 JSON 字符串格式存储 metadata 和 metrics，而非 metadata_* 前缀字段
+ * Note: Currently uses JSON string format for storing metadata and metrics, not metadata_* prefix fields
  */
 @Tag("integration")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -48,7 +48,7 @@ public class MetadataStorageTest {
 
     @BeforeEach
     public void setup() {
-        // 清理测试数据
+        // Clean up test data
         redissonClient.getKeys().flushdb();
 
         serviceProvider = new RedisServiceProvider(redissonClient);
@@ -71,7 +71,7 @@ public class MetadataStorageTest {
     @Order(1)
     @DisplayName("测试注册时 metadata 以 JSON 存储")
     public void testMetadataStorageDuringRegistration() throws InterruptedException {
-        // 准备带 metadata 的实例
+        // Prepare instance with metadata
         Map<String, String> metadata = new HashMap<>();
         metadata.put("version", "1.0.0");
         metadata.put("region", "us-east-1");
@@ -86,20 +86,20 @@ public class MetadataStorageTest {
                 .metadata(metadata)
                 .build();
 
-        // 注册实例
+        // Register instance
         serviceProvider.register(instance);
         Thread.sleep(500);
 
-        // 直接从 Redis 读取，验证存储格式（使用StringCodec匹配Lua脚本）
+        // Read directly from Redis, verify storage format (using StringCodec to match Lua scripts)
         String instanceKey = "redis_streaming_registry:services:metadata-test-service:instance:meta-001";
         RMap<String, String> instanceMap = redissonClient.getMap(instanceKey, StringCodec.INSTANCE);
         Map<String, String> redisData = instanceMap.readAllMap();
 
-        // 验证：metadata 应该作为 JSON 字符串存储
+        // Verify: metadata should be stored as a JSON string
         assertTrue(redisData.containsKey("metadata"),
                 "Should have 'metadata' field as JSON string");
 
-        // 验证：metadata 是 JSON 格式
+        // Verify: metadata is in JSON format
         String metadataJson = redisData.get("metadata");
         assertNotNull(metadataJson);
         assertTrue(metadataJson.contains("version"), "metadata JSON should contain 'version'");
@@ -107,7 +107,7 @@ public class MetadataStorageTest {
         assertTrue(metadataJson.contains("region"), "metadata JSON should contain 'region'");
         assertTrue(metadataJson.contains("us-east-1"), "metadata JSON should contain region value");
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(instance);
     }
 
@@ -115,7 +115,7 @@ public class MetadataStorageTest {
     @Order(2)
     @DisplayName("测试心跳更新时 metadata 和 metrics 分离")
     public void testMetadataConsistencyAfterHeartbeat() throws InterruptedException {
-        // 注册实例
+        // Register instance
         Map<String, String> metadata = new HashMap<>();
         metadata.put("version", "1.0.0");
         metadata.put("region", "us-east");
@@ -131,36 +131,36 @@ public class MetadataStorageTest {
         serviceProvider.register(instance);
         Thread.sleep(500);
 
-        // 第一次验证：注册后的存储格式
+        // First verification: storage format after registration
         String instanceKey = "redis_streaming_registry:services:heartbeat-test-service:instance:hb-001";
         RMap<String, String> instanceMap = redissonClient.getMap(instanceKey, StringCodec.INSTANCE);
         Map<String, String> redisDataAfterRegistration = instanceMap.readAllMap();
 
-        // 验证注册后有 metadata 字段
+        // Verify metadata field exists after registration
         assertTrue(redisDataAfterRegistration.containsKey("metadata"),
                 "Should have 'metadata' field as JSON after registration");
 
-        // 发送心跳（可能触发 metrics 更新）
+        // Send heartbeat (may trigger metrics update)
         serviceProvider.sendHeartbeat(instance);
         Thread.sleep(500);
 
-        // 第二次验证：心跳后的存储格式
+        // Second verification: storage format after heartbeat
         Map<String, String> redisDataAfterHeartbeat = instanceMap.readAllMap();
 
-        // 验证：应该有 metadata 字段（JSON 格式）
+        // Verify: should have metadata field (JSON format)
         assertTrue(redisDataAfterHeartbeat.containsKey("metadata"),
                 "Should have 'metadata' field after heartbeat");
 
-        // 验证：如果有 metrics 更新，应该也是 JSON 格式
+        // Verify: if metrics are updated, they should also be in JSON format
         if (redisDataAfterHeartbeat.containsKey("metrics")) {
             String metricsJson = redisDataAfterHeartbeat.get("metrics");
             assertNotNull(metricsJson);
-            // metrics 应该是 JSON 格式
+            // metrics should be in JSON format
             assertTrue(metricsJson.startsWith("{") || metricsJson.startsWith("["),
                     "metrics should be JSON format");
         }
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(instance);
     }
 
@@ -168,7 +168,7 @@ public class MetadataStorageTest {
     @Order(3)
     @DisplayName("测试读取实例时 metadata 正确解析")
     public void testMetadataParsingWhenDiscovering() throws InterruptedException {
-        // 注册带复杂 metadata 的实例
+        // Register instance with complex metadata
         Map<String, String> originalMetadata = new HashMap<>();
         originalMetadata.put("version", "2.5.1");
         originalMetadata.put("region", "ap-southeast-1");
@@ -189,19 +189,19 @@ public class MetadataStorageTest {
         serviceProvider.register(instance);
         Thread.sleep(500);
 
-        // 通过服务发现读取实例
+        // Read instance through service discovery
         List<ServiceInstance> discoveredInstances = serviceConsumer.discover("discovery-test-service");
         assertEquals(1, discoveredInstances.size());
 
         ServiceInstance discoveredInstance = discoveredInstances.get(0);
         Map<String, String> discoveredMetadata = discoveredInstance.getMetadata();
 
-        // 验证：读取到的 metadata 完整
+        // Verify: retrieved metadata is complete
         assertNotNull(discoveredMetadata);
         assertEquals(originalMetadata.size(), discoveredMetadata.size(),
                 "All metadata fields should be retrieved");
 
-        // 验证：每个字段的值正确
+        // Verify: each field value is correct
         for (Map.Entry<String, String> entry : originalMetadata.entrySet()) {
             assertTrue(discoveredMetadata.containsKey(entry.getKey()),
                     "Should contain metadata key: " + entry.getKey());
@@ -209,7 +209,7 @@ public class MetadataStorageTest {
                     "Metadata value should match for key: " + entry.getKey());
         }
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(instance);
     }
 
@@ -217,7 +217,7 @@ public class MetadataStorageTest {
     @Order(4)
     @DisplayName("测试 metadata 为空时的处理")
     public void testEmptyMetadata() throws InterruptedException {
-        // 注册不带 metadata 的实例
+        // Register instance without metadata
         ServiceInstance instance = DefaultServiceInstance.builder()
                 .serviceName("empty-meta-service")
                 .instanceId("empty-001")
@@ -228,7 +228,7 @@ public class MetadataStorageTest {
         serviceProvider.register(instance);
         Thread.sleep(500);
 
-        // 验证 Redis 中不应该有 metadata_ 字段
+        // Verify Redis should not have metadata_ fields
         String instanceKey = "redis_streaming_registry:services:empty-meta-service:instance:empty-001";
         RMap<String, String> instanceMap = redissonClient.getMap(instanceKey, StringCodec.INSTANCE);
         Map<String, String> redisData = instanceMap.readAllMap();
@@ -240,7 +240,7 @@ public class MetadataStorageTest {
         assertEquals(0, metadataFieldCount,
                 "Should have no metadata_ fields when metadata is empty");
 
-        // 验证服务发现时 metadata 为空 Map
+        // Verify metadata is an empty Map during service discovery
         List<ServiceInstance> discoveredInstances = serviceConsumer.discover("empty-meta-service");
         assertEquals(1, discoveredInstances.size());
 
@@ -248,7 +248,7 @@ public class MetadataStorageTest {
         assertNotNull(discoveredInstance.getMetadata());
         assertTrue(discoveredInstance.getMetadata().isEmpty());
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(instance);
     }
 
@@ -256,7 +256,7 @@ public class MetadataStorageTest {
     @Order(5)
     @DisplayName("测试 metadata 部分更新")
     public void testPartialMetadataUpdate() throws InterruptedException {
-        // 注册实例
+        // Register instance
         Map<String, String> initialMetadata = new HashMap<>();
         initialMetadata.put("version", "1.0.0");
         initialMetadata.put("load", "0.3");
@@ -273,11 +273,11 @@ public class MetadataStorageTest {
         serviceProvider.register(instance);
         Thread.sleep(500);
 
-        // 更新 metadata（通过重新注册）
+        // Update metadata (via re-registration)
         Map<String, String> updatedMetadata = new HashMap<>();
-        updatedMetadata.put("version", "1.0.0"); // 保持不变
-        updatedMetadata.put("load", "0.8"); // 更新
-        updatedMetadata.put("status", "busy"); // 更新
+        updatedMetadata.put("version", "1.0.0"); // Unchanged
+        updatedMetadata.put("load", "0.8"); // Updated
+        updatedMetadata.put("status", "busy"); // Updated
 
         ServiceInstance updatedInstance = DefaultServiceInstance.builder()
                 .serviceName("update-test-service")
@@ -287,22 +287,22 @@ public class MetadataStorageTest {
                 .metadata(updatedMetadata)
                 .build();
 
-        serviceProvider.register(updatedInstance); // 覆盖注册
+        serviceProvider.register(updatedInstance); // Overwrite registration
         Thread.sleep(500);
 
-        // 通过服务发现读取
+        // Read through service discovery
         List<ServiceInstance> discoveredInstances = serviceConsumer.discover("update-test-service");
         assertEquals(1, discoveredInstances.size());
 
         ServiceInstance discoveredInstance = discoveredInstances.get(0);
         Map<String, String> finalMetadata = discoveredInstance.getMetadata();
 
-        // 验证：更新成功
+        // Verify: update successful
         assertEquals("1.0.0", finalMetadata.get("version"), "version should remain unchanged");
         assertEquals("0.8", finalMetadata.get("load"), "load should be updated");
         assertEquals("busy", finalMetadata.get("status"), "status should be updated");
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(updatedInstance);
     }
 
@@ -310,7 +310,7 @@ public class MetadataStorageTest {
     @Order(6)
     @DisplayName("测试 metadata 特殊字符处理")
     public void testMetadataWithSpecialCharacters() throws InterruptedException {
-        // 包含特殊字符的 metadata
+        // Metadata with special characters
         Map<String, String> metadata = new HashMap<>();
         metadata.put("app.name", "my-application");
         metadata.put("server.port", "8080");
@@ -329,14 +329,14 @@ public class MetadataStorageTest {
         serviceProvider.register(instance);
         Thread.sleep(500);
 
-        // 通过服务发现验证（不再检查 Redis 内部格式）
+        // Verify through service discovery (no longer checking Redis internal format)
         List<ServiceInstance> discoveredInstances = serviceConsumer.discover("special-char-service");
         assertEquals(1, discoveredInstances.size());
 
         ServiceInstance discoveredInstance = discoveredInstances.get(0);
         Map<String, String> discoveredMetadata = discoveredInstance.getMetadata();
 
-        // 验证特殊字符正确保留
+        // Verify special characters are correctly preserved
         assertEquals("my-application", discoveredMetadata.get("app.name"));
         assertEquals("8080", discoveredMetadata.get("server.port"));
         assertEquals("production", discoveredMetadata.get("spring.profiles.active"));
@@ -344,7 +344,7 @@ public class MetadataStorageTest {
         assertEquals("Service with: colons, commas, and spaces",
                 discoveredMetadata.get("description"));
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(instance);
     }
 
@@ -352,7 +352,7 @@ public class MetadataStorageTest {
     @Order(7)
     @DisplayName("测试多实例 metadata 隔离")
     public void testMetadataIsolationBetweenInstances() throws InterruptedException {
-        // 注册两个实例，metadata 不同
+        // Register two instances with different metadata
         Map<String, String> metadata1 = new HashMap<>();
         metadata1.put("version", "1.0.0");
         metadata1.put("instance", "first");
@@ -382,11 +382,11 @@ public class MetadataStorageTest {
         serviceProvider.register(instance2);
         Thread.sleep(500);
 
-        // 发现所有实例
+        // Discover all instances
         List<ServiceInstance> instances = serviceConsumer.discover("isolation-service");
         assertEquals(2, instances.size());
 
-        // 验证每个实例的 metadata 独立且正确
+        // Verify each instance's metadata is independent and correct
         for (ServiceInstance instance : instances) {
             if (instance.getInstanceId().equals("isolation-001")) {
                 assertEquals(2, instance.getMetadata().size());
@@ -401,7 +401,7 @@ public class MetadataStorageTest {
             }
         }
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(instance1);
         serviceProvider.deregister(instance2);
     }
@@ -410,7 +410,7 @@ public class MetadataStorageTest {
     @Order(8)
     @DisplayName("测试 metadata 大量字段")
     public void testMetadataWithManyFields() throws InterruptedException {
-        // 创建包含大量字段的 metadata
+        // Create metadata with many fields
         Map<String, String> metadata = new HashMap<>();
         for (int i = 1; i <= 50; i++) {
             metadata.put("field_" + i, "value_" + i);
@@ -427,22 +427,22 @@ public class MetadataStorageTest {
         serviceProvider.register(instance);
         Thread.sleep(500);
 
-        // 通过服务发现验证（不再检查 Redis 内部存储格式）
+        // Verify through service discovery (no longer checking Redis internal storage format)
         List<ServiceInstance> discoveredInstances = serviceConsumer.discover("many-fields-service");
         assertEquals(1, discoveredInstances.size());
 
         ServiceInstance discoveredInstance = discoveredInstances.get(0);
         Map<String, String> discoveredMetadata = discoveredInstance.getMetadata();
 
-        // 验证所有字段都能正确读取
+        // Verify all fields can be correctly read
         assertEquals(50, discoveredMetadata.size(), "Should retrieve all 50 metadata fields");
 
-        // 抽样验证几个字段
+        // Spot-check a few fields
         assertEquals("value_1", discoveredMetadata.get("field_1"));
         assertEquals("value_25", discoveredMetadata.get("field_25"));
         assertEquals("value_50", discoveredMetadata.get("field_50"));
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(instance);
     }
 }

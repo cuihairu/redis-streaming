@@ -10,8 +10,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
- * 客户端健康探测器
- * 负责探测服务实例的健康状态并汇报给注册中心
+ * Client health checker
+ * Responsible for probing the health status of service instances and reporting to the registry
  */
 public class ClientHealthChecker {
     private static final Logger logger = LoggerFactory.getLogger(ClientHealthChecker.class);
@@ -42,7 +42,7 @@ public class ClientHealthChecker {
     }
     
     /**
-     * 启动健康检查
+     * Start the health check
      */
     public void start() {
         if (running) {
@@ -56,7 +56,7 @@ public class ClientHealthChecker {
     }
     
     /**
-     * 停止健康检查
+     * Stop the health check
      */
     public void stop() {
         if (!running) {
@@ -77,13 +77,13 @@ public class ClientHealthChecker {
     }
     
     /**
-     * 执行健康检查
+     * Perform the health check
      */
     private void checkHealth() {
         try {
             boolean isHealthy = healthChecker.check(serviceInstance);
             
-            // 只有在健康状态发生变化时才汇报
+            // Only report when health status changes
             if (isHealthy != lastHealthStatus) {
                 logger.info("Health status changed for service instance {}: {} -> {}", 
                            serviceInstance.getInstanceId(), lastHealthStatus, isHealthy);
@@ -92,7 +92,7 @@ public class ClientHealthChecker {
             }
         } catch (Exception e) {
             logger.error("Error during health check for service instance: " + serviceInstance.getInstanceId(), e);
-            // 如果检查失败，认为服务不健康
+            // If the check fails, consider the service unhealthy
             if (lastHealthStatus) {
                 healthReporter.accept(false);
                 lastHealthStatus = false;
@@ -101,14 +101,14 @@ public class ClientHealthChecker {
     }
     
     /**
-     * 获取上次检查的健康状态
+     * Get the health status from the last check
      */
     public boolean getLastHealthStatus() {
         return lastHealthStatus;
     }
     
     /**
-     * 检查健康检查器是否正在运行
+     * Check if the health checker is running
      */
     public boolean isRunning() {
         return running;

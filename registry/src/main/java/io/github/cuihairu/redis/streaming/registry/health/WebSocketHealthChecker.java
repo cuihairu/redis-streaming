@@ -8,15 +8,15 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 
 /**
- * WebSocket协议健康检查器
- * 专门用于WebSocket协议的健康检查
+ * WebSocket protocol health checker
+ * Dedicated health checker for WebSocket protocol
  */
 public class WebSocketHealthChecker implements HealthChecker {
     
     private final int connectTimeoutMs;
     
     public WebSocketHealthChecker() {
-        this(5000); // 默认5秒超时
+        this(5000); // Default 5 second timeout
     }
     
     public WebSocketHealthChecker(int connectTimeoutMs) {
@@ -30,7 +30,7 @@ public class WebSocketHealthChecker implements HealthChecker {
             throw new IllegalArgumentException("WebSocketHealthChecker only supports WS/WSS protocols");
         }
         
-        // 对于WebSocket，先检查TCP连通性
+        // For WebSocket, first check TCP connectivity
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(serviceInstance.getHost(), serviceInstance.getPort()), connectTimeoutMs);
             return true;

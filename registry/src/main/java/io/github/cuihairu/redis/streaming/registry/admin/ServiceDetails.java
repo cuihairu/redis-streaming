@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 服务详细信息
+ * Service detailed information
  */
 public class ServiceDetails {
     private String serviceName;
@@ -82,7 +82,7 @@ public class ServiceDetails {
     }
 
     /**
-     * 更新统计信息
+     * Update statistics
      */
     private void updateStatistics() {
         if (instances == null) {
@@ -97,14 +97,14 @@ public class ServiceDetails {
     }
 
     /**
-     * 获取健康率
+     * Get healthy rate
      */
     public double getHealthyRate() {
         return totalInstances > 0 ? (double) healthyInstances / totalInstances * 100 : 0;
     }
 
     /**
-     * 获取启用率
+     * Get enabled rate
      */
     public double getEnabledRate() {
         return totalInstances > 0 ? (double) enabledInstances / totalInstances * 100 : 0;

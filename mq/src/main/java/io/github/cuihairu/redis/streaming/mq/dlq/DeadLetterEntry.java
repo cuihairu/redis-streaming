@@ -1,4 +1,4 @@
-package io.github.cuihairu.redis.streaming.reliability.dlq;
+package io.github.cuihairu.redis.streaming.mq.dlq;
 
 import java.time.Instant;
 import java.util.Map;
@@ -34,4 +34,3 @@ public class DeadLetterEntry {
     public int getRetryCount() { return retryCount; }
     public int getMaxRetries() { return maxRetries; }
 }
-

@@ -1,8 +1,8 @@
 package io.github.cuihairu.redis.streaming.registry;
 
 /**
- * 消息中间件协议枚举
- * 定义基于消息中间件的服务通信协议
+ * Messaging middleware protocol enum
+ * Defines service communication protocols based on messaging middleware
  */
 public enum MessagingProtocol implements Protocol {
     REDIS_STREAM("redis-stream", false, 6379, "Redis Stream Based Service"),
@@ -53,7 +53,7 @@ public enum MessagingProtocol implements Protocol {
     }
 
     /**
-     * 根据协议名称获取协议枚举
+     * Get the protocol enum by protocol name
      */
     public static MessagingProtocol fromName(String name) {
         for (MessagingProtocol protocol : values()) {
@@ -65,49 +65,49 @@ public enum MessagingProtocol implements Protocol {
     }
 
     /**
-     * 根据是否安全获取 Redis Stream 协议
+     * Get the Redis Stream protocol based on whether it is secure
      */
     public static MessagingProtocol redisStream(boolean secure) {
         return secure ? REDIS_STREAM_TLS : REDIS_STREAM;
     }
 
     /**
-     * 根据是否安全获取 Redis Pub/Sub 协议
+     * Get the Redis Pub/Sub protocol based on whether it is secure
      */
     public static MessagingProtocol redisPubSub(boolean secure) {
         return secure ? REDIS_PUBSUB_TLS : REDIS_PUBSUB;
     }
 
     /**
-     * 根据是否安全获取 Kafka 协议
+     * Get the Kafka protocol based on whether it is secure
      */
     public static MessagingProtocol kafka(boolean secure) {
         return secure ? KAFKA_TLS : KAFKA;
     }
 
     /**
-     * 根据是否安全获取 RabbitMQ 协议
+     * Get the RabbitMQ protocol based on whether it is secure
      */
     public static MessagingProtocol rabbitmq(boolean secure) {
         return secure ? RABBITMQ_TLS : RABBITMQ;
     }
 
     /**
-     * 根据是否安全获取 Pulsar 协议
+     * Get the Pulsar protocol based on whether it is secure
      */
     public static MessagingProtocol pulsar(boolean secure) {
         return secure ? PULSAR_TLS : PULSAR;
     }
 
     /**
-     * 根据是否安全获取 NATS 协议
+     * Get the NATS protocol based on whether it is secure
      */
     public static MessagingProtocol nats(boolean secure) {
         return secure ? NATS_TLS : NATS;
     }
 
     /**
-     * 根据是否安全获取 MQTT 协议
+     * Get the MQTT protocol based on whether it is secure
      */
     public static MessagingProtocol mqtt(boolean secure) {
         return secure ? MQTTS : MQTT;

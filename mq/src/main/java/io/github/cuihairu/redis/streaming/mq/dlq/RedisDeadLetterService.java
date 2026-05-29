@@ -1,5 +1,6 @@
-package io.github.cuihairu.redis.streaming.reliability.dlq;
+package io.github.cuihairu.redis.streaming.mq.dlq;
 
+import io.github.cuihairu.redis.streaming.mq.metrics.MqMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
@@ -11,8 +12,6 @@ import java.util.Map;
 
 /**
  * Redis implementation of DeadLetterService using Redis Streams.
- * Note: replay currently writes directly to the original partition stream key for compatibility
- *       (keeps existing behavior); can be evolved to use MQ Producer via injection.
  */
 @Slf4j
 public class RedisDeadLetterService implements DeadLetterService {
@@ -76,7 +75,7 @@ public class RedisDeadLetterService implements DeadLetterService {
         try {
             long deleted = redissonClient.getStream(key).remove(id);
             boolean ok = deleted > 0;
-            if (ok) io.github.cuihairu.redis.streaming.reliability.metrics.ReliabilityMetrics.get().incDlqDelete(originalTopic);
+            if (ok) MqMetrics.get().incDlqDelete(originalTopic);
             return ok;
         } catch (Exception e) {
             log.error("Failed to delete DLQ entry: {} id={} ", key, id, e);
@@ -90,7 +89,7 @@ public class RedisDeadLetterService implements DeadLetterService {
         try {
             long size = redissonClient.getStream(key).size();
             boolean ok = redissonClient.getKeys().delete(key) > 0;
-            if (ok) io.github.cuihairu.redis.streaming.reliability.metrics.ReliabilityMetrics.get().incDlqClear(originalTopic, size);
+            if (ok) MqMetrics.get().incDlqClear(originalTopic, size);
             return ok ? size : 0;
         } catch (Exception e) {
             log.error("Failed to clear DLQ: {}", key, e);
@@ -131,7 +130,6 @@ public class RedisDeadLetterService implements DeadLetterService {
                 Object mr = data.get("maxRetries");
                 try { if (mr != null) maxRetries = (mr instanceof Number) ? ((Number) mr).intValue() : Integer.parseInt(String.valueOf(mr)); } catch (Exception ignore) {}
 
-                // If DLQ stored payload via hash reference, resolve it for the custom replay handler.
                 Object payload = data.get("payload");
                 String storageType = headers.get("x-payload-storage-type");
                 String ref = headers.get("x-payload-hash-ref");
@@ -151,16 +149,13 @@ public class RedisDeadLetterService implements DeadLetterService {
 
                 boolean ok = replayHandler.publish(originalTopic, pid, payload, headers, maxRetries);
                 long dur = System.nanoTime() - start;
-                io.github.cuihairu.redis.streaming.reliability.metrics.ReliabilityMetrics.get()
-                        .recordDlqReplay(originalTopic, pid, ok, dur);
+                MqMetrics.get().recordDlqReplay(originalTopic, pid, ok, dur);
                 return ok;
             } else {
-                // direct write fallback with basic TTL refresh for hash payload reference when present
                 String streamKey = ("stream:topic" + ":" + originalTopic + ":p:" + pid);
                 RStream<String, Object> orig = redissonClient.getStream(streamKey);
                 Map<String, Object> replay = DeadLetterCodec.buildPartitionEntryFromDlq(data, originalTopic, pid);
 
-                // If DLQ entry references hash-stored payload, attempt to extend TTL on the referenced key
                 try {
                     Object hdr = data.get("headers");
                     java.util.Map<String,String> headers = new java.util.HashMap<>();
@@ -175,10 +170,8 @@ public class RedisDeadLetterService implements DeadLetterService {
                         org.redisson.api.RBucket<String> b = redissonClient.getBucket(ref, StringCodec.INSTANCE);
                         String val = b.get();
                         if (val != null) {
-                            // extend TTL to a safe window (24h) to reduce chance of missing on immediate consume
                             b.set(val, java.time.Duration.ofHours(24));
                         } else {
-                            // annotate missing for observability; payload consumer will DLQ accordingly
                             java.util.Map<String,String> h2 = new java.util.HashMap<>();
                             Object h0 = replay.get("headers");
                             if (h0 instanceof java.util.Map) {
@@ -193,14 +186,12 @@ public class RedisDeadLetterService implements DeadLetterService {
                 StreamMessageId nid = orig.add(StreamAddArgs.entries(replay));
                 boolean ok = nid != null;
                 long dur = System.nanoTime() - start;
-                io.github.cuihairu.redis.streaming.reliability.metrics.ReliabilityMetrics.get()
-                        .recordDlqReplay(originalTopic, pid, ok, dur);
+                MqMetrics.get().recordDlqReplay(originalTopic, pid, ok, dur);
                 return ok;
             }
         } catch (Exception e) {
             log.error("Failed to replay DLQ entry: topic={}, id={}", originalTopic, id, e);
-            io.github.cuihairu.redis.streaming.reliability.metrics.ReliabilityMetrics.get()
-                    .recordDlqReplay(originalTopic, 0, false, 0);
+            MqMetrics.get().recordDlqReplay(originalTopic, 0, false, 0);
             return false;
         }
     }

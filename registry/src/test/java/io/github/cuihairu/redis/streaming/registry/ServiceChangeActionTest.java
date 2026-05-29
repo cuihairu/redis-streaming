@@ -186,42 +186,42 @@ class ServiceChangeActionTest {
 
     @Test
     void testAddedSemantics() {
-        // 服务实例添加
+        // Service instance added
         ServiceChangeAction action = ServiceChangeAction.ADDED;
         assertEquals("added", action.getValue());
     }
 
     @Test
     void testRemovedSemantics() {
-        // 服务实例移除
+        // Service instance removed
         ServiceChangeAction action = ServiceChangeAction.REMOVED;
         assertEquals("removed", action.getValue());
     }
 
     @Test
     void testUpdatedSemantics() {
-        // 服务实例更新
+        // Service instance updated
         ServiceChangeAction action = ServiceChangeAction.UPDATED;
         assertEquals("updated", action.getValue());
     }
 
     @Test
     void testCurrentSemantics() {
-        // 当前状态（用于订阅时立即通知现有实例）
+        // Current state (used to immediately notify existing instances upon subscription)
         ServiceChangeAction action = ServiceChangeAction.CURRENT;
         assertEquals("current", action.getValue());
     }
 
     @Test
     void testHealthRecoverySemantics() {
-        // 健康状态恢复
+        // Health status recovered
         ServiceChangeAction action = ServiceChangeAction.HEALTH_RECOVERY;
         assertEquals("health_recovery", action.getValue());
     }
 
     @Test
     void testHealthFailureSemantics() {
-        // 健康状态失败
+        // Health status failed
         ServiceChangeAction action = ServiceChangeAction.HEALTH_FAILURE;
         assertEquals("health_failure", action.getValue());
     }

@@ -7,7 +7,7 @@ import java.util.Map;
 import io.github.cuihairu.redis.streaming.core.utils.SystemUtils;
 
 /**
- * 应用程序指标收集器
+ * Application metric collector
  */
 public class ApplicationMetricCollector implements MetricCollector {
 

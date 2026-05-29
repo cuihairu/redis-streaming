@@ -1,4 +1,4 @@
-package io.github.cuihairu.redis.streaming.reliability.dlq;
+package io.github.cuihairu.redis.streaming.mq.dlq;
 
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RedissonClient;
@@ -11,11 +11,6 @@ import java.util.stream.Collectors;
 
 /**
  * Default Redis-based implementation of DeadLetterAdmin.
- *
- * Responsibilities:
- * - Discover DLQ topics via key pattern scan ("{prefix}:*:dlq");
- * - Delegate list/size/replay/delete/clear to DeadLetterService;
- * - Convert raw DLQ entries to DeadLetterEntry domain.
  */
 @Slf4j
 public class RedisDeadLetterAdmin implements DeadLetterAdmin {
@@ -30,12 +25,11 @@ public class RedisDeadLetterAdmin implements DeadLetterAdmin {
 
     @Override
     public List<String> listTopics() {
-        String pattern = DlqKeys.dlq("*"); // e.g. "stream:topic:*:dlq"
+        String pattern = DlqKeys.dlq("*");
         List<String> topics = new ArrayList<>();
         try {
-            // Avoid deprecated pattern APIs: scan all keys and filter suffix/prefix
-            String startToken = DlqKeys.dlq(""); // e.g. "stream:topic::dlq"
-            startToken = startToken.substring(0, Math.max(0, startToken.length() - ":dlq".length())); // "stream:topic:"
+            String startToken = DlqKeys.dlq("");
+            startToken = startToken.substring(0, Math.max(0, startToken.length() - ":dlq".length()));
             Iterable<String> all = redissonClient.getKeys().getKeys();
             for (String key : all) {
                 if (key == null) continue;
@@ -123,14 +117,13 @@ public class RedisDeadLetterAdmin implements DeadLetterAdmin {
         }
     }
 
-    // Extract {topic} from "{prefix}:{topic}:dlq" safely (topic may contain colons)
     private String extractTopicFromDlqKey(String key) {
         if (key == null) return null;
         String suffix = ":dlq";
         int end = key.lastIndexOf(suffix);
         if (end <= 0) return null;
-        String probe = DlqKeys.dlq(""); // e.g. "stream:topic::dlq"
-        String startToken = probe.substring(0, Math.max(0, probe.length() - suffix.length())); // "stream:topic:"
+        String probe = DlqKeys.dlq("");
+        String startToken = probe.substring(0, Math.max(0, probe.length() - suffix.length()));
         if (!key.startsWith(startToken)) return null;
         return key.substring(startToken.length(), end);
     }

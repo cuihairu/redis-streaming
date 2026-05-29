@@ -4,24 +4,24 @@ import lombok.Getter;
 import lombok.Setter;
 
 /**
- * Redis配置中心基础配置
- * 包含配置中心共享的配置设置
+ * Redis configuration center base configuration
+ * Contains shared configuration settings for the configuration center
  */
 @Getter
 public class BaseRedisConfig {
 
     /**
-     * 默认的Redis键前缀
+     * Default Redis key prefix
      */
     public static final String DEFAULT_KEY_PREFIX = "redis_streaming";
 
     /**
-     * Redis键前缀，用于避免键冲突
+     * Redis key prefix, used to avoid key conflicts
      */
     private String keyPrefix = DEFAULT_KEY_PREFIX;
 
     /**
-     * 是否启用键前缀
+     * Whether to enable key prefix
      */
     @Setter
     private boolean enableKeyPrefix = true;
@@ -39,20 +39,20 @@ public class BaseRedisConfig {
     }
 
     /**
-     * 设置Redis键前缀
+     * Set Redis key prefix
      *
-     * @param keyPrefix 键前缀
+     * @param keyPrefix key prefix
      */
     public void setKeyPrefix(String keyPrefix) {
         this.keyPrefix = keyPrefix;
     }
 
     /**
-     * 根据配置格式化Redis键
+     * Format Redis key based on configuration
      *
-     * @param keyPattern 键模式
-     * @param args 键参数
-     * @return 格式化后的键
+     * @param keyPattern key pattern
+     * @param args key arguments
+     * @return formatted key
      */
     public String formatKey(String keyPattern, Object... args) {
         if (enableKeyPrefix && keyPrefix != null && !keyPrefix.isEmpty()) {

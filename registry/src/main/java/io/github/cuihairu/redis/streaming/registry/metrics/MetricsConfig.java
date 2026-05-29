@@ -5,14 +5,14 @@ import java.util.*;
 import io.github.cuihairu.redis.streaming.registry.metrics.ChangeThresholdType;
 
 /**
- * 指标收集配置
+ * Metric collectionConfiguration
  */
 public class MetricsConfig {
 
-    // 启用的指标类型
+    // Enabled metric types
     private Set<String> enabledMetrics = Set.of("memory", "cpu", "application");
 
-    // 各指标的收集间隔（覆盖默认值）
+    // Collection intervals per metric type (overrides default value)
     private Map<String, Duration> collectionIntervals = Map.of(
             "memory", Duration.ofSeconds(30),
             "cpu", Duration.ofSeconds(60),
@@ -20,20 +20,20 @@ public class MetricsConfig {
             "network", Duration.ofMinutes(10)
     );
 
-    // 指标变化阈值
+    // MetricChange threshold
     private Map<String, ChangeThreshold> changeThresholds = Map.of(
             MetricKeys.MEMORY_HEAP_USAGE_PERCENT, new ChangeThreshold(10.0, ChangeThresholdType.ABSOLUTE),
             MetricKeys.CPU_PROCESS_LOAD, new ChangeThreshold(0.20, ChangeThresholdType.ABSOLUTE),
             MetricKeys.DISK_USAGE_PERCENT, new ChangeThreshold(5.0, ChangeThresholdType.ABSOLUTE)
     );
 
-    // 默认收集间隔
+    // DefaultCollectInterval
     private Duration defaultCollectionInterval = Duration.ofMinutes(1);
 
-    // 是否在变化显著时立即更新
+    // Whether to update immediately when significant changes are detected
     private boolean immediateUpdateOnSignificantChange = true;
 
-    // 收集超时时间
+    // Collection timeout
     private Duration collectionTimeout = Duration.ofSeconds(5);
 
     public Set<String> getEnabledMetrics() {

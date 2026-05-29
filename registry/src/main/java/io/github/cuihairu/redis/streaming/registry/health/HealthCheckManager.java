@@ -11,8 +11,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 
 /**
- * 健康检查管理器
- * 管理多个服务实例的健康检查器
+ * Health check manager
+ * Manages health checkers for multiple service instances
  */
 public class HealthCheckManager {
     private static final Logger logger = LoggerFactory.getLogger(HealthCheckManager.class);
@@ -37,7 +37,7 @@ public class HealthCheckManager {
     }
     
     /**
-     * 为指定协议注册健康检查器
+     * Register a health checker for the specified protocol
      */
     public void registerProtocolHealthChecker(Protocol protocol, HealthChecker healthChecker) {
         protocolHealthCheckers.put(protocol, healthChecker);
@@ -45,14 +45,14 @@ public class HealthCheckManager {
     }
     
     /**
-     * 获取指定协议的健康检查器
+     * Get the health checker for the specified protocol
      */
     public HealthChecker getProtocolHealthChecker(Protocol protocol) {
         return protocolHealthCheckers.get(protocol);
     }
     
     /**
-     * 为服务实例注册健康检查器
+     * Register a health checker for a service instance
      */
     public void registerServiceInstance(ServiceInstance serviceInstance) {
         String uniqueId = serviceInstance.getUniqueId();
@@ -62,14 +62,14 @@ public class HealthCheckManager {
             return;
         }
 
-        // 根据协议获取对应的健康检查器
+        // Get the corresponding health checker based on protocol
         Protocol protocol =  serviceInstance.getProtocol();
         HealthChecker healthChecker = protocolHealthCheckers.get(protocol);
         if (healthChecker == null) {
             healthChecker = defaultHealthChecker;
         }
 
-        // 如果默认的检查器都是 null,则直接返回
+        // If the default checker is also null, return directly
         if (healthChecker == null) {
             logger.warn("No health checker registered for protocol: {}", protocol.getName());
             return;
@@ -90,8 +90,8 @@ public class HealthCheckManager {
     }
     
     /**
-     * 移除服务实例的健康检查器
-     * @param uniqueId 服务实例的全局唯一ID (serviceName:instanceId)
+     * Remove the health checker for a service instance
+     * @param uniqueId globally unique ID of the service instance (serviceName:instanceId)
      */
     public void unregisterServiceInstance(String uniqueId) {
         ClientHealthChecker healthChecker = healthCheckers.remove(uniqueId);
@@ -102,14 +102,14 @@ public class HealthCheckManager {
     }
     
     /**
-     * 移除服务实例的健康检查器
+     * Remove the health checker for a service instance
      */
     public void unregisterServiceInstance(ServiceInstance serviceInstance) {
         unregisterServiceInstance(serviceInstance.getUniqueId());
     }
     
     /**
-     * 启动所有健康检查器
+     * Start all health checkers
      */
     public void startAll() {
         healthCheckers.values().forEach(ClientHealthChecker::start);
@@ -117,7 +117,7 @@ public class HealthCheckManager {
     }
     
     /**
-     * 停止所有健康检查器
+     * Stop all health checkers
      */
     public void stopAll() {
         healthCheckers.values().forEach(ClientHealthChecker::stop);
@@ -126,15 +126,15 @@ public class HealthCheckManager {
     }
     
     /**
-     * 获取健康检查器数量
+     * Get the number of health checkers
      */
     public int getHealthCheckerCount() {
         return healthCheckers.size();
     }
     
     /**
-     * 检查指定实例的健康状态
-     * @param uniqueId 服务实例的全局唯一ID (serviceName:instanceId)
+     * Check the health status of a specified instance
+     * @param uniqueId globally unique ID of the service instance (serviceName:instanceId)
      */
     public boolean isInstanceHealthy(String uniqueId) {
         ClientHealthChecker healthChecker = healthCheckers.get(uniqueId);

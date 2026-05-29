@@ -10,12 +10,12 @@ import org.slf4j.LoggerFactory;
 import java.util.List;
 
 /**
- * 注册中心Lua脚本执行器
+ * Registry Lua script executor
  * <p>
- * 使用脚本缓存优化：
- * 1. 在初始化时通过 scriptLoad() 预加载脚本到 Redis
- * 2. 执行时使用 evalSha() 传输 SHA-1 摘要而非完整脚本
- * 3. 处理 NOSCRIPT 错误（Redis 重启/脚本被清理）时自动重新加载
+ * Uses script caching optimization:
+ * 1. Preloads scripts to Redis via scriptLoad() during initialization
+ * 2. Uses evalSha() to transmit SHA-1 digests instead of full scripts during execution
+ * 3. Automatically reloads when NOSCRIPT errors occur (Redis restart/scripts cleared)
  */
 public class RegistryLuaScriptExecutor {
 
@@ -24,7 +24,7 @@ public class RegistryLuaScriptExecutor {
     private final RedissonClient redissonClient;
     private final RScript script;
 
-    // 脚本 SHA-1 缓存（volatile 保证可见性）
+    // Script SHA-1 cache (volatile ensures visibility)
     private volatile String heartbeatUpdateScriptSha;
     private volatile String cleanupExpiredInstancesScriptSha;
     private volatile String cleanupExpiredInstancesWithSnapshotsScriptSha;
@@ -33,29 +33,29 @@ public class RegistryLuaScriptExecutor {
     private volatile String deregisterInstanceScriptSha;
     private volatile String getInstancesByMetadataScriptSha;
 
-    // 心跳更新脚本（支持 metadata 和 metrics 分离更新）
+    // Heartbeat update script (supports separate metadata and metrics updates)
     private static final String HEARTBEAT_UPDATE_SCRIPT = """
-            -- 多模式心跳更新脚本
+            -- Multi-mode heartbeat update script
             local heartbeat_key = KEYS[1]    -- ZSet
             local instance_key = KEYS[2]     -- Hash
             local instance_id = ARGV[1]
             local heartbeat_time = ARGV[2]
             local update_mode = ARGV[3]      -- "heartbeat_only" | "metrics_update" | "metadata_update" | "full_update"
-            local metadata_json = ARGV[4]    -- 可选，metadata JSON
-            local metrics_json = ARGV[5]     -- 可选，metrics JSON
-            local ttl_seconds = ARGV[6]      -- 可选，实例Hash TTL（仅用于临时实例）
+            local metadata_json = ARGV[4]    -- Optional, metadata JSON
+            local metrics_json = ARGV[5]     -- Optional, metrics JSON
+            local ttl_seconds = ARGV[6]      -- Optional, instance Hash TTL (only for ephemeral instances)
 
-            -- 参数校验
+            -- Parameter validation
             if not heartbeat_key or not instance_key or not instance_id or not heartbeat_time then
                 return redis.error_reply("Missing required parameters")
             end
 
-            -- 检查实例是否存在（心跳更新不应该创建新实例）
+            -- Check if instance exists (heartbeat update should not create new instances)
             if redis.call('EXISTS', instance_key) == 0 then
-                return 0  -- 实例不存在，可能已注销
+                return 0  -- Instance does not exist, may have been deregistered
             end
 
-            -- 总是更新心跳时间戳（ARGV参数为字符串，需转换为数字）
+            -- Always update heartbeat timestamp (ARGV parameters are strings, need to convert to number)
             local heartbeat_num = tonumber(heartbeat_time)
             if not heartbeat_num then
                 return redis.error_reply("Invalid heartbeat_time: must be a number")
@@ -63,8 +63,8 @@ public class RegistryLuaScriptExecutor {
             redis.call('ZADD', heartbeat_key, heartbeat_num, instance_id)
             redis.call('HSET', instance_key, 'lastHeartbeatTime', heartbeat_time)
 
-            -- 刷新实例Hash的TTL（仅对临时实例生效）。
-            -- 规则：ephemeral=true 或未设置表示临时实例，需要滑动过期；ephemeral=false 表示永久实例，不设置TTL。
+            -- Refresh instance Hash TTL (only effective for ephemeral instances).
+            -- Rule: ephemeral=true or unset means ephemeral instance, requires sliding expiration; ephemeral=false means persistent instance, no TTL.
             if ttl_seconds and ttl_seconds ~= '' then
                 local ttl_num = tonumber(ttl_seconds)
                 if ttl_num and ttl_num > 0 then
@@ -75,13 +75,13 @@ public class RegistryLuaScriptExecutor {
                 end
             end
 
-            -- 根据不同模式执行对应的更新
+            -- Execute corresponding updates based on different modes
             if update_mode == 'heartbeat_only' then
-                -- 只更新时间戳，已完成
+                -- Only update timestamp, done
                 return 1
 
             elseif update_mode == 'metrics_update' then
-                -- 只更新 metrics
+                -- Only update metrics
                 if metrics_json and metrics_json ~= '' then
                     redis.call('HSET', instance_key, 'metrics', metrics_json)
                     redis.call('HSET', instance_key, 'lastMetricsUpdate', heartbeat_time)
@@ -89,7 +89,7 @@ public class RegistryLuaScriptExecutor {
                 return 1
 
             elseif update_mode == 'metadata_update' then
-                -- 只更新 metadata
+                -- Only update metadata
                 if metadata_json and metadata_json ~= '' then
                     redis.call('HSET', instance_key, 'metadata', metadata_json)
                     redis.call('HSET', instance_key, 'lastMetadataUpdate', heartbeat_time)
@@ -97,7 +97,7 @@ public class RegistryLuaScriptExecutor {
                 return 1
 
             elseif update_mode == 'full_update' then
-                -- 同时更新 metadata 和 metrics
+                -- Update both metadata and metrics
                 if metadata_json and metadata_json ~= '' then
                     redis.call('HSET', instance_key, 'metadata', metadata_json)
                     redis.call('HSET', instance_key, 'lastMetadataUpdate', heartbeat_time)
@@ -112,21 +112,21 @@ public class RegistryLuaScriptExecutor {
             return 0
             """;
 
-    // 清理过期实例脚本
+    // Cleanup expired instances script
     private static final String CLEANUP_EXPIRED_INSTANCES_SCRIPT = """
-            -- 清理过期实例脚本（仅清理临时实例）
+            -- Cleanup expired instances script (only cleans up ephemeral instances)
             local heartbeat_key = KEYS[1]
             local service_name = ARGV[1]
             local current_time = ARGV[2]
             local timeout_ms = ARGV[3]
             local key_prefix = ARGV[4]
 
-            -- 参数校验
+            -- Parameter validation
             if not heartbeat_key or not service_name or not current_time or not timeout_ms or not key_prefix then
                 return redis.error_reply("Missing required parameters")
             end
 
-            -- ARGV参数为字符串，需转换为数字进行算术运算
+            -- ARGV parameters are strings, need to convert to numbers for arithmetic operations
             local current_time_num = tonumber(current_time)
             local timeout_ms_num = tonumber(timeout_ms)
             if not current_time_num or not timeout_ms_num then
@@ -141,19 +141,19 @@ public class RegistryLuaScriptExecutor {
                     local instance_id = expired_candidates[i]
                     local instance_key = key_prefix .. ':services:' .. service_name .. ':instance:' .. instance_id
 
-                    -- 获取实例的 ephemeral 属性
+                    -- Get the ephemeral property of the instance
                     local ephemeral = redis.call('HGET', instance_key, 'ephemeral')
 
-                    -- 只清理临时实例（ephemeral=true 或未设置）
-                    -- 永久实例（ephemeral=false）只标记不健康，不删除
+                    -- Only clean up ephemeral instances (ephemeral=true or unset)
+                    -- Persistent instances (ephemeral=false) are only marked unhealthy, not deleted
                     if ephemeral == nil or ephemeral == 'true' then
-                        -- 从心跳索引中删除
+                        -- Remove from heartbeat index
                         redis.call('ZREM', heartbeat_key, instance_id)
-                        -- 删除实例详情
+                        -- Delete instance details
                         redis.call('DEL', instance_key)
                         table.insert(expired_instances, instance_id)
                     else
-                        -- 永久实例只标记为不健康
+                        -- Persistent instance only marked as unhealthy
                         redis.call('HSET', instance_key, 'healthy', 'false')
                     end
                 end
@@ -162,7 +162,7 @@ public class RegistryLuaScriptExecutor {
             return expired_instances
             """;
 
-    // 清理过期实例（携带实例快照）脚本：返回 [id1, json1, id2, json2, ...]
+    // Cleanup expired instances (with instance snapshots) script: returns [id1, json1, id2, json2, ...]
     private static final String CLEANUP_EXPIRED_INSTANCES_WITH_SNAPSHOTS_SCRIPT = """
             local heartbeat_key = KEYS[1]
             local service_name = ARGV[1]
@@ -209,19 +209,19 @@ public class RegistryLuaScriptExecutor {
             return result
             """;
 
-    // 获取活跃实例脚本
+    // Get active instances script
     private static final String GET_ACTIVE_INSTANCES_SCRIPT = """
-            -- 获取活跃实例脚本
+            -- Get active instances script
             local heartbeat_key = KEYS[1]
             local current_time = ARGV[1]
             local timeout_ms = ARGV[2]
 
-            -- 参数校验
+            -- Parameter validation
             if not heartbeat_key or not current_time or not timeout_ms then
                 return redis.error_reply("Missing required parameters")
             end
 
-            -- ARGV参数为字符串，需转换为数字进行算术运算
+            -- ARGV parameters are strings, need to convert to numbers for arithmetic operations
             local current_time_num = tonumber(current_time)
             local timeout_ms_num = tonumber(timeout_ms)
             if not current_time_num or not timeout_ms_num then
@@ -233,12 +233,12 @@ public class RegistryLuaScriptExecutor {
             return active_instances
             """;
 
-    // 实例注册脚本（使用新格式：metadata 和 metrics 作为 JSON 字符串）
+    // Instance registration script (uses new format: metadata and metrics as JSON strings)
     private static final String REGISTER_INSTANCE_SCRIPT = """
-            -- 实例注册脚本
-            local services_key = KEYS[1]        -- 服务索引Set
-            local heartbeat_key = KEYS[2]       -- 心跳ZSet
-            local instance_key = KEYS[3]        -- 实例详情Hash
+            -- Instance registration script
+            local services_key = KEYS[1]        -- Service index Set
+            local heartbeat_key = KEYS[2]       -- Heartbeat ZSet
+            local instance_key = KEYS[3]        -- Instance details Hash
 
             local service_name = ARGV[1]
             local instance_id = ARGV[2]
@@ -246,7 +246,7 @@ public class RegistryLuaScriptExecutor {
             local instance_data_json = ARGV[4]
             local ttl_seconds = ARGV[5]
 
-            -- 参数校验
+            -- Parameter validation
             if not services_key or not heartbeat_key or not instance_key then
                 return redis.error_reply("Missing required KEYS")
             end
@@ -254,20 +254,20 @@ public class RegistryLuaScriptExecutor {
                 return redis.error_reply("Missing required ARGV")
             end
 
-            -- 添加服务到服务索引
+            -- Add service to service index
             redis.call('SADD', services_key, service_name)
 
-            -- 添加心跳时间戳（ARGV参数为字符串，需转换为数字）
+            -- Add heartbeat timestamp (ARGV parameters are strings, need to convert to number)
             local heartbeat_num = tonumber(heartbeat_time)
             if not heartbeat_num then
                 return redis.error_reply("Invalid heartbeat_time: must be a number")
             end
             redis.call('ZADD', heartbeat_key, heartbeat_num, instance_id)
 
-            -- 解析实例数据
+            -- Parse instance data
             local instance_data = cjson.decode(instance_data_json)
 
-            -- 存储基础字段（非 metadata 和 metrics）
+            -- Store base fields (non-metadata and non-metrics)
             for key, value in pairs(instance_data) do
                 if value ~= cjson.null and key ~= 'metadata' and key ~= 'metrics' then
                     if type(value) == "table" then
@@ -278,24 +278,24 @@ public class RegistryLuaScriptExecutor {
                 end
             end
 
-            -- 存储 metadata（作为 JSON 字符串）
+            -- Store metadata (as JSON string)
             if instance_data.metadata and instance_data.metadata ~= cjson.null then
                 redis.call('HSET', instance_key, 'metadata', cjson.encode(instance_data.metadata))
             end
 
-            -- 存储 metrics（作为 JSON 字符串）
+            -- Store metrics (as JSON string)
             if instance_data.metrics and instance_data.metrics ~= cjson.null then
                 redis.call('HSET', instance_key, 'metrics', cjson.encode(instance_data.metrics))
             end
 
-            -- 添加心跳时间到Hash中（冗余存储）
+            -- Add heartbeat time to Hash (redundant storage)
             redis.call('HSET', instance_key, 'lastHeartbeatTime', heartbeat_time)
 
-            -- 设置TTL（仅对临时实例生效；ARGV参数需转换为整数）
+            -- Set TTL (only effective for ephemeral instances; ARGV parameter needs to convert to integer)
             if ttl_seconds and ttl_seconds ~= '' then
                 local ttl_num = tonumber(ttl_seconds)
                 if ttl_num and ttl_num > 0 then
-                    -- 从提交的数据判断是否临时实例（默认临时）
+                    -- Determine from submitted data if ephemeral instance (default ephemeral)
                     local ephemeral = instance_data['ephemeral']
                     if ephemeral == nil or ephemeral == true or ephemeral == 'true' then
                         redis.call('EXPIRE', instance_key, ttl_num)
@@ -306,17 +306,17 @@ public class RegistryLuaScriptExecutor {
             return 'OK'
             """;
 
-    // 实例注销脚本
+    // Instance deregistration script
     private static final String DEREGISTER_INSTANCE_SCRIPT = """
-            -- 实例注销脚本
-            local services_key = KEYS[1]        -- 服务索引Set
-            local heartbeat_key = KEYS[2]       -- 心跳ZSet
-            local instance_key = KEYS[3]        -- 实例详情Hash
+            -- Instance deregistration script
+            local services_key = KEYS[1]        -- Service index Set
+            local heartbeat_key = KEYS[2]       -- Heartbeat ZSet
+            local instance_key = KEYS[3]        -- Instance details Hash
 
             local service_name = ARGV[1]
             local instance_id = ARGV[2]
 
-            -- 参数校验
+            -- Parameter validation
             if not services_key or not heartbeat_key or not instance_key then
                 return redis.error_reply("Missing required KEYS")
             end
@@ -324,36 +324,36 @@ public class RegistryLuaScriptExecutor {
                 return redis.error_reply("Missing required ARGV")
             end
 
-            -- 从心跳索引中移除
+            -- Remove from heartbeat index
             redis.call('ZREM', heartbeat_key, instance_id)
 
-            -- 删除实例详情
+            -- Delete instance details
             redis.call('DEL', instance_key)
 
-            -- 检查心跳索引是否为空
+            -- Check if heartbeat index is empty
             local remaining_instances = redis.call('ZCARD', heartbeat_key)
             if remaining_instances == 0 then
-                -- 心跳索引为空，删除心跳Key
+                -- Heartbeat index is empty, delete heartbeat key
                 redis.call('DEL', heartbeat_key)
-                -- 从服务索引中移除该服务
+                -- Remove the service from service index
                 redis.call('SREM', services_key, service_name)
             end
 
             return 'OK'
             """;
 
-    // 根据 metadata/metrics 过滤获取实例脚本（支持比较运算符）
+    // Get instances by metadata/metrics filter script (supports comparison operators)
     private static final String GET_INSTANCES_BY_METADATA_SCRIPT = """
-            -- 根据 metadata/metrics 过滤获取实例脚本（支持比较运算符）
-            -- 注意：metadata 和 metrics 现在都以 JSON 字符串格式存储
-            local heartbeat_key = KEYS[1]       -- 心跳ZSet
-            local key_prefix = ARGV[1]          -- Redis key前缀
-            local service_name = ARGV[2]        -- 服务名
-            local current_time = ARGV[3]        -- 当前时间戳
-            local timeout_ms = ARGV[4]          -- 超时时间(毫秒)
-            local filters_json = ARGV[5]        -- 过滤条件JSON，格式: {"metadata":{},"metrics":{}}
+            -- Get instances by metadata/metrics filter script (supports comparison operators)
+            -- Note: metadata and metrics are now stored as JSON strings
+            local heartbeat_key = KEYS[1]       -- Heartbeat ZSet
+            local key_prefix = ARGV[1]          -- Redis key prefix
+            local service_name = ARGV[2]        -- Service name
+            local current_time = ARGV[3]        -- Current timestamp
+            local timeout_ms = ARGV[4]          -- Timeout (milliseconds)
+            local filters_json = ARGV[5]        -- Filter conditions JSON, format: {"metadata":{},"metrics":{}}
 
-            -- 参数校验
+            -- Parameter validation
             if not heartbeat_key or not key_prefix or not service_name then
                 return redis.error_reply("Missing required parameters")
             end
@@ -361,18 +361,18 @@ public class RegistryLuaScriptExecutor {
                 return redis.error_reply("Missing time parameters")
             end
 
-            -- 转换时间参数为数字
+            -- Convert time parameters to numbers
             local current_time_num = tonumber(current_time)
             local timeout_ms_num = tonumber(timeout_ms)
             if not current_time_num or not timeout_ms_num then
                 return redis.error_reply("Invalid time parameters: must be numbers")
             end
 
-            -- 解析过滤条件的 key（支持运算符）
-            -- 格式：field:op，例如 "age:>=" 返回 ("age", ">=")
-            -- 如果没有运算符，返回 (field, "==")
+            -- Parse filter condition keys (supports operators)
+            -- Format: field:op, e.g. "age:>=" returns ("age", ">=")
+            -- If no operator, returns (field, "==")
             local function parse_filter_key(filter_key)
-                -- 从后往前找最后一个冒号
+                -- Find the last colon from the end
                 local last_colon = 0
                 for i = 1, #filter_key do
                     if string.sub(filter_key, i, i) == ':' then
@@ -382,7 +382,7 @@ public class RegistryLuaScriptExecutor {
 
                 if last_colon > 0 then
                     local possible_op = string.sub(filter_key, last_colon + 1)
-                    -- 检查是否是有效的运算符
+                    -- Check if it is a valid operator
                     if possible_op == '==' or possible_op == '!=' or
                        possible_op == '>' or possible_op == '>=' or
                        possible_op == '<' or possible_op == '<=' then
@@ -390,19 +390,19 @@ public class RegistryLuaScriptExecutor {
                     end
                 end
 
-                -- 默认使用等于运算符
+                -- Default to equals operator
                 return filter_key, '=='
             end
 
-            -- 比较两个值
-            -- 优先尝试数值比较，失败则使用字符串比较（字典序）
+            -- Compare two values
+            -- Try numeric comparison first, fall back to string comparison (lexicographic order)
             local function compare_values(op, actual, expected)
-                -- 尝试数值转换
+                -- Try numeric conversion
                 local actual_num = tonumber(actual)
                 local expected_num = tonumber(expected)
 
                 if actual_num and expected_num then
-                    -- 数值比较
+                    -- Numeric comparison
                     if op == '==' then
                         return actual_num == expected_num
                     elseif op == '!=' then
@@ -417,7 +417,7 @@ public class RegistryLuaScriptExecutor {
                         return actual_num <= expected_num
                     end
                 else
-                    -- 字符串比较（字典序）
+                    -- String comparison (lexicographic order)
                     if op == '==' then
                         return actual == expected
                     elseif op == '!=' then
@@ -436,81 +436,81 @@ public class RegistryLuaScriptExecutor {
                 return false
             end
 
-            -- 检查单个数据源（metadata 或 metrics）的过滤条件
+            -- Check filter conditions for a single data source (metadata or metrics)
             local function check_filters(data_json, filters)
                 if not filters or next(filters) == nil then
-                    return true  -- 没有过滤条件，直接通过
+                    return true  -- No filter conditions, pass directly
                 end
 
                 if not data_json then
-                    return false  -- 需要过滤但数据不存在
+                    return false  -- Needs filtering but data does not exist
                 end
 
-                -- 解析 JSON
+                -- Parse JSON
                 local data = cjson.decode(data_json)
 
-                -- 检查所有过滤条件（AND 关系）
+                -- Check all filter conditions (AND relationship)
                 for filter_key, filter_value in pairs(filters) do
                     local field, op = parse_filter_key(filter_key)
                     local actual_value = data[field]
 
                     if not actual_value then
-                        return false  -- 字段不存在
+                        return false  -- Field does not exist
                     end
 
                     if not compare_values(op, actual_value, filter_value) then
-                        return false  -- 不匹配
+                        return false  -- Does not match
                     end
                 end
 
                 return true
             end
 
-            -- 计算活跃实例阈值
+            -- Calculate active instances threshold
             local active_threshold = current_time_num - timeout_ms_num
 
-            -- 获取所有活跃的实例ID
+            -- Get all active instance IDs
             local active_instance_ids = redis.call('ZRANGEBYSCORE', heartbeat_key, active_threshold, '+inf')
 
-            -- 解析过滤条件
+            -- Parse filter conditions
             local metadata_filters = {}
             local metrics_filters = {}
 
             if filters_json and filters_json ~= '' then
                 local all_filters = cjson.decode(filters_json)
-                -- 兼容旧格式：如果是简单的 map，当做 metadata 过滤
+                -- Compatible with old format: if it is a simple map, treat as metadata filter
                 if all_filters.metadata or all_filters.metrics then
                     metadata_filters = all_filters.metadata or {}
                     metrics_filters = all_filters.metrics or {}
                 else
-                    -- 旧格式兼容：直接当做 metadata 过滤
+                    -- Old format compatibility: treat directly as metadata filter
                     metadata_filters = all_filters
                 end
             end
 
-            -- 匹配的实例ID列表
+            -- List of matched instance IDs
             local matched_instances = {}
 
-            -- 遍历每个活跃实例，检查是否匹配过滤条件
+            -- Iterate each active instance, check if it matches filter conditions
             for i = 1, #active_instance_ids do
                 local instance_id = active_instance_ids[i]
                 local instance_key = key_prefix .. ':services:' .. service_name .. ':instance:' .. instance_id
 
-                -- 如果没有任何过滤条件，直接添加
+                -- If no filter conditions, add directly
                 if next(metadata_filters) == nil and next(metrics_filters) == nil then
                     table.insert(matched_instances, instance_id)
                 else
-                    -- 获取实例的 metadata 和 metrics JSON
+                    -- Get the instance's metadata and metrics JSON
                     local metadata_json = redis.call('HGET', instance_key, 'metadata')
                     local metrics_json = redis.call('HGET', instance_key, 'metrics')
 
-                    -- 检查 metadata 过滤条件
+                    -- Check metadata filter conditions
                     local metadata_match = check_filters(metadata_json, metadata_filters)
 
-                    -- 检查 metrics 过滤条件
+                    -- Check metrics filter conditions
                     local metrics_match = check_filters(metrics_json, metrics_filters)
 
-                    -- 所有条件都匹配才添加到结果（AND 关系）
+                    -- Add to result only if all conditions match (AND relationship)
                     if metadata_match and metrics_match then
                         table.insert(matched_instances, instance_id)
                     end
@@ -522,13 +522,13 @@ public class RegistryLuaScriptExecutor {
 
     public RegistryLuaScriptExecutor(RedissonClient redissonClient) {
         this.redissonClient = redissonClient;
-        this.script = redissonClient.getScript(StringCodec.INSTANCE); // 使用StringCodec确保参数正确传递给Lua
-        // 初始化时预加载所有脚本
+        this.script = redissonClient.getScript(StringCodec.INSTANCE); // Use StringCodec to ensure parameters are correctly passed to Lua
+        // Preload all scripts during initialization
         initScripts();
     }
 
     /**
-     * 初始化脚本：加载到 Redis 并缓存 SHA-1
+     * Initialize scripts: load into Redis and cache SHA-1 digests
      */
     private void initScripts() {
         try {
@@ -546,12 +546,12 @@ public class RegistryLuaScriptExecutor {
                     deregisterInstanceScriptSha, getInstancesByMetadataScriptSha);
         } catch (Exception e) {
             logger.error("Failed to load Lua scripts, will fallback to eval mode", e);
-            // 不抛异常，允许降级到 eval 模式
+            // Do not throw exception, allow fallback to eval mode
         }
     }
 
     /**
-     * 重新加载指定脚本（当遇到 NOSCRIPT 错误时）
+     * Reload the specified script (when a NOSCRIPT error is encountered)
      */
     private synchronized String reloadScript(String scriptContent) {
         try {
@@ -563,23 +563,23 @@ public class RegistryLuaScriptExecutor {
     }
 
     /**
-     * 执行心跳更新（使用 SHA 缓存优化，支持 metadata 和 metrics 分离更新）
+     * Execute heartbeat update (with SHA caching optimization, supports separate metadata and metrics updates)
      *
-     * @param heartbeatKey 心跳Key (ZSet)
-     * @param instanceKey 实例Key (Hash)
-     * @param instanceId 实例ID
-     * @param heartbeatTime 心跳时间戳
-     * @param updateMode 更新模式："heartbeat_only", "metrics_update", "metadata_update", "full_update"
-     * @param metadataJson metadata JSON（可为 null）
-     * @param metricsJson metrics JSON（可为 null）
-     * @param ttlSeconds TTL秒数（仅对临时实例生效）
+     * @param heartbeatKey heartbeat key (ZSet)
+     * @param instanceKey instance key (Hash)
+     * @param instanceId instance ID
+     * @param heartbeatTime heartbeat timestamp
+     * @param updateMode update mode: "heartbeat_only", "metrics_update", "metadata_update", "full_update"
+     * @param metadataJson metadata JSON (can be null)
+     * @param metricsJson metrics JSON (can be null)
+     * @param ttlSeconds TTL in seconds (only effective for ephemeral instances)
      */
     public void executeHeartbeatUpdate(String heartbeatKey, String instanceKey, String instanceId,
                                          long heartbeatTime, String updateMode,
                                          String metadataJson, String metricsJson,
                                          int ttlSeconds) {
         try {
-            // 优先使用 evalSha（传输 40 字节 SHA vs ~800 字节脚本）
+            // Prefer evalSha (transmits 40-byte SHA vs ~800-byte script)
             if (heartbeatUpdateScriptSha != null) {
                 try {
                     script.evalSha(RScript.Mode.READ_WRITE, heartbeatUpdateScriptSha, RScript.ReturnType.VALUE,
@@ -591,10 +591,10 @@ public class RegistryLuaScriptExecutor {
                     return;
                 } catch (RedisException e) {
                     if (e.getMessage() != null && e.getMessage().contains("NOSCRIPT")) {
-                        // Redis 重启或脚本被清理，重新加载
+                        // Redis restarted or script was cleared, reload
                         logger.warn("Script not found in Redis cache, reloading...");
                         heartbeatUpdateScriptSha = reloadScript(HEARTBEAT_UPDATE_SCRIPT);
-                        // 重试一次
+                        // Retry once
                         script.evalSha(RScript.Mode.READ_WRITE, heartbeatUpdateScriptSha, RScript.ReturnType.VALUE,
                                 List.of(heartbeatKey, instanceKey),
                                 instanceId, String.valueOf(heartbeatTime), updateMode,
@@ -607,7 +607,7 @@ public class RegistryLuaScriptExecutor {
                 }
             }
 
-            // 降级：直接使用 eval（初始化失败时）
+            // Fallback: use eval directly (when initialization failed)
             logger.debug("Using eval fallback for heartbeat update");
             script.eval(RScript.Mode.READ_WRITE, HEARTBEAT_UPDATE_SCRIPT, RScript.ReturnType.VALUE,
                     List.of(heartbeatKey, instanceKey),
@@ -622,7 +622,7 @@ public class RegistryLuaScriptExecutor {
     }
 
     /**
-     * 执行清理过期实例（使用 SHA 缓存优化）
+     * Execute cleanup of expired instances (with SHA caching optimization)
      */
     @SuppressWarnings("unchecked")
     public List<String> executeCleanupExpiredInstances(String heartbeatKey, String serviceName,
@@ -655,7 +655,7 @@ public class RegistryLuaScriptExecutor {
     }
 
     /**
-     * 执行清理过期实例（返回 [id,json] 对序列）
+     * Execute cleanup of expired instances (returns [id,json] pair sequence)
      */
     @SuppressWarnings("unchecked")
     public List<Object> executeCleanupExpiredInstancesWithSnapshots(String heartbeatKey, String serviceName,
@@ -688,7 +688,7 @@ public class RegistryLuaScriptExecutor {
     }
 
     /**
-     * 执行获取活跃实例（使用 SHA 缓存优化）
+     * Execute get active instances (with SHA caching optimization)
      */
     @SuppressWarnings("unchecked")
     public List<Object> executeGetActiveInstances(String heartbeatKey, long currentTime, long timeoutMs) {
@@ -720,7 +720,7 @@ public class RegistryLuaScriptExecutor {
     }
 
     /**
-     * 执行实例注册（使用 SHA 缓存优化）
+     * Execute instance registration (with SHA caching optimization)
      */
     public String executeRegisterInstance(String servicesKey, String heartbeatKey, String instanceKey,
                                           String serviceName, String instanceId, long heartbeatTime,
@@ -753,7 +753,7 @@ public class RegistryLuaScriptExecutor {
     }
 
     /**
-     * 执行实例注销（使用 SHA 缓存优化）
+     * Execute instance deregistration (with SHA caching optimization)
      */
     public String executeDeregisterInstance(String servicesKey, String heartbeatKey, String instanceKey,
                                            String serviceName, String instanceId) {
@@ -785,44 +785,44 @@ public class RegistryLuaScriptExecutor {
     }
 
     /**
-     * 根据 metadata 过滤获取服务实例（使用 SHA 缓存优化）
+     * Get service instances filtered by metadata (with SHA caching optimization)
      *
-     * @deprecated 使用 {@link #executeGetInstancesByFilters(String, String, String, long, long, String, String)} 代替
-     * @param heartbeatKey 心跳Key
-     * @param keyPrefix Redis key前缀
-     * @param serviceName 服务名
-     * @param currentTime 当前时间戳
-     * @param timeoutMs 超时时间(毫秒)
-     * @param metadataFiltersJson metadata过滤条件JSON，格式：{"key1":"value1","key2":"value2"}
-     * @return 匹配的实例ID列表
+     * @deprecated Use {@link #executeGetInstancesByFilters(String, String, String, long, long, String, String)} instead
+     * @param heartbeatKey heartbeat key
+     * @param keyPrefix Redis key prefix
+     * @param serviceName service name
+     * @param currentTime current timestamp
+     * @param timeoutMs timeout in milliseconds
+     * @param metadataFiltersJson metadata filter conditions JSON, format: {"key1":"value1","key2":"value2"}
+     * @return list of matching instance IDs
      */
     @Deprecated
     @SuppressWarnings("unchecked")
     public List<String> executeGetInstancesByMetadata(String heartbeatKey, String keyPrefix, String serviceName,
                                                        long currentTime, long timeoutMs, String metadataFiltersJson) {
-        // 向后兼容：metadata 过滤转换为新格式
+        // Backward compatibility: convert metadata filter to new format
         return executeGetInstancesByFilters(heartbeatKey, keyPrefix, serviceName,
                 currentTime, timeoutMs, metadataFiltersJson, null);
     }
 
     /**
-     * 根据 metadata/metrics 过滤获取服务实例（使用 SHA 缓存优化）
+     * Get service instances filtered by metadata/metrics (with SHA caching optimization)
      *
-     * @param heartbeatKey 心跳Key
-     * @param keyPrefix Redis key前缀
-     * @param serviceName 服务名
-     * @param currentTime 当前时间戳
-     * @param timeoutMs 超时时间(毫秒)
-     * @param metadataFiltersJson metadata过滤条件JSON，格式：{"key1":"value1","key2":"value2"}，可为null
-     * @param metricsFiltersJson metrics过滤条件JSON，格式：{"key1":"value1","key2":"value2"}，可为null
-     * @return 匹配的实例ID列表
+     * @param heartbeatKey heartbeat key
+     * @param keyPrefix Redis key prefix
+     * @param serviceName service name
+     * @param currentTime current timestamp
+     * @param timeoutMs timeout in milliseconds
+     * @param metadataFiltersJson metadata filter conditions JSON, format: {"key1":"value1","key2":"value2"}, can be null
+     * @param metricsFiltersJson metrics filter conditions JSON, format: {"key1":"value1","key2":"value2"}, can be null
+     * @return list of matching instance IDs
      */
     @SuppressWarnings("unchecked")
     public List<String> executeGetInstancesByFilters(String heartbeatKey, String keyPrefix, String serviceName,
                                                       long currentTime, long timeoutMs,
                                                       String metadataFiltersJson, String metricsFiltersJson) {
         try {
-            // 构造新格式的过滤条件 JSON
+            // Build new format filter conditions JSON
             String filtersJson = buildFiltersJson(metadataFiltersJson, metricsFiltersJson);
 
             if (getInstancesByMetadataScriptSha != null) {
@@ -855,26 +855,26 @@ public class RegistryLuaScriptExecutor {
     }
 
     /**
-     * 构造过滤条件 JSON
+     * Build filter conditions JSON
      *
-     * @param metadataFiltersJson metadata 过滤条件
-     * @param metricsFiltersJson metrics 过滤条件
-     * @return 组合后的过滤条件 JSON，格式：{"metadata":{...},"metrics":{...}}
+     * @param metadataFiltersJson metadata filter conditions
+     * @param metricsFiltersJson metrics filter conditions
+     * @return combined filter conditions JSON, format: {"metadata":{...},"metrics":{...}}
      */
     private String buildFiltersJson(String metadataFiltersJson, String metricsFiltersJson) {
         try {
-            // 如果两者都为空，返回空
+            // If both are empty, return empty
             if ((metadataFiltersJson == null || metadataFiltersJson.isEmpty()) &&
                 (metricsFiltersJson == null || metricsFiltersJson.isEmpty())) {
                 return "";
             }
 
-            // 如果只有 metadata，为了兼容旧格式，直接返回
+            // If only metadata, return directly for backward compatibility with old format
             if (metricsFiltersJson == null || metricsFiltersJson.isEmpty()) {
                 return metadataFiltersJson;
             }
 
-            // 构造新格式
+            // Build new format
             StringBuilder sb = new StringBuilder();
             sb.append("{");
 

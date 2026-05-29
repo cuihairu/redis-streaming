@@ -10,7 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * 指标收集管理器
+ * Metric collection manager
  */
 public class MetricsCollectionManager {
 
@@ -29,7 +29,7 @@ public class MetricsCollectionManager {
     }
 
     /**
-     * 收集当前应该更新的指标
+     * Collect metrics that should be updated currently
      */
     public Map<String, Object> collectMetrics(boolean forceAll) {
         long now = System.currentTimeMillis();
@@ -38,14 +38,14 @@ public class MetricsCollectionManager {
         for (MetricCollector collector : collectors) {
             String metricType = collector.getMetricType();
 
-            // 检查是否启用
+            // Check whether enabled
             if (!config.getEnabledMetrics().contains(metricType)) {
                 continue;
             }
 
-            // 检查是否需要收集
+            // Check whether collection is needed
             if (!forceAll && !shouldCollectMetric(metricType, now)) {
-                // 使用缓存的值，但依然扁平化导出 dotted/legacy 键，保证上报稳定
+                // Use cached value, but still flatten and export dotted/legacy keys for stable reporting
                 Object lastValue = lastMetrics.get(metricType);
                 if (lastValue != null) {
                     result.put(metricType, lastValue);
@@ -54,12 +54,12 @@ public class MetricsCollectionManager {
                 continue;
             }
 
-            // 收集新指标
+            // Collect new metrics
             try {
                 Object metric = collectWithTimeout(collector);
                 if (metric != null) {
                     result.put(metricType, metric);
-                    // 统一：扁平化为 dotted key（如 cpu.processCpuLoad），并做过渡期旧键双写
+                    // Flatten to dotted keys (e.g., cpu.processCpuLoad) and dual-write legacy keys during transition
                     addDottedAndLegacyKeys(metricType, metric, result);
                     lastMetrics.put(metricType, metric);
                     lastCollectionTimes.put(metricType, now);
@@ -73,8 +73,8 @@ public class MetricsCollectionManager {
     }
 
     /**
-     * 将分组的指标（如 {processCpuLoad: 0.2}）扁平化到 result 顶层（如 cpu.processCpuLoad -> 0.2），
-     * 并在过渡期同步写入旧键（大写风格）以便消费端兼容。
+     * Flatten grouped metrics (e.g., {processCpuLoad: 0.2}) to the top level of result (e.g., cpu.processCpuLoad -> 0.2),
+     * and synchronously write legacy keys (uppercase style) during the transition period for consumer compatibility.
      */
     @SuppressWarnings("unchecked")
     private void addDottedAndLegacyKeys(String metricType, Object metric, Map<String, Object> out) {
@@ -83,10 +83,10 @@ public class MetricsCollectionManager {
         for (Map.Entry<String, Object> e : m.entrySet()) {
             String leaf = e.getKey();
             Object val = e.getValue();
-            // 如果子键已经是 dotted 形式（包含点），直接使用；否则前缀 metricType.
+            // If the sub-key is already in dotted form (contains a dot), use it directly; otherwise prefix with metricType.
             String dotted = leaf.contains(".") ? leaf : (metricType + "." + leaf);
             out.put(dotted, val);
-            // 旧键映射（有限集合）
+            // Legacy key mapping (limited set)
             String legacy = legacyKeyOf(dotted);
             if (legacy != null) {
                 out.put(legacy, val);
@@ -99,9 +99,9 @@ public class MetricsCollectionManager {
     }
 
     /**
-     * Map dotted key -> 旧版大写键名（仅维护常见字段）
-     * 说明：这里访问了被 @Deprecated 标注的旧键，以实现过渡期双写；
-     * 下个小版本会移除此方法与双写逻辑。
+     * Map dotted key -> legacy uppercase key name (only common fields maintained)
+     * Note: This method accesses @Deprecated legacy keys for transition-period dual-write;
+     * both this method and the dual-write logic will be removed in the next minor version.
      */
     @SuppressWarnings("deprecation")
     private String legacyKeyOf(String dotted) {
@@ -121,7 +121,7 @@ public class MetricsCollectionManager {
     private boolean shouldCollectMetric(String metricType, long now) {
         Long lastTime = lastCollectionTimes.get(metricType);
         if (lastTime == null) {
-            return true; // 首次收集
+            return true; // First collection
         }
 
         Duration interval = config.getCollectionIntervals()
@@ -135,7 +135,7 @@ public class MetricsCollectionManager {
             return null;
         }
 
-        // 使用 CompletableFuture 实现超时控制
+        // Use CompletableFuture for timeout control
         CompletableFuture<Object> future = CompletableFuture.supplyAsync(() -> {
             try {
                 return collector.collectMetric();
@@ -148,7 +148,7 @@ public class MetricsCollectionManager {
     }
 
     /**
-     * 检查指标是否有显著变化
+     * Check whether metrics have significant changes
      */
     public boolean hasSignificantChange(Map<String, Object> newMetrics) {
         if (!config.isImmediateUpdateOnSignificantChange()) {
@@ -187,14 +187,14 @@ public class MetricsCollectionManager {
     }
 
     /**
-     * 获取最后收集的指标
+     * Get last collected metrics
      */
     public Map<String, Object> getLastMetrics() {
         return new HashMap<>(lastMetrics);
     }
 
     /**
-     * 清除指标缓存
+     * Clear metric cache
      */
     public void clearCache() {
         lastMetrics.clear();

@@ -1,8 +1,8 @@
 package io.github.cuihairu.redis.streaming.registry;
 
 /**
- * 标准协议枚举
- * 定义常用的网络协议
+ * Standard protocol enum
+ * Defines commonly used network protocols
  */
 public enum StandardProtocol implements Protocol {
     HTTP("http", false, 80, "Hypertext Transfer Protocol"),
@@ -50,7 +50,7 @@ public enum StandardProtocol implements Protocol {
     }
     
     /**
-     * 根据协议名称获取协议枚举
+     * Get the protocol enum by protocol name
      */
     public static StandardProtocol fromName(String name) {
         for (StandardProtocol protocol : values()) {
@@ -62,21 +62,21 @@ public enum StandardProtocol implements Protocol {
     }
     
     /**
-     * 根据是否安全获取HTTP协议
+     * Get the HTTP protocol based on whether it is secure
      */
     public static StandardProtocol http(boolean secure) {
         return secure ? HTTPS : HTTP;
     }
     
     /**
-     * 根据是否安全获取WebSocket协议
+     * Get the WebSocket protocol based on whether it is secure
      */
     public static StandardProtocol ws(boolean secure) {
         return secure ? WSS : WS;
     }
     
     /**
-     * 根据是否安全获取gRPC协议
+     * Get the gRPC protocol based on whether it is secure
      */
     public static StandardProtocol grpc(boolean secure) {
         return secure ? GRPCS : GRPC;

@@ -8,7 +8,7 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * 简单的采集自检：收集一次并校验关键键存在。
+ * Simple collection self-check: collect once and verify required keys are present.
  */
 public class MetricsCollectorSelfCheckTest {
 

@@ -1,24 +1,24 @@
 package io.github.cuihairu.redis.streaming.registry.metrics;
 
 /**
- * 变化阈值类型枚举
+ * Change threshold typeEnum
  */
 public enum ChangeThresholdType {
     /**
-     * 百分比变化
-     * 计算相对于旧值的百分比变化
+     * Percentage change
+     * Calculate the percentage change relative to the old value
      */
     PERCENTAGE("percentage"),
 
     /**
-     * 绝对值变化
-     * 计算新值与旧值的绝对差值
+     * Absolute value change
+     * Calculate the absolute difference between the new and old values
      */
     ABSOLUTE("absolute"),
 
     /**
-     * 任何变化
-     * 只要值不相等就认为有显著变化
+     * Any change
+     * Any unequal values are considered a significant change
      */
     ANY("any");
 
@@ -38,11 +38,11 @@ public enum ChangeThresholdType {
     }
 
     /**
-     * 从字符串值解析枚举
+     * Parse enum from string value
      *
-     * @param value 字符串值
-     * @return 对应的枚举值
-     * @throws IllegalArgumentException 如果值不匹配
+     * @param value String value
+     * @return Corresponding enum value
+     * @throws IllegalArgumentException If the value does not match
      */
     public static ChangeThresholdType fromValue(String value) {
         for (ChangeThresholdType type : values()) {

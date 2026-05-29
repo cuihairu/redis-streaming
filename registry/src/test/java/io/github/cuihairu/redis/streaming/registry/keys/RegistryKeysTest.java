@@ -4,8 +4,8 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * RegistryKeys 单元测试
- * 测试注册中心 Key 生成、验证和解析功能
+ * RegistryKeys unit tests
+ * Tests registry key generation, validation, and parsing functionality
  */
 public class RegistryKeysTest {
 
@@ -104,7 +104,7 @@ public class RegistryKeysTest {
     @Test
     public void testValidateInstanceIdThrowsOnColon() {
         RegistryKeys keys = new RegistryKeys();
-        // instanceId 包含冒号应该抛出异常
+        // instanceId containing colon should throw exception
         assertThrows(IllegalArgumentException.class, () -> {
             keys.getServiceInstanceKey("my-service", "192.168.1.1:8080");
         });
@@ -112,7 +112,7 @@ public class RegistryKeysTest {
 
     @Test
     public void testSanitizeInstanceId() {
-        // 测试实例 ID 清理
+        // Test instance ID sanitization
         assertEquals("192.168.1.1_8080", RegistryKeys.sanitizeInstanceId("192.168.1.1:8080"));
         assertEquals("instance-001", RegistryKeys.sanitizeInstanceId("instance-001"));
         assertEquals("test-instance-name", RegistryKeys.sanitizeInstanceId("test instance\tname"));
@@ -126,11 +126,11 @@ public class RegistryKeysTest {
 
     @Test
     public void testValidateAndSanitizeInstanceId() {
-        // 安全的 ID 直接返回
+        // Safe ID returned as-is
         String safeId = "instance-001";
         assertEquals(safeId, RegistryKeys.validateAndSanitizeInstanceId(safeId));
 
-        // 不安全的 ID 返回清理后的版本
+        // Unsafe ID returns sanitized version
         String unsafeId = "192.168.1.1:8080";
         String sanitized = RegistryKeys.validateAndSanitizeInstanceId(unsafeId);
         assertEquals("192.168.1.1_8080", sanitized);
@@ -153,12 +153,12 @@ public class RegistryKeysTest {
 
     @Test
     public void testIsInstanceIdSafe() {
-        // 安全的 ID
+        // Safe IDs
         assertTrue(RegistryKeys.isInstanceIdSafe("instance-001"));
         assertTrue(RegistryKeys.isInstanceIdSafe("my_instance_123"));
         assertTrue(RegistryKeys.isInstanceIdSafe("192.168.1.1_8080"));
 
-        // 不安全的 ID
+        // Unsafe IDs
         assertFalse(RegistryKeys.isInstanceIdSafe("192.168.1.1:8080"));
         assertFalse(RegistryKeys.isInstanceIdSafe("instance 001"));
         assertFalse(RegistryKeys.isInstanceIdSafe("instance\t001"));
@@ -187,7 +187,7 @@ public class RegistryKeysTest {
         String serviceName = keys.extractServiceNameFromInstanceKey(instanceKey);
         assertEquals("user-service", serviceName);
 
-        // 无效的 Key
+        // Invalid keys
         assertNull(keys.extractServiceNameFromInstanceKey("invalid:key"));
         assertNull(keys.extractServiceNameFromInstanceKey("other:services:test:instance:001"));
         assertNull(keys.extractServiceNameFromInstanceKey(null));
@@ -201,7 +201,7 @@ public class RegistryKeysTest {
         String instanceId = keys.extractInstanceIdFromInstanceKey(instanceKey);
         assertEquals("instance-001", instanceId);
 
-        // 无效的 Key
+        // Invalid keys
         assertNull(keys.extractInstanceIdFromInstanceKey("invalid:key"));
         assertNull(keys.extractInstanceIdFromInstanceKey("other:services:test:instance:001"));
         assertNull(keys.extractInstanceIdFromInstanceKey(null));
@@ -215,7 +215,7 @@ public class RegistryKeysTest {
         String serviceName = keys.extractServiceNameFromHeartbeatsKey(heartbeatsKey);
         assertEquals("user-service", serviceName);
 
-        // 无效的 Key
+        // Invalid keys
         assertNull(keys.extractServiceNameFromHeartbeatsKey("invalid:key"));
         assertNull(keys.extractServiceNameFromHeartbeatsKey("other:services:test:heartbeats"));
         assertNull(keys.extractServiceNameFromHeartbeatsKey(null));
@@ -228,7 +228,7 @@ public class RegistryKeysTest {
 
         assertNotNull(templates);
         assertEquals(4, templates.length);
-        // 验证包含所有注册相关模板
+        // Verify all registry-related templates are included
         assertTrue(templates[0].contains("services"));
         assertTrue(templates[1].contains("heartbeats"));
         assertTrue(templates[2].contains("instance"));
@@ -247,7 +247,7 @@ public class RegistryKeysTest {
 
     @Test
     public void testKeyGenerationConsistency() {
-        // 测试多次调用生成相同的 Key
+        // Test that multiple calls generate the same key
         RegistryKeys keys = new RegistryKeys("test");
 
         String key1 = keys.getServiceInstanceKey("my-service", "instance-001");

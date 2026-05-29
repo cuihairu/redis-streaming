@@ -11,9 +11,9 @@ import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
 /**
- * 网络指标收集器
- * - 优先从 Tomcat MBean 读取请求/错误/连接数（若存在）
- * - 附加提供 Linux /proc/net/dev 的 rx/tx 字节计数（若存在）
+ * Network metric collector
+ * - Reads request/error/connection counts from Tomcat MBeans first (if available)
+ * - Additionally provides Linux /proc/net/dev rx/tx byte counts (if available)
  */
 public class NetworkMetricCollector implements MetricCollector {
     private static final File PROC_NET_DEV = new File("/proc/net/dev");
@@ -28,7 +28,7 @@ public class NetworkMetricCollector implements MetricCollector {
     public Object collectMetric() throws Exception {
         Map<String, Object> out = new HashMap<>();
 
-        // 1) Tomcat MBeans（可选）
+        // 1) Tomcat MBeans (optional)
         try {
             MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
             // GlobalRequestProcessor: requestCount / errorCount
@@ -47,7 +47,7 @@ public class NetworkMetricCollector implements MetricCollector {
             if (requests > 0) { out.put("requests", requests); out.put(MetricKeys.NETWORK_REQUESTS, requests); }
             if (errors > 0)   { out.put("errors", errors);     out.put(MetricKeys.NETWORK_ERRORS, errors); }
 
-            // ThreadPool: currentThreadsBusy 作为活跃连接近似
+            // ThreadPool: currentThreadsBusy as an approximation of active connections
             Set<ObjectName> tps = mbs.queryNames(new ObjectName("Catalina:type=ThreadPool,*"), null);
             long busy = 0;
             if (tps != null) {
@@ -63,7 +63,7 @@ public class NetworkMetricCollector implements MetricCollector {
             // no tomcat or no permission
         }
 
-        // 2) Linux /proc/net/dev（可选）
+        // 2) Linux /proc/net/dev (optional)
         if (PROC_NET_DEV.exists() && PROC_NET_DEV.canRead()) {
             long rx = 0, tx = 0;
             try (BufferedReader br = new BufferedReader(new FileReader(PROC_NET_DEV))) {

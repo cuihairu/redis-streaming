@@ -7,8 +7,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * GC 指标收集器
- * 汇总所有 GC 的总次数与总耗时（毫秒）
+ * GC Metric collector
+ * Aggregates total GC count and total GC time (in milliseconds) across all garbage collectors
  */
 public class GcMetricCollector implements MetricCollector {
 

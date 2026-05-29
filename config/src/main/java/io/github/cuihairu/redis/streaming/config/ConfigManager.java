@@ -3,77 +3,77 @@ package io.github.cuihairu.redis.streaming.config;
 import java.util.List;
 
 /**
- * 配置管理器接口
- * 参考Nacos Config Center设计，提供统一的配置管理能力
- * 
- * 核心概念：
- * - Config Publisher（配置发布者）：发布和管理配置
- * - Config Subscriber（配置订阅者）：获取和监听配置变更
+ * Configuration manager interface
+ * Inspired by Nacos Config Center design, providing unified configuration management capabilities
+ *
+ * Core concepts:
+ * - Config Publisher: publishes and manages configurations
+ * - Config Subscriber: retrieves and listens for configuration changes
  */
 public interface ConfigManager {
     
-    // ==================== 配置发布者接口 ====================
+    // ==================== Configuration Publisher Interface ====================
     
     /**
-     * 发布配置
-     * 配置发布者调用此方法向配置中心发布配置
-     * 
-     * @param dataId 配置ID
-     * @param group 配置组
-     * @param content 配置内容
-     * @return 发布成功返回true，否则返回false
+     * Publish configuration
+     * Configuration publishers call this method to publish configurations to the config center
+     *
+     * @param dataId configuration ID
+     * @param group configuration group
+     * @param content configuration content
+     * @return true if published successfully, false otherwise
      */
     boolean publishConfig(String dataId, String group, String content);
     
     /**
-     * 发布配置，带描述信息
-     * 
-     * @param dataId 配置ID
-     * @param group 配置组
-     * @param content 配置内容
-     * @param description 配置描述
-     * @return 发布成功返回true，否则返回false
+     * Publish configuration with description
+     *
+     * @param dataId configuration ID
+     * @param group configuration group
+     * @param content configuration content
+     * @param description configuration description
+     * @return true if published successfully, false otherwise
      */
     boolean publishConfig(String dataId, String group, String content, String description);
     
     /**
-     * 删除配置
-     * 
-     * @param dataId 配置ID
-     * @param group 配置组
-     * @return 删除成功返回true，否则返回false
+     * Remove configuration
+     *
+     * @param dataId configuration ID
+     * @param group configuration group
+     * @return true if removed successfully, false otherwise
      */
     boolean removeConfig(String dataId, String group);
     
     /**
-     * 获取配置历史记录
-     * 
-     * @param dataId 配置ID
-     * @param group 配置组
-     * @param size 历史记录数量
-     * @return 配置历史记录列表
+     * Get configuration history records
+     *
+     * @param dataId configuration ID
+     * @param group configuration group
+     * @param size number of history records to retrieve
+     * @return list of configuration history records
      */
     List<ConfigHistory> getConfigHistory(String dataId, String group, int size);
     
-    // ==================== 配置订阅者接口 ====================
+    // ==================== Configuration Subscriber Interface ====================
     
     /**
-     * 获取配置
-     * 配置订阅者调用此方法获取配置内容
-     * 
-     * @param dataId 配置ID
-     * @param group 配置组
-     * @return 配置内容，如果不存在返回null
+     * Get configuration
+     * Configuration subscribers call this method to retrieve configuration content
+     *
+     * @param dataId configuration ID
+     * @param group configuration group
+     * @return configuration content, or null if not found
      */
     String getConfig(String dataId, String group);
     
     /**
-     * 获取配置，带默认值
-     * 
-     * @param dataId 配置ID
-     * @param group 配置组
-     * @param defaultValue 默认值
-     * @return 配置内容，如果不存在返回默认值
+     * Get configuration with default value
+     *
+     * @param dataId configuration ID
+     * @param group configuration group
+     * @param defaultValue default value
+     * @return configuration content, or default value if not found
      */
     default String getConfig(String dataId, String group, String defaultValue) {
         String config = getConfig(dataId, group);
@@ -81,40 +81,40 @@ public interface ConfigManager {
     }
     
     /**
-     * 添加配置变更监听器
-     * 配置订阅者调用此方法监听配置变更
-     * 
-     * @param dataId 配置ID
-     * @param group 配置组
-     * @param listener 配置变更监听器
+     * Add configuration change listener
+     * Configuration subscribers call this method to listen for configuration changes
+     *
+     * @param dataId configuration ID
+     * @param group configuration group
+     * @param listener configuration change listener
      */
     void addListener(String dataId, String group, ConfigChangeListener listener);
     
     /**
-     * 移除配置变更监听器
-     * 
-     * @param dataId 配置ID
-     * @param group 配置组
-     * @param listener 配置变更监听器
+     * Remove configuration change listener
+     *
+     * @param dataId configuration ID
+     * @param group configuration group
+     * @param listener configuration change listener
      */
     void removeListener(String dataId, String group, ConfigChangeListener listener);
     
-    // ==================== 生命周期管理 ====================
+    // ==================== Lifecycle Management ====================
     
     /**
-     * 启动配置管理器
+     * Start the configuration manager
      */
     void start();
     
     /**
-     * 停止配置管理器
+     * Stop the configuration manager
      */
     void stop();
     
     /**
-     * 检查配置管理器是否正在运行
-     * 
-     * @return 如果正在运行返回true，否则返回false
+     * Check if the configuration manager is running
+     *
+     * @return true if running, false otherwise
      */
     boolean isRunning();
 }

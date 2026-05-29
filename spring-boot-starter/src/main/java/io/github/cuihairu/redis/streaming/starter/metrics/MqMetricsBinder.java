@@ -4,7 +4,7 @@ import io.github.cuihairu.redis.streaming.mq.admin.MessageQueueAdmin;
 import io.github.cuihairu.redis.streaming.mq.admin.model.QueueInfo;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
-import io.github.cuihairu.redis.streaming.reliability.dlq.DeadLetterService;
+import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterService;
 
 import java.util.List;
 

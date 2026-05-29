@@ -15,13 +15,13 @@ import io.github.cuihairu.redis.streaming.mq.MessageProducer;
 import io.github.cuihairu.redis.streaming.mq.admin.MessageQueueAdmin;
 import io.github.cuihairu.redis.streaming.mq.admin.impl.RedisMessageQueueAdmin;
 import io.github.cuihairu.redis.streaming.mq.DeadLetterQueueManager;
-import io.github.cuihairu.redis.streaming.reliability.dlq.DeadLetterService;
-import io.github.cuihairu.redis.streaming.reliability.dlq.DeadLetterAdmin;
-import io.github.cuihairu.redis.streaming.reliability.dlq.RedisDeadLetterAdmin;
+import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterService;
+import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterAdmin;
+import io.github.cuihairu.redis.streaming.mq.dlq.RedisDeadLetterAdmin;
 import io.github.cuihairu.redis.streaming.reliability.metrics.ReliabilityMetrics;
-import io.github.cuihairu.redis.streaming.reliability.dlq.RedisDeadLetterService;
-import io.github.cuihairu.redis.streaming.reliability.dlq.DeadLetterConsumer;
-import io.github.cuihairu.redis.streaming.reliability.dlq.RedisDeadLetterConsumer;
+import io.github.cuihairu.redis.streaming.mq.dlq.RedisDeadLetterService;
+import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterConsumer;
+import io.github.cuihairu.redis.streaming.mq.dlq.RedisDeadLetterConsumer;
 import io.github.cuihairu.redis.streaming.reliability.ratelimit.InMemorySlidingWindowRateLimiter;
 import io.github.cuihairu.redis.streaming.reliability.ratelimit.RateLimiter;
 import io.github.cuihairu.redis.streaming.reliability.ratelimit.RedisSlidingWindowRateLimiter;
@@ -43,8 +43,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Redis Streaming框架自动配置
- * 根据配置按需加载服务注册发现和配置管理功能
+ * Redis Streaming framework auto-configuration
+ * Conditionally loads service registration, discovery, and configuration management based on properties
  */
 @Slf4j
 @Configuration
@@ -53,13 +53,13 @@ import org.springframework.context.annotation.Configuration;
 public class RedisStreamingAutoConfiguration {
 
     /**
-     * 创建RedissonClient
+     * Create RedissonClient
      *
-     * 注意：如果项目中已经配置了 redisson-spring-boot-starter，
-     * 该Bean会被跳过（@ConditionalOnMissingBean），使用项目的RedissonClient配置。
+     * Note: If the project already has redisson-spring-boot-starter configured,
+     * this bean will be skipped (@ConditionalOnMissingBean) and the project's RedissonClient configuration will be used.
      *
-     * 这里提供的是简化的单机配置，适合快速开发和测试。
-     * 生产环境建议使用 redisson-spring-boot-starter 提供完整的集群/哨兵/SSL等配置。
+     * This provides simplified single-server configuration, suitable for quick development and testing.
+     * For production, it is recommended to use redisson-spring-boot-starter for full cluster/sentinel/SSL configuration.
      */
     @Bean
     @ConditionalOnMissingBean
@@ -67,8 +67,8 @@ public class RedisStreamingAutoConfiguration {
         Config config = new Config();
         RedisStreamingProperties.RedisProperties redis = properties.getRedis();
 
-        // 简化配置，仅支持单机模式
-        // 完整配置请使用 redisson-spring-boot-starter
+        // Simplified configuration, single-server mode only
+        // For full configuration, please use redisson-spring-boot-starter
         config.useSingleServer()
                 .setAddress(redis.getAddress())
                 .setPassword(redis.getPassword())
@@ -84,7 +84,7 @@ public class RedisStreamingAutoConfiguration {
     }
 
     /**
-     * 服务注册配置
+     * Service registry configuration
      */
     @Configuration
     @ConditionalOnProperty(prefix = "redis-streaming.registry", name = "enabled", havingValue = "true", matchIfMissing = true)
@@ -120,15 +120,15 @@ public class RedisStreamingAutoConfiguration {
         }
 
         /**
-         * 注册 ServiceChangeListener 注解处理器
-         * 自动扫描并注册带有 @ServiceChangeListener 注解的方法
+         * Register ServiceChangeListener annotation processor
+         * Automatically scans and registers methods annotated with @ServiceChangeListener
          */
         @Bean
         @ConditionalOnMissingBean
         @ConditionalOnBean(NamingService.class)
         public ServiceChangeListenerProcessor serviceChangeListenerProcessor(NamingService namingService) {
             log.info("Initializing ServiceChangeListenerProcessor for @ServiceChangeListener annotation");
-            // NamingService 继承了 ServiceConsumer，ServiceConsumer 继承了 ServiceDiscovery
+            // NamingService extends ServiceConsumer, which extends ServiceDiscovery
             return new ServiceChangeListenerProcessor((ServiceDiscovery) namingService);
         }
 
@@ -206,7 +206,7 @@ public class RedisStreamingAutoConfiguration {
     }
 
     /**
-     * 服务发现配置
+     * Service discovery configuration
      */
     @Configuration
     @ConditionalOnProperty(prefix = "redis-streaming.discovery", name = "enabled", havingValue = "true", matchIfMissing = true)
@@ -225,7 +225,7 @@ public class RedisStreamingAutoConfiguration {
     }
 
     /**
-     * 配置服务配置
+     * Configuration service configuration
      */
     @Configuration
     @ConditionalOnProperty(prefix = "redis-streaming.config", name = "enabled", havingValue = "true", matchIfMissing = true)
@@ -249,7 +249,7 @@ public class RedisStreamingAutoConfiguration {
     }
 
     /**
-     * MQ 自动配置
+     * MQ auto-configuration
      */
     @Configuration
     @ConditionalOnProperty(prefix = "redis-streaming.mq", name = "enabled", havingValue = "true", matchIfMissing = true)
@@ -353,12 +353,12 @@ public class RedisStreamingAutoConfiguration {
 
         @Bean
         @ConditionalOnMissingBean
-        public io.github.cuihairu.redis.streaming.reliability.dlq.ReplayHandler dlqReplayHandler(
+        public io.github.cuihairu.redis.streaming.mq.dlq.ReplayHandler dlqReplayHandler(
                 RedissonClient redissonClient,
                 MqOptions opts,
                 @org.springframework.beans.factory.annotation.Qualifier("dlqReplayProducer") MessageProducer dlqReplayProducer) {
             // Keep DLQ key space consistent with MQ stream prefix (idempotent)
-            io.github.cuihairu.redis.streaming.reliability.dlq.DlqKeys.configure(opts.getStreamKeyPrefix());
+            io.github.cuihairu.redis.streaming.mq.dlq.DlqKeys.configure(opts.getStreamKeyPrefix());
             return (topic, partitionId, payload, headers, maxRetries) -> {
                 try {
                     java.util.Map<String,String> hdr = new java.util.HashMap<>();
@@ -377,7 +377,7 @@ public class RedisStreamingAutoConfiguration {
         @Bean
         @ConditionalOnMissingBean
         public DeadLetterService deadLetterService(RedissonClient redissonClient,
-                                                   io.github.cuihairu.redis.streaming.reliability.dlq.ReplayHandler dlqReplayHandler) {
+                                                   io.github.cuihairu.redis.streaming.mq.dlq.ReplayHandler dlqReplayHandler) {
             return new RedisDeadLetterService(redissonClient, dlqReplayHandler);
         }
 
@@ -393,9 +393,9 @@ public class RedisStreamingAutoConfiguration {
         @Bean
         @ConditionalOnMissingBean
         public DeadLetterConsumer deadLetterConsumer(RedissonClient redissonClient, MqOptions opts,
-                                                     io.github.cuihairu.redis.streaming.reliability.dlq.ReplayHandler dlqReplayHandler) {
+                                                     io.github.cuihairu.redis.streaming.mq.dlq.ReplayHandler dlqReplayHandler) {
             // Ensure DLQ keys prefix aligns even if DeadLetterService bean was not requested
-            io.github.cuihairu.redis.streaming.reliability.dlq.DlqKeys.configure(opts.getStreamKeyPrefix());
+            io.github.cuihairu.redis.streaming.mq.dlq.DlqKeys.configure(opts.getStreamKeyPrefix());
             return new RedisDeadLetterConsumer(redissonClient, opts.getConsumerNamePrefix() + "dlq", opts.getDefaultDlqGroup(), dlqReplayHandler);
         }
 

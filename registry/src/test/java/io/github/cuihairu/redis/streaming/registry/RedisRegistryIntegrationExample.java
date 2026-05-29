@@ -19,30 +19,30 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Redis注册中心和配置中心集成示例
- * 演示服务注册发现和配置管理的完整功能
+ * Redis registry and configuration center integration example
+ * Demonstrates full functionality of service registration/discovery and configuration management
  */
 @Tag("integration")
 public class RedisRegistryIntegrationExample {
     
     @Test
     public void testServiceRegistryAndDiscovery() throws Exception {
-        // 创建Redis客户端
+        // Create Redis client
         Config config = new Config();
         String redisUrl = System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379");
         config.useSingleServer().setAddress(redisUrl);
         RedissonClient redissonClient = Redisson.create(config);
         
-        // 创建服务注册和发现实例
+        // Create service registration and discovery instances
         RedisServiceProvider serviceProvider = new RedisServiceProvider(redissonClient);
         RedisServiceConsumer serviceConsumer = new RedisServiceConsumer(redissonClient);
         
         try {
-            // 启动服务
+            // Start services
             serviceProvider.start();
             serviceConsumer.start();
             
-            // 创建服务实例
+            // Create service instances
             ServiceInstance instance1 = DefaultServiceInstance.builder()
                     .serviceName("user-service")
                     .instanceId("instance-1")
@@ -61,15 +61,15 @@ public class RedisRegistryIntegrationExample {
                     .metadata(createMetadata("version", "1.1", "region", "us-west"))
                     .build();
             
-            // 注册服务实例
+            // Register service instances
             System.out.println("=== 注册服务实例 ===");
             serviceProvider.register(instance1);
             serviceProvider.register(instance2);
             
-            // 等待注册完成
+            // Wait for registration to complete
             Thread.sleep(1000);
             
-            // 发现服务
+            // Discover services
             System.out.println("=== 发现服务实例 ===");
             List<ServiceInstance> instances = serviceConsumer.discover("user-service");
             System.out.println("发现 " + instances.size() + " 个服务实例:");
@@ -78,9 +78,9 @@ public class RedisRegistryIntegrationExample {
                                  " (权重: " + instance.getWeight() + ", 版本: " + instance.getMetadata().get("version") + ")");
             }
             
-            // 订阅服务变更
+            // Subscribe to service changes
             System.out.println("=== 订阅服务变更 ===");
-            CountDownLatch changeLatch = new CountDownLatch(2); // 期待2个变更事件
+            CountDownLatch changeLatch = new CountDownLatch(2); // Expect 2 change events
             
             ServiceChangeListener listener = (serviceName, action, instance, allInstances) -> {
                 System.out.println("服务变更通知: " + action + " - " + instance.getInstanceId() + 
@@ -90,16 +90,16 @@ public class RedisRegistryIntegrationExample {
             
             serviceConsumer.subscribe("user-service", listener);
             
-            // 发送心跳
+            // Send heartbeats
             System.out.println("=== 发送心跳 ===");
             serviceProvider.sendHeartbeat(instance1);
             serviceProvider.sendHeartbeat(instance2);
             
-            // 注销一个实例
+            // Deregister an instance
             System.out.println("=== 注销服务实例 ===");
             serviceProvider.deregister(instance2);
 
-            // 添加新实例
+            // Add a new instance
             ServiceInstance instance3 = DefaultServiceInstance.builder()
                     .serviceName("user-service")
                     .instanceId("instance-3")
@@ -110,11 +110,11 @@ public class RedisRegistryIntegrationExample {
                     .build();
             serviceProvider.register(instance3);
             
-            // 等待变更通知
+            // Wait for change notifications
             boolean received = changeLatch.await(5, TimeUnit.SECONDS);
             System.out.println("变更通知接收状态: " + (received ? "成功" : "超时"));
             
-            // 再次发现服务
+            // Discover services again
             System.out.println("=== 变更后的服务实例 ===");
             instances = serviceConsumer.discoverHealthy("user-service");
             System.out.println("发现 " + instances.size() + " 个健康的服务实例:");
@@ -124,7 +124,7 @@ public class RedisRegistryIntegrationExample {
             }
             
         } finally {
-            // 清理资源
+            // Clean up resources
             serviceProvider.stop();
             serviceConsumer.stop();
             redissonClient.shutdown();
@@ -133,22 +133,22 @@ public class RedisRegistryIntegrationExample {
     
     @Test
     public void testConfigService() throws Exception {
-        // 创建Redis客户端
+        // Create Redis client
         Config config = new Config();
         String redisUrl = System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379");
         config.useSingleServer().setAddress(redisUrl);
         RedissonClient redissonClient = Redisson.create(config);
         
-        // 创建配置服务
+        // Create configuration service
         ConfigService configService = new RedisConfigService(redissonClient);
         
         try {
-            // 启动配置服务
+            // Start configuration service
             configService.start();
             
             System.out.println("=== 配置管理演示 ===");
             
-            // 发布配置
+            // Publish configuration
             String dataId = "database.config";
             String group = "production";
             String configContent = "{\n" +
@@ -162,13 +162,13 @@ public class RedisRegistryIntegrationExample {
             boolean published = configService.publishConfig(dataId, group, configContent, "初始数据库配置");
             System.out.println("发布结果: " + (published ? "成功" : "失败"));
             
-            // 获取配置
+            // Get configuration
             System.out.println("=== 获取配置 ===");
             String retrievedConfig = configService.getConfig(dataId, group);
             System.out.println("获取到的配置:");
             System.out.println(retrievedConfig);
             
-            // 监听配置变更
+            // Listen for configuration changes
             System.out.println("=== 监听配置变更 ===");
             CountDownLatch configChangeLatch = new CountDownLatch(1);
             
@@ -183,7 +183,7 @@ public class RedisRegistryIntegrationExample {
             
             configService.addListener(dataId, group, listener);
             
-            // 更新配置
+            // Update configuration
             String updatedConfig = "{\n" +
                     "  \"host\": \"db.example.com\",\n" +
                     "  \"port\": 3306,\n" +
@@ -195,7 +195,7 @@ public class RedisRegistryIntegrationExample {
             boolean updated = configService.publishConfig(dataId, group, updatedConfig, "增加最大连接数");
             System.out.println("更新结果: " + (updated ? "成功" : "失败"));
             
-            // 等待配置变更通知
+            // Wait for configuration change notification
             boolean received = configChangeLatch.await(5, TimeUnit.SECONDS);
             System.out.println("配置变更通知接收状态: " + (received ? "成功" : "超时"));
             
@@ -207,7 +207,7 @@ public class RedisRegistryIntegrationExample {
     
     @Test
     public void testIntegratedScenario() throws Exception {
-        // 综合场景：服务注册发现 + 配置管理
+        // Integrated scenario: service registration/discovery + configuration management
         Config config = new Config();
         String redisUrl = System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379");
         config.useSingleServer().setAddress(redisUrl);
@@ -220,12 +220,12 @@ public class RedisRegistryIntegrationExample {
         try {
             System.out.println("=== 综合场景演示 ===");
             
-            // 启动所有服务
+            // Start all services
             serviceProvider.start();
             serviceConsumer.start();
             configService.start();
             
-            // 1. 发布服务配置
+            // 1. Publish service configuration
             String serviceConfigId = "user-service.config";
             String group = "services";
             String serviceConfig = "{\n" +
@@ -236,7 +236,7 @@ public class RedisRegistryIntegrationExample {
             
             configService.publishConfig(serviceConfigId, group, serviceConfig, "用户服务配置");
             
-            // 2. 注册服务实例（携带配置信息）
+            // 2. Register service instance (carrying configuration info)
             Map<String, String> metadata = createMetadata(
                     "version", "1.0",
                     "configGroup", group,
@@ -253,7 +253,7 @@ public class RedisRegistryIntegrationExample {
             
             serviceProvider.register(serviceInstance);
             
-            // 3. 服务消费者发现服务并获取配置
+            // 3. Service consumer discovers services and retrieves configuration
             List<ServiceInstance> instances = serviceConsumer.discoverHealthy("user-service");
             System.out.println("发现服务实例: " + instances.size() + " 个");
             
@@ -268,7 +268,7 @@ public class RedisRegistryIntegrationExample {
                 }
             }
             
-            // 4. 模拟配置更新和服务重新发现
+            // 4. Simulate configuration update and service re-discovery
             String updatedServiceConfig = "{\n" +
                     "  \"timeout\": 3000,\n" +
                     "  \"retries\": 5,\n" +
@@ -280,7 +280,7 @@ public class RedisRegistryIntegrationExample {
             System.out.println("=== 综合场景演示完成 ===");
             
         } finally {
-            // 清理资源
+            // Clean up resources
             serviceProvider.stop();
             serviceConsumer.stop();
             configService.stop();

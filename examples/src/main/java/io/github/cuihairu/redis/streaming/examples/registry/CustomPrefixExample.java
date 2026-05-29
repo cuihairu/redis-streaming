@@ -7,29 +7,29 @@ import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
 
 /**
- * 自定义Redis键前缀示例
- * 演示如何使用自定义前缀来避免Redis键冲突
+ * Custom Redis key prefix example
+ * Demonstrates how to use custom prefixes to avoid Redis key conflicts
  */
 public class CustomPrefixExample {
     
     public static void main(String[] args) throws Exception {
-        // 创建Redis客户端
+        // Create Redis client
         Config config = new Config();
         String redisUrl = System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379");
         config.useSingleServer().setAddress(redisUrl);
         RedissonClient redissonClient = Redisson.create(config);
         
         try {
-            // 创建自定义前缀的配置
+            // Create configuration with custom prefix
             NamingServiceConfig registryConfig = new NamingServiceConfig("myapp");
             
-            // 创建命名服务实例
+            // Create naming service instance
             NamingService namingService = new RedisNamingService(redissonClient, registryConfig);
             
-            // 启动服务
+            // Start service
             namingService.start();
             
-            // 注册服务实例
+            // Register service instance
             ServiceInstance instance = DefaultServiceInstance.builder()
                     .serviceName("user-service")
                     .instanceId("instance-1")
@@ -39,18 +39,18 @@ public class CustomPrefixExample {
             
             namingService.register(instance);
             
-            // 发现服务实例
+            // Discover service instances
             var instances = namingService.getAllInstances("user-service");
             System.out.println("发现服务实例数量: " + instances.size());
             
-            // 检查Redis中的键
+            // Check Redis keys
             System.out.println("Redis键前缀: " + registryConfig.getKeyPrefix());
             System.out.println("启用前缀: " + registryConfig.isEnableKeyPrefix());
             
-            // 发送心跳
+            // Send heartbeat
             namingService.sendHeartbeat(instance);
             
-            // 注销服务实例
+            // Deregister service instance
             namingService.deregister(instance);
             
             System.out.println("自定义前缀示例执行完成");

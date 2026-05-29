@@ -1,4 +1,4 @@
-package io.github.cuihairu.redis.streaming.reliability.dlq;
+package io.github.cuihairu.redis.streaming.mq.dlq;
 
 import java.util.Map;
 
@@ -7,11 +7,5 @@ import java.util.Map;
  */
 @FunctionalInterface
 public interface ReplayHandler {
-    /**
-     * Publish a message to the target topic/partition.
-     *
-     * @return true if published successfully
-     */
     boolean publish(String topic, int partitionId, Object payload, Map<String,String> headers, int maxRetries);
 }
-

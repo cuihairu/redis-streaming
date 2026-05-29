@@ -18,8 +18,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * 注册中心集成测试套件
- * 测试与 Redis 的真实交互
+ * Registry integration test suite
+ * Tests real interaction with Redis
  */
 @Tag("integration")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -46,7 +46,7 @@ public class RegistryIntegrationTest {
 
     @BeforeEach
     public void setup() {
-        // 清理测试数据避免污染
+        // Clean up test data to avoid contamination
         redissonClient.getKeys().flushdb();
 
         serviceProvider = new RedisServiceProvider(redissonClient);
@@ -69,7 +69,7 @@ public class RegistryIntegrationTest {
     @Order(1)
     @DisplayName("测试基础注册流程")
     public void testBasicRegistration() throws InterruptedException {
-        // 创建并注册临时实例
+        // Create and register an ephemeral instance
         ServiceInstance instance = DefaultServiceInstance.builder()
                 .serviceName("test-service")
                 .instanceId("test-001")
@@ -80,10 +80,10 @@ public class RegistryIntegrationTest {
 
         serviceProvider.register(instance);
 
-        // 等待注册完成
+        // Wait for registration to complete
         Thread.sleep(500);
 
-        // 发现服务
+        // Discover services
         List<ServiceInstance> instances = serviceConsumer.discover("test-service");
         assertEquals(1, instances.size());
 
@@ -93,11 +93,11 @@ public class RegistryIntegrationTest {
         assertEquals("192.168.1.100", discovered.getHost());
         assertEquals(8080, discovered.getPort());
 
-        // 注销实例
+        // Deregister instance
         serviceProvider.deregister(instance);
         Thread.sleep(500);
 
-        // 验证已注销
+        // Verify deregistered
         instances = serviceConsumer.discover("test-service");
         assertEquals(0, instances.size());
     }
@@ -106,7 +106,7 @@ public class RegistryIntegrationTest {
     @Order(2)
     @DisplayName("测试多实例注册")
     public void testMultipleInstanceRegistration() throws InterruptedException {
-        // 注册多个实例
+        // Register multiple instances
         for (int i = 1; i <= 5; i++) {
             ServiceInstance instance = DefaultServiceInstance.builder()
                     .serviceName("multi-service")
@@ -120,18 +120,18 @@ public class RegistryIntegrationTest {
 
         Thread.sleep(500);
 
-        // 验证所有实例都已注册
+        // Verify all instances are registered
         List<ServiceInstance> instances = serviceConsumer.discover("multi-service");
         assertEquals(5, instances.size());
 
-        // 验证权重设置
+        // Verify weight settings
         for (ServiceInstance instance : instances) {
             String id = instance.getInstanceId();
             int expectedWeight = Integer.parseInt(id.substring(id.lastIndexOf("-") + 1));
             assertEquals(expectedWeight, instance.getWeight());
         }
 
-        // 清理
+        // Clean up
         for (ServiceInstance instance : instances) {
             serviceProvider.deregister(instance);
         }
@@ -141,7 +141,7 @@ public class RegistryIntegrationTest {
     @Order(3)
     @DisplayName("测试临时实例 vs 永久实例")
     public void testEphemeralVsPersistentInstances() throws InterruptedException {
-        // 注册临时实例
+        // Register ephemeral instance
         ServiceInstance ephemeralInstance = DefaultServiceInstance.builder()
                 .serviceName("mixed-service")
                 .instanceId("ephemeral-001")
@@ -150,7 +150,7 @@ public class RegistryIntegrationTest {
                 .ephemeral(true)
                 .build();
 
-        // 注册永久实例
+        // Register persistent instance
         ServiceInstance persistentInstance = DefaultServiceInstance.builder()
                 .serviceName("mixed-service")
                 .instanceId("persistent-001")
@@ -164,11 +164,11 @@ public class RegistryIntegrationTest {
 
         Thread.sleep(500);
 
-        // 验证两个实例都注册成功
+        // Verify both instances registered successfully
         List<ServiceInstance> instances = serviceConsumer.discover("mixed-service");
         assertEquals(2, instances.size());
 
-        // 验证 ephemeral 属性
+        // Verify ephemeral property
         for (ServiceInstance instance : instances) {
             if (instance.getInstanceId().startsWith("ephemeral")) {
                 assertTrue(instance.isEphemeral());
@@ -177,7 +177,7 @@ public class RegistryIntegrationTest {
             }
         }
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(ephemeralInstance);
         serviceProvider.deregister(persistentInstance);
     }
@@ -196,17 +196,17 @@ public class RegistryIntegrationTest {
         serviceProvider.register(instance);
         Thread.sleep(500);
 
-        // 发送心跳
+        // Send heartbeat
         for (int i = 0; i < 3; i++) {
             serviceProvider.sendHeartbeat(instance);
             Thread.sleep(100);
         }
 
-        // 验证实例仍然活跃
+        // Verify instance is still active
         List<ServiceInstance> instances = serviceConsumer.discoverHealthy("heartbeat-service");
         assertEquals(1, instances.size());
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(instance);
     }
 
@@ -218,7 +218,7 @@ public class RegistryIntegrationTest {
         CountDownLatch removeLatch = new CountDownLatch(1);
         AtomicInteger changeCount = new AtomicInteger(0);
 
-        // 订阅服务变更
+        // Subscribe to service changes
         ServiceChangeListener listener = (serviceName, action, instance, allInstances) -> {
             changeCount.incrementAndGet();
             System.out.println("Service change: " + action + " - " + instance.getInstanceId());
@@ -232,7 +232,7 @@ public class RegistryIntegrationTest {
 
         serviceConsumer.subscribe("notification-service", listener);
 
-        // 注册实例（触发 ADDED 通知）
+        // Register instance (triggers ADDED notification)
         ServiceInstance instance = DefaultServiceInstance.builder()
                 .serviceName("notification-service")
                 .instanceId("notif-001")
@@ -244,12 +244,12 @@ public class RegistryIntegrationTest {
         boolean addReceived = addLatch.await(3, TimeUnit.SECONDS);
         assertTrue(addReceived, "Should receive ADDED notification");
 
-        // 注销实例（触发 REMOVED 通知）
+        // Deregister instance (triggers REMOVED notification)
         serviceProvider.deregister(instance);
         boolean removeReceived = removeLatch.await(3, TimeUnit.SECONDS);
         assertTrue(removeReceived, "Should receive REMOVED notification");
 
-        // 验证收到了2个通知
+        // Verify 2 notifications were received
         assertTrue(changeCount.get() >= 2);
     }
 
@@ -273,7 +273,7 @@ public class RegistryIntegrationTest {
         serviceProvider.register(instance);
         Thread.sleep(500);
 
-        // 发现服务并验证元数据
+        // Discover service and verify metadata
         List<ServiceInstance> instances = serviceConsumer.discover("metadata-service");
         assertEquals(1, instances.size());
 
@@ -283,7 +283,7 @@ public class RegistryIntegrationTest {
         assertEquals("us-east-1", discovered.getMetadata().get("region"));
         assertEquals("zone-a", discovered.getMetadata().get("zone"));
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(instance);
     }
 
@@ -301,13 +301,13 @@ public class RegistryIntegrationTest {
 
         ServiceInstance instance2 = DefaultServiceInstance.builder()
                 .serviceName("reregister-service")
-                .instanceId("same-id")  // 相同的 instanceId
-                .host("192.168.1.101")  // 不同的 host
-                .port(8081)              // 不同的 port
-                .weight(5)               // 不同的 weight
+                .instanceId("same-id")  // Same instanceId
+                .host("192.168.1.101")  // Different host
+                .port(8081)              // Different port
+                .weight(5)               // Different weight
                 .build();
 
-        // 第一次注册
+        // First registration
         serviceProvider.register(instance1);
         Thread.sleep(500);
 
@@ -315,7 +315,7 @@ public class RegistryIntegrationTest {
         assertEquals(1, instances.size());
         assertEquals("192.168.1.100", instances.get(0).getHost());
 
-        // 第二次注册（覆盖）
+        // Second registration (overwrite)
         serviceProvider.register(instance2);
         Thread.sleep(500);
 
@@ -326,7 +326,7 @@ public class RegistryIntegrationTest {
         assertEquals(8081, discovered.getPort());
         assertEquals(5, discovered.getWeight());
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(instance2);
     }
 
@@ -354,11 +354,11 @@ public class RegistryIntegrationTest {
         serviceProvider.register(grpcInstance);
         Thread.sleep(500);
 
-        // 发现所有实例
+        // Discover all instances
         List<ServiceInstance> instances = serviceConsumer.discover("protocol-service");
         assertEquals(2, instances.size());
 
-        // 验证协议
+        // Verify protocols
         boolean hasHttp = false;
         boolean hasGrpc = false;
         for (ServiceInstance instance : instances) {
@@ -370,7 +370,7 @@ public class RegistryIntegrationTest {
         }
         assertTrue(hasHttp && hasGrpc);
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(httpInstance);
         serviceProvider.deregister(grpcInstance);
     }
@@ -381,7 +381,7 @@ public class RegistryIntegrationTest {
     public void testCleanupAfterLastInstanceDeregistration() throws InterruptedException {
         String serviceName = "cleanup-service";
 
-        // 注册唯一实例
+        // Register the only instance
         ServiceInstance instance = DefaultServiceInstance.builder()
                 .serviceName(serviceName)
                 .instanceId("only-001")
@@ -392,15 +392,15 @@ public class RegistryIntegrationTest {
         serviceProvider.register(instance);
         Thread.sleep(500);
 
-        // 验证服务存在
+        // Verify service exists
         List<ServiceInstance> instances = serviceConsumer.discover(serviceName);
         assertEquals(1, instances.size());
 
-        // 注销最后一个实例
+        // Deregister the last instance
         serviceProvider.deregister(instance);
         Thread.sleep(500);
 
-        // 验证服务索引被清理
+        // Verify service index is cleaned up
         instances = serviceConsumer.discover(serviceName);
         assertEquals(0, instances.size());
     }
@@ -413,12 +413,12 @@ public class RegistryIntegrationTest {
         CountDownLatch startLatch = new CountDownLatch(1);
         CountDownLatch doneLatch = new CountDownLatch(threadCount);
 
-        // 多线程并发注册
+        // Concurrent registration from multiple threads
         for (int i = 0; i < threadCount; i++) {
             final int index = i;
             new Thread(() -> {
                 try {
-                    startLatch.await(); // 等待信号一起开始
+                    startLatch.await(); // Wait for signal to start together
 
                     ServiceInstance instance = DefaultServiceInstance.builder()
                             .serviceName("concurrent-service")
@@ -436,17 +436,17 @@ public class RegistryIntegrationTest {
             }).start();
         }
 
-        startLatch.countDown(); // 发出开始信号
+        startLatch.countDown(); // Send start signal
         boolean completed = doneLatch.await(10, TimeUnit.SECONDS);
         assertTrue(completed, "All threads should complete");
 
-        Thread.sleep(1000); // 等待所有注册完成
+        Thread.sleep(1000); // Wait for all registrations to complete
 
-        // 验证所有实例都注册成功
+        // Verify all instances registered successfully
         List<ServiceInstance> instances = serviceConsumer.discover("concurrent-service");
         assertEquals(threadCount, instances.size());
 
-        // 清理
+        // Clean up
         for (ServiceInstance instance : instances) {
             serviceProvider.deregister(instance);
         }

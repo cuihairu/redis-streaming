@@ -7,163 +7,163 @@ import java.util.List;
 import io.github.cuihairu.redis.streaming.mq.admin.model.PendingSort;
 
 /**
- * 消息队列管理接口
- * <p>提供队列监控、运维操作等功能</p>
+ * Message queue admin interface
+ * <p>Provides queue monitoring, operational management, and other features</p>
  */
 public interface MessageQueueAdmin {
 
-    // ==================== 队列信息查询 ====================
+    // ==================== Queue Information Queries ====================
 
     /**
-     * 获取队列信息
+     * Get queue information
      *
-     * @param topic 队列名称
-     * @return 队列信息
+     * @param topic queue name
+     * @return queue information
      */
     QueueInfo getQueueInfo(String topic);
 
     /**
-     * 列出所有队列
+     * List all queues
      *
-     * @return 队列名称列表
+     * @return list of queue names
      */
     List<String> listAllTopics();
 
     /**
-     * 检查队列是否存在
+     * Check if a queue exists
      *
-     * @param topic 队列名称
-     * @return 是否存在
+     * @param topic queue name
+     * @return whether the queue exists
      */
     boolean topicExists(String topic);
 
-    // ==================== 消费者组管理 ====================
+    // ==================== Consumer Group Management ====================
 
     /**
-     * 获取指定队列的所有消费者组
+     * Get all consumer groups for a given queue
      *
-     * @param topic 队列名称
-     * @return 消费者组信息列表
+     * @param topic queue name
+     * @return list of consumer group information
      */
     List<ConsumerGroupInfo> getConsumerGroups(String topic);
 
     /**
-     * 获取消费者组统计信息
+     * Get consumer group statistics
      *
-     * @param topic 队列名称
-     * @param group 消费者组名称
-     * @return 统计信息
+     * @param topic queue name
+     * @param group consumer group name
+     * @return statistics
      */
     ConsumerGroupStats getConsumerGroupStats(String topic, String group);
 
     /**
-     * 检查消费者组是否存在
+     * Check if a consumer group exists
      *
-     * @param topic 队列名称
-     * @param group 消费者组名称
-     * @return 是否存在
+     * @param topic queue name
+     * @param group consumer group name
+     * @return whether the consumer group exists
      */
     boolean consumerGroupExists(String topic, String group);
 
-    // ==================== Pending 消息管理 ====================
+    // ==================== Pending Message Management ====================
 
     /**
-     * 获取待处理消息列表
+     * Get pending message list
      *
-     * @param topic 队列名称
-     * @param group 消费者组名称
-     * @param limit 最大返回数量
-     * @return 待处理消息列表
+     * @param topic queue name
+     * @param group consumer group name
+     * @param limit maximum number of results
+     * @return list of pending messages
      */
     List<PendingMessage> getPendingMessages(String topic, String group, int limit);
 
     /**
-     * 获取待处理消息列表（带排序与过滤）
+     * Get pending message list (with sorting and filtering)
      *
-     * @param topic 队列名称
-     * @param group 消费者组名称
-     * @param limit 最大返回数量
-     * @param sort 排序字段（空闲时长/投递次数/ID）
-     * @param desc 是否倒序
-     * @param minIdleMs 最小空闲时间（毫秒），小于该值的记录将被过滤
+     * @param topic queue name
+     * @param group consumer group name
+     * @param limit maximum number of results
+     * @param sort sort field (idle time / delivery count / ID)
+     * @param desc whether to sort in descending order
+     * @param minIdleMs minimum idle time (milliseconds); records below this value will be filtered out
      */
     List<PendingMessage> getPendingMessages(String topic, String group, int limit, PendingSort sort, boolean desc, long minIdleMs);
 
     /**
-     * 获取待处理消息数量
+     * Get pending message count
      *
-     * @param topic 队列名称
-     * @param group 消费者组名称
-     * @return 待处理消息数量
+     * @param topic queue name
+     * @param group consumer group name
+     * @return pending message count
      */
     long getPendingCount(String topic, String group);
 
-    // ==================== 运维操作 ====================
+    // ==================== Operations ====================
 
     /**
-     * 清理队列（保留最新的 N 条消息）
+     * Trim the queue (keep the latest N messages)
      *
-     * @param topic 队列名称
-     * @param maxLen 保留的最大消息数
-     * @return 删除的消息数
+     * @param topic queue name
+     * @param maxLen maximum number of messages to keep
+     * @return number of deleted messages
      */
     long trimQueue(String topic, long maxLen);
 
     /**
-     * 按时间清理队列（删除超过指定时间的消息）
+     * Trim the queue by age (delete messages older than the specified time)
      *
-     * @param topic 队列名称
-     * @param maxAge 最大保留时间
-     * @return 删除的消息数
+     * @param topic queue name
+     * @param maxAge maximum retention time
+     * @return number of deleted messages
      */
     long trimQueueByAge(String topic, Duration maxAge);
 
     /**
-     * 删除队列
+     * Delete a queue
      *
-     * @param topic 队列名称
-     * @return 是否成功删除
+     * @param topic queue name
+     * @return whether the queue was successfully deleted
      */
     boolean deleteTopic(String topic);
 
     /**
-     * 删除消费者组
+     * Delete a consumer group
      *
-     * @param topic 队列名称
-     * @param group 消费者组名称
-     * @return 是否成功删除
+     * @param topic queue name
+     * @param group consumer group name
+     * @return whether the consumer group was successfully deleted
      */
     boolean deleteConsumerGroup(String topic, String group);
 
     /**
-     * 重置消费者组的消费位置
+     * Reset the consumption position of a consumer group
      *
-     * @param topic 队列名称
-     * @param group 消费者组名称
-     * @param messageId 要重置到的消息ID（"0"表示从头开始，"$"表示从最新消息开始）
-     * @return 是否成功重置
+     * @param topic queue name
+     * @param group consumer group name
+     * @param messageId the message ID to reset to ("0" means from the beginning, "$" means from the latest message)
+     * @return whether the reset was successful
      */
     boolean resetConsumerGroupOffset(String topic, String group, String messageId);
 
     /**
-     * 更新 topic 的分区数（仅允许增加）。
+     * Update the partition count for a topic (only increases are allowed).
      *
-     * @param topic 队列名称
-     * @param newPartitionCount 新分区数（必须 > 当前分区数）
-     * @return 是否更新成功
+     * @param topic queue name
+     * @param newPartitionCount new partition count (must be greater than the current partition count)
+     * @return whether the update was successful
      */
     boolean updatePartitionCount(String topic, int newPartitionCount);
 
-    // ==================== 原始消息窥视（只读） ====================
+    // ==================== Raw Message Peek (Read-Only) ====================
 
     /**
-     * 列出各分区最近的消息（按每分区条数采样聚合，按 Stream ID 降序）
+     * List recent messages across all partitions (aggregated per partition count, sorted by Stream ID descending)
      */
     List<MessageEntry> listRecent(String topic, int perPartitionCount);
 
     /**
-     * 按分区与范围读取消息（XRANGE/XREVRANGE 原样返回字段）。
-     * @param reverse true 则使用 XREVRANGE，从 toId 倒序读取
+     * Read messages by partition and range (returns fields as-is from XRANGE/XREVRANGE).
+     * @param reverse if true, uses XREVRANGE to read from toId in reverse order
      */
     List<MessageEntry> range(String topic, int partitionId, String fromId, String toId, int count, boolean reverse);
 }

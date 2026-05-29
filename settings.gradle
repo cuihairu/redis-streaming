@@ -1,41 +1,41 @@
 rootProject.name = 'streaming'
 
 // =====================================
-// Tier 1: 核心抽象层
+// Tier 1: Core abstraction layer
 // =====================================
 include 'core'
-include 'runtime'                  // 流处理运行时引擎
+include 'runtime'                  // Stream processing runtime engine
 
 // =====================================
-// Tier 2: 基础设施层
+// Tier 2: Infrastructure layer
 // =====================================
-include 'mq'                       // 消息队列（从 core 分离）
-include 'registry'                 // 服务注册发现（从 core 分离）
-include 'config'                   // 配置中心（从 registry 分离）
-include 'state'                    // 状态管理
-include 'checkpoint'               // 检查点机制
-include 'watermark'                // 水位线机制
+include 'mq'                       // Message queue (separated from core)
+include 'registry'                 // Service registration and discovery (separated from core)
+include 'config'                   // Configuration center (separated from registry)
+include 'state'                    // State management
+include 'checkpoint'               // Checkpoint mechanism
+include 'watermark'                // Watermark mechanism
 
 // =====================================
-// Tier 3: 功能模块层
+// Tier 3: Feature module layer
 // =====================================
-include 'window'                   // 窗口操作
-include 'aggregation'             // 聚合函数
-include 'table'                    // 流表二元性
-include 'join'                     // Join 操作
+include 'window'                   // Window operations
+include 'aggregation'             // Aggregation functions
+include 'table'                    // Stream-table duality
+include 'join'                     // Join operations
 include 'cdc'                      // CDC
-include 'sink'                     // 数据输出连接器
-include 'source'                   // 数据输入连接器
+include 'sink'                     // Data output connectors
+include 'source'                   // Data input connectors
 
 // =====================================
-// Tier 4: 高级功能层
+// Tier 4: Advanced features layer
 // =====================================
-include 'reliability'              // 可靠性保证
-include 'cep'                      // 复杂事件处理
+include 'reliability'              // Reliability guarantees
+include 'cep'                      // Complex event processing
 
 // =====================================
-// Tier 5: 集成层
+// Tier 5: Integration layer
 // =====================================
-include 'metrics'                  // 监控指标
-include 'spring-boot-starter'      // Spring Boot 集成
-include 'examples'                 // 示例代码
+include 'metrics'                  // Monitoring metrics
+include 'spring-boot-starter'      // Spring Boot integration
+include 'examples'                 // Example code

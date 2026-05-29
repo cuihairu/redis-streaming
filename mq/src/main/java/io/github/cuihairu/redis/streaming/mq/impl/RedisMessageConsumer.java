@@ -55,6 +55,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final PayloadLifecycleManager payloadLifecycleManager;
     private final Semaphore inFlightLimiter;
+    private final io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterService deadLetterService;
 
     public RedisMessageConsumer(RedissonClient redissonClient, String consumerName,
                                 TopicPartitionRegistry partitionRegistry,
@@ -74,6 +75,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 this.options.getRetryMaxBackoffMs());
         this.payloadLifecycleManager = new PayloadLifecycleManager(redissonClient, this.options);
         this.inFlightLimiter = this.options.getMaxInFlight() > 0 ? new Semaphore(this.options.getMaxInFlight()) : null;
+        this.deadLetterService = new io.github.cuihairu.redis.streaming.mq.dlq.RedisDeadLetterService(redissonClient);
     }
 
     public RedisMessageConsumer(RedissonClient redissonClient, String consumerName,
@@ -94,6 +96,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 this.options.getRetryMaxBackoffMs());
         this.payloadLifecycleManager = new PayloadLifecycleManager(redissonClient, this.options);
         this.inFlightLimiter = this.options.getMaxInFlight() > 0 ? new Semaphore(this.options.getMaxInFlight()) : null;
+        this.deadLetterService = new io.github.cuihairu.redis.streaming.mq.dlq.RedisDeadLetterService(redissonClient);
     }
 
     @Override
@@ -643,28 +646,17 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
 
     private void sendToDeadLetterQueue(Message message) {
         try {
-            String dlqKey = StreamKeys.dlq(message.getTopic());
-            // Use StringCodec to keep DLQ entries codec-agnostic and consistent with admin/tools
-            RStream<String, Object> dlqStream = redissonClient.getStream(dlqKey, org.redisson.client.codec.StringCodec.INSTANCE);
-            Map<String, Object> dlqData = StreamEntryCodec.buildDlqEntry(message, payloadLifecycleManager);
-            // Normalize values to strings for StringCodec to avoid binary/non-string field issues
-            java.util.Map<String, Object> serialized = new java.util.HashMap<>(dlqData.size());
-            for (java.util.Map.Entry<String, Object> e : dlqData.entrySet()) {
-                Object v = e.getValue();
-                String s;
-                try {
-                    if (v == null || v instanceof String || v instanceof Number || v instanceof Boolean) {
-                        s = String.valueOf(v == null ? "" : v);
-                    } else {
-                        s = objectMapper.writeValueAsString(v);
-                    }
-                } catch (Exception ex) {
-                    s = String.valueOf(v);
-                }
-                serialized.put(e.getKey(), s);
-            }
-            dlqStream.add(StreamAddArgs.entries(serialized));
-            log.warn("Message sent to dead letter queue: {}", dlqKey);
+            io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterRecord record = new io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterRecord();
+            record.originalTopic = message.getTopic();
+            record.payload = message.getPayload();
+            record.retryCount = message.getRetryCount();
+            record.maxRetries = message.getMaxRetries();
+            record.headers = message.getHeaders() != null ? new java.util.HashMap<>(message.getHeaders()) : new java.util.HashMap<>();
+            record.originalMessageId = message.getId();
+            record.timestamp = message.getTimestamp() != null ? message.getTimestamp() : Instant.now();
+            if (message.getKey() != null) record.headers.put("key", message.getKey());
+            deadLetterService.send(record);
+            log.warn("Message sent to dead letter queue via DeadLetterService: topic={}", message.getTopic());
         } catch (Exception e) {
             log.error("Failed to send message to dead letter queue", e);
         }

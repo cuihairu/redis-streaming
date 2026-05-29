@@ -1,27 +1,27 @@
 package io.github.cuihairu.redis.streaming.registry;
 
 /**
- * 协议接口
- * 定义服务实例支持的协议规范
+ * Protocol interface
+ * Defines the protocol specification supported by service instances
  */
 public interface Protocol {
     /**
-     * 获取协议名称
+     * Get the protocol name
      */
     String getName();
     
     /**
-     * 是否使用安全连接
+     * Whether to use a secure connection
      */
     boolean isSecure();
     
     /**
-     * 获取默认端口
+     * Get the default port
      */
     int getDefaultPort();
     
     /**
-     * 获取协议描述
+     * Get the protocol description
      */
     default String getDescription() {
         return getName();

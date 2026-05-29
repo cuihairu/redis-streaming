@@ -3,16 +3,16 @@ package io.github.cuihairu.redis.streaming.registry.health;
 import io.github.cuihairu.redis.streaming.registry.ServiceInstance;
 
 /**
- * 健康检查器接口
- * 定义健康检查的标准方法
+ * Health checker interface
+ * Defines standard methods for health checking
  */
 public interface HealthChecker {
     /**
-     * 检查服务实例的健康状态
-     * 
-     * @param serviceInstance 服务实例
-     * @return true表示健康，false表示不健康
-     * @throws Exception 检查过程中可能抛出的异常
+     * Check the health status of a service instance
+     *
+     * @param serviceInstance the service instance
+     * @return true if healthy, false if unhealthy
+     * @throws Exception exception that may be thrown during the check
      */
     boolean check(ServiceInstance serviceInstance) throws Exception;
 }

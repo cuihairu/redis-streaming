@@ -33,13 +33,13 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 基于Redis的服务提供者实现
- * 支持三级存储结构 + 智能心跳策略（通过配置开关启用）
+ * Redis-based service provider implementation
+ * Supports three-level storage structure + smart heartbeat strategy (enabled via configuration)
  *
- * <p>实现了两个接口：</p>
+ * <p>Implements two interfaces:</p>
  * <ul>
- *   <li>{@link ServiceProvider} - 业务角色视角</li>
- *   <li>{@link ServiceRegistry} - 技术操作视角</li>
+ *   <li>{@link ServiceProvider} - Business role perspective</li>
+ *   <li>{@link ServiceRegistry} - Technical operation perspective</li>
  * </ul>
  */
 public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
@@ -108,45 +108,45 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
             String serviceName = instance.getServiceName();
             String instanceId = instance.getInstanceId();
 
-            // 安全处理 serviceName，防止冒号等字符导致 key 解析问题
+            // Safely handle serviceName to prevent colons and other characters from causing key parsing issues
             String safeServiceName = RegistryKeys.validateAndSanitizeServiceName(serviceName);
 
-            // 安全处理 instanceId，防止冒号等字符导致 key 解析问题
+            // Safely handle instanceId to prevent colons and other characters from causing key parsing issues
             String safeInstanceId = RegistryKeys.validateAndSanitizeInstanceId(instanceId);
 
-            // 如果清理后的值发生变化，创建新的实例对象
+            // If sanitized values changed, create a new instance object
             if (!serviceName.equals(safeServiceName) || !instanceId.equals(safeInstanceId)) {
                 instance = createSafeInstance(instance, safeServiceName, safeInstanceId);
                 logger.info("Instance sanitized: serviceName '{}' -> '{}', instanceId '{}' -> '{}'",
                     serviceName, safeServiceName, instanceId, safeInstanceId);
-                // 更新局部变量
+                // Update local variables
                 serviceName = safeServiceName;
                 instanceId = safeInstanceId;
             }
 
             long currentTime = System.currentTimeMillis();
 
-            // 准备实例数据
+            // Prepare instance data
             Map<String, Object> instanceData = InstanceEntryCodec.buildInstanceData(instance, currentTime);
 
-            // 收集初始指标
+            // Collect initial metrics
             if (metricsManager != null) {
                 Map<String, Object> metrics = metricsManager.collectMetrics(true);
                 instanceData.put("metrics", metrics);
             }
 
-            // 使用Lua脚本执行原子注册
+            // Use Lua script for atomic registration
             String servicesKey = registryKeys.getServicesIndexKey();
             String heartbeatKey = registryKeys.getServiceHeartbeatsKey(serviceName);
             String instanceKey = registryKeys.getServiceInstanceKey(serviceName, instanceId);
 
-            // 判断是否已存在，决定事件类型（ADDED 或 UPDATED）
+            // Determine if instance already existed to decide event type (ADDED or UPDATED)
             boolean existed = false;
             try {
                 RMap<String, String> imap = redissonClient.getMap(instanceKey);
                 existed = imap.isExists();
             } catch (Exception ignore) {
-                // 非关键路径，存在异常则回退到 ADDED
+                // Non-critical path, fallback to ADDED on exception
             }
 
             luaExecutor.executeRegisterInstance(
@@ -155,10 +155,10 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
                     objectMapper.writeValueAsString(instanceData), config.getHeartbeatTimeoutSeconds()
             );
 
-            // 通知服务变更（首次为 ADDED，重复注册视为 UPDATED）
+            // Notify service change (ADDED for first time, UPDATED for re-registration)
             notifyServiceChange(serviceName, existed ? ServiceChangeAction.UPDATED : ServiceChangeAction.ADDED, instance);
 
-            // 初始化心跳状态管理器中的metadata hash，确保后续的变更检测能正常工作
+            // Initialize metadata hash in heartbeat state manager to ensure subsequent change detection works properly
             if (stateManager != null) {
                 stateManager.markMetadataUpdateCompleted(safeServiceName, safeInstanceId,
                     new HashMap<>(instance.getMetadata()));
@@ -187,21 +187,21 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
             String serviceName = instance.getServiceName();
             String instanceId = instance.getInstanceId();
 
-            // 安全处理 serviceName 和 instanceId，确保与注册时使用的key一致
+            // Safely handle serviceName and instanceId to ensure consistency with keys used during registration
             String safeServiceName = RegistryKeys.validateAndSanitizeServiceName(serviceName);
             String safeInstanceId = RegistryKeys.validateAndSanitizeInstanceId(instanceId);
 
-            // 使用Lua脚本执行原子注销
+            // Use Lua script for atomic deregistration
             String servicesKey = registryKeys.getServicesIndexKey();
             String heartbeatKey = registryKeys.getServiceHeartbeatsKey(safeServiceName);
             String instanceKey = registryKeys.getServiceInstanceKey(safeServiceName, safeInstanceId);
 
             luaExecutor.executeDeregisterInstance(servicesKey, heartbeatKey, instanceKey, safeServiceName, safeInstanceId);
 
-            // 清理本地状态
+            // Clean up local state
             stateManager.removeInstanceState(safeServiceName, safeInstanceId);
 
-            // 通知服务变更
+            // Notify service change
             notifyServiceChange(safeServiceName, ServiceChangeAction.REMOVED, instance);
 
             logger.info("Service instance deregistered: {}:{}", safeServiceName, safeInstanceId);
@@ -216,7 +216,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
     @Override
     public void sendHeartbeat(ServiceInstance instance) {
         if (!running) {
-            return; // 心跳可以静默失败
+            return; // Heartbeat can fail silently
         }
 
         try {
@@ -243,7 +243,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
         }
     }
 
-    // ==================== ServiceRegistry 接口实现（别名方法） ====================
+    // ==================== ServiceRegistry interface implementation (alias methods) ====================
 
     /**
      * Alias for sendHeartbeat (ServiceRegistry interface)
@@ -265,7 +265,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
         batchSendHeartbeats(instances);
     }
 
-    // ==================== 生命周期管理 ====================
+    // ==================== Lifecycle management ====================
 
     @Override
     public void start() {
@@ -280,7 +280,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
             return t;
         });
 
-        // 启动定时清理任务
+        // Start scheduled cleanup task
         cleanupTask = executorService.scheduleWithFixedDelay(
                 this::cleanupExpiredInstances, 60, 30, TimeUnit.SECONDS);
 
@@ -320,72 +320,72 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
     }
 
     /**
-     * 处理实例心跳（使用智能心跳策略，区分 metadata 和 metrics）
+     * Process instance heartbeat (using smart heartbeat strategy, distinguishes metadata and metrics)
      */
     private void processInstanceHeartbeat(ServiceInstance instance) {
         String serviceName = instance.getServiceName();
         String instanceId = instance.getInstanceId();
 
-        // 安全处理 serviceName 和 instanceId
+        // Safely handle serviceName and instanceId
         String safeServiceName = RegistryKeys.validateAndSanitizeServiceName(serviceName);
         String safeInstanceId = RegistryKeys.validateAndSanitizeInstanceId(instanceId);
 
-        // ========== 1. 收集当前数据 ==========
+        // ========== 1. Collect current data ==========
         Map<String, Object> currentMetrics = metricsManager != null ?
                 metricsManager.collectMetrics(false) : Collections.emptyMap();
 
         Map<String, Object> currentMetadata = new HashMap<>(instance.getMetadata());
 
-        // ========== 2. 决策：是否更新 metrics ==========
+        // ========== 2. Decision: whether to update metrics ==========
         UpdateDecision metricsDecision = currentMetrics.isEmpty() ?
                 UpdateDecision.NO_UPDATE :
                 stateManager.shouldUpdateMetrics(safeServiceName, safeInstanceId, currentMetrics);
 
-        // ========== 3. 决策：是否更新 metadata（极少触发）==========
+        // ========== 3. Decision: whether to update metadata (rarely triggered) ==========
         UpdateDecision metadataDecision = stateManager.shouldUpdateMetadata(
                 safeServiceName, safeInstanceId, currentMetadata);
 
-        // ========== 4. 合并决策并执行 ==========
+        // ========== 4. Merge decisions and execute ==========
         UpdateDecision finalDecision = mergeDecisions(metricsDecision, metadataDecision);
 
         if (finalDecision != UpdateDecision.NO_UPDATE) {
             executeUpdate(instance, safeServiceName, safeInstanceId,
                     finalDecision, currentMetadata, currentMetrics);
         } else {
-            // 完全不需要更新（既不需要心跳，也不需要数据更新）
+            // No update needed at all (neither heartbeat nor data update)
             logger.trace("No update needed for {}:{}", safeServiceName, safeInstanceId);
         }
     }
 
     /**
-     * 合并 metrics 和 metadata 的更新决策
+     * Merge metrics and metadata update decisions
      *
-     * @param metricsDecision metrics 更新决策
-     * @param metadataDecision metadata 更新决策
-     * @return 合并后的决策
+     * @param metricsDecision metrics update decision
+     * @param metadataDecision metadata update decision
+     * @return merged decision
      */
     private UpdateDecision mergeDecisions(UpdateDecision metricsDecision,
                                           UpdateDecision metadataDecision) {
-        // 优先级：FULL_UPDATE > METADATA_UPDATE > METRICS_UPDATE > HEARTBEAT_ONLY > NO_UPDATE
+        // Priority: FULL_UPDATE > METADATA_UPDATE > METRICS_UPDATE > HEARTBEAT_ONLY > NO_UPDATE
 
-        // 如果 metadata 和 metrics 都需要更新
+        // If both metadata and metrics need to be updated
         if (metadataDecision == UpdateDecision.METADATA_UPDATE &&
                 (metricsDecision == UpdateDecision.METRICS_UPDATE ||
                         metricsDecision == UpdateDecision.HEARTBEAT_ONLY)) {
             return UpdateDecision.FULL_UPDATE;
         }
 
-        // metadata 优先（因为变化少，更重要）
+        // Metadata takes priority (because it changes less, more important)
         if (metadataDecision == UpdateDecision.METADATA_UPDATE) {
             return UpdateDecision.METADATA_UPDATE;
         }
 
-        // metrics 更新
+        // Metrics update
         if (metricsDecision == UpdateDecision.METRICS_UPDATE) {
             return UpdateDecision.METRICS_UPDATE;
         }
 
-        // 只需要心跳
+        // Only heartbeat needed
         if (metricsDecision == UpdateDecision.HEARTBEAT_ONLY ||
                 metadataDecision == UpdateDecision.HEARTBEAT_ONLY) {
             return UpdateDecision.HEARTBEAT_ONLY;
@@ -395,7 +395,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
     }
 
     /**
-     * 执行更新操作
+     * Execute update operation
      */
     private void executeUpdate(ServiceInstance instance,
                                String safeServiceName,
@@ -409,7 +409,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
             String heartbeatKey = registryKeys.getServiceHeartbeatsKey(safeServiceName);
             String instanceKey = registryKeys.getServiceInstanceKey(safeServiceName, safeInstanceId);
 
-            // ========== 决定更新模式和数据 ==========
+            // ========== Determine update mode and data ==========
             String updateMode;
             String metadataJson = null;
             String metricsJson = null;
@@ -439,14 +439,14 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
                     return;  // NO_UPDATE
             }
 
-            // ========== 执行更新脚本（并刷新TTL，仅对临时实例） ==========
+            // ========== Execute update script (and refresh TTL, only for ephemeral instances) ==========
             luaExecutor.executeHeartbeatUpdate(
                     heartbeatKey, instanceKey, safeInstanceId,
                     currentTime, updateMode, metadataJson, metricsJson,
                     config.getHeartbeatTimeoutSeconds()
             );
 
-            // ========== 更新本地状态 ==========
+            // ========== Update local state ==========
             switch (decision) {
                 case METRICS_UPDATE:
                     stateManager.markMetricsUpdateCompleted(safeServiceName, safeInstanceId, metrics);
@@ -466,7 +466,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
             logger.debug("Heartbeat processed for {}:{} with mode: {}",
                     safeServiceName, safeInstanceId, updateMode);
 
-            // 发送 UPDATED 事件，便于消费者感知实例属性变化
+            // Send UPDATED event so consumers can perceive instance attribute changes
             if (!"heartbeat_only".equals(updateMode)) {
                 notifyServiceChange(safeServiceName, ServiceChangeAction.UPDATED, instance);
             }
@@ -479,11 +479,11 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
     }
 
     /**
-     * 清理过期的服务实例
+     * Cleanup expired service instances
      */
     private void cleanupExpiredInstances() {
         try {
-            // 获取所有服务
+            // Get all services
             RSet<String> servicesSet = redissonClient.getSet(registryKeys.getServicesIndexKey(), org.redisson.client.codec.StringCodec.INSTANCE);
             Set<String> services = servicesSet.readAll();
 
@@ -497,7 +497,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
     }
 
     /**
-     * 清理指定服务的过期实例
+     * Cleanup expired instances for a specified service
      */
     private void cleanupExpiredInstancesForService(String serviceName) {
         try {
@@ -507,7 +507,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
             String heartbeatKey = registryKeys.getServiceHeartbeatsKey(serviceName);
             String keyPrefix = config.getKeyPrefix() != null ? config.getKeyPrefix() : "registry";
 
-            // 调用带快照的清理脚本，结果为 [id1, json1, id2, json2, ...]
+            // Call cleanup script with snapshots, result is [id1, json1, id2, json2, ...]
             List<Object> result = luaExecutor.executeCleanupExpiredInstancesWithSnapshots(
                     heartbeatKey, serviceName, currentTime, timeoutMs, keyPrefix
             );
@@ -519,20 +519,20 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
                     String json = String.valueOf(result.get(i + 1));
                     cleaned++;
 
-                    // 清理本地状态
+                    // Clean up local state
                     stateManager.removeInstanceState(serviceName, instanceId);
 
-                    // 将 JSON 快照转换为 ServiceInstance，用于通知
+                    // Convert JSON snapshot to ServiceInstance for notification
                     ServiceInstance snapshot = buildInstanceFromSnapshot(serviceName, instanceId, json);
                     if (snapshot != null) {
                         notifyServiceChange(serviceName, ServiceChangeAction.REMOVED, snapshot);
                     } else {
-                        // 回退：仅用ID通知
+                        // Fallback: notify with ID only
                         notifyServiceChangeById(serviceName, ServiceChangeAction.REMOVED, instanceId);
                     }
                 }
 
-                // 若心跳集为空则从服务索引移除（避免残留）
+                // If heartbeat set is empty, remove from service index (avoid residual)
                 try {
                     RScoredSortedSet<String> set = redissonClient.getScoredSortedSet(heartbeatKey);
                     if (set.size() == 0) {
@@ -550,7 +550,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
     }
 
     /**
-     * 根据 Lua 返回的实例 Hash JSON 构建 ServiceInstance 快照
+     * Build ServiceInstance snapshot from instance Hash JSON returned by Lua
      */
     private ServiceInstance buildInstanceFromSnapshot(String serviceName, String instanceId, String json) {
         try {
@@ -596,7 +596,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
     // prepareInstanceData migrated to InstanceEntryCodec
 
     /**
-     * 通知服务变更
+     * Notify service change
      */
     private void notifyServiceChange(String serviceName, ServiceChangeAction action, ServiceInstance instance) {
         try {
@@ -624,7 +624,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
     }
 
     /**
-     * 通知服务变更（仅根据实例ID）
+     * Notify service change (by instance ID only)
      */
     private void notifyServiceChangeById(String serviceName, ServiceChangeAction action, String instanceId) {
         try {
@@ -638,7 +638,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
     }
 
     /**
-     * 创建安全的ServiceInstance副本，使用清理后的serviceName和instanceId
+     * Create a safe ServiceInstance copy with sanitized serviceName and instanceId
      */
     private ServiceInstance createSafeInstance(ServiceInstance original, String safeServiceName, String safeInstanceId) {
         return DefaultServiceInstance.builder()
@@ -655,35 +655,35 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
     }
 
     /**
-     * 获取配置
+     * Get configuration
      */
     public ServiceProviderConfig getConfig() {
         return config;
     }
 
     /**
-     * 获取心跳配置
+     * Get heartbeat configuration
      */
     public HeartbeatConfig getHeartbeatConfig() {
         return heartbeatConfig;
     }
 
     /**
-     * 获取状态管理器
+     * Get state manager
      */
     public HeartbeatStateManager getStateManager() {
         return stateManager;
     }
 
     /**
-     * 获取指标管理器
+     * Get metrics manager
      */
     public MetricsCollectionManager getMetricsManager() {
         return metricsManager;
     }
 
     /**
-     * 获取RegistryKeys
+     * Get RegistryKeys
      */
     public RegistryKeys getRegistryKeys() {
         return registryKeys;

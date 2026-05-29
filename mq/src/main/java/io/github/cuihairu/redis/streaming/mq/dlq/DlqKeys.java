@@ -1,8 +1,8 @@
-package io.github.cuihairu.redis.streaming.reliability.dlq;
+package io.github.cuihairu.redis.streaming.mq.dlq;
 
 /**
  * Key helper for Dead Letter Queue streams. Defaults mirror MQ StreamKeys defaults
- * to keep compatibility. Only DLQ naming is provided here to avoid depending on MQ.
+ * to keep compatibility.
  */
 public final class DlqKeys {
     private static volatile String STREAM_PREFIX = "stream:topic";
@@ -18,4 +18,3 @@ public final class DlqKeys {
         return STREAM_PREFIX + ":" + topic + ":dlq";
     }
 }
-

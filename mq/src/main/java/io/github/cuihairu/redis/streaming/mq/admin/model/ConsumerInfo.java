@@ -4,23 +4,23 @@ import lombok.Builder;
 import lombok.Data;
 
 /**
- * 单个消费者信息
+ * Individual consumer information
  */
 @Data
 @Builder
 public class ConsumerInfo {
     /**
-     * 消费者名称
+     * Consumer name
      */
     private String name;
 
     /**
-     * 待处理消息数
+     * Pending message count
      */
     private long pending;
 
     /**
-     * 空闲时间（毫秒）
+     * Idle time (milliseconds)
      */
     private long idleTime;
 }

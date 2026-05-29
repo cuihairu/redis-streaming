@@ -1,4 +1,4 @@
-package io.github.cuihairu.redis.streaming.reliability.dlq;
+package io.github.cuihairu.redis.streaming.mq.dlq;
 
 public interface DeadLetterConsumer {
     enum HandleResult { SUCCESS, RETRY, FAIL }
@@ -22,4 +22,3 @@ public interface DeadLetterConsumer {
 
     boolean isClosed();
 }
-

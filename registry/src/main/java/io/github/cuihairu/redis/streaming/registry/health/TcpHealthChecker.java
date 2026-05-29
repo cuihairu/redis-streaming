@@ -8,15 +8,15 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 
 /**
- * TCP协议健康检查器
- * 专门用于TCP协议的健康检查
+ * TCP protocol health checker
+ * Dedicated health checker for TCP protocol
  */
 public class TcpHealthChecker implements HealthChecker {
     
     private final int connectTimeoutMs;
     
     public TcpHealthChecker() {
-        this(5000); // 默认5秒超时
+        this(5000); // Default 5 second timeout
     }
     
     public TcpHealthChecker(int connectTimeoutMs) {

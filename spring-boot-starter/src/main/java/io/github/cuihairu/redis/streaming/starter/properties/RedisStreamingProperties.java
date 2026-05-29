@@ -4,104 +4,104 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * Redis Streaming框架配置属性
- * 支持服务注册发现和配置管理的统一配置
+ * Redis Streaming framework configuration properties
+ * Supports unified configuration for service registration, discovery, and configuration management
  */
 @Data
 @ConfigurationProperties(prefix = "redis-streaming")
 public class RedisStreamingProperties {
 
     /**
-     * Redis连接配置
+     * Redis connection configuration
      *
-     * 注意：这是简化的单机配置，仅适合开发和测试环境。
-     * 生产环境建议使用官方 redisson-spring-boot-starter，支持：
-     * - 集群模式（Cluster）
-     * - 哨兵模式（Sentinel）
-     * - 主从模式（Master-Slave）
-     * - SSL/TLS 加密
-     * - 更多高级配置
+     * Note: This is a simplified single-server configuration, suitable only for development and testing environments.
+     * For production, it is recommended to use the official redisson-spring-boot-starter, which supports:
+     * - Cluster mode
+     * - Sentinel mode
+     * - Master-Slave mode
+     * - SSL/TLS encryption
+     * - More advanced configuration options
      *
-     * 使用方式：添加依赖 org.redisson:redisson-spring-boot-starter:3.29.0
-     * 然后通过 spring.redis.redisson.config 配置
+     * Usage: Add dependency org.redisson:redisson-spring-boot-starter:3.29.0
+     * Then configure via spring.redis.redisson.config
      */
     private RedisProperties redis = new RedisProperties();
 
     /**
-     * 服务注册配置
+     * Service registry configuration
      */
     private RegistryProperties registry = new RegistryProperties();
 
     /**
-     * 服务发现配置
+     * Service discovery configuration
      */
     private DiscoveryProperties discovery = new DiscoveryProperties();
 
     /**
-     * 配置服务配置
+     * Configuration service configuration
      */
     private ConfigProperties config = new ConfigProperties();
 
     /**
-     * 负载均衡配置（starter级）
+     * Load balancer configuration (starter-level)
      */
     private LoadBalancerProperties loadBalancer = new LoadBalancerProperties();
 
     /**
-     * 客户端调用配置（重试/熔断等）
+     * Client invocation configuration (retry/circuit-breaker, etc.)
      */
     private InvokerProperties invoker = new InvokerProperties();
 
     /**
-     * 消息队列（MQ）配置
+     * Message queue (MQ) configuration
      */
     private MqProperties mq = new MqProperties();
 
     /**
-     * 速率限制配置
+     * Rate limiting configuration
      */
     private RateLimitProperties ratelimit = new RateLimitProperties();
 
     /**
-     * Redis单机配置（简化版）
+     * Redis single-server configuration (simplified)
      *
-     * 仅支持单机模式，适合快速开发和测试。
-     * 生产环境请使用 redisson-spring-boot-starter。
+     * Only supports single-server mode, suitable for quick development and testing.
+     * For production, please use redisson-spring-boot-starter.
      */
     @Data
     public static class RedisProperties {
         /**
-         * Redis服务器地址
+         * Redis server address
          */
         private String address = "redis://127.0.0.1:6379";
 
         /**
-         * 连接密码
+         * Connection password
          */
         private String password;
 
         /**
-         * 数据库索引
+         * Database index
          */
         private int database = 0;
 
         /**
-         * 连接超时时间(毫秒)
+         * Connection timeout (milliseconds)
          */
         private int connectTimeout = 3000;
 
         /**
-         * 响应超时时间(毫秒)
+         * Response timeout (milliseconds)
          */
         private int timeout = 3000;
 
         /**
-         * 连接池大小
+         * Connection pool size
          */
         private int connectionPoolSize = 64;
 
         /**
-         * 最小空闲连接数
+         * Minimum idle connection count
          */
         private int connectionMinimumIdleSize = 10;
     }
@@ -109,27 +109,27 @@ public class RedisStreamingProperties {
     @Data
     public static class RegistryProperties {
         /**
-         * 是否启用服务注册
+         * Whether to enable service registry
          */
         private boolean enabled = true;
 
         /**
-         * 心跳间隔时间(秒)
+         * Heartbeat interval (seconds)
          */
         private int heartbeatInterval = 30;
 
         /**
-         * 心跳超时时间(秒)
+         * Heartbeat timeout (seconds)
          */
         private int heartbeatTimeout = 90;
 
         /**
-         * 自动注册本服务实例
+         * Whether to automatically register this service instance
          */
         private boolean autoRegister = true;
 
         /**
-         * 服务实例配置
+         * Service instance configuration
          */
         private InstanceProperties instance = new InstanceProperties();
 
@@ -142,49 +142,49 @@ public class RedisStreamingProperties {
     @Data
     public static class InstanceProperties {
         /**
-         * 服务名称
+         * Service name
          */
         private String serviceName = "${spring.application.name}";
 
         /**
-         * 实例ID，不设置将自动生成
+         * Instance ID; if not set, it will be auto-generated
          */
         private String instanceId;
 
         /**
-         * 服务主机地址，不设置将自动获取
+         * Service host address; if not set, it will be auto-detected
          */
         private String host;
 
         /**
-         * 服务端口，不设置将使用server.port
+         * Service port; if not set, server.port will be used
          */
         private Integer port;
 
         /**
-         * 服务权重
+         * Service weight
          */
         private int weight = 1;
 
         /**
-         * 是否启用实例
+         * Whether the instance is enabled
          */
         private boolean enabled = true;
 
         /**
-         * 协议类型
+         * Protocol type
          */
         private String protocol = "http";
 
         /**
-         * 是否为临时实例
-         * true: 临时实例，依赖客户端心跳，超时自动删除
-         * false: 永久实例，服务端健康检查，只标记不删除
+         * Whether this is an ephemeral instance
+         * true: ephemeral instance, relies on client heartbeat, auto-deleted on timeout
+         * false: persistent instance, server-side health check, marked only (not deleted)
          */
         private Boolean ephemeral;
 
         /**
-         * 实例元数据
+         * Instance metadata
          */
         private java.util.Map<String, String> metadata = new java.util.HashMap<>();
     }
@@ -192,17 +192,17 @@ public class RedisStreamingProperties {
     @Data
     public static class DiscoveryProperties {
         /**
-         * 是否启用服务发现
+         * Whether to enable service discovery
          */
         private boolean enabled = true;
 
         /**
-         * 是否只发现健康的实例
+         * Whether to discover only healthy instances
          */
         private boolean healthyOnly = true;
 
         /**
-         * 服务发现缓存时间(秒)
+         * Service discovery cache time (seconds)
          */
         private int cacheTime = 30;
     }
@@ -210,27 +210,27 @@ public class RedisStreamingProperties {
     @Data
     public static class ConfigProperties {
         /**
-         * 是否启用配置服务
+         * Whether to enable configuration service
          */
         private boolean enabled = true;
 
         /**
-         * 默认配置组
+         * Default configuration group
          */
         private String defaultGroup = "DEFAULT_GROUP";
 
         /**
-         * 配置刷新间隔(秒)
+         * Configuration refresh interval (seconds)
          */
         private int refreshInterval = 30;
 
         /**
-         * 是否启用配置自动刷新
+         * Whether to enable automatic configuration refresh
          */
         private boolean autoRefresh = true;
 
         /**
-         * 配置历史保留数量
+         * Number of configuration history entries to retain
          */
         private int historySize = 10;
 
@@ -248,11 +248,11 @@ public class RedisStreamingProperties {
     @Data
     public static class LoadBalancerProperties {
         /**
-         * 策略：scored | wrr | weighted-random | consistent-hash
+         * Strategy: scored | wrr | weighted-random | consistent-hash
          */
         private String strategy = "scored";
 
-        // scored 配置
+        // scored configuration
         private String preferredRegion;
         private String preferredZone;
         private double cpuWeight = 1.0;
@@ -282,67 +282,67 @@ public class RedisStreamingProperties {
 
     @Data
     public static class MqProperties {
-        /** 是否启用 MQ 模块（仅影响自动装配） */
+        /** Whether to enable the MQ module (only affects auto-configuration) */
         private boolean enabled = true;
 
-        /** 默认分区数（topic 首次写入时使用） */
+        /** Default partition count (used when a topic is first written to) */
         private int defaultPartitionCount = 1;
 
-        /** 消费线程池大小 */
+        /** Consumer thread pool size */
         private int workerThreads = 8;
 
-        /** 调度线程池大小（续约/再均衡/搬运） */
+        /** Scheduler thread pool size (renewal/rebalancing/moving) */
         private int schedulerThreads = 2;
 
-        /** 每次拉取最大条数 */
+        /** Maximum number of messages per pull */
         private int consumerBatchCount = 10;
 
-        /** 拉取超时（毫秒） */
+        /** Pull timeout (milliseconds) */
         private long consumerPollTimeoutMs = 1000;
 
-        /** 租约 TTL（秒） */
+        /** Lease TTL (seconds) */
         private int leaseTtlSeconds = 15;
 
-        /** 再均衡间隔（秒） */
+        /** Rebalancing interval (seconds) */
         private int rebalanceIntervalSec = 5;
 
-        /** 续约间隔（秒） */
+        /** Renewal interval (seconds) */
         private int renewIntervalSec = 3;
 
-        /** pending 扫描间隔（秒） */
+        /** Pending scan interval (seconds) */
         private int pendingScanIntervalSec = 30;
 
-        /** 认定孤儿 pending 的 idle 阈值（毫秒） */
+        /** Idle threshold for identifying orphaned pending messages (milliseconds) */
         private long claimIdleMs = 300000;
 
-        /** claim 批大小 */
+        /** Claim batch size */
         private int claimBatchSize = 50;
 
-        /** 背压：每个 consumer 实例最大并发处理中消息数（0=关闭） */
+        /** Backpressure: maximum number of concurrently in-flight messages per consumer instance (0=disabled) */
         private int maxInFlight = 0;
 
-        /** 分区 lease 上限：每个 consumer 实例最多持有多少分区（0=默认=workerThreads） */
+        /** Partition lease upper limit: maximum number of partitions each consumer instance can hold (0=default=workerThreads) */
         private int maxLeasedPartitionsPerConsumer = 0;
 
-        /** 最大重试次数 */
+        /** Maximum retry attempts */
         private int retryMaxAttempts = 5;
 
-        /** 重试基准退避（毫秒） */
+        /** Retry base backoff (milliseconds) */
         private long retryBaseBackoffMs = 1000;
 
-        /** 重试最大退避（毫秒） */
+        /** Retry max backoff (milliseconds) */
         private long retryMaxBackoffMs = 60000;
 
-        /** 重试搬运批大小 */
+        /** Retry mover batch size */
         private int retryMoverBatch = 100;
 
-        /** 重试搬运周期（秒） */
+        /** Retry mover interval (seconds) */
         private int retryMoverIntervalSec = 1;
 
-        /** 重试搬运锁等待（毫秒） */
+        /** Retry mover lock wait time (milliseconds) */
         private long retryLockWaitMs = 100;
 
-        /** 重试搬运锁租期（毫秒） */
+        /** Retry mover lock lease duration (milliseconds) */
         private long retryLockLeaseMs = 500;
 
         /** Key prefixes (MQ control keys & stream keys) */
@@ -393,60 +393,60 @@ public class RedisStreamingProperties {
     @Data
     public static class MetricsProperties {
         /**
-         * 启用的指标类型，如 [memory, cpu, application, disk, network]
+         * Enabled metric types, e.g. [memory, cpu, application, disk, network]
          */
         private java.util.Set<String> enabled = new java.util.HashSet<>(java.util.Set.of("memory","cpu","application","disk","network"));
 
         /**
-         * 指标收集间隔（键为指标类型），例如：memory: 30s, cpu: 60s
+         * Metric collection intervals (keyed by metric type), e.g. memory: 30s, cpu: 60s
          */
         private java.util.Map<String, java.time.Duration> intervals = new java.util.HashMap<>();
 
         /**
-         * 默认收集间隔
+         * Default collection interval
          */
         private java.time.Duration defaultInterval = java.time.Duration.ofMinutes(1);
 
         /**
-         * 显著变化时是否立即更新
+         * Whether to update immediately on significant changes
          */
         private boolean immediateUpdateOnSignificantChange = true;
 
         /**
-         * 收集超时时间
+         * Collection timeout
          */
         private java.time.Duration timeout = java.time.Duration.ofSeconds(5);
     }
 
     @lombok.Data
     public static class RateLimitProperties {
-        /** 是否启用限速（仅影响自动装配） */
+        /** Whether to enable rate limiting (only affects auto-configuration) */
         private boolean enabled = false;
-        /** 后端：memory | redis */
+        /** Backend: memory | redis */
         private String backend = "memory";
-        /** 窗口大小（毫秒） */
+        /** Window size (milliseconds) */
         private long windowMs = 1000;
-        /** 窗口内允许的最大请求数 */
+        /** Maximum number of requests allowed within the window */
         private int limit = 100;
-        /** Redis Key 前缀（仅后端为 redis 时有效） */
+        /** Redis key prefix (only effective when backend is redis) */
         private String keyPrefix = "streaming:rl";
 
         /**
-         * 命名策略集合（可同时声明多个不同的限速器）。
-         * 当不为空时，将根据该集合创建一个 RateLimiterRegistry 供按名称获取。
+         * Named policy collection (multiple rate limiters can be declared simultaneously).
+         * When non-empty, a RateLimiterRegistry will be created from this collection for lookup by name.
          */
         private java.util.Map<String, Policy> policies = new java.util.HashMap<>();
 
         /**
-         * 默认策略名称（当注入单个 RateLimiter 时使用）。
+         * Default policy name (used when injecting a single RateLimiter).
          */
         private String defaultName = "default";
 
         @lombok.Data
         public static class Policy {
-            /** 算法：sliding | token-bucket | leaky-bucket */
+            /** Algorithm: sliding | token-bucket | leaky-bucket */
             private String algorithm = "sliding";
-            /** 后端：memory | redis（仅 sliding/token-bucket 支持 redis） */
+            /** Backend: memory | redis (only sliding/token-bucket support redis) */
             private String backend = "memory";
             // sliding params
             private long windowMs = 1000;

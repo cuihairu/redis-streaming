@@ -7,14 +7,14 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * ServiceInstance 单元测试
- * 测试服务实例的构建、验证和属性管理
+ * ServiceInstance unit tests
+ * Tests service instance construction, validation, and property management
  */
 public class ServiceInstanceTest {
 
     @Test
     public void testBasicInstanceBuilder() {
-        // 测试基本实例构建
+        // Test basic instance construction
         ServiceInstance instance = DefaultServiceInstance.builder()
                 .serviceName("test-service")
                 .instanceId("test-001")
@@ -30,14 +30,14 @@ public class ServiceInstanceTest {
         assertEquals(1, instance.getWeight());
         assertTrue(instance.isEnabled());
         assertTrue(instance.isHealthy());
-        assertTrue(instance.isEphemeral()); // 默认临时实例
+        assertTrue(instance.isEphemeral()); // Default is ephemeral instance
         assertNotNull(instance.getMetadata());
         assertTrue(instance.getMetadata().isEmpty());
     }
 
     @Test
     public void testEphemeralInstance() {
-        // 测试临时实例
+        // Test ephemeral instance
         ServiceInstance ephemeralInstance = DefaultServiceInstance.builder()
                 .serviceName("ephemeral-service")
                 .instanceId("ephemeral-001")
@@ -51,7 +51,7 @@ public class ServiceInstanceTest {
 
     @Test
     public void testPersistentInstance() {
-        // 测试永久实例
+        // Test persistent instance
         ServiceInstance persistentInstance = DefaultServiceInstance.builder()
                 .serviceName("persistent-service")
                 .instanceId("persistent-001")
@@ -65,7 +65,7 @@ public class ServiceInstanceTest {
 
     @Test
     public void testInstanceWithProtocol() {
-        // 测试不同协议的实例
+        // Test instances with different protocols
         ServiceInstance httpInstance = DefaultServiceInstance.builder()
                 .serviceName("test-service")
                 .instanceId("http-001")
@@ -97,7 +97,7 @@ public class ServiceInstanceTest {
 
     @Test
     public void testInstanceWithMetadata() {
-        // 测试带元数据的实例
+        // Test instance with metadata
         Map<String, String> metadata = new HashMap<>();
         metadata.put("version", "1.0.0");
         metadata.put("region", "us-east-1");
@@ -122,7 +122,7 @@ public class ServiceInstanceTest {
 
     @Test
     public void testInstanceWithWeight() {
-        // 测试不同权重的实例
+        // Test instances with different weights
         ServiceInstance weight1 = DefaultServiceInstance.builder()
                 .serviceName("test-service")
                 .instanceId("weight-1")
@@ -145,7 +145,7 @@ public class ServiceInstanceTest {
 
     @Test
     public void testInstanceEnabledAndHealthy() {
-        // 测试启用和健康状态
+        // Test enabled and healthy status
         ServiceInstance enabledHealthy = DefaultServiceInstance.builder()
                 .serviceName("test-service")
                 .instanceId("enabled-001")
@@ -172,7 +172,7 @@ public class ServiceInstanceTest {
 
     @Test
     public void testInstanceToString() {
-        // 测试 toString 方法
+        // Test toString method
         ServiceInstance instance = DefaultServiceInstance.builder()
                 .serviceName("test-service")
                 .instanceId("test-001")
@@ -188,7 +188,7 @@ public class ServiceInstanceTest {
 
     @Test
     public void testInstanceEquality() {
-        // 测试实例相等性（基于 serviceName 和 instanceId）
+        // Test instance equality (based on serviceName and instanceId)
         ServiceInstance instance1 = DefaultServiceInstance.builder()
                 .serviceName("test-service")
                 .instanceId("test-001")
@@ -199,19 +199,19 @@ public class ServiceInstanceTest {
         ServiceInstance instance2 = DefaultServiceInstance.builder()
                 .serviceName("test-service")
                 .instanceId("test-001")
-                .host("192.168.1.101") // 不同的 host
-                .port(8081)             // 不同的 port
+                .host("192.168.1.101") // Different host
+                .port(8081)             // Different port
                 .build();
 
-        // 基于 Lombok @EqualsAndHashCode 的默认行为
-        // 如果实现了自定义 equals，应该基于 serviceName + instanceId
+        // Based on Lombok @EqualsAndHashCode default behavior
+        // If custom equals is implemented, it should be based on serviceName + instanceId
         assertNotNull(instance1);
         assertNotNull(instance2);
     }
 
     @Test
     public void testCompleteInstance() {
-        // 测试完整配置的实例
+        // Test fully configured instance
         Map<String, String> metadata = new HashMap<>();
         metadata.put("version", "2.0.0");
         metadata.put("git.commit", "abc123");
@@ -229,7 +229,7 @@ public class ServiceInstanceTest {
                 .metadata(metadata)
                 .build();
 
-        // 验证所有属性
+        // Verify all properties
         assertEquals("complete-service", instance.getServiceName());
         assertEquals("complete-001", instance.getInstanceId());
         assertEquals("10.0.0.100", instance.getHost());
@@ -246,16 +246,16 @@ public class ServiceInstanceTest {
 
     @Test
     public void testInstanceWithoutMetadata() {
-        // 测试不设置元数据时使用默认值
+        // Test default value when metadata is not set
         ServiceInstance instance = DefaultServiceInstance.builder()
                 .serviceName("test-service")
                 .instanceId("test-001")
                 .host("127.0.0.1")
                 .port(8080)
-                // 不设置 metadata
+                // Metadata not set
                 .build();
 
-        // Builder.Default 应该提供默认的空 Map
+        // Builder.Default should provide a default empty Map
         assertNotNull(instance.getMetadata());
         assertTrue(instance.getMetadata().isEmpty());
     }

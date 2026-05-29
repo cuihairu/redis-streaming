@@ -13,8 +13,8 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * 服务注册中心管理服务
- * 支持三级存储结构
+ * Service registry admin service
+ * Supports three-level storage structure
  */
 public class RegistryAdminService {
 
@@ -35,7 +35,7 @@ public class RegistryAdminService {
     }
 
     /**
-     * 获取所有服务名称
+     * Get all service names
      */
     public Set<String> getAllServices() {
         try {
@@ -48,24 +48,24 @@ public class RegistryAdminService {
     }
 
     /**
-     * 获取服务详细信息
+     * Get service detailed information
      */
     public ServiceDetails getServiceDetails(String serviceName) {
         return getServiceDetails(serviceName, Duration.ofMinutes(2));
     }
 
     /**
-     * 获取服务详细信息（支持自定义超时）
+     * Get service detailed information (supports custom timeout)
      */
     public ServiceDetails getServiceDetails(String serviceName, Duration timeout) {
         try {
             ServiceDetails serviceDetails = new ServiceDetails(serviceName);
 
-            // 获取活跃实例
+            // Get active instances
             List<InstanceDetails> instances = getActiveInstances(serviceName, timeout);
             serviceDetails.setInstances(instances);
 
-            // 计算聚合指标
+            // Calculate aggregated metrics
             if (!instances.isEmpty()) {
                 Map<String, Object> aggregatedMetrics = calculateAggregatedMetrics(instances);
                 serviceDetails.setAggregatedMetrics(aggregatedMetrics);
@@ -82,7 +82,7 @@ public class RegistryAdminService {
     }
 
     /**
-     * 获取活跃实例列表
+     * Get active instances list
      */
     public List<InstanceDetails> getActiveInstances(String serviceName, Duration timeout) {
         try {
@@ -91,17 +91,17 @@ public class RegistryAdminService {
 
             String heartbeatKey = registryKeys.getServiceHeartbeatsKey(serviceName);
 
-            // 获取活跃实例ID和心跳时间
+            // Get active instance IDs and heartbeat times
             List<Object> activeData = luaExecutor.executeGetActiveInstances(heartbeatKey, currentTime, timeoutMs);
 
             List<InstanceDetails> instances = new ArrayList<>();
 
-            // 解析结果并获取实例详情
+            // Parse results and get instance details
             for (int i = 0; i < activeData.size(); i += 2) {
                 String instanceId = (String) activeData.get(i);
                 Object heartbeatTimeObj = activeData.get(i + 1);
 
-                // 兼容 String 和 Number 类型的心跳时间
+                // Compatible with String and Number types for heartbeat time
                 long heartbeatTime;
                 if (heartbeatTimeObj instanceof String) {
                     heartbeatTime = Long.parseLong((String) heartbeatTimeObj);
@@ -133,7 +133,7 @@ public class RegistryAdminService {
     }
 
     /**
-     * 获取实例详细信息
+     * Get instance detailed information
      */
     public InstanceDetails getInstanceDetails(String serviceName, String instanceId) {
         try {
@@ -154,7 +154,7 @@ public class RegistryAdminService {
     }
 
     /**
-     * 获取实例指标
+     * Get instance metrics
      */
     public Map<String, Object> getInstanceMetrics(String serviceName, String instanceId) {
         try {
@@ -167,7 +167,7 @@ public class RegistryAdminService {
     }
 
     /**
-     * 获取注册中心健康状态
+     * Get registry health status
      */
     public Map<String, Object> getRegistryHealth() {
         try {
@@ -185,7 +185,7 @@ public class RegistryAdminService {
                     List<InstanceDetails> instances = getActiveInstances(serviceName, Duration.ofMinutes(2));
                     totalInstances += instances.size();
                     healthyInstances += (int) instances.stream().filter(InstanceDetails::isHealthy).count();
-                    activeInstances += instances.size(); // 这里的instances已经是活跃的
+                    activeInstances += instances.size(); // instances here are already active
                 } catch (Exception e) {
                     logger.warn("Failed to check health for service: {}", serviceName, e);
                 }
@@ -209,7 +209,7 @@ public class RegistryAdminService {
     }
 
     /**
-     * 手动清理过期实例
+     * Manually cleanup expired instances
      */
     public Map<String, Integer> cleanupExpiredInstances(Duration timeout) {
         Map<String, Integer> result = new HashMap<>();
@@ -236,7 +236,7 @@ public class RegistryAdminService {
 
                 } catch (Exception e) {
                     logger.error("Failed to cleanup expired instances for service: {}", serviceName, e);
-                    result.put(serviceName, -1); // 表示清理失败
+                    result.put(serviceName, -1); // Indicates cleanup failed
                 }
             }
 
@@ -248,7 +248,7 @@ public class RegistryAdminService {
     }
 
     /**
-     * 解析实例详情
+     * Parse instance details
      */
     private InstanceDetails parseInstanceDetails(String serviceName, String instanceId, Map<String, String> data) {
         try {
@@ -264,7 +264,7 @@ public class RegistryAdminService {
             instance.setLastHeartbeatTime(parseLongSafely(data.get("lastHeartbeatTime"), 0));
             instance.setLastMetadataUpdate(parseLongSafely(data.get("lastMetadataUpdate"), 0));
 
-            // 解析metadata
+            // Parse metadata
             String metadataStr = data.get("metadata");
             if (metadataStr != null && !metadataStr.isEmpty()) {
                 try {
@@ -276,7 +276,7 @@ public class RegistryAdminService {
                 }
             }
 
-            // 解析 metrics（独立 JSON 字段）
+            // Parse metrics (independent JSON field)
             Map<String, Object> metrics = Collections.emptyMap();
             String metricsStr = data.get("metrics");
             if (metricsStr != null && !metricsStr.isEmpty()) {
@@ -298,7 +298,7 @@ public class RegistryAdminService {
     }
 
     /**
-     * 计算聚合指标
+     * Calculate aggregated metrics
      */
     private Map<String, Object> calculateAggregatedMetrics(List<InstanceDetails> instances) {
         Map<String, Object> aggregated = new HashMap<>();
@@ -307,14 +307,14 @@ public class RegistryAdminService {
             return aggregated;
         }
 
-        // 计算平均心跳延迟
+        // Calculate average heartbeat delay
         double avgHeartbeatDelay = instances.stream()
                 .mapToLong(InstanceDetails::getHeartbeatDelay)
                 .average()
                 .orElse(0);
         aggregated.put("avgHeartbeatDelay", avgHeartbeatDelay);
 
-        // 聚合各种指标
+        // Aggregate various metrics
         Map<String, List<Double>> numericMetrics = new HashMap<>();
 
         for (InstanceDetails instance : instances) {
@@ -324,7 +324,7 @@ public class RegistryAdminService {
             }
         }
 
-        // 计算平均值和统计信息
+        // Calculate averages and statistics
         for (Map.Entry<String, List<Double>> entry : numericMetrics.entrySet()) {
             String metricName = entry.getKey();
             List<Double> values = entry.getValue();
@@ -344,7 +344,7 @@ public class RegistryAdminService {
     }
 
     /**
-     * 收集数值型指标
+     * Collect numeric metrics
      */
     private void collectNumericMetrics(Map<String, Object> metrics, Map<String, List<Double>> collector, String prefix) {
         for (Map.Entry<String, Object> entry : metrics.entrySet()) {
@@ -361,7 +361,7 @@ public class RegistryAdminService {
         }
     }
 
-    // 安全解析方法
+    // Safe parse methods
     private int parseIntSafely(String value, int defaultValue) {
         try {
             return value != null ? Integer.parseInt(value) : defaultValue;
@@ -382,5 +382,5 @@ public class RegistryAdminService {
         return value != null ? Boolean.parseBoolean(value) : defaultValue;
     }
 
-    // Key生成方法统一走 RegistryKeys，避免与主实现不一致
+    // Key generation methods are unified through RegistryKeys to avoid inconsistency with main implementation
 }

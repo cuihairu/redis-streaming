@@ -15,7 +15,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * 测试比较运算符功能
+ * Test comparison operator functionality
  */
 @Tag("integration")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -43,7 +43,7 @@ public class ComparisonOperatorTest {
 
     @BeforeEach
     public void setup() {
-        // 清理测试数据
+        // Clean up test data
         redissonClient.getKeys().flushdb();
 
         serviceProvider = new RedisServiceProvider(redissonClient);
@@ -228,7 +228,7 @@ public class ComparisonOperatorTest {
             createInstance("instance-3", Map.of("zone", "zone-c"))
         );
 
-        // 字典序比较
+        // Lexicographic comparison
         Map<String, String> filters = Map.of("zone:>", "zone-a");
         List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filters);
 
@@ -247,8 +247,8 @@ public class ComparisonOperatorTest {
             createInstance("instance-3", Map.of("count", "100"))
         );
 
-        // 如果是字典序："10" < "2" < "100"（错误）
-        // 如果是数值序：2 < 10 < 100（正确）
+        // If lexicographic: "10" < "2" < "100" (wrong)
+        // If numeric: 2 < 10 < 100 (correct)
         Map<String, String> filters = Map.of("count:>", "10");
         List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filters);
 
@@ -261,13 +261,13 @@ public class ComparisonOperatorTest {
     @Order(11)
     @DisplayName("测试字段名包含冒号的情况")
     public void testFieldNameWithColon() throws InterruptedException {
-        // 注意：这是边界情况测试
+        // Note: this is an edge case test
         registerInstances(
             createInstance("instance-1", Map.of("my:field", "10")),
             createInstance("instance-2", Map.of("my:field", "20"))
         );
 
-        // 使用最后一个冒号作为分隔符
+        // Use the last colon as the separator
         Map<String, String> filters = Map.of("my:field:>=", "15");
         List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filters);
 
@@ -315,7 +315,7 @@ public class ComparisonOperatorTest {
                 .instanceId("instance-2")
                 .host("192.168.1.101")
                 .port(8081)
-                .healthy(false)  // 不健康
+                .healthy(false)  // Unhealthy
                 .metadata(metadata2)
                 .build();
 
@@ -338,16 +338,16 @@ public class ComparisonOperatorTest {
 
         Map<String, String> filters = Map.of("weight:>=", "15");
 
-        // 所有匹配的实例（包括不健康的）
+        // All matching instances (including unhealthy ones)
         List<ServiceInstance> all = serviceConsumer.discoverByMetadata("test-service", filters);
         assertEquals(2, all.size());
 
-        // 只获取健康的匹配实例
+        // Get only healthy matching instances
         List<ServiceInstance> healthy = serviceConsumer.discoverHealthyByMetadata("test-service", filters);
         assertEquals(1, healthy.size());
         assertEquals("instance-3", healthy.get(0).getInstanceId());
 
-        // 清理
+        // Clean up
         serviceProvider.deregister(instance1);
         serviceProvider.deregister(instance2);
         serviceProvider.deregister(instance3);

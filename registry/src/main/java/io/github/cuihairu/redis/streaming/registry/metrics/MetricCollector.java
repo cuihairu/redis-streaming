@@ -1,29 +1,29 @@
 package io.github.cuihairu.redis.streaming.registry.metrics;
 
 /**
- * 指标收集器接口
+ * Metric collector interface
  */
 public interface MetricCollector {
 
     /**
-     * 指标类型标识
+     * Metric type identifier
      */
     String getMetricType();
 
     /**
-     * 收集指标数据
+     * Collect metric data
      */
     Object collectMetric() throws Exception;
 
     /**
-     * 指标是否可用（检查依赖环境）
+     * Whether the metric collector is available (checks runtime environment dependencies)
      */
     default boolean isAvailable() {
         return true;
     }
 
     /**
-     * 指标收集的开销级别
+     * Overhead level of metric collection
      */
     default CollectionCost getCost() {
         return CollectionCost.LOW;

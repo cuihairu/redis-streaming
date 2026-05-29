@@ -12,8 +12,8 @@ import org.slf4j.LoggerFactory;
 import java.util.List;
 
 /**
- * 基于 Redis 的命名服务实现
- * 整合服务注册和服务发现功能，提供统一的 NamingService 接口
+ * Redis-based naming service implementation
+ * Integrates service registration and discovery, provides unified NamingService interface
  *
  * This implementation clearly separates service provider and consumer responsibilities
  * while maintaining backward compatibility with the legacy API.
@@ -53,7 +53,7 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
         this.serviceConsumer = new RedisServiceConsumer(redissonClient, consumerConfig);
     }
 
-    // ==================== ServiceProvider 接口实现 ====================
+    // ==================== ServiceProvider interface implementation ====================
 
     @Override
     public void register(ServiceInstance instance) {
@@ -78,7 +78,7 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
     @Override
     public void sendHeartbeat(ServiceInstance instance) {
         if (!running) {
-            return; // 心跳可以静默失败
+            return; // Heartbeat can fail silently
         }
 
         serviceProvider.sendHeartbeat(instance);
@@ -96,7 +96,7 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
             instances.size(), instances.get(0).getServiceName());
     }
 
-    // ==================== ServiceConsumer 接口实现 ====================
+    // ==================== ServiceConsumer interface implementation ====================
 
     @Override
     public List<ServiceInstance> getAllInstances(String serviceName) {
@@ -169,42 +169,42 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
         logger.info("Unsubscribed from service changes for: {}", serviceName);
     }
 
-    // ==================== Metadata 过滤查询 ====================
+    // ==================== Metadata filter queries ====================
 
     /**
-     * 根据 metadata 过滤获取服务实例（支持比较运算符）
+     * Get service instances filtered by metadata (supports comparison operators)
      *
-     * @param serviceName 服务名称
-     * @param metadataFilters metadata过滤条件（AND关系），支持比较运算符：
+     * @param serviceName service name
+     * @param metadataFilters metadata filter conditions (AND relationship), supports comparison operators:
      * <ul>
-     *   <li>"field": "value" - 等于（默认）</li>
-     *   <li>"field:==": "value" - 等于（显式）</li>
-     *   <li>"field:!=": "value" - 不等于</li>
-     *   <li>"field:>": "value" - 大于</li>
-     *   <li>"field:>=": "value" - 大于等于</li>
-     *   <li>"field:&lt;": "value" - 小于</li>
-     *   <li>"field:&lt;=": "value" - 小于等于</li>
+     *   <li>"field": "value" - equals (default)</li>
+     *   <li>"field:==": "value" - equals (explicit)</li>
+     *   <li>"field:!=": "value" - not equals</li>
+     *   <li>"field:>": "value" - greater than</li>
+     *   <li>"field:>=": "value" - greater than or equals</li>
+     *   <li>"field:&lt;": "value" - less than</li>
+     *   <li>"field:&lt;=": "value" - less than or equals</li>
      * </ul>
      *
-     * <p>比较规则：</p>
+     * <p>Comparison rules:</p>
      * <ol>
-     *   <li>优先尝试数值比较（推荐用于 weight, age, cpu 等）</li>
-     *   <li>失败则使用字符串比较（字典序，谨慎使用）</li>
+     *   <li>Numeric comparison is attempted first (recommended for weight, age, cpu, etc.)</li>
+     *   <li>Falls back to string comparison (lexicographic order, use with caution)</li>
      * </ol>
      *
-     * <p>示例：</p>
+     * <p>Examples:</p>
      * <pre>
-     * // ✅ 推荐：数值比较
+     * // Recommended: numeric comparison
      * Map&lt;String, String&gt; filters = new HashMap&lt;&gt;();
-     * filters.put("weight:>=", "10");      // 权重 >= 10
-     * filters.put("cpu_usage:&lt;", "80");    // CPU使用率 &lt; 80
+     * filters.put("weight:>=", "10");      // weight >= 10
+     * filters.put("cpu_usage:&lt;", "80");    // CPU usage &lt; 80
      *
-     * // ✅ 推荐：字符串相等
-     * filters.put("region", "us-east-1");  // 精确匹配
-     * filters.put("status:!=", "down");    // 状态不等于
+     * // Recommended: string equality
+     * filters.put("region", "us-east-1");  // exact match
+     * filters.put("status:!=", "down");    // status not equals
      * </pre>
      *
-     * @return 匹配的服务实例列表
+     * @return list of matching service instances
      */
     @Override
     public List<ServiceInstance> getInstancesByMetadata(String serviceName, java.util.Map<String, String> metadataFilters) {
@@ -219,11 +219,11 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
     }
 
     /**
-     * 根据 metadata 过滤获取健康的服务实例
+     * Get healthy service instances filtered by metadata
      *
-     * @param serviceName 服务名称
-     * @param metadataFilters metadata过滤条件（AND关系）
-     * @return 匹配且健康的服务实例列表
+     * @param serviceName service name
+     * @param metadataFilters metadata filter conditions (AND relationship)
+     * @return list of matching and healthy service instances
      */
     @Override
     public List<ServiceInstance> getHealthyInstancesByMetadata(String serviceName, java.util.Map<String, String> metadataFilters) {
@@ -237,7 +237,7 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
         return instances;
     }
 
-    // ==================== ServiceDiscovery 接口实现 ====================
+    // ==================== ServiceDiscovery interface implementation ====================
 
     @Override
     public List<ServiceInstance> discoverByMetadata(String serviceName, java.util.Map<String, String> metadataFilters) {
@@ -249,7 +249,7 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
         return getHealthyInstancesByMetadata(serviceName, metadataFilters);
     }
 
-    // ==================== 扩展：支持 metrics 过滤 ====================
+    // ==================== Extension: support metrics filtering ====================
 
     /**
      * Convenience methods to use combined metadata/metrics filters
@@ -296,7 +296,7 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
         return lb.choose(serviceName, instances, context);
     }
 
-    // ==================== ServiceRegistry 接口实现 ====================
+    // ==================== ServiceRegistry interface implementation ====================
 
     /**
      * Alias for sendHeartbeat (ServiceRegistry interface)
@@ -318,7 +318,7 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
         batchSendHeartbeats(instances);
     }
 
-    // ==================== 生命周期管理 ====================
+    // ==================== Lifecycle management ====================
 
     @Override
     public void start() {
@@ -354,9 +354,9 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
     }
     
     /**
-     * 获取配置
-     * 
-     * @return Redis注册中心配置
+     * Get configuration
+     *
+     * @return Redis registry configuration
      */
     public NamingServiceConfig getConfig() {
         return config;

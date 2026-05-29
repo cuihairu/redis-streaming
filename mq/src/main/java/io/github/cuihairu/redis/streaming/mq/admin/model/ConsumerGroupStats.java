@@ -4,48 +4,48 @@ import lombok.Builder;
 import lombok.Data;
 
 /**
- * 消费者组统计信息
+ * Consumer group statistics
  */
 @Data
 @Builder
 public class ConsumerGroupStats {
     /**
-     * 消费者组名称
+     * Consumer group name
      */
     private String groupName;
 
     /**
-     * 队列名称
+     * Queue (topic) name
      */
     private String topic;
 
     /**
-     * 待处理消息数
+     * Pending message count
      */
     private long pendingCount;
 
     /**
-     * 消费者数量
+     * Number of consumers
      */
     private int consumerCount;
 
     /**
-     * 消费滞后（Lag）- 队列最新消息ID与消费位置的差距
+     * Consumer lag - the gap between the latest message ID in the queue and the consumption position
      */
     private long lag;
 
     /**
-     * 是否有消费者在线
+     * Whether any consumer is online
      */
     private boolean hasActiveConsumers;
 
     /**
-     * 最慢的消费者名称
+     * Name of the slowest consumer
      */
     private String slowestConsumer;
 
     /**
-     * 最大空闲时间（毫秒）
+     * Maximum idle time (milliseconds)
      */
     private long maxIdleTime;
 }

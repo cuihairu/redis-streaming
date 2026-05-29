@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
- * 基于Redis的配置服务实现
+ * Redis-based configuration service implementation
  */
 public class RedisConfigService implements ConfigService, ConfigManager {
     
@@ -24,11 +24,11 @@ public class RedisConfigService implements ConfigService, ConfigManager {
     private final ConfigServiceConfig config;
     private volatile boolean running = false;
     
-    // 监听器管理
+    // Listener management
     private final Map<String, Set<ConfigChangeListener>> listeners = new ConcurrentHashMap<>();
     private final Map<String, RTopic> subscriptions = new ConcurrentHashMap<>();
     
-    // 配置历史保留数量（实例级，可由配置注入）
+    // Configuration history retention count (instance-level, can be injected via configuration)
     private final int maxHistorySize;
     private final String clientId = "client-" + java.util.UUID.randomUUID();
     
@@ -200,10 +200,10 @@ public class RedisConfigService implements ConfigService, ConfigManager {
         
         String listenerKey = group + ":" + dataId;
         
-        // 添加监听器
+        // Add listener
         listeners.computeIfAbsent(listenerKey, k -> ConcurrentHashMap.newKeySet()).add(listener);
         
-        // 如果是第一个监听器，创建Redis订阅
+        // If this is the first listener, create Redis subscription
         if (!subscriptions.containsKey(listenerKey)) {
             RTopic topic = redissonClient.getTopic(
                 config.getConfigChangeChannelKey(group, dataId), new JsonJacksonCodec());
@@ -214,7 +214,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
             
             subscriptions.put(listenerKey, topic);
             
-            // 添加到订阅者列表
+            // Add to subscribers list
             RSet<String> subscribersSet = redissonClient.getSet(
                 config.getConfigSubscribersKey(group, dataId));
             subscribersSet.add(clientId);
@@ -222,7 +222,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
             logger.info("Added config listener for: {}:{}", group, dataId);
         }
         
-        // 立即通知当前配置
+        // Immediately notify with current configuration
         try {
             String configKey = config.getConfigKey(group, dataId);
             RMap<String, String> map = redissonClient.getMap(configKey, org.redisson.client.codec.StringCodec.INSTANCE);
@@ -244,7 +244,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
         if (configListeners != null) {
             configListeners.remove(listener);
             
-            // 如果没有监听器了，取消Redis订阅
+            // If no listeners remain, cancel Redis subscription
             if (configListeners.isEmpty()) {
                 listeners.remove(listenerKey);
                 
@@ -254,7 +254,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
                     logger.info("Removed config listener for: {}:{}", group, dataId);
                 }
                 
-                // 从订阅者列表中移除
+                // Remove from subscribers list
                 RSet<String> subscribersSet = redissonClient.getSet(
                     config.getConfigSubscribersKey(group, dataId));
                 try { subscribersSet.remove(clientId); } catch (Exception ignore) {}
@@ -340,7 +340,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
         
         running = false;
         
-        // 清理所有订阅
+        // Clean up all subscriptions
         for (Map.Entry<String, RTopic> entry : subscriptions.entrySet()) {
             try {
                 entry.getValue().removeAllListeners();
@@ -361,7 +361,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
     }
     
     /**
-     * 生成配置版本号
+     * Generate configuration version number
      */
     private static final java.util.concurrent.atomic.AtomicLong LAST_TS = new java.util.concurrent.atomic.AtomicLong(0);
     private static final java.util.concurrent.atomic.AtomicInteger SEQ = new java.util.concurrent.atomic.AtomicInteger(0);
@@ -378,24 +378,24 @@ public class RedisConfigService implements ConfigService, ConfigManager {
     }
     
     /**
-     * 生成客户端ID
+     * Generate client ID
      */
     private String generateClientId() {
         return "client-" + System.currentTimeMillis() + "-" + java.util.UUID.randomUUID();
     }
     
     /**
-     * 保存配置历史记录
+     * Save configuration history record
      */
-    private void saveConfigHistory(String dataId, String group, String content, String version, 
+    private void saveConfigHistory(String dataId, String group, String content, String version,
                                  LocalDateTime changeTime) {
         saveConfigHistory(dataId, group, content, version, changeTime, "UPDATED");
     }
     
     /**
-     * 保存配置历史记录
+     * Save configuration history record
      */
-    private void saveConfigHistory(String dataId, String group, String content, String version, 
+    private void saveConfigHistory(String dataId, String group, String content, String version,
                                  LocalDateTime changeTime, String operation) {
         try {
             String key = config.getConfigHistoryKey(group, dataId);
@@ -419,7 +419,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
     }
     
     /**
-     * 发布配置变更事件
+     * Publish configuration change event
      */
     private void publishConfigChangeEvent(String dataId, String group, String content, String version) {
         try {
@@ -435,7 +435,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
     }
     
     /**
-     * 处理配置变更事件
+     * Handle configuration change event
      */
     private void handleConfigChangeEvent(String dataId, String group, ConfigChangeEvent message) {
         try {
@@ -463,7 +463,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
     }
     
     /**
-     * 构建配置历史对象
+     * Build configuration history object
      */
     @SuppressWarnings("unchecked")
     private ConfigHistory buildConfigHistory(Object dataObj) {

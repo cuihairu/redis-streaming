@@ -8,8 +8,8 @@ import lombok.Builder;
 import java.time.LocalDateTime;
 
 /**
- * 配置信息模型
- * 封装配置的完整信息
+ * Configuration information model
+ * Encapsulates complete configuration information
  */
 @Data
 @NoArgsConstructor
@@ -18,37 +18,37 @@ import java.time.LocalDateTime;
 public class ConfigInfo {
     
     /**
-     * 配置ID
+     * Configuration ID
      */
     private String dataId;
-    
+
     /**
-     * 配置组
+     * Configuration group
      */
     private String group;
-    
+
     /**
-     * 配置内容
+     * Configuration content
      */
     private String content;
-    
+
     /**
-     * 配置版本
+     * Configuration version
      */
     private String version;
-    
+
     /**
-     * 配置描述
+     * Configuration description
      */
     private String description;
-    
+
     /**
-     * 更新时间
+     * Update time
      */
     private LocalDateTime updateTime;
-    
+
     /**
-     * 创建时间
+     * Creation time
      */
     private LocalDateTime createTime;
 }

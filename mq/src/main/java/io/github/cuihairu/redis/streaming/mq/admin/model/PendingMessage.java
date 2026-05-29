@@ -7,33 +7,33 @@ import org.redisson.api.StreamMessageId;
 import java.time.Duration;
 
 /**
- * 待处理消息（Pending）
+ * Pending message
  */
 @Data
 @Builder
 public class PendingMessage {
     /**
-     * 消息ID
+     * Message ID
      */
     private StreamMessageId messageId;
 
     /**
-     * 消费者名称
+     * Consumer name
      */
     private String consumerName;
 
     /**
-     * 空闲时间（该消息多久没被确认）
+     * Idle time (how long since this message was last acknowledged)
      */
     private Duration idleTime;
 
     /**
-     * 投递次数
+     * Delivery count
      */
     private long deliveryCount;
 
     /**
-     * 首次投递时间
+     * First delivery time
      */
     private long firstDeliveryTime;
 }

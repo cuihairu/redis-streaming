@@ -3,7 +3,7 @@ package io.github.cuihairu.redis.streaming.registry.metrics;
 import lombok.Getter;
 
 /**
- * 变化阈值配置
+ * Change thresholdConfiguration
  */
 @Getter
 public class ChangeThreshold {
@@ -16,11 +16,11 @@ public class ChangeThreshold {
     }
 
     /**
-     * 向后兼容的构造函数，接受字符串类型
+     * Backward-compatible constructor that accepts a string type
      *
-     * @param threshold 阈值
-     * @param typeStr 类型字符串
-     * @deprecated 使用 {@link #ChangeThreshold(double, ChangeThresholdType)} 代替
+     * @param threshold Threshold value
+     * @param typeStr Type string
+     * @deprecated Use {@link #ChangeThreshold(double, ChangeThresholdType)} instead
      */
     @Deprecated
     public ChangeThreshold(double threshold, String typeStr) {
@@ -29,7 +29,7 @@ public class ChangeThreshold {
     }
 
     /**
-     * 检查变化是否显著
+     * Check whether the change is significant
      */
     public boolean isSignificant(Object oldValue, Object newValue) {
         if (type == ChangeThresholdType.ANY) {

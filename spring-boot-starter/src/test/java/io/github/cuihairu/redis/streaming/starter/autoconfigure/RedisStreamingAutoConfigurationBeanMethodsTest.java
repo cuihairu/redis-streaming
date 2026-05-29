@@ -4,7 +4,7 @@ import io.github.cuihairu.redis.streaming.mq.Message;
 import io.github.cuihairu.redis.streaming.mq.MessageProducer;
 import io.github.cuihairu.redis.streaming.mq.MqHeaders;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
-import io.github.cuihairu.redis.streaming.reliability.dlq.ReplayHandler;
+import io.github.cuihairu.redis.streaming.mq.dlq.ReplayHandler;
 import io.github.cuihairu.redis.streaming.registry.loadbalancer.ConsistentHashLoadBalancer;
 import io.github.cuihairu.redis.streaming.registry.loadbalancer.LoadBalancer;
 import io.github.cuihairu.redis.streaming.registry.loadbalancer.ScoredLoadBalancer;

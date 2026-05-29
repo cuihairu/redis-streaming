@@ -5,38 +5,38 @@ import lombok.Getter;
 import lombok.Setter;
 
 /**
- * Redis注册中心基础配置
- * 包含所有角色共享的配置设置
+ * Redis registry base configuration
+ * Contains configuration settings shared by all roles
  */
 @Getter
 @Setter
 public class BaseRedisConfig {
 
     /**
-     * 默认的Redis键前缀
+     * Default Redis key prefix
      */
     public static final String DEFAULT_KEY_PREFIX = "redis_streaming_registry";
 
     /**
-     * Redis键前缀，用于避免键冲突
+     * Redis key prefix, used to avoid key conflicts
      * -- GETTER --
-     *  获取Redis键前缀
+     *  Get the Redis key prefix
      */
     private String keyPrefix = DEFAULT_KEY_PREFIX;
 
     /**
-     * 是否启用键前缀
+     * Whether to enable key prefix
      * -- GETTER --
-     *  检查是否启用键前缀
+     *  Check if key prefix is enabled
      * -- SETTER --
-     *  设置是否启用键前缀
+     *  Set whether to enable key prefix
      */
     private boolean enableKeyPrefix = true;
 
     /**
-     * 统一的Key管理器
+     * Unified key manager
      * -- GETTER --
-     *  获取统一的Key管理器
+     *  Get the unified key manager
      *
      */
     private RegistryKeys registryKeys;
@@ -57,21 +57,21 @@ public class BaseRedisConfig {
     }
 
     /**
-     * 设置Redis键前缀
+     * Set the Redis key prefix
      *
-     * @param keyPrefix 键前缀
+     * @param keyPrefix the key prefix
      */
     public void setKeyPrefix(String keyPrefix) {
         this.keyPrefix = keyPrefix;
-        this.registryKeys = new RegistryKeys(keyPrefix); // 重新创建RegistryKeys
+        this.registryKeys = new RegistryKeys(keyPrefix); // Recreate RegistryKeys
     }
 
     /**
-     * 根据配置格式化Redis键
+     * Format a Redis key based on configuration
      *
-     * @param keyPattern 键模式
-     * @param args 键参数
-     * @return 格式化后的键
+     * @param keyPattern the key pattern
+     * @param args the key arguments
+     * @return the formatted key
      */
     public String formatKey(String keyPattern, Object... args) {
         if (enableKeyPrefix && keyPrefix != null && !keyPrefix.isEmpty()) {
