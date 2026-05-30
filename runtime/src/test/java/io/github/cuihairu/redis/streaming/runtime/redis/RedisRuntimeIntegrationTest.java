@@ -34,6 +34,7 @@ import org.redisson.client.codec.StringCodec;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -41,7 +42,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.redisson.api.RKeys;
 import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
@@ -1061,11 +1061,10 @@ class RedisRuntimeIntegrationTest {
                 var data = msgs.get(firstId);
                 assertNotNull(data);
 
-                String headersJson = (String) data.get("headers");
-                assertNotNull(headersJson);
-                ObjectMapper om = new ObjectMapper();
-                var headers = om.readValue(headersJson, new TypeReference<java.util.Map<String, String>>() {
-                });
+                // headers is already deserialized as a Map
+                @SuppressWarnings("unchecked")
+                var headers = (Map<String, String>) data.get("headers");
+                assertNotNull(headers);
 
                 assertEquals(cfg2.getJobName(), headers.get(RedisRuntimeHeaders.JOB_NAME));
                 assertEquals(group, headers.get(RedisRuntimeHeaders.CONSUMER_GROUP));
@@ -1706,11 +1705,10 @@ class RedisRuntimeIntegrationTest {
             var data = msgs.get(firstId);
             assertNotNull(data);
 
-            String headersJson = (String) data.get("headers");
-            assertNotNull(headersJson);
-            ObjectMapper om = new ObjectMapper();
-            var headers = om.readValue(headersJson, new TypeReference<java.util.Map<String, String>>() {
-            });
+            // headers is already deserialized as a Map
+            @SuppressWarnings("unchecked")
+            var headers = (Map<String, String>) data.get("headers");
+            assertNotNull(headers);
 
             assertEquals(cfg.getJobName(), headers.get(RedisRuntimeHeaders.JOB_NAME));
             assertEquals(group, headers.get(RedisRuntimeHeaders.CONSUMER_GROUP));
