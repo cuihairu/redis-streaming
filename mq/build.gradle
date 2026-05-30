@@ -4,6 +4,7 @@ plugins {
 }
 
 dependencies {
+    api project(':core')
     api 'org.redisson:redisson:3.52.0'
     api 'com.fasterxml.jackson.core:jackson-databind:2.17.0'
     // Support Java 8 date/time types (e.g., LocalDateTime) in JSON
