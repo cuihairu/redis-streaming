@@ -2,17 +2,42 @@ package io.github.cuihairu.redis.streaming.mq.impl;
 
 import io.github.cuihairu.redis.streaming.mq.Message;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.redisson.api.RBucket;
+import org.redisson.api.RedissonClient;
+import org.redisson.client.codec.StringCodec;
 
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.doAnswer;
 
 /**
  * Unit tests for StreamEntryCodec
  */
+@SuppressWarnings({"unchecked", "deprecation"})
 class StreamEntryCodecTest {
+
+    @Mock
+    private RedissonClient mockRedissonClient;
+
+    @Mock
+    private RBucket<Object> mockRBucket;
+
+    private org.junit.jupiter.api.Nested mockery;
+
+    @org.junit.jupiter.api.BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+    }
 
     @Test
     void testBuildPartitionEntryWithBasicMessage() {
@@ -506,5 +531,392 @@ class StreamEntryCodecTest {
         assertEquals("payload", parsed.getPayload());
         assertEquals(2, parsed.getRetryCount());
         assertEquals(5, parsed.getMaxRetries());
+    }
+
+    // ==========================================
+    // RedissonClient Overload Tests
+    // These tests trigger the private helper methods
+    // ==========================================
+
+    @Test
+    void testBuildPartitionEntryWithRedissonClientAndSmallPayload() {
+        Message message = new Message();
+        message.setTopic("test-topic");
+        message.setPayload("small-payload");
+
+        Map<String, Object> entry = StreamEntryCodec.buildPartitionEntry(message, 0, mockRedissonClient);
+
+        assertNotNull(entry);
+        assertEquals("small-payload", entry.get("payload"));
+        // Small payloads should be stored inline, no Redis calls needed
+    }
+
+    @Test
+    void testBuildPartitionEntryWithRedissonClientAndLargePayload() {
+        Message message = new Message();
+        message.setTopic("test-topic");
+        // Create a large payload that exceeds MAX_INLINE_PAYLOAD_SIZE
+        StringBuilder largePayload = new StringBuilder();
+        for (int i = 0; i < PayloadHeaders.MAX_INLINE_PAYLOAD_SIZE + 1; i++) {
+            largePayload.append("x");
+        }
+        message.setPayload(largePayload.toString());
+
+        when(mockRedissonClient.getBucket(anyString(), eq(StringCodec.INSTANCE))).thenReturn(mockRBucket);
+        doAnswer(inv -> null).when(mockRBucket).set(anyString());
+
+        Map<String, Object> entry = StreamEntryCodec.buildPartitionEntry(message, 0, mockRedissonClient);
+
+        assertNotNull(entry);
+        assertNull(entry.get("payload"));
+        @SuppressWarnings("unchecked")
+        Map<String, String> headers = (Map<String, String>) entry.get("headers");
+        assertNotNull(headers);
+        assertEquals(PayloadHeaders.STORAGE_TYPE_HASH, headers.get(PayloadHeaders.PAYLOAD_STORAGE_TYPE));
+        assertNotNull(headers.get(PayloadHeaders.PAYLOAD_HASH_REF));
+        // Verify Redis operations were called
+        verify(mockRedissonClient, atLeastOnce()).getBucket(anyString(), eq(StringCodec.INSTANCE));
+        verify(mockRBucket).set(anyString());
+    }
+
+    @Test
+    void testBuildPartitionEntryWithRedissonClientAndNullPayload() {
+        Message message = new Message();
+        message.setTopic("test-topic");
+        message.setPayload(null);
+
+        Map<String, Object> entry = StreamEntryCodec.buildPartitionEntry(message, 0, mockRedissonClient);
+
+        assertNotNull(entry);
+        assertNull(entry.get("payload"));
+    }
+
+    @Test
+    void testParsePartitionEntryWithRedissonClientAndInlinePayload() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("payload", "inline-payload");
+        data.put("timestamp", "2024-01-01T00:00:00Z");
+        data.put("retryCount", 1);
+        data.put("maxRetries", 3);
+        data.put("topic", "test-topic");
+        data.put("partitionId", 0);
+
+        Message message = StreamEntryCodec.parsePartitionEntry("test-topic", "msg-id", data, mockRedissonClient);
+
+        assertNotNull(message);
+        assertEquals("inline-payload", message.getPayload());
+        // No Redis calls needed for inline payloads
+        verify(mockRedissonClient, never()).getBucket(anyString(), any());
+    }
+
+    @Test
+    void testParsePartitionEntryWithRedissonClientAndHashStoredPayload() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("payload", null);
+        data.put("timestamp", "2024-01-01T00:00:00Z");
+        data.put("retryCount", 1);
+        data.put("maxRetries", 3);
+        data.put("topic", "test-topic");
+        data.put("partitionId", 0);
+
+        Map<String, String> headers = new HashMap<>();
+        headers.put(PayloadHeaders.PAYLOAD_STORAGE_TYPE, PayloadHeaders.STORAGE_TYPE_HASH);
+        headers.put(PayloadHeaders.PAYLOAD_HASH_REF, "test-hash-key");
+        data.put("headers", headers);
+
+        when(mockRedissonClient.getBucket(eq("test-hash-key"), eq(StringCodec.INSTANCE))).thenReturn(mockRBucket);
+        when(mockRBucket.get()).thenReturn("\"loaded-from-hash\"");
+        when(mockRBucket.expire(any(java.time.Duration.class))).thenReturn(true);
+
+        Message message = StreamEntryCodec.parsePartitionEntry("test-topic", "msg-id", data, mockRedissonClient);
+
+        assertNotNull(message);
+        assertEquals("loaded-from-hash", message.getPayload());
+        // Verify Redis operations were called
+        verify(mockRedissonClient).getBucket(eq("test-hash-key"), eq(StringCodec.INSTANCE));
+        verify(mockRBucket).get();
+        // Payload-related headers should be removed from user-visible headers
+        Map<String, String> messageHeaders = message.getHeaders();
+        assertNotNull(messageHeaders);
+        assertNull(messageHeaders.get(PayloadHeaders.PAYLOAD_HASH_REF));
+        assertNull(messageHeaders.get(PayloadHeaders.PAYLOAD_STORAGE_TYPE));
+        assertNull(messageHeaders.get(PayloadHeaders.PAYLOAD_ORIGINAL_SIZE));
+    }
+
+    @Test
+    void testParsePartitionEntryWithRedissonClientAndNullHashPayload() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("payload", null);
+        data.put("timestamp", "2024-01-01T00:00:00Z");
+
+        Map<String, String> headers = new HashMap<>();
+        headers.put(PayloadHeaders.PAYLOAD_STORAGE_TYPE, PayloadHeaders.STORAGE_TYPE_HASH);
+        headers.put(PayloadHeaders.PAYLOAD_HASH_REF, "test-hash-key");
+        data.put("headers", headers);
+
+        when(mockRedissonClient.getBucket(eq("test-hash-key"), eq(StringCodec.INSTANCE))).thenReturn(mockRBucket);
+        when(mockRBucket.get()).thenReturn(null);
+
+        // Should throw RuntimeException when payload not found in hash
+        assertThrows(RuntimeException.class, () ->
+            StreamEntryCodec.parsePartitionEntry("test-topic", "msg-id", data, mockRedissonClient)
+        );
+    }
+
+    @Test
+    void testParsePartitionEntryWithRedissonClientAndBothManagers() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("payload", null);
+        data.put("timestamp", "2024-01-01T00:00:00Z");
+
+        Map<String, String> headers = new HashMap<>();
+        headers.put(PayloadHeaders.PAYLOAD_STORAGE_TYPE, PayloadHeaders.STORAGE_TYPE_HASH);
+        headers.put(PayloadHeaders.PAYLOAD_HASH_REF, "test-hash-key");
+        data.put("headers", headers);
+
+        when(mockRedissonClient.getBucket(eq("test-hash-key"), eq(StringCodec.INSTANCE))).thenReturn(mockRBucket);
+        when(mockRBucket.get()).thenReturn("\"payload\"");
+
+        PayloadLifecycleManager lifecycleManager = new PayloadLifecycleManager(mockRedissonClient);
+
+        Message message = StreamEntryCodec.parsePartitionEntry("test-topic", "msg-id", data, mockRedissonClient, lifecycleManager);
+
+        assertNotNull(message);
+        assertEquals("payload", message.getPayload());
+    }
+
+    @Test
+    void testBuildDlqEntryWithRedissonClientAndSmallPayload() {
+        Message message = new Message();
+        message.setTopic("test-topic");
+        message.setPayload("small-payload");
+
+        Map<String, Object> entry = StreamEntryCodec.buildDlqEntry(message, mockRedissonClient);
+
+        assertNotNull(entry);
+        assertEquals("small-payload", entry.get("payload"));
+        assertEquals("test-topic", entry.get("originalTopic"));
+        // Small payloads stored inline
+        @SuppressWarnings("unchecked")
+        Map<String, String> headers = (Map<String, String>) entry.get("headers");
+        assertNotNull(headers);
+        assertEquals(PayloadHeaders.STORAGE_TYPE_INLINE, headers.get(PayloadHeaders.PAYLOAD_STORAGE_TYPE));
+    }
+
+    @Test
+    void testBuildDlqEntryWithRedissonClientAndLargePayload() {
+        Message message = new Message();
+        message.setTopic("test-topic");
+        // Create a large payload
+        StringBuilder largePayload = new StringBuilder();
+        for (int i = 0; i < PayloadHeaders.MAX_INLINE_PAYLOAD_SIZE + 1; i++) {
+            largePayload.append("x");
+        }
+        message.setPayload(largePayload.toString());
+
+        when(mockRedissonClient.getBucket(anyString(), eq(StringCodec.INSTANCE))).thenReturn(mockRBucket);
+        doAnswer(inv -> null).when(mockRBucket).set(anyString());
+
+        Map<String, Object> entry = StreamEntryCodec.buildDlqEntry(message, mockRedissonClient);
+
+        assertNotNull(entry);
+        assertNull(entry.get("payload"));
+        @SuppressWarnings("unchecked")
+        Map<String, String> headers = (Map<String, String>) entry.get("headers");
+        assertNotNull(headers);
+        assertEquals(PayloadHeaders.STORAGE_TYPE_HASH, headers.get(PayloadHeaders.PAYLOAD_STORAGE_TYPE));
+        assertNotNull(headers.get(PayloadHeaders.PAYLOAD_HASH_REF));
+        // Verify Redis operations
+        verify(mockRedissonClient, atLeastOnce()).getBucket(anyString(), eq(StringCodec.INSTANCE));
+        verify(mockRBucket).set(anyString());
+    }
+
+    @Test
+    void testParseDlqEntryWithRedissonClientAndInlinePayload() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("originalTopic", "test-topic");
+        data.put("payload", "inline-payload");
+        data.put("timestamp", "2024-01-01T00:00:00Z");
+        data.put("retryCount", 1);
+
+        Message message = StreamEntryCodec.parseDlqEntry("dlq-id", data, mockRedissonClient);
+
+        assertNotNull(message);
+        assertEquals("test-topic", message.getTopic());
+        assertEquals("inline-payload", message.getPayload());
+        // No Redis calls for inline payload
+        verify(mockRedissonClient, never()).getBucket(anyString(), any());
+    }
+
+    @Test
+    void testParseDlqEntryWithRedissonClientAndHashStoredPayload() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("originalTopic", "test-topic");
+        data.put("payload", null);
+        data.put("timestamp", "2024-01-01T00:00:00Z");
+        data.put("retryCount", 1);
+
+        Map<String, String> headers = new HashMap<>();
+        headers.put(PayloadHeaders.PAYLOAD_STORAGE_TYPE, PayloadHeaders.STORAGE_TYPE_HASH);
+        headers.put(PayloadHeaders.PAYLOAD_HASH_REF, "dlq-hash-key");
+        data.put("headers", headers);
+
+        when(mockRedissonClient.getBucket(eq("dlq-hash-key"), eq(StringCodec.INSTANCE))).thenReturn(mockRBucket);
+        when(mockRBucket.get()).thenReturn("\"dlq-payload\"");
+
+        Message message = StreamEntryCodec.parseDlqEntry("dlq-id", data, mockRedissonClient);
+
+        assertNotNull(message);
+        assertEquals("test-topic", message.getTopic());
+        assertEquals("dlq-payload", message.getPayload());
+        // Verify Redis operations
+        verify(mockRedissonClient).getBucket(eq("dlq-hash-key"), eq(StringCodec.INSTANCE));
+        verify(mockRBucket).get();
+        // Internal headers should be hidden
+        Map<String, String> messageHeaders = message.getHeaders();
+        assertNotNull(messageHeaders);
+        assertNull(messageHeaders.get(PayloadHeaders.PAYLOAD_HASH_REF));
+        assertNull(messageHeaders.get(PayloadHeaders.PAYLOAD_STORAGE_TYPE));
+        assertNull(messageHeaders.get(PayloadHeaders.PAYLOAD_ORIGINAL_SIZE));
+    }
+
+    @Test
+    void testBuildPartitionEntryWithRedissonClientHandlesException() {
+        Message message = new Message();
+        message.setTopic("test-topic");
+        // Create large payload
+        StringBuilder largePayload = new StringBuilder();
+        for (int i = 0; i < PayloadHeaders.MAX_INLINE_PAYLOAD_SIZE + 1; i++) {
+            largePayload.append("x");
+        }
+        message.setPayload(largePayload.toString());
+
+        when(mockRedissonClient.getBucket(anyString(), eq(StringCodec.INSTANCE)))
+            .thenThrow(new RuntimeException("Redis connection failed"));
+
+        assertThrows(RuntimeException.class, () ->
+            StreamEntryCodec.buildPartitionEntry(message, 0, mockRedissonClient)
+        );
+    }
+
+    @Test
+    void testParsePartitionEntryWithOriginalMessageIdInData() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("payload", "test-payload");
+        data.put("originalMessageId", "original-id");
+        data.put("timestamp", "2024-01-01T00:00:00Z");
+
+        Message message = StreamEntryCodec.parsePartitionEntry("test-topic", "msg-id", data);
+
+        assertNotNull(message.getHeaders());
+        assertEquals("original-id", message.getHeaders()
+            .get(io.github.cuihairu.redis.streaming.mq.MqHeaders.ORIGINAL_MESSAGE_ID));
+    }
+
+    @Test
+    void testParsePartitionEntryWithOriginalMessageIdAlreadyInHeaders() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("payload", "test-payload");
+        data.put("originalMessageId", "data-original-id");
+        data.put("timestamp", "2024-01-01T00:00:00Z");
+
+        Map<String, String> headers = new HashMap<>();
+        headers.put(io.github.cuihairu.redis.streaming.mq.MqHeaders.ORIGINAL_MESSAGE_ID, "header-original-id");
+        data.put("headers", headers);
+
+        Message message = StreamEntryCodec.parsePartitionEntry("test-topic", "msg-id", data);
+
+        // Header value should take precedence over data field
+        assertNotNull(message.getHeaders());
+        assertEquals("header-original-id", message.getHeaders()
+            .get(io.github.cuihairu.redis.streaming.mq.MqHeaders.ORIGINAL_MESSAGE_ID));
+    }
+
+    @Test
+    void testParseDlqEntryWithBothPayloadAndHashRef() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("originalTopic", "test-topic");
+        data.put("payload", "inline-payload");
+        data.put("timestamp", "2024-01-01T00:00:00Z");
+
+        Map<String, String> headers = new HashMap<>();
+        headers.put(PayloadHeaders.PAYLOAD_STORAGE_TYPE, PayloadHeaders.STORAGE_TYPE_HASH);
+        headers.put(PayloadHeaders.PAYLOAD_HASH_REF, "hash-key");
+        data.put("headers", headers);
+
+        when(mockRedissonClient.getBucket(eq("hash-key"), eq(StringCodec.INSTANCE))).thenReturn(mockRBucket);
+        when(mockRBucket.get()).thenReturn("\"hash-payload\"");
+
+        Message message = StreamEntryCodec.parseDlqEntry("dlq-id", data, mockRedissonClient);
+
+        assertNotNull(message);
+        // When storage type is HASH, should load from hash even if inline payload present
+        assertEquals("hash-payload", message.getPayload());
+    }
+
+    @Test
+    void testParseDlqEntryWithEmptyPayloadAndHashRef() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("originalTopic", "test-topic");
+        data.put("payload", ""); // Empty string
+        data.put("timestamp", "2024-01-01T00:00:00Z");
+
+        Map<String, String> headers = new HashMap<>();
+        headers.put(PayloadHeaders.PAYLOAD_HASH_REF, "hash-key");
+        data.put("headers", headers);
+
+        when(mockRedissonClient.getBucket(eq("hash-key"), eq(StringCodec.INSTANCE))).thenReturn(mockRBucket);
+        when(mockRBucket.get()).thenReturn("\"hash-payload\"");
+
+        Message message = StreamEntryCodec.parseDlqEntry("dlq-id", data, mockRedissonClient);
+
+        assertNotNull(message);
+        // Empty payload with hash ref should load from hash
+        assertEquals("hash-payload", message.getPayload());
+    }
+
+    @Test
+    void testBuildDlqEntryWithNullTopic() {
+        Message message = new Message();
+        message.setTopic(null);
+        message.setPayload("payload");
+
+        Map<String, Object> entry = StreamEntryCodec.buildDlqEntry(message, mockRedissonClient);
+
+        assertNotNull(entry);
+        assertNull(entry.get("originalTopic"));
+    }
+
+    @Test
+    void testBuildDlqEntryWithNullTimestamp() {
+        Message message = new Message();
+        message.setTopic("test-topic");
+        message.setPayload("payload");
+        message.setTimestamp(null);
+
+        Map<String, Object> entry = StreamEntryCodec.buildDlqEntry(message, mockRedissonClient);
+
+        assertNotNull(entry);
+        assertNotNull(entry.get("timestamp"));
+        assertNotNull(entry.get("failedAt"));
+    }
+
+    @Test
+    void testBuildPartitionEntryWithEmptyPayloadAndLifecycleManager() {
+        Message message = new Message();
+        message.setTopic("test-topic");
+        message.setPayload("");
+
+        PayloadLifecycleManager lifecycleManager = new PayloadLifecycleManager(null);
+
+        Map<String, Object> entry = StreamEntryCodec.buildPartitionEntry(message, 0, lifecycleManager);
+
+        assertNotNull(entry);
+        assertEquals("", entry.get("payload"));
+        @SuppressWarnings("unchecked")
+        Map<String, String> headers = (Map<String, String>) entry.get("headers");
+        assertNotNull(headers);
+        // Empty string serialized as "" which is 2 bytes in UTF-8
+        assertEquals("2", headers.get(PayloadHeaders.PAYLOAD_ORIGINAL_SIZE));
     }
 }
