@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Integration tests for RedisBrokerPersistence
  */
 @Tag("integration")
+@SuppressWarnings({"unchecked", "deprecation"})
 class RedisBrokerPersistenceIntegrationTest {
 
     private RedissonClient createClient() {

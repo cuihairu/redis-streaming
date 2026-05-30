@@ -17,6 +17,7 @@ import static org.mockito.Mockito.*;
 /**
  * Unit tests for BrokerBackedProducer
  */
+@SuppressWarnings({"unchecked", "deprecation"})
 class BrokerBackedProducerTest {
 
     @Mock

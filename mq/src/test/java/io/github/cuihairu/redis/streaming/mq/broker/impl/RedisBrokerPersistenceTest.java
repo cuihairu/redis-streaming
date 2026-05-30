@@ -21,6 +21,7 @@ import static org.mockito.Mockito.*;
 /**
  * Unit tests for RedisBrokerPersistence
  */
+@SuppressWarnings({"unchecked", "deprecation"})
 class RedisBrokerPersistenceTest {
 
     @Mock

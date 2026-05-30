@@ -21,6 +21,7 @@ import static org.mockito.Mockito.*;
 /**
  * Unit tests for RedisMessageProducer
  */
+@SuppressWarnings({"unchecked", "deprecation"})
 class RedisMessageProducerTest {
 
     @Mock
