@@ -118,4 +118,62 @@ public final class Storms {
         }
         return invoked;
     }
+
+    /**
+     * Deep storm: additionally invokes declared (private/protected) methods on the class
+     * hierarchy with sample args, each guarded by a worker thread + timeout so methods with
+     * internal loops can never hang the suite. Target exceptions are swallowed; Errors propagate.
+     */
+    public static int stormDeep(Object target, Map<Class<?>, Object> hints, long methodTimeoutMs, String... skipMethods) {
+        int invoked = storm(target, hints, skipMethods);
+        java.util.Set<String> skip = new java.util.HashSet<>(java.util.Arrays.asList(skipMethods));
+        skip.add("storm");
+        Class<?> klass = target.getClass();
+        while (klass != null && klass != Object.class) {
+            for (Method m : klass.getDeclaredMethods()) {
+                if (m.isSynthetic() || Modifier.isStatic(m.getModifiers()) || skip.contains(m.getName())) continue;
+                if (m.getName().startsWith("lambda$") || m.getName().startsWith("access$")) continue;
+                Class<?>[] params = m.getParameterTypes();
+                Object[] args = new Object[params.length];
+                boolean ok = true;
+                for (int i = 0; i < params.length; i++) {
+                    try {
+                        args[i] = sampleFor(params[i], hints);
+                    } catch (Throwable t) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (!ok) continue;
+                m.setAccessible(true);
+                final Method mm = m;
+                final Object[] aa = args;
+                final Throwable[] failure = new Throwable[1];
+                Thread t = new Thread(() -> {
+                    try {
+                        mm.invoke(target, aa);
+                    } catch (InvocationTargetException e) {
+                        if (e.getCause() instanceof Error err) failure[0] = err;
+                    } catch (Throwable e) {
+                        if (e instanceof Error err) failure[0] = err;
+                    }
+                }, "storm-deep-" + mm.getName());
+                t.setDaemon(true);
+                t.start();
+                try {
+                    t.join(methodTimeoutMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+                if (t.isAlive()) {
+                    t.interrupt();
+                }
+                if (failure[0] instanceof Error err) throw err;
+                invoked++;
+            }
+            klass = klass.getSuperclass();
+        }
+        return invoked;
+    }
+
 }
