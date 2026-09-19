@@ -366,14 +366,28 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                 return close;
             }
 
-            @Override
-            public DataStream<V> reduce(ReduceFunction<V> reducer) {
-                Objects.requireNonNull(reducer, "reducer");
-                String stateName = "__internal:window:reduce:" + operatorId + ":" + upstreamOperators.size();
-
+            /**
+             * Registers a windowed operator, encapsulating the shared per-record pipeline:
+             * key/partition binding, due-set bookkeeping, late-event dropping and the
+             * accumulate-then-fire cycle. Kinds differ only via the two callbacks.
+             *
+             * @param kind      logical state-name discriminator (reduce/aggregate/apply/sum/count)
+             * @param guard     optional per-record pre-check (e.g. sum requires Number)
+             * @param accumulator updates the stored member state for a single window
+             * @param emitter   decodes the stored member state and emits the fire result
+             */
+            private <R> DataStream<R> registerWindowedOperator(
+                    String kind,
+                    WindowGuard<V> guard,
+                    WindowAccumulator<V> accumulator,
+                    WindowEmitter emitter) {
+                String stateName = "__internal:window:" + kind + ":" + operatorId + ":" + upstreamOperators.size();
                 List<RedisOperatorNode> ops = new ArrayList<>(upstreamOperators);
                 ops.add((value, ctx, emit) -> {
                     V v = castValue(value);
+                    if (guard != null) {
+                        guard.check(v);
+                    }
                     K key = currentKeyOrCompute(v);
                     int partitionId = ctx.currentPartitionId();
                     long eventTimeMs = ctx.currentEventTime();
@@ -401,6 +415,45 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                             }
                             String member = windowMember(keyField, w.getStart(), w.getEnd());
                             RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
+                            accumulator.accumulate(ref, stateName, member, v, due, closeTime);
+                            stateStore.touch(ref.redisKey(), stateName, ref.map());
+                        }
+
+                        fireDueWindows(due, watermark, (member, windowStart, windowEnd) -> {
+                            RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
+                            emitter.emit(ref, stateName, member, windowStart, windowEnd, partitionId, emit);
+                        });
+                    } finally {
+                        stateStore.clearCurrentKey();
+                        stateStore.clearCurrentPartitionId();
+                    }
+                });
+                return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops);
+            }
+
+            @FunctionalInterface
+            private interface WindowGuard<X> {
+                void check(X value);
+            }
+
+            @FunctionalInterface
+            private interface WindowAccumulator<X> {
+                void accumulate(RedisKeyedStateStore.StateMapRef ref, String stateName, String member, X value,
+                                RScoredSortedSet<String> due, long closeTime) throws Exception;
+            }
+
+            @FunctionalInterface
+            private interface WindowEmitter {
+                void emit(RedisKeyedStateStore.StateMapRef ref, String stateName, String member,
+                          long windowStart, long windowEnd, int partitionId,
+                          RedisPipelineRunner.Emitter emit) throws Exception;
+            }
+
+            @Override
+            public DataStream<V> reduce(ReduceFunction<V> reducer) {
+                Objects.requireNonNull(reducer, "reducer");
+                return registerWindowedOperator("reduce", null,
+                        (ref, stateName, member, v, due, closeTime) -> {
                             RMap<String, String> state = ref.map();
                             String json = state.get(member);
                             V current = null;
@@ -430,11 +483,8 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                 }
                                 due.add(closeTime, member);
                             }
-                            stateStore.touch(ref.redisKey(), stateName, state);
-                        }
-
-                        fireDueWindows(due, watermark, (member, windowStart, windowEnd) -> {
-                            RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
+                        },
+                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit) -> {
                             RMap<String, String> state = ref.map();
                             String json = state.get(member);
                             if (json == null) {
@@ -459,13 +509,6 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                 stateStore.touch(ref.redisKey(), stateName, state);
                             }
                         });
-                    } finally {
-                        stateStore.clearCurrentKey();
-                        stateStore.clearCurrentPartitionId();
-                    }
-                });
-
-                return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops);
             }
 
             @Override
@@ -474,38 +517,8 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                 @SuppressWarnings("unchecked")
                 Class<? extends AggregateFunction.Accumulator<V>> accClass =
                         (Class<? extends AggregateFunction.Accumulator<V>>) aggregateFunction.createAccumulator().getClass();
-                String stateName = "__internal:window:aggregate:" + operatorId + ":" + upstreamOperators.size();
-
-                List<RedisOperatorNode> ops = new ArrayList<>(upstreamOperators);
-                ops.add((value, ctx, emit) -> {
-                    V v = castValue(value);
-                    K key = currentKeyOrCompute(v);
-                    int partitionId = ctx.currentPartitionId();
-                    long eventTimeMs = ctx.currentEventTime();
-                    if (key != null) keyClassRef.compareAndSet(null, key.getClass());
-                    if (v != null) valueClassRef.compareAndSet(null, v.getClass());
-
-                    stateStore.setCurrentPartitionId(partitionId);
-                    stateStore.setCurrentKey(key);
-                    try {
-                        String keyField = stateStore.stateFieldForKey(key);
-                        String dueKey = windowDueKey(partitionId, stateName);
-                        stateStore.registerStateKey(dueKey);
-                        RScoredSortedSet<String> due = redissonClient.getScoredSortedSet(dueKey, StringCodec.INSTANCE);
-                        long watermark = ctx.currentWatermark();
-
-                        for (WindowAssigner.Window w : assigner.assignWindows(v, eventTimeMs)) {
-                            if (w == null) continue;
-                            long closeTime = windowCloseTime(w.getEnd());
-                            if (watermark >= closeTime) {
-                                try {
-                                    RedisRuntimeMetrics.get().incWindowLateDropped(config.getJobName(), topic, consumerGroup, operatorId, stateName, partitionId);
-                                } catch (Exception ignore) {
-                                }
-                                continue;
-                            }
-                            String member = windowMember(keyField, w.getStart(), w.getEnd());
-                            RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
+                return registerWindowedOperator("aggregate", null,
+                        (ref, stateName, member, v, due, closeTime) -> {
                             RMap<String, String> state = ref.map();
                             AggregateFunction.Accumulator<V> acc;
                             String json = state.get(member);
@@ -529,11 +542,8 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                 throw new RuntimeException("Failed to serialize window accumulator", e);
                             }
                             due.add(closeTime, member);
-                            stateStore.touch(ref.redisKey(), stateName, state);
-                        }
-
-                        fireDueWindows(due, watermark, (member, windowStart, windowEnd) -> {
-                            RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
+                        },
+                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit) -> {
                             RMap<String, String> state = ref.map();
                             String json = state.get(member);
                             if (json == null) {
@@ -554,50 +564,13 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                 stateStore.touch(ref.redisKey(), stateName, state);
                             }
                         });
-                    } finally {
-                        stateStore.clearCurrentKey();
-                        stateStore.clearCurrentPartitionId();
-                    }
-                });
-
-                return cast(new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops));
             }
 
             @Override
             public <R> DataStream<R> apply(WindowFunction<K, V, R> windowFunction) {
                 Objects.requireNonNull(windowFunction, "windowFunction");
-                String stateName = "__internal:window:apply:" + operatorId + ":" + upstreamOperators.size();
-
-                List<RedisOperatorNode> ops = new ArrayList<>(upstreamOperators);
-                ops.add((value, ctx, emit) -> {
-                    V v = castValue(value);
-                    K key = currentKeyOrCompute(v);
-                    int partitionId = ctx.currentPartitionId();
-                    long eventTimeMs = ctx.currentEventTime();
-                    if (key != null) keyClassRef.compareAndSet(null, key.getClass());
-                    if (v != null) valueClassRef.compareAndSet(null, v.getClass());
-
-                    stateStore.setCurrentPartitionId(partitionId);
-                    stateStore.setCurrentKey(key);
-                    try {
-                        String keyField = stateStore.stateFieldForKey(key);
-                        String dueKey = windowDueKey(partitionId, stateName);
-                        stateStore.registerStateKey(dueKey);
-                        RScoredSortedSet<String> due = redissonClient.getScoredSortedSet(dueKey, StringCodec.INSTANCE);
-                        long watermark = ctx.currentWatermark();
-
-                        for (WindowAssigner.Window w : assigner.assignWindows(v, eventTimeMs)) {
-                            if (w == null) continue;
-                            long closeTime = windowCloseTime(w.getEnd());
-                            if (watermark >= closeTime) {
-                                try {
-                                    RedisRuntimeMetrics.get().incWindowLateDropped(config.getJobName(), topic, consumerGroup, operatorId, stateName, partitionId);
-                                } catch (Exception ignore) {
-                                }
-                                continue;
-                            }
-                            String member = windowMember(keyField, w.getStart(), w.getEnd());
-                            RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
+                return registerWindowedOperator("apply", null,
+                        (ref, stateName, member, v, due, closeTime) -> {
                             RMap<String, String> state = ref.map();
                             List<String> items = new ArrayList<>();
                             String cur = state.get(member);
@@ -619,11 +592,8 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                 throw new RuntimeException("Failed to serialize window elements", e);
                             }
                             due.add(closeTime, member);
-                            stateStore.touch(ref.redisKey(), stateName, state);
-                        }
-
-                        fireDueWindows(due, watermark, (member, windowStart, windowEnd) -> {
-                            RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
+                        },
+                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit) -> {
                             RMap<String, String> state = ref.map();
                             String json = state.get(member);
                             if (json == null || json.isBlank()) {
@@ -672,55 +642,20 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                 emit.emit(buffer.removeFirst());
                             }
                         });
-                    } finally {
-                        stateStore.clearCurrentKey();
-                        stateStore.clearCurrentPartitionId();
-                    }
-                });
-
-                return cast(new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops));
             }
 
             @Override
             public DataStream<V> sum(Function<V, ? extends Number> fieldSelector) {
                 Objects.requireNonNull(fieldSelector, "fieldSelector");
-                String stateName = "__internal:window:sum:" + operatorId + ":" + upstreamOperators.size();
-
-                List<RedisOperatorNode> ops = new ArrayList<>(upstreamOperators);
-                ops.add((value, ctx, emit) -> {
-                    V v = castValue(value);
-                    if (!(v instanceof Number numberValue)) {
-                        throw new UnsupportedOperationException(
-                                "Redis runtime window sum() only supports Number elements, but got: " +
-                                        (v == null ? "null" : v.getClass().getName()));
-                    }
-                    K key = currentKeyOrCompute(v);
-                    int partitionId = ctx.currentPartitionId();
-                    long eventTimeMs = ctx.currentEventTime();
-                    if (key != null) keyClassRef.compareAndSet(null, key.getClass());
-                    if (v != null) valueClassRef.compareAndSet(null, v.getClass());
-
-                    stateStore.setCurrentPartitionId(partitionId);
-                    stateStore.setCurrentKey(key);
-                    try {
-                        String keyField = stateStore.stateFieldForKey(key);
-                        String dueKey = windowDueKey(partitionId, stateName);
-                        stateStore.registerStateKey(dueKey);
-                        RScoredSortedSet<String> due = redissonClient.getScoredSortedSet(dueKey, StringCodec.INSTANCE);
-                        long watermark = ctx.currentWatermark();
-
-                        for (WindowAssigner.Window w : assigner.assignWindows(v, eventTimeMs)) {
-                            if (w == null) continue;
-                            long closeTime = windowCloseTime(w.getEnd());
-                            if (watermark >= closeTime) {
-                                try {
-                                    RedisRuntimeMetrics.get().incWindowLateDropped(config.getJobName(), topic, consumerGroup, operatorId, stateName, partitionId);
-                                } catch (Exception ignore) {
-                                }
-                                continue;
+                return registerWindowedOperator("sum",
+                        v -> {
+                            if (!(v instanceof Number)) {
+                                throw new UnsupportedOperationException(
+                                        "Redis runtime window sum() only supports Number elements, but got: "
+                                                + (v == null ? "null" : v.getClass().getName()));
                             }
-                            String member = windowMember(keyField, w.getStart(), w.getEnd());
-                            RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
+                        },
+                        (ref, stateName, member, v, due, closeTime) -> {
                             RMap<String, String> state = ref.map();
                             Map<String, Object> cur = new HashMap<>();
                             String json = state.get(member);
@@ -738,18 +673,15 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                             Number current = decodeNumber(cur.get("sum"));
                             Number next = io.github.cuihairu.redis.streaming.runtime.internal.NumberAggregationUtils.add(current, fieldSelector.apply(v));
                             cur.put("sum", next);
-                            cur.put("sample", numberValue.getClass().getName());
+                            cur.put("sample", ((Number) v).getClass().getName());
                             try {
                                 state.put(member, objectMapper.writeValueAsString(cur));
                             } catch (Exception e) {
                                 throw new RuntimeException("Failed to serialize window sum state", e);
                             }
                             due.add(closeTime, member);
-                            stateStore.touch(ref.redisKey(), stateName, state);
-                        }
-
-                        fireDueWindows(due, watermark, (member, windowStart, windowEnd) -> {
-                            RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
+                        },
+                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit) -> {
                             RMap<String, String> state = ref.map();
                             String json = state.get(member);
                             if (json == null || json.isBlank()) {
@@ -775,49 +707,12 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                 stateStore.touch(ref.redisKey(), stateName, state);
                             }
                         });
-                    } finally {
-                        stateStore.clearCurrentKey();
-                        stateStore.clearCurrentPartitionId();
-                    }
-                });
-
-                return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops);
             }
 
             @Override
             public DataStream<Long> count() {
-                String stateName = "__internal:window:count:" + operatorId + ":" + upstreamOperators.size();
-
-                List<RedisOperatorNode> ops = new ArrayList<>(upstreamOperators);
-                ops.add((value, ctx, emit) -> {
-                    V v = castValue(value);
-                    K key = currentKeyOrCompute(v);
-                    int partitionId = ctx.currentPartitionId();
-                    long eventTimeMs = ctx.currentEventTime();
-                    if (key != null) keyClassRef.compareAndSet(null, key.getClass());
-                    if (v != null) valueClassRef.compareAndSet(null, v.getClass());
-
-                    stateStore.setCurrentPartitionId(partitionId);
-                    stateStore.setCurrentKey(key);
-                    try {
-                        String keyField = stateStore.stateFieldForKey(key);
-                        String dueKey = windowDueKey(partitionId, stateName);
-                        stateStore.registerStateKey(dueKey);
-                        RScoredSortedSet<String> due = redissonClient.getScoredSortedSet(dueKey, StringCodec.INSTANCE);
-                        long watermark = ctx.currentWatermark();
-
-                        for (WindowAssigner.Window w : assigner.assignWindows(v, eventTimeMs)) {
-                            if (w == null) continue;
-                            long closeTime = windowCloseTime(w.getEnd());
-                            if (watermark >= closeTime) {
-                                try {
-                                    RedisRuntimeMetrics.get().incWindowLateDropped(config.getJobName(), topic, consumerGroup, operatorId, stateName, partitionId);
-                                } catch (Exception ignore) {
-                                }
-                                continue;
-                            }
-                            String member = windowMember(keyField, w.getStart(), w.getEnd());
-                            RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
+                return registerWindowedOperator("count", null,
+                        (ref, stateName, member, v, due, closeTime) -> {
                             RMap<String, String> state = ref.map();
                             long cur = 0L;
                             String s = state.get(member);
@@ -830,11 +725,8 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                             cur++;
                             state.put(member, Long.toString(cur));
                             due.add(closeTime, member);
-                            stateStore.touch(ref.redisKey(), stateName, state);
-                        }
-
-                        fireDueWindows(due, watermark, (member, windowStart, windowEnd) -> {
-                            RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
+                        },
+                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit) -> {
                             RMap<String, String> state = ref.map();
                             String s = state.get(member);
                             if (s == null || s.isBlank()) {
@@ -853,13 +745,6 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                 stateStore.touch(ref.redisKey(), stateName, state);
                             }
                         });
-                    } finally {
-                        stateStore.clearCurrentKey();
-                        stateStore.clearCurrentPartitionId();
-                    }
-                });
-
-                return cast(new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops));
             }
 
             private String windowMember(String keyField, long start, long end) {
