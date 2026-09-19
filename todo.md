@@ -552,6 +552,10 @@ void testRedisIntegration() {
 - [ ] `metrics` 模块与 `RedisRuntimeMetrics`/`CDCMetrics`/`MqMetrics` 四套体系统一
 - [ ] `reliability` 与 mq 的 DLQ/重试、runtime 幂等 sink 的去重职责划界
 
+### C.5 CDC 拉取模型陷阱(新发现,建议尽快修)
+- [ ] `AbstractCDCConnector.startScheduledPolling`:当 `pollingIntervalMs>0`(默认 1000ms)时后台调度器周期调用 `poll()` 并**丢弃取回的事件**,与外部拉取消费者竞争队列(几乎必然抢空)。修复方向:调度器只做"填充"(scan-only)或将事件交付 listener(需在 CDCEventListener 上增加带事件的 default 回调)。当前测试以 pollingIntervalMs=0 规避。
+- [ ] 连接器启动时 `initializeLastPolledValues` 会跳过存量行(无初始快照捕获)——与 `snapshot.mode` 命名语义不符,文档与实现需对齐。
+
 ### D. registry 瘦身(破坏公开 API,建议放到 1.0 周期)
 - [ ] `metrics/` APM 采集 14 类(与 metrics 模块重叠)、`client/` RPC 调用端(与 reliability 重叠)、`WebSocketHealthChecker`(实为裸 TCP,等价 TcpHealthChecker)、四套同义接口(Registry/Provider、Discovery/Consumer)与 `RedisNamingService` 纯委托门面
 - [ ] `config.RedisConfigCenter` 冗余门面;两个 `BaseRedisConfig` 已合并,继续收敛 `ConfigManager/ConfigService/ConfigCenter` 接口堆叠
