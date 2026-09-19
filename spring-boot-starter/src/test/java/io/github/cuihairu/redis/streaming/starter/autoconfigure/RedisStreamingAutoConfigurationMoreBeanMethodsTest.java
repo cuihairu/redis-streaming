@@ -47,7 +47,7 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
     void registryNamingServiceStartsAndAppliesMetricsGlobalConfig() {
         MetricsGlobal.setDefaultConfig(null);
         RedissonClient redisson = mock(RedissonClient.class);
-        RedisStreamingAutoConfiguration.RegistryConfiguration cfg = new RedisStreamingAutoConfiguration.RegistryConfiguration();
+        RedisStreamingRegistryAutoConfiguration cfg = new RedisStreamingRegistryAutoConfiguration();
         RedisStreamingProperties props = new RedisStreamingProperties();
 
         props.getRegistry().getMetrics().setEnabled(Set.of("cpu"));
@@ -76,7 +76,7 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
     @Test
     void discoveryServiceIsStartedByBeanMethod() {
         RedissonClient redisson = mock(RedissonClient.class);
-        RedisStreamingAutoConfiguration.DiscoveryConfiguration cfg = new RedisStreamingAutoConfiguration.DiscoveryConfiguration();
+        RedisStreamingDiscoveryAutoConfiguration cfg = new RedisStreamingDiscoveryAutoConfiguration();
         RedisStreamingProperties props = new RedisStreamingProperties();
         props.getDiscovery().setHealthyOnly(true);
 
@@ -88,7 +88,7 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
     @Test
     void configServiceBeanUsesConfiguredHistorySizeAndPrefix() throws Exception {
         RedissonClient redisson = mock(RedissonClient.class);
-        RedisStreamingAutoConfiguration.ConfigServiceConfiguration cfg = new RedisStreamingAutoConfiguration.ConfigServiceConfiguration();
+        RedisStreamingConfigServiceAutoConfiguration cfg = new RedisStreamingConfigServiceAutoConfiguration();
         RedisStreamingProperties props = new RedisStreamingProperties();
 
         props.getConfig().setHistorySize(77);
@@ -115,7 +115,7 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
 
     @Test
     void mqOptionsAreMappedFromProperties() {
-        RedisStreamingAutoConfiguration.MqConfiguration cfg = new RedisStreamingAutoConfiguration.MqConfiguration();
+        RedisStreamingMqAutoConfiguration cfg = new RedisStreamingMqAutoConfiguration();
         RedisStreamingProperties props = new RedisStreamingProperties();
 
         props.getMq().setDefaultPartitionCount(3);
@@ -164,7 +164,7 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
 
         try {
             RedisStreamingAutoConfiguration auto = new RedisStreamingAutoConfiguration();
-            RedisStreamingAutoConfiguration.MqConfiguration cfg = new RedisStreamingAutoConfiguration.MqConfiguration();
+            RedisStreamingMqAutoConfiguration cfg = new RedisStreamingMqAutoConfiguration();
 
             io.micrometer.core.instrument.simple.SimpleMeterRegistry reg =
                     new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
@@ -199,7 +199,7 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
 
     @Test
     void dlqReplayProducerBeanDelegatesToFactory() {
-        RedisStreamingAutoConfiguration.MqConfiguration cfg = new RedisStreamingAutoConfiguration.MqConfiguration();
+        RedisStreamingMqAutoConfiguration cfg = new RedisStreamingMqAutoConfiguration();
         MessageQueueFactory factory = mock(MessageQueueFactory.class);
         MessageProducer producer = mock(MessageProducer.class);
         when(factory.createProducer()).thenReturn(producer);
@@ -210,7 +210,7 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
 
     @Test
     void streamRetentionHousekeeperBeanCanBeCreatedAndClosed() {
-        RedisStreamingAutoConfiguration.MqConfiguration cfg = new RedisStreamingAutoConfiguration.MqConfiguration();
+        RedisStreamingMqAutoConfiguration cfg = new RedisStreamingMqAutoConfiguration();
         RedissonClient redisson = mock(RedissonClient.class);
         MessageQueueAdmin admin = mock(MessageQueueAdmin.class);
         when(admin.listAllTopics()).thenReturn(Collections.emptyList());
@@ -227,7 +227,7 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
 
     @Test
     void rateLimiterRegistryBuildsFromPoliciesAndDefaultFallbackWorks() {
-        RedisStreamingAutoConfiguration.RateLimitConfiguration cfg = new RedisStreamingAutoConfiguration.RateLimitConfiguration();
+        RedisStreamingRateLimitAutoConfiguration cfg = new RedisStreamingRateLimitAutoConfiguration();
         RedisStreamingProperties props = new RedisStreamingProperties();
 
         var p1 = new RedisStreamingProperties.RateLimitProperties.Policy();
@@ -266,7 +266,7 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
 
     @Test
     void rateLimiterFallsBackToInMemoryWhenRegistryEmpty() {
-        RedisStreamingAutoConfiguration.RateLimitConfiguration cfg = new RedisStreamingAutoConfiguration.RateLimitConfiguration();
+        RedisStreamingRateLimitAutoConfiguration cfg = new RedisStreamingRateLimitAutoConfiguration();
         RedisStreamingProperties props = new RedisStreamingProperties();
         props.getRatelimit().setDefaultName("missing");
 

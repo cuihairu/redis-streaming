@@ -34,7 +34,7 @@ class RedisStreamingAutoConfigurationBeanMethodsTest {
     @Test
     void registryLoadBalancerSupportsMultipleStrategies() {
         RedissonClient redisson = mock(RedissonClient.class);
-        RedisStreamingAutoConfiguration.RegistryConfiguration cfg = new RedisStreamingAutoConfiguration.RegistryConfiguration();
+        RedisStreamingRegistryAutoConfiguration cfg = new RedisStreamingRegistryAutoConfiguration();
         RedisStreamingProperties props = new RedisStreamingProperties();
 
         props.getLoadBalancer().setStrategy("wrr");
@@ -60,7 +60,7 @@ class RedisStreamingAutoConfigurationBeanMethodsTest {
 
     @Test
     void brokerFactoryUsesJdbcWhenRequestedAndDataSourceProvided() {
-        RedisStreamingAutoConfiguration.MqConfiguration cfg = new RedisStreamingAutoConfiguration.MqConfiguration();
+        RedisStreamingMqAutoConfiguration cfg = new RedisStreamingMqAutoConfiguration();
         RedisStreamingProperties props = new RedisStreamingProperties();
         props.getMq().getBroker().setType("jdbc");
 
@@ -71,7 +71,7 @@ class RedisStreamingAutoConfigurationBeanMethodsTest {
 
     @Test
     void brokerFactoryFallsBackToRedisWhenJdbcRequestedButNoDataSource() {
-        RedisStreamingAutoConfiguration.MqConfiguration cfg = new RedisStreamingAutoConfiguration.MqConfiguration();
+        RedisStreamingMqAutoConfiguration cfg = new RedisStreamingMqAutoConfiguration();
         RedisStreamingProperties props = new RedisStreamingProperties();
         props.getMq().getBroker().setType("jdbc");
 
@@ -81,7 +81,7 @@ class RedisStreamingAutoConfigurationBeanMethodsTest {
 
     @Test
     void dlqReplayHandlerPublishesWithForcedPartitionHeader() {
-        RedisStreamingAutoConfiguration.MqConfiguration cfg = new RedisStreamingAutoConfiguration.MqConfiguration();
+        RedisStreamingMqAutoConfiguration cfg = new RedisStreamingMqAutoConfiguration();
 
         RedissonClient redisson = mock(RedissonClient.class);
         MqOptions opts = MqOptions.builder().streamKeyPrefix("stream:topic").build();
@@ -109,7 +109,7 @@ class RedisStreamingAutoConfigurationBeanMethodsTest {
 
     @Test
     void dlqReplayHandlerReturnsFalseOnPublishFailure() {
-        RedisStreamingAutoConfiguration.MqConfiguration cfg = new RedisStreamingAutoConfiguration.MqConfiguration();
+        RedisStreamingMqAutoConfiguration cfg = new RedisStreamingMqAutoConfiguration();
 
         RedissonClient redisson = mock(RedissonClient.class);
         MqOptions opts = MqOptions.builder().streamKeyPrefix("stream:topic").build();

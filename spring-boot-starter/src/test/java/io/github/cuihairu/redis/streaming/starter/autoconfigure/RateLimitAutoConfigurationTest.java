@@ -111,6 +111,6 @@ public class RateLimitAutoConfigurationTest {
 
     @Configuration(proxyBeanMethods = false)
     @EnableConfigurationProperties(RedisStreamingProperties.class)
-    @Import(RedisStreamingAutoConfiguration.RateLimitConfiguration.class)
+    @Import(RedisStreamingRateLimitAutoConfiguration.class)
     static class RateLimitOnlyConfig {}
 }
