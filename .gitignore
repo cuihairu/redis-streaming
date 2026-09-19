@@ -71,8 +71,21 @@ docker-compose.override.yml
 **/src/main/java.backup/
 **/src/test.backup/
 
+# Node (docs build artifacts must live under docs/ only)
+node_modules/
+package.json
+package-lock.json
+!docs/package.json
+!docs/package-lock.json
+
+# Eclipse
+*.factorypath
+
 # VuePress docs
 docs/node_modules/
 docs/.vuepress/.cache/
 docs/.vuepress/.temp/
 docs/.vuepress/dist/
+
+# Eclipse default output
+/*/bin/

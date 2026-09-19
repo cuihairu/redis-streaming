@@ -596,7 +596,7 @@ List<ChangeEvent> events = connector.poll();
 ## 📊 技术栈
 
 ### 核心依赖
-- **Redisson 3.52.0** - Redis 客户端，用于分布式操作
+- **Redisson 4.7.0** - Redis 客户端，用于分布式操作
 - **Jackson 2.17.0** - JSON 序列化/反序列化
 - **Lombok 1.18.34** - 代码生成，减少样板代码
 - **SLF4J 1.7.36** - 日志抽象
@@ -698,7 +698,7 @@ List<ChangeEvent> events = connector.poll();
 ### 快速开始
 - [快速入门教程](QUICK_START.md) - 5分钟上手指南
 - [运行示例](RUNNING_EXAMPLES.md) - 端到端示例与演示程序
-- [完成报告](COMPLETION_REPORT.md) - 模块完成度与覆盖率
+- [完成报告](docs/archive/COMPLETION_REPORT.md) - 模块完成度与覆盖率
 - [测试指南](TESTING.md) - 单元测试 / 集成测试
 
 ### 设计文档

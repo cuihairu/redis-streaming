@@ -8,7 +8,7 @@ The goal is to keep the core APIs small and composable, while shipping productio
 - Start here: `README.md`, `QUICK_START.md`
 - Run demos: `RUNNING_EXAMPLES.md`
 - How to test: `TESTING.md` (unit vs integration)
-- Completion & coverage notes: `COMPLETION_REPORT.md`
+- Completion & coverage notes: `docs/archive/COMPLETION_REPORT.md`
 - Design docs index: `docs/README.md` (and `wiki/`)
 
 ## Module Overview (20 modules)

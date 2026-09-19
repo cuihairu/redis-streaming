@@ -149,7 +149,7 @@ Pattern pattern = Pattern.begin("start")
 | Component | Purpose | Required |
 |-----------|---------|----------|
 | Redis 6.0+ | Stream/TimeSeries base storage | ✅ |
-| Redisson 3.52.0 | Distributed locks, thread-safe connections | ✅ |
+| Redisson 4.7.0 | Distributed locks, thread-safe connections | ✅ |
 | Jackson 2.17.0 | JSON serialization | ✅ |
 | Spring Boot 3.x | Starter module dependency | Optional |
 | Lombok | Simplify POJO code | Recommended |

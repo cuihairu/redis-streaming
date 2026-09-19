@@ -149,7 +149,7 @@ Pattern pattern = Pattern.begin("start")
 | 组件 | 用途 | 是否必需 |
 |------|------|---------|
 | Redis 6.0+ | Stream/TimeSeries 基础存储 | ✅ |
-| Redisson 3.52.0 | 分布式锁、线程安全连接 | ✅ |
+| Redisson 4.7.0 | 分布式锁、线程安全连接 | ✅ |
 | Jackson 2.17.0 | JSON 序列化 | ✅ |
 | Spring Boot 3.x | Starter 模块依赖 | 可选 |
 | Lombok | 简化 POJO 代码 | 推荐 |
