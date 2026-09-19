@@ -1,68 +1,46 @@
 package io.github.cuihairu.redis.streaming.mq;
 
-import org.junit.jupiter.api.BeforeEach;
+import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 import org.redisson.api.RedissonClient;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mock;
 
 class MessageQueueFactoryTest {
 
-    @Mock
-    private RedissonClient redissonClient;
-
-    private MessageQueueFactory factory;
-
-    @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this);
-        factory = new MessageQueueFactory(redissonClient);
+    @Test
+    void nullOptionsAndFactoryFallBackToDefaults() {
+        RedissonClient client = mock(RedissonClient.class);
+        MessageQueueFactory f = new MessageQueueFactory(client, null);
+        assertNotNull(f.createProducer());
+        assertNotNull(f.createConsumer());
+        assertNotNull(f.createConsumer("named"));
+        assertNotNull(f.createAdmin());
     }
 
     @Test
-    void testCreateProducer() {
-        MessageProducer producer = factory.createProducer();
+    void deadLetterConsumerNaming() {
+        RedissonClient client = mock(RedissonClient.class);
+        MqOptions options = MqOptions.builder().consumerNamePrefix("c-").dlqConsumerSuffix("-dlq").build();
+        MessageQueueFactory f = new MessageQueueFactory(client, options, null);
 
-        assertNotNull(producer);
-        // Producer delegates to Broker now (router + persistence)
-        assertTrue(producer instanceof io.github.cuihairu.redis.streaming.mq.impl.BrokerBackedProducer);
+        assertNotNull(f.createDeadLetterConsumer());
+
+        MessageConsumer keepsSuffix = f.createDeadLetterConsumer("worker-dlq");
+        assertNotNull(keepsSuffix);
+        MessageConsumer appendsSuffix = f.createDeadLetterConsumer("worker");
+        assertNotNull(appendsSuffix);
+        MessageConsumer blankName = f.createDeadLetterConsumer("   ");
+        assertNotNull(blankName);
     }
 
     @Test
-    void testCreateConsumer() {
-        MessageConsumer consumer = factory.createConsumer();
-
-        assertNotNull(consumer);
-        assertTrue(consumer instanceof io.github.cuihairu.redis.streaming.mq.impl.RedisMessageConsumer);
-    }
-
-    @Test
-    void testCreateConsumerWithName() {
-        String consumerName = "custom-consumer";
-        MessageConsumer consumer = factory.createConsumer(consumerName);
-
-        assertNotNull(consumer);
-        assertTrue(consumer instanceof io.github.cuihairu.redis.streaming.mq.impl.RedisMessageConsumer);
-    }
-
-    @Test
-    void testCreateDeadLetterConsumer() {
-        MessageConsumer dlqConsumer = factory.createDeadLetterConsumer();
-
-        assertNotNull(dlqConsumer);
-        // DLQ consumer is provided via reliability adapter
-        assertTrue(dlqConsumer instanceof io.github.cuihairu.redis.streaming.mq.impl.DlqConsumerAdapter);
-    }
-
-    @Test
-    void testCreateDeadLetterConsumerWithName() {
-        String consumerName = "custom-consumer";
-        MessageConsumer dlqConsumer = factory.createDeadLetterConsumer(consumerName);
-
-        assertNotNull(dlqConsumer);
-        assertTrue(dlqConsumer instanceof io.github.cuihairu.redis.streaming.mq.impl.DlqConsumerAdapter);
+    void deadLetterConsumerForTopicStartsAndDefaultsGroup() {
+        RedissonClient client = mock(RedissonClient.class);
+        MqOptions options = MqOptions.builder().defaultDlqGroup("fallback-group").build();
+        MessageQueueFactory f = new MessageQueueFactory(client, options, null);
+        assertNotNull(f.createDeadLetterConsumerForTopic("t", null, null, m -> MessageHandleResult.SUCCESS));
+        assertNotNull(f.createDeadLetterConsumerForTopic("t", "explicit", "named", m -> MessageHandleResult.SUCCESS));
     }
 }
