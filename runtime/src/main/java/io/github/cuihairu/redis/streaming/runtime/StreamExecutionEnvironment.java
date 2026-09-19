@@ -6,6 +6,8 @@ import io.github.cuihairu.redis.streaming.api.checkpoint.CheckpointCoordinator;
 import io.github.cuihairu.redis.streaming.runtime.internal.InMemoryDataStream;
 import io.github.cuihairu.redis.streaming.runtime.internal.InMemoryCheckpointCoordinator;
 import io.github.cuihairu.redis.streaming.runtime.internal.InMemoryRecord;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -22,6 +24,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * triggered by terminal operations like {@link DataStream#addSink} / {@link DataStream#print()}.
  */
 public final class StreamExecutionEnvironment {
+
+    private static final Logger log = LoggerFactory.getLogger(StreamExecutionEnvironment.class);
 
     private InMemoryCheckpointCoordinator checkpointCoordinator;
 
@@ -77,6 +81,11 @@ public final class StreamExecutionEnvironment {
         AtomicLong fallbackTimestamp = new AtomicLong(0L);
 
         try {
+            source.open();
+        } catch (Exception e) {
+            throw new RuntimeException("Source open failed", e);
+        }
+        try {
             source.run(new StreamSource.SourceContext<>() {
                 @Override
                 public void collect(T element) {
@@ -102,6 +111,11 @@ public final class StreamExecutionEnvironment {
             throw new RuntimeException("Source execution failed", e);
         } finally {
             stopped.set(true);
+            try {
+                source.close();
+            } catch (Exception e) {
+                log.warn("Failed to close source", e);
+            }
         }
 
         return InMemoryDataStream.fromRecords(out::iterator, checkpointCoordinator);

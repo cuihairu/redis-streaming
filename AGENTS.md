@@ -22,7 +22,7 @@
 ## Testing Guidelines
 - Frameworks: JUnit 5, Mockito.
 - Unit tests must not require Redis; integration tests must be annotated `@Tag("integration")` and can assume Redis at `redis://127.0.0.1:6379` (override `REDIS_URL`).
-- Coverage: `jacocoRootCoverageVerification` currently enforces a 25% aggregate instruction-coverage gate; aspirational per-module targets are core ≥ 80%, others ≥ 70% (raise the gate as targets are met).
+- Coverage: `jacocoRootCoverageVerification` currently enforces a 70% aggregate instruction-coverage gate (measured ~82%); aspirational per-module targets are core ≥ 80%, others ≥ 70% (raise the gate as targets are met).
 - Useful invocations: `./gradlew :core:test --tests "ClassNameTest"`, `./gradlew integrationTest --info`.
 
 ## Commit & Pull Request Guidelines

@@ -12,6 +12,7 @@ All notable changes to this project are documented here (Conventional Commits st
   - ⚠️ Redisson 4.x `StreamMessageId.MIN` sends the `-` special stream id, which requires **Redis ≥ 7.0**. New code (`RedisStreamSource`) uses an explicit `0-0` id for Redis 6 compatibility; library users passing `MIN` to `XGROUP CREATE` on Redis 6 should switch to an explicit id.
 - `sink.redis.RedisStreamSink` now performs real **XADD** onto a Redis Stream and implements `core StreamSink`. The previous (misnamed) List behavior is preserved as the new `sink.redis.RedisListSink`.
 - `core StreamSink` gained an optional lifecycle: `open()` / `close()` default methods. Both runtime engines now call them (InMemory engine around the terminal iteration; the Redis engine lazily on first message and on job close). Implementations holding resources should override them.
+- `core StreamSource` gained the symmetric `open()` / `close()` lifecycle, wired into the in-memory engine's `addSource`.
 - `spring-boot-starter`: `RedisStreamingAutoConfiguration` is now a small `@AutoConfiguration` owning the shared `RedissonClient`; registry/discovery/config/mq/ratelimit beans moved to their own `RedisStreaming*AutoConfiguration` classes (same conditions and semantics).
 - `registry.BaseRedisConfig` now extends `config.BaseRedisConfig` (removes a forked duplicate).
 - `registry` `MessagingProtocol` trimmed to Redis-based protocols only (Kafka/Pulsar/RabbitMQ/NATS/MQTT constants had no implementation).

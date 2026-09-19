@@ -345,7 +345,7 @@ java -version
 ```
 
 ### Test Coverage Goals
-- Enforced today: 25% aggregate gate (`jacocoRootCoverageVerification`); module-level targets below are aspirational.
+- Enforced today: 70% aggregate gate (`jacocoRootCoverageVerification`, measured ~82%); module-level targets below are aspirational.
 - **Core module (registry + mq)**: 80%+ (critical infrastructure)
 - **Business modules**: 70%+
 - **Integration tests**: Cover main workflows and edge cases

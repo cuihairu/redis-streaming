@@ -558,6 +558,7 @@ void testRedisIntegration() {
 
 ### E. 其他
 - [x] examples 新增 `springboot.StarterExampleApplication` + 注释版 `application.yml`(registry/discovery/config/mq/ratelimit 全键样例)。**首次真实启动 starter 暴露并修复 4 个潜伏 bug**:logback 1.5.13 与 Spring Boot 3.2 不兼容(`LoggerContext.getConfigurationLock` 移除,降到 1.4.14)、默认空密码仍发送 AUTH 导致连接失败(改为仅非空才 set)、`MqHealthIndicator` bean 在无 actuator 时使配置类内省失败(下沉到类级 `@ConditionalOnClass` 嵌套配置)、5 个 micrometer collector/installer bean 缺 `@ConditionalOnBean(MeterRegistry/collector)` 守卫。示例已在本地 Redis 端到端跑通(注册/配置/MQ 全通)
-- [ ] `SourceContext.getCheckpointLock` 真实接入(两引擎均返回无锁对象);`StreamSource` 无 open/close 生命周期(与 StreamSink 已补齐形成对照,source 侧未做)
+- [x] `StreamSource` 生命周期与 StreamSink 对称补齐:`open()/close()` 默认方法,InMemory 引擎 addSource 已接线(source.open → run → finally close)
+- [ ] `SourceContext.getCheckpointLock` 真实接入(两引擎均返回无锁对象;需与检查点屏障协议一并设计)
 - [ ] 发布说明记录 Redisson 4.7.0 升级与 API 迁移(README/docs 已同步版本号)
-- [ ] 覆盖率:延续上文"优先级 1-4"清单;把 JaCoCo 聚合门槛从 0.25 逐步上调(建议下一档 0.40)
+- [ ] 覆盖率:延续上文"优先级 1-4"清单;JaCoCo 聚合门槛上调尝试见提交历史(下一档视实测覆盖而定)

@@ -10,6 +10,17 @@ import java.io.Serializable;
 public interface StreamSource<T> extends Serializable {
 
     /**
+     * Called once by the runtime before {@link #run(SourceContext)} starts.
+     *
+     * <p>Use this hook to acquire resources such as connections or files. The default
+     * implementation is a no-op, preserving compatibility with existing sources.</p>
+     *
+     * @throws Exception if the source cannot be initialized
+     */
+    default void open() throws Exception {
+    }
+
+    /**
      * Run the source to produce elements.
      * This method is called once when the source starts.
      *
@@ -24,6 +35,18 @@ public interface StreamSource<T> extends Serializable {
      */
     default void cancel() {
         // Default: no-op
+    }
+
+    /**
+     * Called once by the runtime after the source finished (or was cancelled).
+     *
+     * <p>Use this hook to release resources acquired in {@link #open()}. Implementations must
+     * be idempotent; runtimes log but do not propagate exceptions thrown from this method.
+     * The default implementation is a no-op.</p>
+     *
+     * @throws Exception if the resource release fails
+     */
+    default void close() throws Exception {
     }
 
     /**

@@ -253,7 +253,7 @@ tasks.register('jacocoRootCoverageVerification', JacocoCoverageVerification) {
             limit {
                 counter = 'INSTRUCTION'
                 value = 'COVEREDRATIO'
-                minimum = 0.25
+                minimum = 0.70
             }
         }
     }
