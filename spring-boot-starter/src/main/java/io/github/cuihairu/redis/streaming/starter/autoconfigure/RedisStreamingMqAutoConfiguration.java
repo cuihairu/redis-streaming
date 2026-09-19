@@ -18,6 +18,7 @@ import io.github.cuihairu.redis.streaming.mq.dlq.RedisDeadLetterService;
 import io.github.cuihairu.redis.streaming.reliability.metrics.ReliabilityMetrics;
 import io.github.cuihairu.redis.streaming.starter.properties.RedisStreamingProperties;
 import org.redisson.api.RedissonClient;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
@@ -192,12 +193,14 @@ public class RedisStreamingMqAutoConfiguration {
 
     @Bean
     @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
+    @ConditionalOnBean(io.micrometer.core.instrument.MeterRegistry.class)
     public io.github.cuihairu.redis.streaming.starter.metrics.MqMicrometerCollector mqMicrometerCollector(
             io.micrometer.core.instrument.MeterRegistry registry) {
         return new io.github.cuihairu.redis.streaming.starter.metrics.MqMicrometerCollector(registry);
     }
 
     @Bean
+    @ConditionalOnBean(io.github.cuihairu.redis.streaming.starter.metrics.MqMicrometerCollector.class)
     @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
     public Object installMqCollector(io.github.cuihairu.redis.streaming.starter.metrics.MqMicrometerCollector collector) {
         // Bridge mq module metrics to Micrometer
@@ -210,12 +213,14 @@ public class RedisStreamingMqAutoConfiguration {
             "io.micrometer.core.instrument.MeterRegistry",
             "io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics"
     })
+    @ConditionalOnBean(io.micrometer.core.instrument.MeterRegistry.class)
     public io.github.cuihairu.redis.streaming.starter.metrics.RedisRuntimeMicrometerCollector redisRuntimeMicrometerCollector(
             io.micrometer.core.instrument.MeterRegistry registry) {
         return new io.github.cuihairu.redis.streaming.starter.metrics.RedisRuntimeMicrometerCollector(registry);
     }
 
     @Bean
+    @ConditionalOnBean(io.github.cuihairu.redis.streaming.starter.metrics.RedisRuntimeMicrometerCollector.class)
     @ConditionalOnClass(name = {
             "io.micrometer.core.instrument.MeterRegistry",
             "io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics"
@@ -227,12 +232,14 @@ public class RedisStreamingMqAutoConfiguration {
 
     @Bean
     @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
+    @ConditionalOnBean(io.micrometer.core.instrument.MeterRegistry.class)
     public io.github.cuihairu.redis.streaming.starter.metrics.RetentionMicrometerCollector retentionMicrometerCollector(
             io.micrometer.core.instrument.MeterRegistry registry) {
         return new io.github.cuihairu.redis.streaming.starter.metrics.RetentionMicrometerCollector(registry);
     }
 
     @Bean
+    @ConditionalOnBean(io.github.cuihairu.redis.streaming.starter.metrics.RetentionMicrometerCollector.class)
     @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
     public Object installRetentionCollector(io.github.cuihairu.redis.streaming.starter.metrics.RetentionMicrometerCollector collector) {
         io.github.cuihairu.redis.streaming.mq.metrics.RetentionMetrics.setCollector(collector);
@@ -250,21 +257,32 @@ public class RedisStreamingMqAutoConfiguration {
 
     @Bean
     @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
+    @ConditionalOnBean(io.micrometer.core.instrument.MeterRegistry.class)
     public io.github.cuihairu.redis.streaming.starter.metrics.ReliabilityMicrometerCollector reliabilityMicrometerCollector(
             io.micrometer.core.instrument.MeterRegistry registry) {
         return new io.github.cuihairu.redis.streaming.starter.metrics.ReliabilityMicrometerCollector(registry);
     }
 
     @Bean
+    @ConditionalOnBean(io.github.cuihairu.redis.streaming.starter.metrics.ReliabilityMicrometerCollector.class)
     @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
     public Object installReliabilityCollector(io.github.cuihairu.redis.streaming.starter.metrics.ReliabilityMicrometerCollector collector) {
         ReliabilityMetrics.setCollector(collector);
         return new Object();
     }
 
-    @Bean
+    /**
+     * Health-indicator wiring lives in its own nested configuration guarded at the class level:
+     * {@code MqHealthIndicator implements HealthIndicator} (optional actuator), and method-level
+     * guards cannot prevent Spring from introspecting the method's return type otherwise.
+     */
+    @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(name = "org.springframework.boot.actuate.health.HealthIndicator")
-    public io.github.cuihairu.redis.streaming.starter.health.MqHealthIndicator mqHealthIndicator(MessageQueueAdmin admin) {
-        return new io.github.cuihairu.redis.streaming.starter.health.MqHealthIndicator(admin);
+    static class MqHealthIndicatorConfiguration {
+
+        @Bean
+        public io.github.cuihairu.redis.streaming.starter.health.MqHealthIndicator mqHealthIndicator(MessageQueueAdmin admin) {
+            return new io.github.cuihairu.redis.streaming.starter.health.MqHealthIndicator(admin);
+        }
     }
 }

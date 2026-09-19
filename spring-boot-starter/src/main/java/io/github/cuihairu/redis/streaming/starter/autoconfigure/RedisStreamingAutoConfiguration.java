@@ -7,6 +7,7 @@ import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -56,14 +57,16 @@ public class RedisStreamingAutoConfiguration {
 
         // Simplified configuration, single-server mode only
         // For full configuration, please use redisson-spring-boot-starter
-        config.useSingleServer()
+        org.redisson.config.SingleServerConfig serverConfig = config.useSingleServer()
                 .setAddress(redis.getAddress())
-                .setPassword(redis.getPassword())
                 .setDatabase(redis.getDatabase())
                 .setConnectTimeout(redis.getConnectTimeout())
                 .setTimeout(redis.getTimeout())
                 .setConnectionPoolSize(redis.getConnectionPoolSize())
                 .setConnectionMinimumIdleSize(redis.getConnectionMinimumIdleSize());
+        if (redis.getPassword() != null && !redis.getPassword().isBlank()) {
+            serverConfig.setPassword(redis.getPassword());
+        }
 
         log.info("Initializing RedissonClient with address: {} (Simple single-server mode)", redis.getAddress());
         log.info("For production with cluster/sentinel, use redisson-spring-boot-starter");
@@ -73,12 +76,14 @@ public class RedisStreamingAutoConfiguration {
     // Wire RateLimit metrics to Micrometer if present
     @Bean
     @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
+    @ConditionalOnBean(io.micrometer.core.instrument.MeterRegistry.class)
     public io.github.cuihairu.redis.streaming.starter.metrics.RateLimitMicrometerCollector rateLimitMicrometerCollector(
             io.micrometer.core.instrument.MeterRegistry registry) {
         return new io.github.cuihairu.redis.streaming.starter.metrics.RateLimitMicrometerCollector(registry);
     }
 
     @Bean
+    @ConditionalOnBean(io.github.cuihairu.redis.streaming.starter.metrics.RateLimitMicrometerCollector.class)
     @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
     public Object installRateLimitCollector(io.github.cuihairu.redis.streaming.starter.metrics.RateLimitMicrometerCollector collector) {
         RateLimitMetrics.setCollector(collector);

@@ -1,0 +1,58 @@
+# redis-streaming-spring-boot-starter 配置样例
+# 供 StarterExampleApplication 使用;所有键均为可选,省略时取下述默认值。
+# 组件装配条件:registry/discovery/config/mq 默认启用,ratelimit 默认关闭。
+spring:
+  main:
+    web-application-type: none   # 示例为非 Web 应用,运行一次 CommandLineRunner 后退出
+
+redis-streaming:
+  redis:
+    address: redis://127.0.0.1:6379   # 单服务器模式;集群/哨兵/SSL 请改用 redisson-spring-boot-starter 自建 RedissonClient
+    password: ""
+    database: 0
+    connect-timeout: 10000
+    timeout: 3000
+    connection-pool-size: 64
+    connection-minimum-idle-size: 24
+
+  registry:
+    enabled: true
+    heartbeat-interval: 30      # 秒
+    heartbeat-timeout: 90       # 秒
+
+  discovery:
+    enabled: true
+    healthy-only: true
+
+  config:
+    enabled: true
+    default-group: DEFAULT_GROUP
+    key-prefix: redis_streaming
+    history-size: 30
+
+  mq:
+    enabled: true
+    key-prefix: streaming:mq
+    default-consumer-group: default
+    worker-threads: 4
+    consumer-batch-count: 32
+    retry-max-attempts: 3
+
+  ratelimit:
+    enabled: false              # 打开后提供 RateLimiter / RateLimiterRegistry bean
+    backend: redis              # redis | memory(顶层单策略:window-ms/limit)
+    window-ms: 1000
+    limit: 100
+    default-name: default
+    # 多命名策略(非空时按名字注册 RateLimiterRegistry;algorithm: sliding|token-bucket|leaky-bucket)
+    policies:
+      api:
+        algorithm: token-bucket
+        backend: memory
+        capacity: 50.0
+        rate-per-second: 10.0
+
+  # 示例应用自身读取的键
+  example:
+    service-name: demo-service
+    topic: starter-example-topic

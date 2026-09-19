@@ -34,6 +34,7 @@ The build supports `-PmainClass=...`:
 - `io.github.cuihairu.redis.streaming.examples.checkpoint.CheckpointExample`
 - `io.github.cuihairu.redis.streaming.examples.window.WindowExample`
 - `io.github.cuihairu.redis.streaming.examples.ratelimit.RateLimitExample`
+- `io.github.cuihairu.redis.streaming.examples.springboot.StarterExampleApplication` (Spring Boot starter; config in examples/src/main/resources/application.yml)
 
 ## Cleanup
 - Stop containers: `docker-compose down`
