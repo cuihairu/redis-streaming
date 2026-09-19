@@ -191,11 +191,24 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
     @Override
     public DataStream<T> addSink(StreamSink<T> sink) {
         Objects.requireNonNull(sink, "sink");
-        for (T v : this) {
+        try {
+            sink.open();
+        } catch (Exception e) {
+            throw new RuntimeException("Sink open failed", e);
+        }
+        try {
+            for (T v : this) {
+                try {
+                    sink.invoke(v);
+                } catch (Exception e) {
+                    throw new RuntimeException("Sink invocation failed", e);
+                }
+            }
+        } finally {
             try {
-                sink.invoke(v);
+                sink.close();
             } catch (Exception e) {
-                throw new RuntimeException("Sink invocation failed", e);
+                log.warn("Failed to close sink", e);
             }
         }
         return this;

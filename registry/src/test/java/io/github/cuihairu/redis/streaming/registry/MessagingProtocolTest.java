@@ -10,7 +10,7 @@ public class MessagingProtocolTest {
     public void testFromNameCaseInsensitive() {
         assertEquals(MessagingProtocol.REDIS_STREAM, MessagingProtocol.fromName("redis-stream"));
         assertEquals(MessagingProtocol.REDIS_STREAM, MessagingProtocol.fromName("REDIS-STREAM"));
-        assertEquals(MessagingProtocol.KAFKA_TLS, MessagingProtocol.fromName("Kafka-TLS"));
+        assertEquals(MessagingProtocol.REDIS_PUBSUB_TLS, MessagingProtocol.fromName("redis-pubsub-tls"));
     }
 
     @Test
@@ -25,33 +25,24 @@ public class MessagingProtocolTest {
 
         assertEquals(MessagingProtocol.REDIS_PUBSUB, MessagingProtocol.redisPubSub(false));
         assertEquals(MessagingProtocol.REDIS_PUBSUB_TLS, MessagingProtocol.redisPubSub(true));
+    }
 
-        assertEquals(MessagingProtocol.KAFKA, MessagingProtocol.kafka(false));
-        assertEquals(MessagingProtocol.KAFKA_TLS, MessagingProtocol.kafka(true));
-
-        assertEquals(MessagingProtocol.RABBITMQ, MessagingProtocol.rabbitmq(false));
-        assertEquals(MessagingProtocol.RABBITMQ_TLS, MessagingProtocol.rabbitmq(true));
-
-        assertEquals(MessagingProtocol.PULSAR, MessagingProtocol.pulsar(false));
-        assertEquals(MessagingProtocol.PULSAR_TLS, MessagingProtocol.pulsar(true));
-
-        assertEquals(MessagingProtocol.NATS, MessagingProtocol.nats(false));
-        assertEquals(MessagingProtocol.NATS_TLS, MessagingProtocol.nats(true));
-
-        assertEquals(MessagingProtocol.MQTT, MessagingProtocol.mqtt(false));
-        assertEquals(MessagingProtocol.MQTTS, MessagingProtocol.mqtt(true));
+    @Test
+    public void testOnlyRedisProtocolsAreSupported() {
+        for (MessagingProtocol protocol : MessagingProtocol.values()) {
+            assertTrue(protocol.getName().startsWith("redis-"),
+                    "MessagingProtocol should only expose Redis-based protocols, found: " + protocol.getName());
+        }
     }
 
     @Test
     public void testProtocolFields() {
-        assertEquals("kafka", MessagingProtocol.KAFKA.getName());
-        assertFalse(MessagingProtocol.KAFKA.isSecure());
-        assertEquals(9092, MessagingProtocol.KAFKA.getDefaultPort());
-        assertEquals("Apache Kafka Messaging", MessagingProtocol.KAFKA.getDescription());
+        assertEquals("redis-stream", MessagingProtocol.REDIS_STREAM.getName());
+        assertFalse(MessagingProtocol.REDIS_STREAM.isSecure());
+        assertEquals(6379, MessagingProtocol.REDIS_STREAM.getDefaultPort());
 
-        assertEquals("kafka-tls", MessagingProtocol.KAFKA_TLS.getName());
-        assertTrue(MessagingProtocol.KAFKA_TLS.isSecure());
-        assertEquals(9093, MessagingProtocol.KAFKA_TLS.getDefaultPort());
+        assertEquals("redis-stream-tls", MessagingProtocol.REDIS_STREAM_TLS.getName());
+        assertTrue(MessagingProtocol.REDIS_STREAM_TLS.isSecure());
+        assertEquals(6380, MessagingProtocol.REDIS_STREAM_TLS.getDefaultPort());
     }
 }
-

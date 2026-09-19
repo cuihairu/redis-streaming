@@ -1,87 +1,108 @@
 package io.github.cuihairu.redis.streaming.sink.redis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.cuihairu.redis.streaming.api.stream.StreamSink;
 import lombok.extern.slf4j.Slf4j;
-import org.redisson.api.RList;
+import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
+import org.redisson.api.stream.StreamMessageId;
+import org.redisson.api.stream.StreamAddArgs;
+import org.redisson.client.codec.StringCodec;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Redis List Sink for writing data to Redis Lists.
- * Uses Redis List as a simplified stream implementation.
+ * Redis Stream Sink that appends elements to a Redis Stream using {@code XADD}.
+ *
+ * <p>Each element is stored as a stream entry with a single configurable value field
+ * (defaults to {@code value}); non-string elements are serialized to JSON. Use
+ * {@link RedisListSink} when plain Redis Lists (RPUSH semantics) are intended.</p>
  *
  * @param <T> the type of elements to write
  */
 @Slf4j
-public class RedisStreamSink<T> {
+public class RedisStreamSink<T> implements StreamSink<T> {
+
+    /** Default stream entry field name used to store the payload. */
+    public static final String DEFAULT_VALUE_FIELD = "value";
 
     private final RedissonClient redissonClient;
-    private final String listName;
+    private final String streamName;
+    private final String valueField;
     private final ObjectMapper objectMapper;
 
     /**
-     * Create a Redis List sink.
+     * Create a Redis Stream sink writing to the default {@code value} field.
      *
      * @param redissonClient the Redisson client
-     * @param listName       the Redis List name
+     * @param streamName     the Redis Stream name
      */
-    public RedisStreamSink(RedissonClient redissonClient, String listName) {
-        this(redissonClient, listName, new ObjectMapper());
+    public RedisStreamSink(RedissonClient redissonClient, String streamName) {
+        this(redissonClient, streamName, DEFAULT_VALUE_FIELD, new ObjectMapper());
     }
 
     /**
-     * Create a Redis List sink with custom settings.
+     * Create a Redis Stream sink.
      *
      * @param redissonClient the Redisson client
-     * @param listName       the Redis List name
+     * @param streamName     the Redis Stream name
+     * @param valueField     the stream entry field holding the payload
      * @param objectMapper   the JSON object mapper
      */
     public RedisStreamSink(
             RedissonClient redissonClient,
-            String listName,
+            String streamName,
+            String valueField,
             ObjectMapper objectMapper) {
         Objects.requireNonNull(redissonClient, "RedissonClient cannot be null");
-        Objects.requireNonNull(listName, "List name cannot be null");
+        Objects.requireNonNull(streamName, "Stream name cannot be null");
+        Objects.requireNonNull(valueField, "Value field cannot be null");
         Objects.requireNonNull(objectMapper, "ObjectMapper cannot be null");
 
         this.redissonClient = redissonClient;
-        this.listName = listName;
+        this.streamName = streamName;
+        this.valueField = valueField;
         this.objectMapper = objectMapper;
     }
 
     /**
-     * Write an element to the Redis List (synchronous).
+     * Append an element to the Redis Stream (synchronous XADD).
      *
      * @param element the element to write
-     * @return true if successful
+     * @return true if the entry was added
      */
     public boolean write(T element) {
         try {
-            RList<String> list = redissonClient.getList(listName);
+            RStream<String, String> stream = redissonClient.getStream(streamName, StringCodec.INSTANCE);
 
-            String value;
+            Map<String, String> entry = new LinkedHashMap<>(2);
             if (element instanceof String) {
-                value = (String) element;
+                entry.put(valueField, (String) element);
             } else {
-                value = objectMapper.writeValueAsString(element);
+                entry.put(valueField, objectMapper.writeValueAsString(element));
             }
 
-            boolean success = list.add(value);
-            log.debug("Written to Redis List {}: {}", listName, value);
+            StreamMessageId id = stream.add(StreamAddArgs.entries(entry));
+            boolean success = id != null;
+            log.debug("Appended to Redis Stream {}: {}", streamName, entry);
             return success;
 
         } catch (Exception e) {
-            log.error("Failed to write to Redis List: {}", listName, e);
-            throw new RuntimeException("Failed to write to Redis List", e);
+            log.error("Failed to append to Redis Stream: {}", streamName, e);
+            throw new RuntimeException("Failed to append to Redis Stream", e);
         }
     }
 
+    @Override
+    public void invoke(T value) throws Exception {
+        write(value);
+    }
+
     /**
-     * Write an element to the Redis List (asynchronous).
+     * Append an element to the Redis Stream (asynchronous).
      *
      * @param element the element to write
      * @return a CompletableFuture with the result
@@ -91,7 +112,7 @@ public class RedisStreamSink<T> {
     }
 
     /**
-     * Write multiple elements in batch.
+     * Append multiple elements in batch.
      *
      * @param elements the elements to write
      * @return number of elements written
@@ -109,34 +130,27 @@ public class RedisStreamSink<T> {
     }
 
     /**
-     * Get the list size.
+     * Get the stream length (XLEN).
      *
-     * @return the number of elements in the list
+     * @return the number of entries in the stream
      */
-    public int getSize() {
-        RList<String> list = redissonClient.getList(listName);
-        return list.size();
+    public long getSize() {
+        return redissonClient.<String, String>getStream(streamName, StringCodec.INSTANCE).size();
     }
 
     /**
-     * Clear the list.
+     * Delete the stream (equivalent of clearing all entries).
      */
     public void clear() {
-        RList<String> list = redissonClient.getList(listName);
-        list.clear();
-        log.info("Cleared Redis List: {}", listName);
-    }
-
-    /**
-     * Delete the list.
-     */
-    public void deleteList() {
-        RList<String> list = redissonClient.getList(listName);
-        list.delete();
-        log.info("Deleted Redis List: {}", listName);
+        redissonClient.getStream(streamName, StringCodec.INSTANCE).delete();
+        log.info("Deleted Redis Stream: {}", streamName);
     }
 
     public String getStreamName() {
-        return listName;
+        return streamName;
+    }
+
+    public String getValueField() {
+        return valueField;
     }
 }

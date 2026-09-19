@@ -56,6 +56,9 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
     );
     private long timerSeq = 0L;
     private final AtomicLong lastEventTimeTimerOverflowWarnAtMs = new AtomicLong(0L);
+    private final Object sinkLifecycleLock = new Object();
+    private boolean sinksOpened = false;
+    private boolean sinksClosed = false;
 
     public RedisPipelineRunner(RedisRuntimeConfig config,
                               RedissonClient redissonClient,
@@ -98,6 +101,7 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
         if (message == null) {
             return true;
         }
+        ensureSinksOpen();
         long now = System.currentTimeMillis();
         long eventTime = extractEventTimeMs(message, now);
         updateWatermark(eventTime);
@@ -254,10 +258,36 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
                 + ":p:" + partitionId;
     }
 
+    private void ensureSinksOpen() throws Exception {
+        synchronized (sinkLifecycleLock) {
+            if (sinksOpened || sinksClosed) {
+                return;
+            }
+            for (StreamSink<Object> sink : sinks) {
+                sink.open();
+            }
+            sinksOpened = true;
+        }
+    }
+
     @Override
     public void close() {
         if (closeTimerExecutor) {
             timerExecutor.shutdownNow();
+        }
+        synchronized (sinkLifecycleLock) {
+            if (!sinksOpened || sinksClosed) {
+                return;
+            }
+            for (StreamSink<Object> sink : sinks) {
+                try {
+                    sink.close();
+                } catch (Exception e) {
+                    log.warn("Failed to close sink for jobName={}, topic={}, group={}",
+                            config.getJobName(), topic, consumerGroup, e);
+                }
+            }
+            sinksClosed = true;
         }
     }
 

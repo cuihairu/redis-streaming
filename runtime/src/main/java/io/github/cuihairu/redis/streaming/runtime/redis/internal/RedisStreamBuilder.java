@@ -736,7 +736,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                 }
                             }
                             Number current = decodeNumber(cur.get("sum"));
-                            Number next = addNumbers(current, fieldSelector.apply(v));
+                            Number next = io.github.cuihairu.redis.streaming.runtime.internal.NumberAggregationUtils.add(current, fieldSelector.apply(v));
                             cur.put("sum", next);
                             cur.put("sample", numberValue.getClass().getName());
                             try {
@@ -760,7 +760,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                 Map<String, Object> cur = objectMapper.readValue(json, Map.class);
                                 Number sum = decodeNumber(cur == null ? null : cur.get("sum"));
                                 String sampleName = cur == null ? null : String.valueOf(cur.get("sample"));
-                                Number outNumber = castToSameNumberType(sum, sampleName);
+                                Number outNumber = io.github.cuihairu.redis.streaming.runtime.internal.NumberAggregationUtils.castToSameType(sum, sampleName);
                                 @SuppressWarnings("unchecked")
                                 V out = (V) outNumber;
                                 try {
@@ -965,58 +965,6 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                 }
             }
 
-            private Number addNumbers(Number a, Number b) {
-                if (b == null) {
-                    return a == null ? 0L : a;
-                }
-                if (a == null) {
-                    return b;
-                }
-                if (a instanceof Double || a instanceof Float || b instanceof Double || b instanceof Float) {
-                    return a.doubleValue() + b.doubleValue();
-                }
-                return a.longValue() + b.longValue();
-            }
-
-            private Number castToSameNumberType(Number value, Number sample) {
-                if (sample == null) {
-                    return value;
-                }
-                if (sample instanceof Integer) {
-                    return value.intValue();
-                }
-                if (sample instanceof Long) {
-                    return value.longValue();
-                }
-                if (sample instanceof Double) {
-                    return value.doubleValue();
-                }
-                if (sample instanceof Float) {
-                    return value.floatValue();
-                }
-                if (sample instanceof Short) {
-                    return value.shortValue();
-                }
-                if (sample instanceof Byte) {
-                    return value.byteValue();
-                }
-                return value;
-            }
-
-            private Number castToSameNumberType(Number value, String sampleClassName) {
-                if (sampleClassName == null || sampleClassName.isBlank()) {
-                    return value;
-                }
-                return switch (sampleClassName) {
-                    case "java.lang.Integer" -> value.intValue();
-                    case "java.lang.Long" -> value.longValue();
-                    case "java.lang.Double" -> value.doubleValue();
-                    case "java.lang.Float" -> value.floatValue();
-                    case "java.lang.Short" -> value.shortValue();
-                    case "java.lang.Byte" -> value.byteValue();
-                    default -> value;
-                };
-            }
 
             private record ParsedWindow(String keyField, long start, long end) {
             }
@@ -1105,12 +1053,12 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                     RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, field);
                     RMap<String, String> state = ref.map();
                     Number current = decodeNumber(state.get(field));
-                    Number next = addNumbers(current, fieldSelector.apply(v));
+                    Number next = io.github.cuihairu.redis.streaming.runtime.internal.NumberAggregationUtils.add(current, fieldSelector.apply(v));
                     state.put(field, encodeNumber(next));
                     stateStore.touch(ref.redisKey(), stateName, state);
 
                     @SuppressWarnings("unchecked")
-                    V out = (V) castToSameNumberType(next, numberValue);
+                    V out = (V) io.github.cuihairu.redis.streaming.runtime.internal.NumberAggregationUtils.castToSameType(next, numberValue);
                     emit.emit(out);
                 } finally {
                     stateStore.clearCurrentKey();
@@ -1141,28 +1089,6 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
         }
     }
 
-    private static Number addNumbers(Number a, Number b) {
-        if (b == null) {
-            return a == null ? 0L : a;
-        }
-        if (a == null) {
-            return b;
-        }
-        if (a instanceof Double || a instanceof Float || b instanceof Double || b instanceof Float) {
-            return a.doubleValue() + b.doubleValue();
-        }
-        return a.longValue() + b.longValue();
-    }
-
-    private static Number castToSameNumberType(Number value, Number sample) {
-        if (sample instanceof Integer) return value.intValue();
-        if (sample instanceof Long) return value.longValue();
-        if (sample instanceof Double) return value.doubleValue();
-        if (sample instanceof Float) return value.floatValue();
-        if (sample instanceof Short) return value.shortValue();
-        if (sample instanceof Byte) return value.byteValue();
-        return value;
-    }
 
     private static String encodeNumber(Number number) {
         if (number == null) {

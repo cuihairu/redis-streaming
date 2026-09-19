@@ -348,10 +348,10 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
                     stateStore.setCurrentKey(key);
 
                     Number current = acc.get(key);
-                    Number next = addNumbers(current, fieldSelector.apply(value));
+                    Number next = NumberAggregationUtils.add(current, fieldSelector.apply(value));
                     acc.put(key, next);
                     @SuppressWarnings("unchecked")
-                    T out = (T) castToSameNumberType(next, (Number) value);
+                    T out = (T) NumberAggregationUtils.castToSameType(next, (Number) value);
                     buffer.addLast(new InMemoryRecord<>(out, record.timestamp()));
                 }
                 return !buffer.isEmpty();
@@ -372,26 +372,4 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
         return new InMemoryKeyedValueState<>(stateStore, stateDescriptor);
     }
 
-    private static Number addNumbers(Number a, Number b) {
-        if (b == null) {
-            return a == null ? 0L : a;
-        }
-        if (a == null) {
-            return b;
-        }
-        if (a instanceof Double || a instanceof Float || b instanceof Double || b instanceof Float) {
-            return a.doubleValue() + b.doubleValue();
-        }
-        return a.longValue() + b.longValue();
-    }
-
-    private static Number castToSameNumberType(Number value, Number sample) {
-        if (sample instanceof Integer) return value.intValue();
-        if (sample instanceof Long) return value.longValue();
-        if (sample instanceof Double) return value.doubleValue();
-        if (sample instanceof Float) return value.floatValue();
-        if (sample instanceof Short) return value.shortValue();
-        if (sample instanceof Byte) return value.byteValue();
-        return value;
-    }
 }

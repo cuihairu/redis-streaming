@@ -274,41 +274,19 @@ final class InMemoryWindowedStream<K, T> implements WindowedStream<K, T> {
                     a = new NumberAcc(0L, record.timestamp(), (Number) value);
                     acc.put(key, a);
                 }
-                a.value = addNumbers(a.value, fieldSelector.apply(value));
+                a.value = NumberAggregationUtils.add(a.value, fieldSelector.apply(value));
                 a.lastTimestamp = record.timestamp();
             }
         }
         List<InMemoryRecord<T>> out = new ArrayList<>(acc.size());
         for (NumberAcc a : acc.values()) {
             @SuppressWarnings("unchecked")
-            T v = (T) castToSameNumberType(a.value, a.sample);
+            T v = (T) NumberAggregationUtils.castToSameType(a.value, a.sample);
             out.add(new InMemoryRecord<>(v, a.lastTimestamp));
         }
         return out;
     }
 
-    private static Number addNumbers(Number a, Number b) {
-        if (b == null) {
-            return a == null ? 0L : a;
-        }
-        if (a == null) {
-            return b;
-        }
-        if (a instanceof Double || a instanceof Float || b instanceof Double || b instanceof Float) {
-            return a.doubleValue() + b.doubleValue();
-        }
-        return a.longValue() + b.longValue();
-    }
-
-    private static Number castToSameNumberType(Number value, Number sample) {
-        if (sample instanceof Integer) return value.intValue();
-        if (sample instanceof Long) return value.longValue();
-        if (sample instanceof Double) return value.doubleValue();
-        if (sample instanceof Float) return value.floatValue();
-        if (sample instanceof Short) return value.shortValue();
-        if (sample instanceof Byte) return value.byteValue();
-        return value;
-    }
 
     private static final class Acc<T> {
         private T value;

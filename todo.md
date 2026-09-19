@@ -506,3 +506,56 @@ void testRedisIntegration() {
 
 - HTML 报告：`build/reports/jacoco/jacocoRootReport/html/index.html`
 - 生成命令：`./gradlew jacocoRootReport`
+
+---
+
+# 架构评审重构进度与遗留待办
+
+> 记录时间:2026-09-19。全仓设计评审(四路并行分析 core/runtime、mq/registry/config、功能模块层、工程化)后的修复轮。
+> 验证:`./gradlew clean check`(全部单测 + `@Tag("integration")` 集成测试 + JaCoCo 门槛)在 Redis 6.2 / JDK 21 / Gradle 8.5 下全绿。**本轮变更尚未 git commit,全部在工作区。**
+
+## 已完成(本轮)
+
+- [x] **P0 仓库清理**:git 删除已入库的 `node_modules/`(3442 文件)与根 package.json/package-lock.json(docs 站点用 docs/ 独立依赖,CI 不受影响);删除 `C…compile_error.txt`(全角冒号垃圾文件)、`refactor-packages.sh`(macOS-only 一次性脚本)、未跟踪 `REDIS===`;`COMPLETION_REPORT/REFACTORING_CHECKLIST/REFACTORING_COMPLETE/MIGRATION_TO_CENTRAL_PORTAL` 移入 `docs/archive/` 并更新引用;`.gitignore` 补 node_modules/、`*.factorypath`
+- [x] **P0 版本统一**:启用 `gradle/libs.versions.toml`(26 个坐标:Redisson/jackson/slf4j/junit/mockito/lombok/springboot 等),全部模块 build.gradle 改用 `libs.*`;slf4j 统一 2.0.17(消除 1.7/2.0 漂移)
+- [x] **P0 Redisson 3.52.0 → 4.7.0** 并完成 API 迁移:`StreamMessageId/StreamGroup/StreamInfo/PendingEntry` 移入 `org.redisson.api.stream`;`RScript.ReturnType` `INTEGER→LONG`、`MULTI→LIST`、`STATUS→STRING`;`RKeys.expire(String,long,Unit)`→`expire(Duration,String...)`;`setPassword` 保留旧 setter + `@SuppressWarnings("deprecation")`(4.x 推荐 CredentialsResolver);final 值对象的 mockito 测试改真实实例(DeadLetterQueueManagerTest、DlqConsumerAdapterTest、RedisMessageProducerTest、RedisMessageQueueAdminBehaviorTest、DefaultBrokerUnitTest)
+- [x] **P1 StreamSink 生命周期**:core `StreamSink` 增加 `open()/close()` 默认方法;InMemory 引擎 `addSink` 包 try/finally;Redis 引擎 `RedisPipelineRunner` 首条消息幂等 open、close 时释放 sink
+- [x] **P1 runtime 依赖修正**:state/watermark 降为 testImplementation(main 零引用);window 保留(修正 FQN 隐式依赖)
+- [x] **P1 吞异常治理**:修复 checkpoint 后 `pc.resume()` 单点失败导致其余 consumer 永久暂停的死锁(env);CheckpointManager/KeyedStateStore 25 处静默 `catch (Exception ignore)` 分级为 warn(影响状态快照完整性)/debug(指标类)
+- [x] **P1 去重**:`addNumbers`/`castToSameNumberType` 4 份副本收敛为 `runtime.internal.NumberAggregationUtils`
+- [x] **P2 名实相符**:`sink.redis.RedisStreamSink` 改为真 XADD(`RStream`+`StreamAddArgs`)并实现 core `StreamSink`;原 List 语义拆为 `RedisListSink implements StreamSink`(该类全仓无其它引用,破坏面为零)
+- [x] **P2 CDC 接入主 API**:新增 `cdc.CDCSource implements StreamSource<ChangeEvent>`(有界排空:连续 N 次空 poll 即返回,兼容拉式引擎),含 3 个单测
+- [x] **P2 registry 分叉消除**:`registry.BaseRedisConfig` 改为继承 `config.BaseRedisConfig`(registry 对 config 升为 implementation);`MessagingProtocol` 删除无实现的 Kafka/Pulsar/RabbitMQ/NATS/MQTT 常量,仅保留 Redis 系协议并加防回归测试;删除 `MessageQueueFactory` 对遗留 `RedisMessageProducer` 的死 import(保留该类以兼容公开 API)
+- [x] **P3 JaCoCo 文档对齐**:AGENTS.md/CLAUDE.md 声明现实门槛为 25% 聚合,80%/70% 标注为 aspirational
+- [x] **executeAsync 拆分**(400 行→~125 行):`ENSURE_GROUP_LUA` 常量、`createMessageHandler`、`optionsForSubtask`、匿名 JobClient→命名内部类 `LaunchedJobClient`、关停序列收敛为 `stopConsumersQuietly/closeRunnersQuietly/shutdownExecutorQuietly`;并规范 80 行遗留 tab 缩进
+
+## 遗留待办(大型专项,建议单独立项)
+
+### A. 上帝类继续拆分
+- [ ] `runtime/redis/internal/RedisStreamBuilder`(1197 行):reduce/aggregate/apply/sum/count 五个 ~90 行结构相似方法(370-863)抽公共模板;窗口状态序列化(decodeKey/ParsedWindow/成员编解码)独立成类
+- [ ] `mq/impl/RedisMessageConsumer`(1140 行):`handleResult`/`handleResultBroker`、`handleFailedMessage`/`handleFailedMessageBroker` 双路径合并;按 订阅/轮询、重试/DLQ、租约/再均衡 拆出协作类
+- [ ] `spring-boot-starter` `RedisStreamingAutoConfiguration`(601 行/85 个 @Bean):按 feature 拆分 AutoConfiguration 并迁移 `@AutoConfiguration` 注解
+
+### B. 双执行引擎统一(核心架构债)
+- [ ] 为 `StreamExecutionEnvironment` 与 `RedisStreamExecutionEnvironment` 定义公共 Environment 抽象
+- [ ] InMemory 引擎支持无界源与增量窗口(现为"先跑完 source 物化成 List"的批式模型,无限源会 OOM;`InMemoryKeyedStream.window` 丢弃 watermarkState/coordinator,累加器不可快照)
+- [ ] Redis 引擎接入 core 的 `assignTimestampsAndWatermarks`/watermark 模块(现为引擎内自研 `maxEventTime - outOfOrderness`),并让 `WindowAssigner.getDefaultTrigger`/window 模块 Trigger 真正被调用(现为死接口)
+- [ ] runtime 用 state 模块实现替换自研 `RedisKeyedStateStore`(消除两套 keyed state);评估移除 `WatermarkState` 与 watermark 模块的第三份水位线逻辑
+- [ ] 补 `runtime.internal`/`redis` 单测(现仅 14 个测试文件,`@Tag("integration")` 在 runtime 仅 1 个)
+
+### C. 孤岛模块接入或降级
+- [ ] `aggregation`:与 core `AggregateFunction`、window 模块的第三套 `TimeWindow/TumblingWindow` 统一(现三套并行抽象互不兼容,喂不进 `WindowedStream.aggregate`)
+- [ ] `join`/`cep`:包装为 DataStream 算子(现为纯内存工具类,无法参与 pipeline);join 与 table 的 join 语义二选一
+- [ ] `table.RedisKTable.toStream()`:由静态快照导出改为持续 changelog
+- [ ] `source.RedisListSource`:改真 XREADGROUP 或并入 runtime;`cdc` 事件到 mq topic 的桥接器
+- [ ] `metrics` 模块与 `RedisRuntimeMetrics`/`CDCMetrics`/`MqMetrics` 四套体系统一
+- [ ] `reliability` 与 mq 的 DLQ/重试、runtime 幂等 sink 的去重职责划界
+
+### D. registry 瘦身(破坏公开 API,建议放到 1.0 周期)
+- [ ] `metrics/` APM 采集 14 类(与 metrics 模块重叠)、`client/` RPC 调用端(与 reliability 重叠)、`WebSocketHealthChecker`(实为裸 TCP,等价 TcpHealthChecker)、四套同义接口(Registry/Provider、Discovery/Consumer)与 `RedisNamingService` 纯委托门面
+- [ ] `config.RedisConfigCenter` 冗余门面;两个 `BaseRedisConfig` 已合并,继续收敛 `ConfigManager/ConfigService/ConfigCenter` 接口堆叠
+
+### E. 其他
+- [ ] examples 增加 `redis-streaming:` 配置样例(starter 无示例配置);`StreamSource` 侧生命周期与 `SourceContext.getCheckpointLock` 真实接入
+- [ ] 发布说明记录 Redisson 4.7.0 升级与 API 迁移(README/docs 已同步版本号)
+- [ ] 覆盖率:延续上文"优先级 1-4"清单;把 JaCoCo 聚合门槛从 0.25 逐步上调(建议下一档 0.40)

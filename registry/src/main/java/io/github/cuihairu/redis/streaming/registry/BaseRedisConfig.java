@@ -5,12 +5,16 @@ import lombok.Getter;
 import lombok.Setter;
 
 /**
- * Redis registry base configuration
- * Contains configuration settings shared by all roles
+ * Redis registry base configuration.
+ *
+ * <p>Extends the shared key-prefix handling of
+ * {@link io.github.cuihairu.redis.streaming.config.BaseRedisConfig} (the config module was
+ * split out of the registry module) and adds the registry-specific {@link RegistryKeys}
+ * manager.</p>
  */
 @Getter
 @Setter
-public class BaseRedisConfig {
+public class BaseRedisConfig extends io.github.cuihairu.redis.streaming.config.BaseRedisConfig {
 
     /**
      * Default Redis key prefix
@@ -18,41 +22,24 @@ public class BaseRedisConfig {
     public static final String DEFAULT_KEY_PREFIX = "redis_streaming_registry";
 
     /**
-     * Redis key prefix, used to avoid key conflicts
-     * -- GETTER --
-     *  Get the Redis key prefix
-     */
-    private String keyPrefix = DEFAULT_KEY_PREFIX;
-
-    /**
-     * Whether to enable key prefix
-     * -- GETTER --
-     *  Check if key prefix is enabled
-     * -- SETTER --
-     *  Set whether to enable key prefix
-     */
-    private boolean enableKeyPrefix = true;
-
-    /**
      * Unified key manager
      * -- GETTER --
      *  Get the unified key manager
-     *
      */
     private RegistryKeys registryKeys;
 
     public BaseRedisConfig() {
-        this.registryKeys = new RegistryKeys(keyPrefix);
+        super(DEFAULT_KEY_PREFIX);
+        this.registryKeys = new RegistryKeys(getKeyPrefix());
     }
 
     public BaseRedisConfig(String keyPrefix) {
-        this.keyPrefix = keyPrefix;
+        super(keyPrefix);
         this.registryKeys = new RegistryKeys(keyPrefix);
     }
 
     public BaseRedisConfig(String keyPrefix, boolean enableKeyPrefix) {
-        this.keyPrefix = keyPrefix;
-        this.enableKeyPrefix = enableKeyPrefix;
+        super(keyPrefix, enableKeyPrefix);
         this.registryKeys = new RegistryKeys(keyPrefix);
     }
 
@@ -61,23 +48,9 @@ public class BaseRedisConfig {
      *
      * @param keyPrefix the key prefix
      */
+    @Override
     public void setKeyPrefix(String keyPrefix) {
-        this.keyPrefix = keyPrefix;
+        super.setKeyPrefix(keyPrefix);
         this.registryKeys = new RegistryKeys(keyPrefix); // Recreate RegistryKeys
-    }
-
-    /**
-     * Format a Redis key based on configuration
-     *
-     * @param keyPattern the key pattern
-     * @param args the key arguments
-     * @return the formatted key
-     */
-    public String formatKey(String keyPattern, Object... args) {
-        if (enableKeyPrefix && keyPrefix != null && !keyPrefix.isEmpty()) {
-            return keyPrefix + ":" + String.format(keyPattern, args);
-        } else {
-            return String.format(keyPattern, args);
-        }
     }
 }

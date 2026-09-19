@@ -3,7 +3,6 @@ package io.github.cuihairu.redis.streaming.mq;
 import io.github.cuihairu.redis.streaming.mq.admin.MessageQueueAdmin;
 import io.github.cuihairu.redis.streaming.mq.admin.impl.RedisMessageQueueAdmin;
 import io.github.cuihairu.redis.streaming.mq.impl.RedisMessageConsumer;
-import io.github.cuihairu.redis.streaming.mq.impl.RedisMessageProducer;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
 import io.github.cuihairu.redis.streaming.mq.partition.HashPartitioner;
 import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
