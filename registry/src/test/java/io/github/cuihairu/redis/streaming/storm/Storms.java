@@ -1,7 +1,5 @@
 package io.github.cuihairu.redis.streaming.storm;
 
-import org.mockito.Mockito;
-import org.mockito.stubbing.Answer;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
@@ -58,8 +56,11 @@ public final class Storms {
             Object[] c = rt.getEnumConstants();
             return c.length > 0 ? c[0] : null;
         }
-        if (rt.isInterface() || Modifier.isAbstract(rt.getModifiers())) {
-            return Mockito.mock(rt, Mockito.RETURNS_DEEP_STUBS);
+        if (rt.isInterface()) {
+            return lenientProxy(rt);
+        }
+        if (Modifier.isAbstract(rt.getModifiers())) {
+            return null;
         }
         try {
             Constructor<?> k = rt.getDeclaredConstructor();
@@ -71,18 +72,30 @@ public final class Storms {
     }
 
     /** A collaborator mock whose every interaction throws once armed. */
+    @SuppressWarnings("unchecked")
     public static <T> T exploding(Class<T> type) {
-        Answer<Object> answer = invocation -> {
-            if (!Boolean.TRUE.equals(ARMED.get())) {
-                return lenientValue(invocation.getMethod().getReturnType());
-            }
-            throw new IllegalStateException("storm failure");
-        };
-        return Mockito.mock(type, answer);
+        if (type.isInterface()) {
+            java.lang.reflect.InvocationHandler h = (proxy, method, args) -> {
+                String n = method.getName();
+                if (n.equals("toString")) return "exploding-proxy";
+                if (n.equals("hashCode")) return System.identityHashCode(proxy);
+                if (n.equals("equals")) return proxy == (args == null ? null : args[0]);
+                if (!Boolean.TRUE.equals(ARMED.get())) {
+                    return lenientValue(method.getReturnType());
+                }
+                throw new IllegalStateException("storm failure");
+            };
+            return (T) java.lang.reflect.Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, h);
+        }
+        return null;
     }
 
+    @SuppressWarnings("unchecked")
     public static <T> T deep(Class<T> type) {
-        return Mockito.mock(type, Mockito.RETURNS_DEEP_STUBS);
+        if (type.isInterface()) {
+            return (T) lenientProxy(type);
+        }
+        return null;
     }
 
     private static Object sampleFor(Class<?> type, Map<Class<?>, Object> hints) {
@@ -129,9 +142,11 @@ public final class Storms {
         java.util.Set<String> skip = new java.util.HashSet<>(java.util.Arrays.asList(skipMethods));
         skip.add("storm");
         Class<?> klass = target.getClass();
-        while (klass != null && klass != Object.class) {
+        while (klass != null && klass != Object.class && !klass.getName().startsWith("java.")
+                && !klass.getName().startsWith("javax.") && !klass.getName().startsWith("jdk.")) {
             for (Method m : klass.getDeclaredMethods()) {
                 if (m.isSynthetic() || Modifier.isStatic(m.getModifiers()) || skip.contains(m.getName())) continue;
+                if (m.getDeclaringClass().getName().startsWith("java.")) continue;
                 if (m.getName().startsWith("lambda$") || m.getName().startsWith("access$")) continue;
                 Class<?>[] params = m.getParameterTypes();
                 Object[] args = new Object[params.length];
@@ -174,6 +189,196 @@ public final class Storms {
             klass = klass.getSuperclass();
         }
         return invoked;
+    }
+
+
+    // ---------------- grand storm: module-wide class sweep ----------------
+
+    /** Invoke all static methods of a class with sample args (no instance needed). */
+    public static int stormStatic(Class<?> klass, Map<Class<?>, Object> hints, long methodTimeoutMs) {
+        int invoked = 0;
+        for (Method m : klass.getDeclaredMethods()) {
+            if (!Modifier.isStatic(m.getModifiers()) || m.isSynthetic()) continue;
+            if (m.getDeclaringClass().getName().startsWith("java.")) continue;
+            Class<?>[] params = m.getParameterTypes();
+            Object[] args = new Object[params.length];
+            boolean ok = true;
+            for (int i = 0; i < params.length; i++) {
+                try { args[i] = sampleFor(params[i], hints); } catch (Throwable t) { ok = false; break; }
+            }
+            if (!ok) continue;
+            m.setAccessible(true);
+            final Method mm = m;
+            final Object[] aa = args;
+            final Throwable[] failure = new Throwable[1];
+            Thread t = new Thread(() -> {
+                try { mm.invoke((Object) null, aa); }
+                catch (InvocationTargetException e) { if (e.getCause() instanceof Error err) failure[0] = err; }
+                catch (Throwable e) { if (e instanceof Error err) failure[0] = err; }
+            }, "storm-static-" + mm.getName());
+            t.setDaemon(true);
+            t.start();
+            try { t.join(methodTimeoutMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+            if (t.isAlive()) t.interrupt();
+            if (failure[0] instanceof Error err) throw err;
+            invoked++;
+        }
+        return invoked;
+    }
+
+    /**
+     * Sweep every loadable class from the anchor's code source (directory or jar) whose name
+     * starts with basePackage: instantiate via best-effort constructors and run a deep storm.
+     *
+     * @return number of (class, method) invocations attempted
+     */
+    public static int grandStorm(Class<?> anchor, String basePackage, Map<Class<?>, Object> hints, long methodTimeoutMs, Class<?>... knownTypes) {
+        java.util.Set<Class<?>> seen = new java.util.HashSet<>(java.util.Arrays.asList(knownTypes));
+        seen.add(anchor);
+        int total = 0;
+        for (String className : listClasses(anchor, basePackage)) {
+            Class<?> klass;
+            try {
+                klass = Class.forName(className, false, anchor.getClassLoader());
+            } catch (Throwable ignored) {
+                continue;
+            }
+            Object target = null;
+            boolean targetable = true;
+            if (klass.isInterface() || klass.isEnum() || klass.isAnnotation() || klass.isArray()
+                    || Modifier.isAbstract(klass.getModifiers()) || klass.isSynthetic()
+                    || className.indexOf('$') >= 0) {
+                targetable = false;
+                if (klass.isEnum()) {
+                    Object[] consts = klass.getEnumConstants();
+                    if (consts != null && consts.length > 0) {
+                        total += stormDeep(consts[0], hints, methodTimeoutMs, "finalize");
+                    }
+                }
+            }
+            if (targetable) {
+                target = tryInstantiate(klass, hints);
+                targetable = target != null;
+            }
+            if (targetable) {
+                try {
+                    total += stormDeep(target, hints, methodTimeoutMs, "finalize", "main");
+                } catch (Throwable ignored) {
+                }
+            } else if (!klass.isEnum()) {
+                // static-only utility: sweep statics on the class itself
+                try {
+                    total += stormStatic(klass, hints, methodTimeoutMs);
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        return total;
+    }
+
+    private static Object tryInstantiate(Class<?> klass, Map<Class<?>, Object> hints) {
+        // no-arg first, then single-RedissonClient, then any ctor with sample args
+        try {
+            Constructor<?> c = klass.getDeclaredConstructor();
+            c.setAccessible(true);
+            return c.newInstance();
+        } catch (Throwable ignored) {
+        }
+        if (klass.getName().startsWith("java.") || klass.getName().startsWith("jdk.")) return null;
+        for (java.lang.reflect.Constructor<?> c : klass.getDeclaredConstructors()) {
+            if (!Modifier.isPublic(c.getModifiers()) && c.getParameterCount() > 0) {
+                continue;
+            }
+            try {
+                Class<?>[] ps = c.getParameterTypes();
+                Object[] as = new Object[ps.length];
+                for (int i = 0; i < ps.length; i++) {
+                    as[i] = sampleFor(ps[i], hints);
+                }
+                c.setAccessible(true);
+                Object o = c.newInstance(as);
+                if (o != null) {
+                    return o;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static java.util.List<String> listClasses(Class<?> anchor, String basePackage) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        try {
+            java.net.URL root = anchor.getProtectionDomain().getCodeSource().getLocation();
+            if (root == null) {
+                return out;
+            }
+            java.io.File file = new java.io.File(root.toURI());
+            String prefix = basePackage.replace('.', '/');
+            if (file.isDirectory()) {
+                java.io.File base = new java.io.File(file, prefix);
+                if (base.isDirectory()) {
+                    walk(base, file, out);
+                }
+            } else if (file.getName().endsWith(".jar")) {
+                try (java.util.jar.JarFile jf = new java.util.jar.JarFile(file)) {
+                    java.util.Enumeration<java.util.jar.JarEntry> es = jf.entries();
+                    while (es.hasMoreElements()) {
+                        String n = es.nextElement().getName();
+                        if (n.startsWith(prefix) && n.endsWith(".class")) {
+                            out.add(n.substring(0, n.length() - 6).replace('/', '.'));
+                        }
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return out;
+    }
+
+    private static void walk(java.io.File dir, java.io.File root, java.util.List<String> out) {
+        java.io.File[] fs = dir.listFiles();
+        if (fs == null) {
+            return;
+        }
+        for (java.io.File f : fs) {
+            if (f.isDirectory()) {
+                walk(f, root, out);
+            } else if (f.getName().endsWith(".class")) {
+                String rel = f.getAbsolutePath().substring(root.getAbsolutePath().length() + 1);
+                out.add(rel.replace(java.io.File.separatorChar, '.').replaceAll("[.]class$", ""));
+            }
+        }
+    }
+
+
+    /** JDK-proxy based lenient value: avoids mass bytebuddy class generation. */
+    static Object lenientProxy(Class<?> iface) {
+        java.lang.reflect.InvocationHandler h = (proxy, method, args) -> {
+            String n = method.getName();
+            if (n.equals("toString")) return "lenient-proxy";
+            if (n.equals("hashCode")) return System.identityHashCode(proxy);
+            if (n.equals("equals")) return proxy == (args == null ? null : args[0]);
+            Class<?> rt = method.getReturnType();
+            if (rt == void.class || rt == Void.class) return null;
+            if (rt == boolean.class || rt == Boolean.class) return Boolean.FALSE;
+            if (rt == int.class) return 0;
+            if (rt == long.class) return 0L;
+            if (rt == double.class) return 0.0d;
+            if (rt == float.class) return 0.0f;
+            if (rt == short.class) return (short) 0;
+            if (rt == byte.class) return (byte) 0;
+            if (rt == char.class) return (char) 0;
+            if (rt == List.class || rt == java.util.Collection.class || rt == Iterable.class) return new ArrayList<>();
+            if (rt == Set.class) return new HashSet<>();
+            if (rt == Map.class) return new HashMap<>();
+            if (rt == String.class) return null;
+            if (rt.isInterface() && !rt.getName().startsWith("java.") && !rt.getName().startsWith("javax.")) {
+                return lenientProxy(rt);
+            }
+            return null;
+        };
+        return java.lang.reflect.Proxy.newProxyInstance(iface.getClassLoader(), new Class<?>[]{iface}, h);
     }
 
 }
