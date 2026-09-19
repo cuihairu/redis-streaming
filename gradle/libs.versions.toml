@@ -3,6 +3,7 @@
 
 [versions]
 assertj = "3.24.2"
+h2 = "2.2.224"
 hikari = "5.1.0"
 jackson = "2.17.0"
 junit = "5.9.2"
@@ -22,6 +23,7 @@ springBoot = "3.2.0"
 
 [libraries]
 assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+h2 = { module = "com.h2database:h2", version.ref = "h2" }
 hikaricp = { module = "com.zaxxer:HikariCP", version.ref = "hikari" }
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
 jackson-jsr310 = { module = "com.fasterxml.jackson.datatype:jackson-datatype-jsr310", version.ref = "jackson" }

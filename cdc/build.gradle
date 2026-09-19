@@ -32,4 +32,5 @@ dependencies {
     testImplementation libs.mockito.core
     testImplementation libs.logback.classic
     testImplementation libs.assertj.core
+    testRuntimeOnly libs.h2
 }

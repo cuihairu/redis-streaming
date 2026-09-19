@@ -9,6 +9,7 @@ dependencies {
     annotationProcessor libs.lombok
 
     testImplementation libs.junit.jupiter
+    testImplementation libs.mockito.core
     testCompileOnly libs.lombok
     testAnnotationProcessor libs.lombok
 }
