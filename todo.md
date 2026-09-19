@@ -532,16 +532,17 @@ void testRedisIntegration() {
 ## 遗留待办(大型专项,建议单独立项)
 
 ### A. 上帝类继续拆分
-- [ ] `runtime/redis/internal/RedisStreamBuilder`(1197 行):reduce/aggregate/apply/sum/count 五个 ~90 行结构相似方法(370-863)抽公共模板;窗口状态序列化(decodeKey/ParsedWindow/成员编解码)独立成类
-- [ ] `mq/impl/RedisMessageConsumer`(1140 行):`handleResult`/`handleResultBroker`、`handleFailedMessage`/`handleFailedMessageBroker` 双路径合并;按 订阅/轮询、重试/DLQ、租约/再均衡 拆出协作类
-- [ ] `spring-boot-starter` `RedisStreamingAutoConfiguration`(601 行/85 个 @Bean):按 feature 拆分 AutoConfiguration 并迁移 `@AutoConfiguration` 注解
+- [x] `runtime/redis/internal/RedisStreamBuilder`:五个窗口方法收敛为 `registerWindowedOperator(kind, guard, accumulator, emitter)` 模板(文件 1123→1008 行;提交 7f2550a);前置特征测试 b4d0cb3。窗口成员编解码(windowMember/parseWindow/decodeKey)保留在 `RedisWindowedStreamImpl` 内(纯搬移收益低)
+- [x] `mq/impl/RedisMessageConsumer` 双路径合并(提交 0188d31):broker/直连两套 per-record 循环收敛为 `processIncomingRecord`,四份 handle* 合并为 `dispatchResult`+直调 `requeueOrDeadLetter`(1140→1082 行;mq+runtime 集成测试全绿)。按 订阅/重试/租约 拆协作类:未做(风险收益比差,遗留)
+- [x] `spring-boot-starter`:核心类改为 `@AutoConfiguration`(90 行,持有 RedissonClient)并按 feature 拆出 5 个顶层配置类(registry/discovery/config/mq/ratelimit),经 @Import 保持原求值顺序与 @EnableRedisStreaming 语义(提交 c84c5f5);starter 38 个装配测试全绿
 
 ### B. 双执行引擎统一(核心架构债)
-- [ ] 为 `StreamExecutionEnvironment` 与 `RedisStreamExecutionEnvironment` 定义公共 Environment 抽象
+- [ ] 为 `StreamExecutionEnvironment` 与 `RedisStreamExecutionEnvironment` 定义公共 Environment 抽象(调查结论:两者公开面交集仅 fromCollection/fromElements/addSource,Redis 引擎无对应实现;空壳接口无价值,须与 B2/B4 一并设计)
 - [ ] InMemory 引擎支持无界源与增量窗口(现为"先跑完 source 物化成 List"的批式模型,无限源会 OOM;`InMemoryKeyedStream.window` 丢弃 watermarkState/coordinator,累加器不可快照)
-- [ ] Redis 引擎接入 core 的 `assignTimestampsAndWatermarks`/watermark 模块(现为引擎内自研 `maxEventTime - outOfOrderness`),并让 `WindowAssigner.getDefaultTrigger`/window 模块 Trigger 真正被调用(现为死接口)
+- [x] Redis 引擎接入 core `WatermarkGenerator`:`DataStream.assignTimestampsAndWatermarks(gen)` 现为真实算子(ctx.raiseWatermark 单调推进水位线),集成测试证明用户生成器能越过配置的 10s outOfOrderness 启发式提前触发窗口;`(TimestampAssigner, gen)` 重载仍未接入(需要 runner 改事件时间传播模型,归入 B2)
+- [ ] 让 `WindowAssigner.getDefaultTrigger`/window 模块 Trigger 真正被调用(现为死接口)
 - [ ] runtime 用 state 模块实现替换自研 `RedisKeyedStateStore`(消除两套 keyed state);评估移除 `WatermarkState` 与 watermark 模块的第三份水位线逻辑
-- [ ] 补 `runtime.internal`/`redis` 单测(现仅 14 个测试文件,`@Tag("integration")` 在 runtime 仅 1 个)
+- [x] 补 runtime 窗口/水位线测试:`RedisRuntimeWindowedStreamIntegrationTest`(6 用例覆盖五个窗口算子 + 用户生成器)、`RedisPipelineRunnerWatermarkTest` 增 raiseWatermark 用例;`@Tag("integration")` 文件 runtime 现 2 个(其余测试项继续见上文覆盖率清单)
 
 ### C. 孤岛模块接入或降级
 - [ ] `aggregation`:与 core `AggregateFunction`、window 模块的第三套 `TimeWindow/TumblingWindow` 统一(现三套并行抽象互不兼容,喂不进 `WindowedStream.aggregate`)

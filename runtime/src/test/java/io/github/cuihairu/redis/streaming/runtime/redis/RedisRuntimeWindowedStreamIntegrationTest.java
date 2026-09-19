@@ -14,6 +14,7 @@ import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -105,6 +106,74 @@ class RedisRuntimeWindowedStreamIntegrationTest {
         List<Integer> out = runWindowed(List.of("1", "2"),
                 keyed -> keyed.window(TumblingWindow.<Integer>ofMillis(WINDOW_MS)).reduce(Integer::sum));
         assertEquals(List.of(3), out);
+    }
+
+    @Test
+    void userWatermarkGeneratorAdvancesBeyondOutOfOrdernessHeuristic() throws Exception {
+        List<Integer> out = new java.util.concurrent.CopyOnWriteArrayList<>();
+        RedisRuntimeConfig cfg = RedisRuntimeConfig.builder()
+                .jobName("rt-win-" + java.util.UUID.randomUUID().toString().substring(0, 6))
+                .stateKeyPrefix("streaming:runtime:wintest:" + java.util.UUID.randomUUID().toString().substring(0, 6))
+                .watermarkOutOfOrderness(Duration.ofSeconds(10))
+                .mqOptions(MqOptions.builder().workerThreads(1).schedulerThreads(1).build())
+                .build();
+        String topic = "rt-win-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+        String group = "rt-grp-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+        RedissonClient client = createClient();
+        try {
+            RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(client, cfg);
+            env.fromMqTopic(topic, group)
+                    .assignTimestampsAndWatermarks(
+                            new io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator<
+                                    io.github.cuihairu.redis.streaming.mq.Message>() {
+                                @Override
+                                public void onEvent(io.github.cuihairu.redis.streaming.mq.Message event, long eventTimestamp,
+                                                    io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator.WatermarkOutput output) {
+                                    if ("999".equals(String.valueOf(event.getPayload()))) {
+                                        // the trigger record knows the stream is quiesced: jump the
+                                        // watermark to its own time, which the 10s-lag heuristic
+                                        // cannot reach
+                                        output.emitWatermark(new io.github.cuihairu.redis.streaming.api.watermark.Watermark(eventTimestamp));
+                                    }
+                                }
+
+                                @Override
+                                public void onPeriodicEmit(io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator.WatermarkOutput output) {
+                                }
+                            })
+                    .map(m -> Integer.parseInt((String) m.getPayload()))
+                    .keyBy(v -> "k")
+                    .window(io.github.cuihairu.redis.streaming.window.assigners.TumblingWindow.<Integer>ofMillis(WINDOW_MS))
+                    .reduce(Integer::sum)
+                    .addSink(out::add);
+            try (RedisJobClient job = env.executeAsync()) {
+                MessageQueueFactory mq = new MessageQueueFactory(client, cfg.getMqOptions());
+                MessageProducer producer = mq.createProducer();
+                try {
+                    alignToWindowStart();
+                    producer.send(topic, "key", "41").get(5, TimeUnit.SECONDS);
+                    Thread.sleep(WINDOW_MS + 400); // now inside the next window; W0 is closed but
+                    producer.send(topic, "key", "42").get(5, TimeUnit.SECONDS); // heuristic wm is 10s behind
+                    Thread.sleep(800);
+                    // W0 ("41") must NOT have fired: heuristic wm (delivery - 10s) is behind its close time
+                    assertTrue(out.isEmpty(), "10s out-of-orderness heuristic should not have fired W0 yet: " + out);
+                    producer.send(topic, "key", "999").get(5, TimeUnit.SECONDS);
+                    long deadline = System.currentTimeMillis() + 10_000;
+                    while (out.isEmpty() && System.currentTimeMillis() < deadline) {
+                        Thread.sleep(50);
+                    }
+                    assertFalse(out.isEmpty(), "generator-emitted watermark did not fire W0");
+                    assertTrue(out.contains(41), "fired windows should include W0 of the first element: " + out);
+                    Thread.sleep(1500);
+                    // the trigger's own window must still be open when the heuristic lags by 10s
+                    assertFalse(out.contains(999), "trigger window should not fire while heuristic wm lags 10s: " + out);
+                } finally {
+                    producer.close();
+                }
+            }
+        } finally {
+            client.shutdown();
+        }
     }
 
     @Test

@@ -62,6 +62,35 @@ class RedisPipelineRunnerWatermarkTest {
     }
 
     @Test
+    void userGeneratorCanRaiseWatermarkDuringProcessing() throws Exception {
+        AtomicLong lastWatermark = new AtomicLong(Long.MIN_VALUE);
+        RedisRuntimeMetrics.setCollector(new CapturingCollector(lastWatermark, new AtomicLong(), new AtomicLong()));
+
+        RedisRuntimeConfig cfg = RedisRuntimeConfig.builder()
+                .jobName("t")
+                .build();
+
+        RedissonClient redisson = mock(RedissonClient.class);
+        ObjectMapper om = new ObjectMapper();
+
+        RedisOperatorNode eagerGenerator = (value, ctx, emit) -> {
+            ctx.raiseWatermark(ctx.currentEventTime() + 60_000L);
+            emit.emit(value);
+        };
+
+        RedisPipelineRunner<Object> runner = new RedisPipelineRunner<>(
+                cfg, redisson, om, "topicA", "groupA",
+                List.of(eagerGenerator), List.of());
+
+        runner.handle(msgAt(1000));
+        assertEquals(61000L, lastWatermark.get());
+
+        // lowering via a later event must not regress the monotonic watermark
+        runner.handle(msgAt(500));
+        assertEquals(61000L, lastWatermark.get());
+    }
+
+    @Test
     void eventTimeTimerQueueIsBoundedByConfig() throws Exception {
         AtomicLong maxQueueSize = new AtomicLong(0);
         RedisRuntimeMetrics.setCollector(new CapturingCollector(new AtomicLong(), maxQueueSize, new AtomicLong()));

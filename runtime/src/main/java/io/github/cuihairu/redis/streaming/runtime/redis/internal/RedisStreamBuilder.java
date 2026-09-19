@@ -12,6 +12,8 @@ import io.github.cuihairu.redis.streaming.api.stream.StreamSink;
 import io.github.cuihairu.redis.streaming.api.stream.WindowFunction;
 import io.github.cuihairu.redis.streaming.api.stream.WindowAssigner;
 import io.github.cuihairu.redis.streaming.api.stream.WindowedStream;
+import io.github.cuihairu.redis.streaming.api.watermark.Watermark;
+import io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator;
 import io.github.cuihairu.redis.streaming.mq.Message;
 import io.github.cuihairu.redis.streaming.mq.SubscriptionOptions;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisRuntimeConfig;
@@ -140,6 +142,33 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
         StreamSink<Object> cast = (StreamSink<Object>) sink;
         def.addSink(cast);
         return this;
+    }
+
+    @Override
+    public DataStream<T> assignTimestampsAndWatermarks(WatermarkGenerator<T> watermarkGenerator) {
+        Objects.requireNonNull(watermarkGenerator, "watermarkGenerator");
+        return withOperator((value, ctx, emit) -> {
+            T v = castValue(value);
+            WatermarkGenerator.WatermarkOutput output = new WatermarkGenerator.WatermarkOutput() {
+                @Override
+                public void emitWatermark(Watermark watermark) {
+                    if (watermark != null) {
+                        ctx.raiseWatermark(watermark.getTimestamp());
+                    }
+                }
+
+                @Override
+                public void markIdle() {
+                }
+
+                @Override
+                public void markActive() {
+                }
+            };
+            watermarkGenerator.onEvent(v, ctx.currentEventTime(), output);
+            watermarkGenerator.onPeriodicEmit(output);
+            emit.emit(v);
+        });
     }
 
     @Override

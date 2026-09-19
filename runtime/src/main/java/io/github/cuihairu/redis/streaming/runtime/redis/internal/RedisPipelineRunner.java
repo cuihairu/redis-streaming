@@ -365,6 +365,21 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
             return eventTimeMs;
         }
 
+        /**
+         * Monotonically raise the pipeline watermark (never lowers it). Used by user-supplied
+         * {@link io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator}s attached
+         * via {@code assignTimestampsAndWatermarks}.
+         */
+        public void raiseWatermark(long watermarkMs) {
+            RedisPipelineRunner.this.watermarkMs.updateAndGet(prev -> Math.max(prev, watermarkMs));
+            try {
+                RedisRuntimeMetrics.get().setWatermarkMs(config.getJobName(), topic, consumerGroup, RedisPipelineRunner.this.watermarkMs.get());
+            } catch (Exception ignore) {
+            }
+        }
+
+
+
         public RedissonClient redissonClient() {
             return redissonClient;
         }
