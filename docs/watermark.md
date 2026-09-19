@@ -1,102 +1,64 @@
 # Watermark 模块
 
-## 概述
-
-Watermark 模块提供水位线生成机制，用于处理事件时间和乱序事件。水位线表示事件时间的进度，用于触发窗口计算和保证结果的正确性。
+模块目录:`watermark/`。提供 core `WatermarkGenerator` / `TimestampAssigner` 接口的开箱实现与组合策略。
 
 ## 核心概念
 
-### Watermark (水位线)
+水位线(watermark)= "事件时间不会再早于 T" 的断言,驱动事件时间窗口触发与迟到处理。
 
-水位线是一个时间戳，表示所有时间戳小于该值的事件都已经到达。用于：
-- 触发窗口计算
-- 处理乱序事件
-- 保证结果完整性
+## 内置生成器(generators 包)
 
-### 事件时间 vs 处理时间
-
-- **事件时间**: 事件发生的时间（如日志时间戳）
-- **处理时间**: 事件被处理的时间（系统时间）
-
-## 核心接口
-
-### WatermarkGenerator
+| 类 | 语义 |
+|---|---|
+| `AscendingTimestampWatermarkGenerator` | 假设数据按事件时间升序,wm = 最大观察时间戳 |
+| `BoundedOutOfOrdernessWatermarkGenerator` | 允许乱序 `maxOutOfOrderness`,wm = maxTs − δ;构造参数为 `Duration` |
 
 ```java
-public interface WatermarkGenerator {
-    // 生成水位线
-    Watermark getCurrentWatermark();
+import io.github.cuihairu.redis.streaming.watermark.generators.BoundedOutOfOrdernessWatermarkGenerator;
 
-    // 处理事件
-    void onEvent(long timestamp);
-
-    // 处理周期性调用
-    void onPeriodicEmit();
-}
+BoundedOutOfOrdernessWatermarkGenerator<Event> gen =
+        new BoundedOutOfOrdernessWatermarkGenerator<>(Duration.ofSeconds(5));
 ```
 
-### TimestampAssigner
+## WatermarkStrategy(组合模式)
+
+`WatermarkStrategy<T>` 把"时间戳提取器 + 生成器工厂"打包,便于在引擎间传递:
 
 ```java
-@FunctionalInterface
-public interface TimestampAssigner<T> {
-    long extract(T element, long recordTimestamp);
-}
+import io.github.cuihairu.redis.streaming.watermark.WatermarkStrategy;
+
+WatermarkStrategy<Event> strategy = WatermarkStrategy
+        .<Event>forBoundedOutOfOrderness(Duration.ofSeconds(5))
+        // 或 forMonotonousTimestamps() / forGenerator(...) / noWatermarks()
+        ;
+
+long ts = strategy.extractTimestamp(event, recordTs);
+WatermarkGenerator<Event> generator = strategy.createWatermarkGenerator();
 ```
 
-## 内置实现
-
-### AscendingTimestampWatermarks
-
-递增时间戳水位线生成器，适用于严格有序的事件流。
+## 在两种引擎中的使用
 
 ```java
-AscendingTimestampWatermarks watermarks = new AscendingTimestampWatermarks();
-```
+// 方式一:直接传 core 接口(内存与 Redis 引擎均支持)
+stream.assignTimestampsAndWatermarks(new BoundedOutOfOrdernessWatermarkGenerator<>(Duration.ofSeconds(5)));
 
-### BoundedOutOfOrdernessWatermarks
-
-有界乱序水位线生成器，允许一定程度的乱序。
-
-```java
-long maxOutOfOrderness = 5000; // 5秒
-BoundedOutOfOrdernessWatermarks watermarks = new BoundedOutOfOrdernessWatermarks(maxOutOfOrderness);
-```
-
-## 使用方式
-
-### 1. 分配时间戳
-
-```java
-DataStream<Event> stream = env.addSource(source);
-
-// 分配事件时间
+// 方式二:同时重指派事件时间(仅内存引擎支持;
+// Redis 引擎需要 runner 级事件时间传播改造,见 todo.md B2/B3)
 stream.assignTimestampsAndWatermarks(
-    (event, timestamp) -> event.getTimestamp(),  // 提取时间戳
-    new BoundedOutOfOrdernessWatermarks(5000)    // 水位线生成器
-);
+        (TimestampAssigner<Event>) (e, recordTs) -> e.getEventTime(),
+        WatermarkStrategy.<Event>forBoundedOutOfOrderness(Duration.ofSeconds(5)).createWatermarkGenerator());
 ```
 
-### 2. 处理乱序事件
+### Redis 引擎的水位线模型
 
-```java
-DataStream<Event> stream = env.fromElements(...);
+- 默认(未调用 `assignTimestampsAndWatermarks`):引擎内部启发式 `wm = max(投递时间戳) − RedisRuntimeConfig.watermarkOutOfOrderness`(默认 0)。
+- 调用后:`WatermarkGenerator.onEvent/onPeriodicEmit` 生成的水位线通过 `Context.raiseWatermark` **单调提升**全局水位线(不会下调启发式已达到的值)。集成测试证明:当配置 `watermarkOutOfOrderness=10s` 时,用户生成器可提前触发窗口,而启发式不能。
+- 窗口触发时机:水位线推进发生在消息处理链入口,窗口算子在逐条消息处理中检查到期(无独立定时器驱动窗口触发)。
 
-stream.assignTimestampsAndWatermarks(
-    TimestampAssignerSupplier.of((event) -> event.getTimestamp()),
-    WatermarkStrategySupplier.forBoundedOutOfOrderness(Duration.ofSeconds(5))
-);
-```
+## 已知限制
 
-## 水位线传播
+- `WindowAssigner.getDefaultTrigger()` 与 window 模块的 `EventTimeTrigger` 等尚未被任一引擎调用(死接口,待统一,见 todo.md B3)。
+- `SourceContext.getCheckpointLock` 目前返回无锁对象,未参与检查点对齐。
 
-水位线在数据流中传播：
-1. 源算子生成初始水位线
-2. 每个算子更新水位线
-3. 下游算子收到上游最小水位线
-4. 窗口算子根据水位线触发计算
-
-## 相关文档
-
-- [Window 模块](Window.md) - 窗口操作
-- [Core API](Core.md) - 核心接口
+## References
+- [Core.md](Core.md) · [window.md](window.md) · [runtime.md](runtime.md)

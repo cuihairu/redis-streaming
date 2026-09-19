@@ -39,5 +39,22 @@ var events = connector.poll();
 // ... handle events ...
 ```
 
+## 接入流式 API 的桥接(0.3 起)
+
+```java
+// 1) CDC 连接器 -> StreamSource(有界排空:连续 maxIdlePolls 次空 poll 即返回)
+CDCSource source = new CDCSource(connector);                 // implements StreamSource<ChangeEvent>
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+env.addSource(source).map(e -> e.getAfterData()).print();
+
+// 2) ChangeEvent -> MQ topic(自描述 payload,key 作分区键,发送失败上抛供重试/DLQ)
+stream.addSink(new ChangeEventQueueSink(producer, "cdc-orders"));
+```
+
+- `cdc.CDCSource`:把任意 `CDCConnector` 接入 core `StreamSource`;`cancel()` 会 `connector.stop()`。
+- `cdc.mq.ChangeEventQueueSink`:实现 core `StreamSink<ChangeEvent>`(cdc 模块新增对 mq 的 implementation 依赖)。
+
+> 说明:连接器本体(MySQL binlog/PG 逻辑复制/JDBC 轮询)与 `CDCManager` 不变;本模块仍不直接实现 Redis Stream 消费——如需消费侧,用 `ChangeEventQueueSink` 写入 MQ 后由 runtime `fromMqTopic` 承接。
+
 ## References
-- Design.md
+- Design.md · [source-sink.md](source-sink.md) · [MQ.md](MQ.md)

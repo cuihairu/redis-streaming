@@ -1,274 +1,66 @@
 # Source & Sink 模块
 
-## 概述
+模块目录:`source/`、`sink/`。连接器实现 core 的 `StreamSource` / `StreamSink` 契约(含 `open()/close()` 生命周期,见 [Core.md](Core.md))。
 
-Source 和 Sink 模块提供数据源连接器和数据汇连接器，用于与外部系统集成。
+## Sources(source 模块)
 
-## Source 模块
+| 类 | 说明 |
+|---|---|
+| `source.collection.CollectionSource` | 从 `Collection` 一次性发射(实现 `StreamSource`) |
+| `source.generator.GeneratorSource` | 按函数迭代生成元素 |
+| `source.file.FileSource` | 逐行读取文件 |
+| `source.http.HttpApiSource` | 轮询 HTTP API(回调式,`AutoCloseable`,非 `StreamSource`) |
+| `source.kafka.KafkaSource` | Kafka 消费(回调式,`AutoCloseable`) |
+| `source.redis.RedisListSource` | Redis **List** 轮询(LINDEX/LPOP 语义,回调式,`AutoCloseable`) |
+| `source.redis.RedisStreamSource` | ✅ 实现 `StreamSource`,Redis **Stream** XREADGROUP 消费(与 `RedisStreamSink` 配对) |
 
-### 功能
+### RedisStreamSource(推荐)
 
-从外部系统读取数据，创建数据流。
-
-### 内置 Source
-
-#### 1. RedisListSource
-
-从 Redis List 读取数据。
-
-```java
-RedisListSource<String> source = new RedisListSource<>(
-    redissonClient,
-    "my-list",      // List 键
-    "LPOP",         // 弹出方式 (LPOP/RPOP/LPOP/RPOP)
-    new StringCodec()
-);
-
-DataStream<String> stream = env.fromSource(source);
-```
-
-#### 2. KafkaSource
-
-从 Kafka Topic 读取数据。
+XREADGROUP 消费 Redis Stream;条目约定单字段 JSON 载荷(默认字段名 `value`,与 `RedisStreamSink` 对称)。`run()` 为**有界排空**:连续 `maxIdlePolls` 次空读后返回,以适配拉式引擎。
 
 ```java
-KafkaSource<String> source = new KafkaSource<>(
-    "localhost:9092",
-    "my-topic",
-    "my-group",
-    new StringDeserializer()
-);
+import io.github.cuihairu.redis.streaming.source.redis.RedisStreamSource;
 
-DataStream<String> stream = env.fromSource(source);
-```
+RedisStreamSource<String> source =
+        new RedisStreamSource<>(redissonClient, "events", "my-group", "consumer-1", String.class);
 
-#### 3. HttpSource
-
-从 HTTP 端点轮询数据。
-
-```java
-HttpSource<String> source = new HttpSource<>(
-    "http://api.example.com/data",
-    Duration.ofSeconds(10),  // 轮询间隔
-    new StringCodec()
-);
-
-DataStream<String> stream = env.fromSource(source);
-```
-
-### 自定义 Source
-
-实现 `StreamSource` 接口创建自定义数据源。
-
-```java
-public class MySource implements StreamSource<String> {
-    private final Iterator<String> iterator;
-
-    public MySource(Iterator<String> iterator) {
-        this.iterator = iterator;
-    }
-
-    @Override
-    public void open() {
-        // 初始化资源
-    }
-
-    @Override
-    public boolean hasNext() {
-        return iterator.hasNext();
-    }
-
-    @Override
-    public String next() {
-        return iterator.next();
-    }
-
-    @Override
-    public void close() {
-        // 释放资源
-    }
-}
-```
-
-## Sink 模块
-
-### 功能
-
-将处理结果写入外部系统。
-
-### 内置 Sink
-
-#### 1. RedisHashSink
-
-写入 Redis Hash。
-
-```java
-stream.sinkToRedisHash(
-    "results",           // Hash 键
-    (key, value) -> Map.of(
-        "key", key,
-        "value", value.toString(),
-        "timestamp", String.valueOf(System.currentTimeMillis())
-    )
-);
-```
-
-#### 2. RedisStreamSink
-
-写入 Redis Stream。
-
-```java
-stream.sinkToRedisStream(
-    "output-stream",
-    message -> new Message(
-        message.getKey(),
-        message.getValue(),
-        Map.of("timestamp", String.valueOf(System.currentTimeMillis()))
-    )
-);
-```
-
-#### 3. RedisListSink
-
-写入 Redis List。
-
-```java
-stream.sinkToRedisList(
-    "output-list",
-    value -> value.toString(),
-    "RPUSH"  // LPUSH/RPUSH
-);
-```
-
-#### 4. KafkaSink
-
-写入 Kafka Topic。
-
-```java
-stream.sinkToKafka(
-    "localhost:9092",
-    "output-topic",
-    new StringSerializer()
-);
-```
-
-### 自定义 Sink
-
-实现 `StreamSink` 接口创建自定义数据汇。
-
-```java
-public class MySink implements StreamSink<Result> {
-    private final Connection connection;
-
-    public MySink(Connection connection) {
-        this.connection = connection;
-    }
-
-    @Override
-    public void open() {
-        // 初始化资源
-    }
-
-    @Override
-    public void write(Result value) {
-        // 写入数据
-        try (Statement stmt = connection.createStatement()) {
-            stmt.execute("INSERT INTO results VALUES ("
-                + "'" + value.getKey() + "', "
-                + value.getValue() + ")");
-        }
-    }
-
-    @Override
-    public void close() {
-        // 释放资源
-    }
-}
-```
-
-## 端到端示例
-
-### Kafka 到 Redis
-
-```java
 StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-
-env.fromKafka("localhost:9092", "input-topic", "group", new StringDeserializer())
-    .map(String::toUpperCase)
-    .keyBy(s -> s.substring(0, 1))
-    .sum("value")
-    .sinkToRedisStream("output-stream");
-
-env.execute("KafkaToRedis");
+env.addSource(source).map(String::toUpperCase).print();
 ```
 
-### HTTP 到 Redis
+> 消费者组自动创建使用显式 `0-0` 起始 id(而非 `StreamMessageId.MIN` 的 `-`,后者要求 Redis ≥ 7.0)。条目 `collect` 后即 `XACK`。
+
+## Sinks(sink 模块)
+
+| 类 | 说明 |
+|---|---|
+| `sink.print.PrintSink` | 控制台输出 |
+| `sink.collection.CollectionSink` | 收集到 `List`(测试常用) |
+| `sink.file.FileSink` | 逐条写文件(`close()` 释放句柄) |
+| `sink.kafka.KafkaSink` | Kafka 生产者 |
+| `sink.redis.RedisStreamSink` | ✅ 实现 `StreamSink`,真实 **XADD**;载荷 JSON 化存入可配置字段(默认 `value`) |
+| `sink.redis.RedisListSink` | ✅ 实现 `StreamSink`,RPUSH 到 Redis List(由历史误名的 RedisStreamSink 更名而来) |
+| `sink.redis.RedisHashSink` | 写 Redis Hash |
+
+### RedisStreamSink / RedisListSink
 
 ```java
-env.fromHttp("http://api.example.com/data", Duration.ofMinutes(1))
-    .filter(data -> data.isValid())
-    .map(Data::transform)
-    .sinkToRedisHash("processed-data");
+import io.github.cuihairu.redis.streaming.sink.redis.RedisStreamSink;
+import io.github.cuihairu.redis.streaming.sink.redis.RedisListSink;
+
+// XADD:每条记录一个 stream entry
+stream.addSink(new RedisStreamSink<>(redissonClient, "out-stream"));
+// 自定义字段名 + 对象 JSON 序列化
+stream.addSink(new RedisStreamSink<>(redissonClient, "out-stream", "payload", mapper));
+// RPUSH:Redis List 语义
+stream.addSink(new RedisListSink<>(redissonClient, "out-list"));
 ```
 
-## 事务支持
+> 破坏性变更提示:`RedisStreamSink` 在 0.3 之前名为 "Stream" 实际写 List;现语义已改真 XADD,如需原 List 行为请改用 `RedisListSink`。
 
-支持 Exactly-Once 语义的 Sink。
+## 与 Redis 运行时的关系
 
-### IdempotentSink
+Redis 运行时引擎自身另有一套内置 sink(`runtime/redis/sink`:幂等/检查点 list sink)用于 exactly-once 演示,与 sink 模块互不依赖。
 
-幂等 Sink，重复写入不产生副作用。
-
-```java
-stream.sinkTo(new IdempotentRedisListSink<>(
-    redissonClient,
-    "output",
-    record -> record.getId(),  // 幂等键
-    record::toString
-));
-```
-
-### CheckpointAwareSink
-
-与 Checkpoint 集成的 Sink。
-
-```java
-stream.sinkTo(new CheckpointAwareSink<Result>() {
-    @Override
-    public void write(Result value) {
-        // 写入数据
-    }
-
-    @Override
-    public void onCheckpointRestore(long checkpointId) {
-        // 从 Checkpoint 恢复
-    }
-});
-```
-
-## 并行处理
-
-### 分区写入
-
-Sink 支持并行写入多个分区。
-
-```java
-stream.setParallelism(4)
-    .keyBy(Result::getKey)
-    .sinkToRedisHash("results");
-```
-
-### 负载均衡
-
-使用分区键实现负载均衡。
-
-```java
-stream.keyBy(record -> record.getKey().hashCode() % 10)
-    .sinkTo(new MultiPartitionSink(partitionSinks));
-```
-
-## 相关文档
-
-- [MQ 模块](MQ.md) - 消息队列
-- [Runtime 模块](Runtime.md) - 运行时环境
-- [Checkpoint 模块](Checkpoint.md) - Checkpoint 机制
+## References
+- [Core.md](Core.md) · [runtime.md](runtime.md) · [MQ.md](MQ.md)

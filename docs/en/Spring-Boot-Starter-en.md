@@ -1,3 +1,5 @@
+> ⚠️ Translation may lag behind the Chinese page `docs/Spring-Boot-Starter.md` (autoconfig split, `redis-streaming.` prefix, optional-dependency guards). Refer to the Chinese page as authoritative.
+
 # Spring Boot Starter Guide
 
 [中文](Spring-Boot-Starter) | [English](Spring-Boot-Starter-en)

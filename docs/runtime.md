@@ -1,243 +1,86 @@
 # Runtime 模块
 
-## 概述
+模块目录:`runtime/`。提供两套彼此独立的执行引擎,实现 core 的 `DataStream`/`KeyedStream`/`WindowedStream` 构建器接口。**尚未统一**(引擎融合是已知架构债,见 `todo.md` B 节),本文如实区分两者能力。
 
-Runtime 模块提供流处理框架的运行时环境，包括内存运行时和 Redis 运行时。内存运行时用于开发和测试，Redis 运行时用于生产环境。
+## 1. 内存引擎(StreamExecutionEnvironment)
 
-## 核心组件
-
-### 1. StreamExecutionEnvironment
-
-流处理执行环境，是构建流处理应用的入口。
+用途:开发/测试。惰性拉取模型(Iterator),**只能跑有界流**;终止操作(`addSink`/`print`)同步触发全量执行,没有 `execute()`。
 
 ```java
-// 创建执行环境
+import io.github.cuihairu.redis.streaming.runtime.StreamExecutionEnvironment;
+
 StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-// 从源创建数据流
-DataStream<String> stream = env.fromElements("a", "b", "c");
-
-// 执行转换
-stream.map(String::toUpperCase)
-      .print();
-
-// 执行作业
-env.execute("MyJob");
-```
-
-### 2. DataStream
-
-数据流核心接口，提供各种转换操作。
-
-```java
-DataStream<String> stream = env.fromElements(...);
-
-// 转换操作
-stream.filter(s -> s.length() > 0)
-      .map(String::toUpperCase)
-      .flatMap(s -> Arrays.asList(s.split("")))
-      .keyBy(s -> s.substring(0, 1));
-```
-
-### 3. RedisRuntime
-
-基于 Redis 的分布式运行时，支持：
-- 分布式状态管理
-- Checkpoint 协调
-- 水位线传播
-- 并行处理
-
-**配置**:
-```java
-RedisRuntimeConfig config = RedisRuntimeConfig.builder()
-    .redisUrl("redis://localhost:6379")
-    .checkpointInterval(Duration.ofMinutes(1))
-    .stateTtl(Duration.ofHours(24))
-    .build();
-
-RedisRuntime runtime = new RedisRuntime(config);
-```
-
-## 使用方式
-
-### 1. 基本流处理作业
-
-```java
-StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-
-env.fromElements("hello", "world", "redis", "streaming")
+env.fromElements("hello", "world", "redis")          // 或 fromCollection(...) / addSource(StreamSource)
    .map(String::toUpperCase)
    .filter(s -> s.startsWith("R"))
-   .collect()
-   .forEach(System.out::println);
+   .print();                                          // addSink 即执行
 ```
 
-### 2. 键控流处理
+能力矩阵(内存引擎):
+- `keyBy(...).sum(...) / reduce(...) / process(KeyedProcessFunction)`:按键有状态算子(内存 Map,不可快照)
+- `window(TumblingWindow/...).reduce/aggregate/apply/sum/count`:批式全窗口聚合(读完全部输入后输出)
+- `assignTimestampsAndWatermarks(gen)` 与 `(TimestampAssigner, gen)` 两个重载均支持
+- `addSource` 生命周期:`open → run → finally close`;`addSink` 对称
+- 限制:无并行、无取消语义、无限流源会 OOM、窗口丢弃水位线状态
+
+## 2. Redis 引擎(RedisStreamExecutionEnvironment)
+
+用途:生产。推模型:基于 mq 模块的消费者线程回调驱动算子链(`RedisOperatorNode` 内联执行,无跨算子 shuffle;`keyBy` 通过 ThreadLocal 绑定当前 key,状态存 Redis)。
+
+### 2.1 构建与启动
 
 ```java
-env.fromElements(
-        new Order("user1", "item1", 100),
-        new Order("user1", "item2", 200),
-        new Order("user2", "item1", 150)
-    )
-    .keyBy(Order::getUserId)
-    .sum("amount")
-    .print();
-```
+import io.github.cuihairu.redis.streaming.runtime.redis.*;
 
-### 3. 窗口聚合
-
-```java
-env.fromElements(events)
-    .assignTimestamps(e -> e.getTimestamp())
-    .keyBy(Event::getKey)
-    .window(TumblingWindow.of(Duration.ofMinutes(1)))
-    .aggregate(Aggregates.sum("value"))
-    .print();
-```
-
-### 4. 使用状态
-
-```java
-env.fromElements(words)
-    .keyBy(w -> w)
-    .process((key, value, ctx, out) -> {
-        StateDescriptor<Long> descriptor = new StateDescriptor<>(
-            "count", Long.class, 0L
-        );
-        ValueState<Long> countState = ctx.getState(descriptor);
-
-        Long count = countState.value() + 1;
-        countState.update(count);
-
-        out.collect(key + ": " + count);
-    });
-```
-
-### 5. Redis 运行时
-
-```java
-// 创建 Redis 运行时
 RedisRuntimeConfig config = RedisRuntimeConfig.builder()
-    .redisUrl("redis://localhost:6379")
-    .build();
+        .jobName("order-agg")                       // 状态/检查点键空间隔离的关键
+        .stateKeyPrefix("streaming:state")
+        .checkpointInterval(Duration.ofSeconds(30))
+        .watermarkOutOfOrderness(Duration.ofSeconds(5))
+        .pipelineParallelism(2)                     // 每管道的 consumer 子任务数(按分区取模)
+        .deferAckUntilCheckpoint(true)
+        .restoreFromLatestCheckpoint(true)
+        .sinkDeduplicationEnabled(true)
+        .build();
 
-StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(config);
+RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(redissonClient, config);
 
-// 构建作业
-env.fromKafka("orders")
-    .keyBy(Order::getUserId)
-    .sum("amount")
-    .sinkToRedis("user-totals");
+env.fromMqTopic("orders", "cg-orders")              // 源 = Redis Stream 消费组(可传 SubscriptionOptions)
+   .assignTimestampsAndWatermarks(                   // 可选:接入 core WatermarkGenerator
+       new BoundedOutOfOrdernessWatermarkGenerator<>(Duration.ofSeconds(5)))
+   .map(m -> parse(m.getPayload()))
+   .keyBy(Order::getUserId)
+   .window(TumblingWindow.of(Duration.ofMinutes(1)))
+   .reduce((a, b) -> merge(a, b))
+   .addSink(new MySink());
 
-// 执行
-env.execute("OrderAggregation");
+RedisJobClient job = env.executeAsync();            // 每环境仅可调用一次
 ```
 
-## 运行模式
+### 2.2 RedisJobClient(作业句柄)
 
-### 内存模式
+`AutoCloseable`;`close()` 即 `cancel()`。方法:
+- `cancel()`:停消费、关 runner、释放 sink 资源(幂等)
+- `triggerCheckpointNow()`:手动触发一次检查点(与周期调度互斥,单飞)
+- `pause()` / `resume()` / `inFlight()`:背压式暂停恢复(PausableMessageConsumer)
+- `getLatestCheckpoint()` / `diagnostics()`:可观测(返回配置+水位+在途量的 Map)
+- `awaitTermination(Duration)`
 
-- **用途**: 开发、测试
-- **特点**: 单线程、内存状态
-- **启动**: 默认模式
+### 2.3 关键语义
 
-```java
-StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-```
+- **事件时间** = 消息投递时间戳;水位线 = max(投递) − `watermarkOutOfOrderness`,用户 `WatermarkGenerator` 只能**单调提升**水位线(`Context.raiseWatermark`)。
+- **窗口触发**:在每条消息处理过程中检查到期窗口(每记录最多 `windowMaxFiresPerRecord` 个),迟到元素计数并丢弃。
+- **状态**:`RedisKeyedStateStore`(按 key 分片到多 Redis Hash,支持 TTL、schema 演进策略、热键告警);`keyBy().process` 中 `ctx.getState(StateDescriptor)` 取 `ValueState`。
+- **检查点**:`RedisRuntimeCheckpointManager` 快照 key 状态集合 + 消费组 pending/commit frontier;恢复时回放 sink `onCheckpointRestore` 并可从 commit frontier 重建消费组。
+- **exactly-once 演示 sink**:`runtime/redis/sink` 下 `RedisIdempotentListSink` / `RedisCheckpointedIdempotentListSink` / `RedisAtomicCheckpointListSink`(去重表/Lua 原子提交)。
+- **定时器**:`KeyedProcessFunction` 的 processing-time(共享 ScheduledExecutor)与 event-time(优先队列,随水位线触发)。
+- **sink 生命周期**:首条消息时 `open()`,`job.cancel()/close()` 时 `close()`。
+- 未支持:`fromCollection/fromElements/addSource`(仅 MQ 源);`(TimestampAssigner, generator)` 重载;窗口 Trigger 接口。
 
-### Redis 模式
+## 3. 指标
 
-- **用途**: 生产环境
-- **特点**: 分布式、持久化状态
-- **启动**: 需要配置
-
-```java
-RedisRuntimeConfig config = RedisRuntimeConfig.builder()
-    .redisUrl("redis://localhost:6379")
-    .build();
-
-StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(config);
-```
-
-## 并行处理
-
-### 并行度
-
-设置作业的并行度，实现水平扩展。
-
-```java
-env.fromKafka("events")
-    .setParallelism(4)  // 4个并行子任务
-    .process(new MyProcessor())
-    .sinkToRedis("results");
-```
-
-### 分区策略
-
-- **KeyedStream**: 按 key 分区
-- **DataStream**: 轮询分区
-
-```java
-// KeyedStream 自动按 key 分区
-stream.keyBy(Event::getKey)
-      .map(Event::getValue);
-```
-
-## Checkpoint 集成
-
-### 启用 Checkpoint
-
-```java
-RedisRuntimeConfig config = RedisRuntimeConfig.builder()
-    .checkpointInterval(Duration.ofMinutes(1))
-    .checkpointsToKeep(3)
-    .build();
-
-StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(config);
-env.enableCheckpointing();
-```
-
-### 故障恢复
-
-```java
-env.fromKafka("events")
-    .enableCheckpointing()
-    .process(new MyProcessor())
-    .execute();
-
-// 故障后重启
-env.execute("MyJob");  // 自动从最近的 Checkpoint 恢复
-```
-
-## 监控指标
-
-Runtime 模块暴露以下指标：
-
-- **吞吐量**: 每秒处理的事件数
-- **延迟**: 端到端处理延迟
-- **Checkpoint**: Checkpoint 成功率、耗时
-- **状态**: 状态读写次数、大小
-
-### Prometheus 集成
-
-```java
-// 指标自动暴露到 Prometheus
-RedisRuntimeConfig config = RedisRuntimeConfig.builder()
-    .enableMetrics(true)
-    .metricsPort(9090)
-    .build();
-```
-
-## 注意事项
-
-1. **线程安全**: DataStream 操作是线程安全的
-2. **资源清理**: 执行完成后自动清理资源
-3. **异常处理**: 算子中的异常会导致作业失败
-4. **状态大小**: 避免单个状态过大，影响性能
+`RedisRuntimeMetrics` 单例收集(job/topic/group 维度):作业启停、管道、处理时延与成败、检查点触发/耗时/失败、窗口触发/迟到、keyed state 读写与热键、事件时间定时器队列。桥接到 Micrometer/Prometheus 由 spring-boot-starter 完成(见 starter 文档)。
 
 ## 相关文档
-
-- [State 模块](State.md) - 状态管理
-- [Checkpoint 模块](Checkpoint.md) - 检查点机制
-- [Core API](Core.md) - 核心接口
+[Core.md](Core.md) · [state.md](state.md) · [checkpoint.md](checkpoint.md) · [watermark.md](watermark.md) · [MQ.md](MQ.md) · [Spring-Boot-Starter.md](Spring-Boot-Starter.md)
