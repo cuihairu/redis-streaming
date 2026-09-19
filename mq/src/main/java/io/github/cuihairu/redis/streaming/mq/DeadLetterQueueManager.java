@@ -9,7 +9,7 @@ import io.github.cuihairu.redis.streaming.mq.impl.StreamEntryCodec;
 import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
-import org.redisson.api.StreamMessageId;
+import org.redisson.api.stream.StreamMessageId;
 import org.redisson.api.stream.StreamAddArgs;
 
 import java.time.Instant;

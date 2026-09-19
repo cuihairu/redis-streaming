@@ -72,7 +72,7 @@ public final class RedisIdempotentListSink<T> implements StreamSink<IdempotentRe
         long ttlSeconds = dedupTtl == null ? 0L : Math.max(0L, dedupTtl.toSeconds());
 
         RScript script = redissonClient.getScript(StringCodec.INSTANCE);
-        Object r = script.eval(RScript.Mode.READ_WRITE, LUA, RScript.ReturnType.INTEGER,
+        Object r = script.eval(RScript.Mode.READ_WRITE, LUA, RScript.ReturnType.LONG,
                 List.of(dedupSetKey, listKey), id, payload, String.valueOf(ttlSeconds));
         // r is 0/1; ignore result (idempotency handled by Lua).
     }

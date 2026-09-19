@@ -297,7 +297,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
 
             Comparator<PendingEntry> cmp;
             if (sort == io.github.cuihairu.redis.streaming.mq.admin.model.PendingSort.DELIVERIES) {
-                cmp = Comparator.comparingLong(PendingEntry::getLastTimeDelivered);
+                cmp = Comparator.comparingLong(PendingEntry::getDeliveryCount);
             } else if (sort == io.github.cuihairu.redis.streaming.mq.admin.model.PendingSort.ID) {
                 cmp = Comparator.comparing(p -> p.getId().toString());
             } else {
@@ -313,7 +313,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
                         .messageId(entry.getId())
                         .consumerName(entry.getConsumerName())
                         .idleTime(Duration.ofMillis(entry.getIdleTime()))
-                        .deliveryCount(entry.getLastTimeDelivered())
+                        .deliveryCount(entry.getDeliveryCount())
                         .firstDeliveryTime(0)
                         .build());
             }
@@ -567,7 +567,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
                 java.util.List<Object> rows = (java.util.List<Object>) script.eval(
                         org.redisson.api.RScript.Mode.READ_ONLY,
                         "return redis.call('XREVRANGE', KEYS[1], ARGV[1], ARGV[2], 'COUNT', tonumber(ARGV[3]))",
-                        org.redisson.api.RScript.ReturnType.MULTI,
+                        org.redisson.api.RScript.ReturnType.LIST,
                         java.util.Collections.singletonList(sk), "+", "-", String.valueOf(per));
                 if (rows != null) {
                     for (Object row : rows) {
@@ -630,7 +630,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             java.util.List<Object> rows = (java.util.List<Object>) script.eval(
                     org.redisson.api.RScript.Mode.READ_ONLY,
                     "return redis.call('XREVRANGE', KEYS[1], ARGV[1], ARGV[2], 'COUNT', tonumber(ARGV[3]))",
-                    org.redisson.api.RScript.ReturnType.MULTI,
+                    org.redisson.api.RScript.ReturnType.LIST,
                     java.util.Collections.singletonList(sk), from, to, String.valueOf(Math.max(1, count)));
             if (rows != null) {
                 for (Object row : rows) {

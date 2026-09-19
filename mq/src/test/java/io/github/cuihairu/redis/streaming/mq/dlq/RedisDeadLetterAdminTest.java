@@ -7,7 +7,7 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.redisson.api.RKeys;
 import org.redisson.api.RedissonClient;
-import org.redisson.api.StreamMessageId;
+import org.redisson.api.stream.StreamMessageId;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -16,7 +16,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
-import static org.redisson.api.StreamMessageId.*;
+import static org.redisson.api.stream.StreamMessageId.*;
 
 /**
  * Unit tests for RedisDeadLetterAdmin

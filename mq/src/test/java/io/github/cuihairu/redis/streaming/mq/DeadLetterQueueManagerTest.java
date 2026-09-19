@@ -9,7 +9,7 @@ import org.mockito.MockitoAnnotations;
 import org.redisson.api.RKeys;
 import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
-import org.redisson.api.StreamMessageId;
+import org.redisson.api.stream.StreamMessageId;
 
 import java.time.Instant;
 import java.util.Collections;
@@ -38,11 +38,9 @@ class DeadLetterQueueManagerTest {
     @Mock
     private RKeys mockKeys;
 
-    @Mock
-    private StreamMessageId mockMessageId;
+    private final StreamMessageId mockMessageId = new StreamMessageId(1, 0);
 
-    @Mock
-    private StreamMessageId mockMessageId2;
+    private final StreamMessageId mockMessageId2 = new StreamMessageId(2, 0);
 
     private DeadLetterQueueManager manager;
 

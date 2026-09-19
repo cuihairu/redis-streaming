@@ -10,7 +10,7 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
-import org.redisson.api.StreamMessageId;
+import org.redisson.api.stream.StreamMessageId;
 import org.redisson.client.codec.StringCodec;
 
 import java.lang.reflect.Method;
@@ -36,8 +36,7 @@ class DlqConsumerAdapterTest {
     @Mock
     private RStream<Object, Object> mockStream;
 
-    @Mock
-    private StreamMessageId mockStreamMessageId;
+    private final StreamMessageId mockStreamMessageId = new StreamMessageId(1, 0);
 
     @Test
     void testConstructorWithValidParameters() {

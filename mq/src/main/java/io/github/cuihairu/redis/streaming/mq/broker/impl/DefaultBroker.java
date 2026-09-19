@@ -64,7 +64,7 @@ public class DefaultBroker implements Broker {
         java.time.Duration timeout = java.time.Duration.ofMillis(timeoutMs < 0 ? 0 : timeoutMs);
         org.redisson.api.stream.StreamReadGroupArgs args =
                 org.redisson.api.stream.StreamReadGroupArgs.neverDelivered().count(Math.max(1, count)).timeout(timeout);
-        java.util.Map<org.redisson.api.StreamMessageId, java.util.Map<String, Object>> messages;
+        java.util.Map<org.redisson.api.stream.StreamMessageId, java.util.Map<String, Object>> messages;
         try {
             messages = stream.readGroup(consumerGroup, consumerName, args);
         } catch (Exception first) {
@@ -78,7 +78,7 @@ public class DefaultBroker implements Broker {
             }
         }
         java.util.List<io.github.cuihairu.redis.streaming.mq.broker.BrokerRecord> out = new java.util.ArrayList<>(messages.size());
-        for (java.util.Map.Entry<org.redisson.api.StreamMessageId, java.util.Map<String, Object>> e : messages.entrySet()) {
+        for (java.util.Map.Entry<org.redisson.api.stream.StreamMessageId, java.util.Map<String, Object>> e : messages.entrySet()) {
             out.add(new io.github.cuihairu.redis.streaming.mq.broker.BrokerRecord(e.getKey().toString(), e.getValue()));
         }
         return out;
@@ -103,7 +103,7 @@ public class DefaultBroker implements Broker {
             script.eval(
                     org.redisson.api.RScript.Mode.READ_WRITE,
                     lua,
-                    org.redisson.api.RScript.ReturnType.INTEGER,
+                    org.redisson.api.RScript.ReturnType.LONG,
                     java.util.Collections.singletonList(streamKey),
                     consumerGroup
             );
@@ -150,8 +150,8 @@ public class DefaultBroker implements Broker {
                 // Compute active groups: groups present on stream AND having an active lease on this partition
                 int active = 0;
                 try {
-                    java.util.List<org.redisson.api.StreamGroup> groups = stream.listGroups();
-                    for (org.redisson.api.StreamGroup g : groups) {
+                    java.util.List<org.redisson.api.stream.StreamGroup> groups = stream.listGroups();
+                    for (org.redisson.api.stream.StreamGroup g : groups) {
                         String leaseKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.lease(topic, g.getName(), partitionId);
                         boolean live = redissonClient.getBucket(leaseKey, org.redisson.client.codec.StringCodec.INSTANCE).isExists();
                         if (live) active++;
@@ -176,19 +176,19 @@ public class DefaultBroker implements Broker {
         }
     }
 
-    private org.redisson.api.StreamMessageId parseStreamId(String id) {
+    private org.redisson.api.stream.StreamMessageId parseStreamId(String id) {
         try {
-            if (id == null) return org.redisson.api.StreamMessageId.MIN;
+            if (id == null) return org.redisson.api.stream.StreamMessageId.MIN;
             String[] parts = id.split("-", 2);
             if (parts.length == 2) {
                 long ms = Long.parseLong(parts[0]);
                 long seq = Long.parseLong(parts[1]);
-                return new org.redisson.api.StreamMessageId(ms, seq);
+                return new org.redisson.api.stream.StreamMessageId(ms, seq);
             }
             long ms = Long.parseLong(id);
-            return new org.redisson.api.StreamMessageId(ms);
+            return new org.redisson.api.stream.StreamMessageId(ms);
         } catch (Exception e) {
-            return org.redisson.api.StreamMessageId.MIN;
+            return org.redisson.api.stream.StreamMessageId.MIN;
         }
     }
 }

@@ -8,7 +8,7 @@ import org.redisson.api.RBucket;
 import org.redisson.api.RKeys;
 import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
-import org.redisson.api.StreamMessageId;
+import org.redisson.api.stream.StreamMessageId;
 import org.redisson.client.codec.StringCodec;
 
 import java.time.Instant;
@@ -18,7 +18,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
-import static org.redisson.api.StreamMessageId.*;
+import static org.redisson.api.stream.StreamMessageId.*;
 
 /**
  * Unit tests for RedisDeadLetterService.

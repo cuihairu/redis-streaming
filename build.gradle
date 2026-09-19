@@ -80,9 +80,9 @@ subprojects {
     }
 
     dependencies {
-        testImplementation 'org.junit.jupiter:junit-jupiter:5.9.2'
-        testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.2'
-        testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.9.2'
+        testImplementation libs.junit.jupiter
+        testImplementation libs.junit.api
+        testRuntimeOnly libs.junit.engine
     }
 
     // Configure source sets for integration tests

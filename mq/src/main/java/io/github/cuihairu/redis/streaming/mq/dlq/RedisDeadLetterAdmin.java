@@ -2,7 +2,7 @@ package io.github.cuihairu.redis.streaming.mq.dlq;
 
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RedissonClient;
-import org.redisson.api.StreamMessageId;
+import org.redisson.api.stream.StreamMessageId;
 
 import java.util.ArrayList;
 import java.util.List;

@@ -1,6 +1,6 @@
 package io.github.cuihairu.redis.streaming.mq.dlq;
 
-import org.redisson.api.StreamMessageId;
+import org.redisson.api.stream.StreamMessageId;
 
 import java.util.List;
 

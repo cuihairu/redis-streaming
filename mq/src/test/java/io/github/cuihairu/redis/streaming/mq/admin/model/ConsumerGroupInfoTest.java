@@ -1,7 +1,7 @@
 package io.github.cuihairu.redis.streaming.mq.admin.model;
 
 import org.junit.jupiter.api.Test;
-import org.redisson.api.StreamMessageId;
+import org.redisson.api.stream.StreamMessageId;
 
 import java.util.ArrayList;
 import java.util.Collections;

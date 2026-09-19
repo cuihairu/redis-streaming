@@ -91,7 +91,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
 
             // Use StringCodec to pass raw strings to Lua (avoid JSON codec wrapping strings)
             RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
-            script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.INTEGER,
+            script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.LONG,
                     java.util.Arrays.asList(configKey, historyKey),
                     dataId, group, entryJson, String.valueOf(nowMs), String.valueOf(maxHistorySize));
 
@@ -157,7 +157,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
                     + "if redis.call('EXISTS', key)==0 then return 0 end; local oldc=redis.call('HGET', key, 'content'); local oldv=redis.call('HGET', key, 'version'); "
                     + "if oldc then local rec=cjson.encode({dataId=dataId,group=grp,content=oldc,version=oldv,operation='DELETED',changeTime=tonumber(now),operator='system'}); redis.call('LPUSH', hist, rec); redis.call('LTRIM', hist, 0, maxhist-1); end; redis.call('DEL', key); return 1;";
             RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
-            Long deleted = script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.INTEGER,
+            Long deleted = script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.LONG,
                     java.util.Arrays.asList(configKey, historyKey), dataId, group, String.valueOf(nowMs), String.valueOf(maxHistorySize));
 
             redissonClient.getSet(config.getConfigSubscribersKey(group, dataId)).delete();
@@ -293,7 +293,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
             String historyKey = config.getConfigHistoryKey(group, dataId);
             String lua = "local key=KEYS[1]; local max=tonumber(ARGV[1]); local len=redis.call('LLEN', key); if max<0 then redis.call('DEL', key); return len; end; if len<=max then return 0; end; redis.call('LTRIM', key, 0, max-1); return len-max;";
             RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
-            Long removed = script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.INTEGER,
+            Long removed = script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.LONG,
                     java.util.Collections.singletonList(historyKey), String.valueOf(maxSize));
             return removed == null ? 0 : removed.intValue();
         } catch (Exception e) {
@@ -313,7 +313,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
                     + "local idx=len-1; while idx>=0 do local it=redis.call('LINDEX', key, idx); if not it then break end; local obj=nil; pcall(function() obj=cjson.decode(it) end); local ct=nil; if obj and obj['changeTime'] then ct=tonumber(obj['changeTime']) end; if ct and ct<cutoff then idx=idx-1 else break end; end; "
                     + "local trimTo=idx; if trimTo>=0 then redis.call('LTRIM', key, 0, trimTo); return len-(trimTo+1); else redis.call('DEL', key); return len; end;";
             RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
-            Long removed = script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.INTEGER,
+            Long removed = script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.LONG,
                     java.util.Collections.singletonList(historyKey), String.valueOf(cutoff));
             return removed == null ? 0 : removed.intValue();
         } catch (Exception e) {

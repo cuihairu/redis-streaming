@@ -24,7 +24,7 @@ import org.redisson.api.RMap;
 import org.redisson.api.RScript;
 import org.redisson.api.RedissonClient;
 import org.redisson.api.RStream;
-import org.redisson.api.StreamMessageId;
+import org.redisson.api.stream.StreamMessageId;
 import org.redisson.client.codec.StringCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -150,6 +150,17 @@ public final class RedisStreamExecutionEnvironment {
         pipelineDefinitions.add(Objects.requireNonNull(pipelineDefinition, "pipelineDefinition"));
     }
 
+    private static final String ENSURE_GROUP_LUA =
+        "local exists=false \n" +
+        "local info = redis.pcall('XINFO','GROUPS', KEYS[1]) \n" +
+        "if type(info) == 'table' and info.err == nil then \n" +
+        "  for i=1,#info do local g = info[i]; for j=1,#g,2 do if g[j]=='name' and g[j+1]==ARGV[1] then exists=true; break end end if exists then break end end \n" +
+        "end \n" +
+        "if exists then return 'EXISTS' end \n" +
+        "local r = redis.pcall('XGROUP','CREATE', KEYS[1], ARGV[1], ARGV[2], 'MKSTREAM') \n" +
+        "if type(r)=='table' and r.err then if string.find(r.err,'BUSYGROUP') then return 'EXISTS' else return r.err end end \n" +
+        "return r";
+
     /**
      * Start all registered pipelines asynchronously.
      */
@@ -176,16 +187,6 @@ public final class RedisStreamExecutionEnvironment {
         DeferredAcks deferredAcks = new DeferredAcks();
         java.util.concurrent.atomic.AtomicReference<Long> restoredCheckpointIdRef = new java.util.concurrent.atomic.AtomicReference<>(null);
         warnDeferAckConfiguration();
-        final String ensureGroupLua =
-                "local exists=false \n" +
-                "local info = redis.pcall('XINFO','GROUPS', KEYS[1]) \n" +
-                "if type(info) == 'table' and info.err == nil then \n" +
-                "  for i=1,#info do local g = info[i]; for j=1,#g,2 do if g[j]=='name' and g[j+1]==ARGV[1] then exists=true; break end end if exists then break end end \n" +
-                "end \n" +
-                "if exists then return 'EXISTS' end \n" +
-                "local r = redis.pcall('XGROUP','CREATE', KEYS[1], ARGV[1], ARGV[2], 'MKSTREAM') \n" +
-                "if type(r)=='table' and r.err then if string.find(r.err,'BUSYGROUP') then return 'EXISTS' else return r.err end end \n" +
-                "return r";
 
         try {
             for (RedisPipelineDefinition def : pipelineDefinitions) {
@@ -227,102 +228,13 @@ public final class RedisStreamExecutionEnvironment {
 
                     if (config.isRestoreConsumerGroupFromCommitFrontier()) {
                         ensureConsumerGroupStartsFromCommitFrontierIfMissing(
-                                partitionRegistry, script, ensureGroupLua, p.topic(), p.consumerGroup());
+                                partitionRegistry, script, ENSURE_GROUP_LUA, p.topic(), p.consumerGroup());
                     }
 
-                    MessageHandler handler = (Message m) -> {
-                        long startNs = System.nanoTime();
-                        boolean installMdc = config.isMdcEnabled() && shouldInstallMdc(m);
-                        if (installMdc) {
-                            try {
-                                MDC.put("rs.job", config.getJobName());
-                                MDC.put("rs.topic", p.topic());
-                                MDC.put("rs.group", p.consumerGroup());
-                                MDC.put("rs.consumer", consumerName);
-                                if (m != null) {
-                                    try { MDC.put("rs.id", m.getId()); } catch (Exception ignore) {}
-                                    try { MDC.put("rs.key", m.getKey()); } catch (Exception ignore) {}
-                                    try {
-                                        String pid = m.getHeaders() == null ? null : m.getHeaders().get(io.github.cuihairu.redis.streaming.mq.MqHeaders.PARTITION_ID);
-                                        if (pid != null) {
-                                            MDC.put("rs.partition", pid);
-                                        }
-                                    } catch (Exception ignore) {
-                                    }
-                                }
-                            } catch (Exception ignore) {
-                            }
-                        }
-                        try {
-                            boolean ok = runner.handle(m);
-                            try {
-                                RedisRuntimeMetrics.get().recordHandleLatency(config.getJobName(), p.topic(), p.consumerGroup(),
-                                        (System.nanoTime() - startNs) / 1_000_000);
-                                if (ok) {
-                                    RedisRuntimeMetrics.get().incHandleSuccess(config.getJobName(), p.topic(), p.consumerGroup());
-                                } else {
-                                    RedisRuntimeMetrics.get().incHandleError(config.getJobName(), p.topic(), p.consumerGroup());
-                                }
-                            } catch (Exception ignore) {
-                            }
-                            if (!ok) {
-                                return MessageHandleResult.RETRY;
-                            }
-                            if (config.isDeferAckUntilCheckpoint()) {
-                                markDeferAck(m, deferredAcks, p.topic(), p.consumerGroup());
-                            }
-                            return MessageHandleResult.SUCCESS;
-                        } catch (Exception e) {
-                            annotateRuntimeError(m, p.consumerGroup(), e);
-                            try {
-                                RedisRuntimeMetrics.get().recordHandleLatency(config.getJobName(), p.topic(), p.consumerGroup(),
-                                        (System.nanoTime() - startNs) / 1_000_000);
-                                RedisRuntimeMetrics.get().incHandleError(config.getJobName(), p.topic(), p.consumerGroup());
-                            } catch (Exception ignore) {
-                            }
-                            try {
-                                String id = m == null ? null : m.getId();
-                                String key = m == null ? null : m.getKey();
-                                log.error("Redis runtime pipeline failed (jobName={}, topic={}, group={}, consumer={}, id={}, key={})",
-                                        config.getJobName(), p.topic(), p.consumerGroup(), consumerName, id, key, e);
-                            } catch (Exception ignore) {
-                                // best-effort logging only
-                            }
-                            return config.getProcessingErrorResult();
-                        } finally {
-                            if (installMdc) {
-                                try {
-                                    MDC.remove("rs.id");
-                                    MDC.remove("rs.key");
-                                    MDC.remove("rs.partition");
-                                    MDC.remove("rs.consumer");
-                                    MDC.remove("rs.group");
-                                    MDC.remove("rs.topic");
-                                    MDC.remove("rs.job");
-                                } catch (Exception ignore) {
-                                }
-                            }
-                        }
-                    };
+                    MessageHandler handler = createMessageHandler(runner, p, consumerName, deferredAcks);
 
-                    io.github.cuihairu.redis.streaming.mq.SubscriptionOptions opts = p.subscriptionOptions();
-                    if (parallelism > 1) {
-                        io.github.cuihairu.redis.streaming.mq.SubscriptionOptions.Builder b = io.github.cuihairu.redis.streaming.mq.SubscriptionOptions.builder();
-                        if (opts != null) {
-                            try {
-                                Integer bc = opts.getBatchCount();
-                                if (bc != null) b.batchCount(bc);
-                            } catch (Exception ignore) {
-                            }
-                            try {
-                                Long to = opts.getPollTimeoutMs();
-                                if (to != null) b.pollTimeoutMs(to);
-                            } catch (Exception ignore) {
-                            }
-                        }
-                        b.partitionModulo(parallelism).partitionRemainder(subtask);
-                        opts = b.build();
-                    }
+                    io.github.cuihairu.redis.streaming.mq.SubscriptionOptions opts =
+                            optionsForSubtask(p.subscriptionOptions(), parallelism, subtask);
 
                     try {
                         consumer.subscribe(p.topic(), p.consumerGroup(), handler, opts);
@@ -362,197 +274,318 @@ public final class RedisStreamExecutionEnvironment {
                 }, ms, ms, TimeUnit.MILLISECONDS);
             }
         } catch (Exception e) {
-            for (MessageConsumer c : consumers) {
-                try {
-                    c.stop();
-                } catch (Exception ignore) {
-                }
-                try {
-                    c.close();
-                } catch (Exception ignore) {
-                }
-            }
-            for (RedisPipelineRunner<?> r : runners) {
-                try {
-                    r.close();
-                } catch (Exception ignore) {
-                }
-            }
-            if (sharedTimerExecutor != null) {
-                try {
-                    sharedTimerExecutor.shutdownNow();
-                } catch (Exception ignore) {
-                }
-            }
-            if (checkpointExecutor != null) {
-                try {
-                    checkpointExecutor.shutdownNow();
-                } catch (Exception ignore) {
-                }
-            }
+            stopConsumersQuietly(consumers);
+            closeRunnersQuietly(runners);
+            shutdownExecutorQuietly(sharedTimerExecutor);
+            shutdownExecutorQuietly(checkpointExecutor);
             executed.set(false);
             throw (e instanceof RuntimeException re) ? re : new RuntimeException("Failed to start Redis runtime job", e);
         }
 
-        ScheduledExecutorService finalCheckpointExecutor = checkpointExecutor;
-        ScheduledExecutorService finalSharedTimerExecutor = sharedTimerExecutor;
-        return new RedisJobClient() {
-            private final CountDownLatch stopped = new CountDownLatch(1);
-            private final AtomicBoolean canceled = new AtomicBoolean(false);
+        return new LaunchedJobClient(checkpointExecutor, sharedTimerExecutor, consumers, runners,
+                checkpointManager, pipelineKeys, deferredAcks, checkpointing, restoredCheckpointIdRef);
+    }
 
-            @Override
-	            public void cancel() {
-	                if (!canceled.compareAndSet(false, true)) {
-	                    return;
-	                }
-                try {
-                    try {
-                        RedisRuntimeMetrics.get().incJobCanceled(config.getJobName());
-                    } catch (Exception ignore) {
-                    }
-                    if (finalCheckpointExecutor != null) {
-                        try {
-                            finalCheckpointExecutor.shutdownNow();
-                        } catch (Exception ignore) {
-                        }
-                    }
-                    for (MessageConsumer c : consumers) {
-                        try {
-                            c.stop();
-                        } catch (Exception ignore) {
-                        }
-                        try {
-                            c.close();
-                        } catch (Exception ignore) {
-                        }
-                    }
-                    for (RedisPipelineRunner<?> r : runners) {
-                        try {
-                            r.close();
-                        } catch (Exception ignore) {
-                        }
-                    }
-                    if (finalSharedTimerExecutor != null) {
-                        try {
-                            finalSharedTimerExecutor.shutdownNow();
-                        } catch (Exception ignore) {
-                        }
-                    }
-                } finally {
-                    executed.set(false);
-                    stopped.countDown();
-	                }
-	            }
 
-	            @Override
-            public Checkpoint triggerCheckpointNow() {
-                if (canceled.get()) {
-                    return null;
-                }
-                if (!checkpointing.compareAndSet(false, true)) {
-                    return null;
-                }
-                try {
-                    return triggerCheckpointInternal(consumers, runners, checkpointManager, pipelineKeys, deferredAcks);
-                } finally {
-                    checkpointing.set(false);
-                }
+    /**
+     * Handle for a job started by {@link #executeAsync()}: cancellation, manual checkpoint
+     * triggering, pause/resume and diagnostics.
+     */
+    private final class LaunchedJobClient implements RedisJobClient {
+
+        private final ScheduledExecutorService checkpointExecutor;
+        private final ScheduledExecutorService sharedTimerExecutor;
+        private final List<MessageConsumer> consumers;
+        private final List<RedisPipelineRunner<?>> runners;
+        private final RedisRuntimeCheckpointManager checkpointManager;
+        private final List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys;
+        private final DeferredAcks deferredAcks;
+        private final AtomicBoolean checkpointing;
+        private final java.util.concurrent.atomic.AtomicReference<Long> restoredCheckpointId;
+
+        private LaunchedJobClient(ScheduledExecutorService checkpointExecutor,
+                                  ScheduledExecutorService sharedTimerExecutor,
+                                  List<MessageConsumer> consumers,
+                                  List<RedisPipelineRunner<?>> runners,
+                                  RedisRuntimeCheckpointManager checkpointManager,
+                                  List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
+                                  DeferredAcks deferredAcks,
+                                  AtomicBoolean checkpointing,
+                                  java.util.concurrent.atomic.AtomicReference<Long> restoredCheckpointId) {
+            this.checkpointExecutor = checkpointExecutor;
+            this.sharedTimerExecutor = sharedTimerExecutor;
+            this.consumers = consumers;
+            this.runners = runners;
+            this.checkpointManager = checkpointManager;
+            this.pipelineKeys = pipelineKeys;
+            this.deferredAcks = deferredAcks;
+            this.checkpointing = checkpointing;
+            this.restoredCheckpointId = restoredCheckpointId;
+        }
+
+        private final CountDownLatch stopped = new CountDownLatch(1);
+        private final AtomicBoolean canceled = new AtomicBoolean(false);
+
+        @Override
+        public void cancel() {
+            if (!canceled.compareAndSet(false, true)) {
+                return;
             }
-
-	            @Override
-	            public Checkpoint getLatestCheckpoint() {
-	                return checkpointManager.getLatestCheckpoint();
-	            }
-
-	            @Override
-	            public void pause() {
-	                for (MessageConsumer c : consumers) {
-	                    if (c instanceof PausableMessageConsumer pc) {
-	                        try {
-	                            pc.pause();
-	                        } catch (Exception ignore) {
-	                        }
-	                    }
-	                }
-	            }
-
-	            @Override
-	            public void resume() {
-	                for (MessageConsumer c : consumers) {
-	                    if (c instanceof PausableMessageConsumer pc) {
-	                        try {
-	                            pc.resume();
-	                        } catch (Exception ignore) {
-	                        }
-	                    }
-	                }
-	            }
-
-	            @Override
-	            public long inFlight() {
-	                long total = 0;
-	                boolean any = false;
-	                for (MessageConsumer c : consumers) {
-	                    if (c instanceof PausableMessageConsumer pc) {
-	                        any = true;
-	                        try {
-	                            total += Math.max(0, pc.inFlight());
-	                        } catch (Exception ignore) {
-	                        }
-	                    }
-	                }
-	                return any ? total : -1L;
-	            }
+            try {
+                try {
+                    RedisRuntimeMetrics.get().incJobCanceled(config.getJobName());
+                } catch (Exception ignore) {
+                }
+                shutdownExecutorQuietly(checkpointExecutor);
+                stopConsumersQuietly(consumers);
+                closeRunnersQuietly(runners);
+                shutdownExecutorQuietly(sharedTimerExecutor);
+            } finally {
+                executed.set(false);
+                stopped.countDown();
+            }
+        }
 
                 @Override
-	                public Map<String, Object> diagnostics() {
-	                    Map<String, Object> out = new HashMap<>();
-                    out.put("jobName", config.getJobName());
-                    out.put("jobInstanceId", config.getJobInstanceId());
-                    out.put("pipelineParallelism", config.getPipelineParallelism());
-                    out.put("timerThreads", config.getTimerThreads());
-                    out.put("checkpointThreads", config.getCheckpointThreads());
-                    out.put("deferAckUntilCheckpoint", config.isDeferAckUntilCheckpoint());
-                    out.put("ackDeferredMessagesOnCheckpoint", config.isAckDeferredMessagesOnCheckpoint());
-                    out.put("checkpointIntervalMs", config.getCheckpointInterval() == null ? 0L : Math.max(0L, config.getCheckpointInterval().toMillis()));
-                    out.put("restoreFromLatestCheckpoint", config.isRestoreFromLatestCheckpoint());
-                    out.put("sinkDeduplicationEnabled", config.isSinkDeduplicationEnabled());
-                    out.put("sinkDeduplicationTtlMs", config.getSinkDeduplicationTtl() == null ? 0L : Math.max(0L, config.getSinkDeduplicationTtl().toMillis()));
-                    out.put("watermarkOutOfOrdernessMs", config.getWatermarkOutOfOrderness() == null ? 0L : Math.max(0L, config.getWatermarkOutOfOrderness().toMillis()));
-                    out.put("windowAllowedLatenessMs", config.getWindowAllowedLateness() == null ? 0L : Math.max(0L, config.getWindowAllowedLateness().toMillis()));
-                    out.put("eventTimeTimerMaxSize", config.getEventTimeTimerMaxSize());
-                    out.put("consumerCount", consumers.size());
-	                    out.put("runnerCount", runners.size());
-	                    out.put("inFlight", inFlight());
-	                    out.put("checkpointing", checkpointing.get());
-	                    out.put("restoredCheckpointId", restoredCheckpointIdRef.get());
-	                    try {
-	                        Checkpoint latest = checkpointManager.getLatestCheckpoint();
-	                        out.put("latestCheckpointId", latest == null ? null : latest.getCheckpointId());
-	                    } catch (Exception ignore) {
-                    }
-                    try {
-                        Checkpoint latestCommitted = checkpointManager.getLatestSinkCommittedCheckpoint();
-                        out.put("latestSinkCommittedCheckpointId", latestCommitted == null ? null : latestCommitted.getCheckpointId());
-                    } catch (Exception ignore) {
-                    }
-                    List<Map<String, Object>> pipelines = new ArrayList<>();
-                    for (RedisRuntimeCheckpointManager.PipelineKey pk : pipelineKeys) {
-                        Map<String, Object> p = new HashMap<>();
-                        p.put("topic", pk.topic());
-                        p.put("consumerGroup", pk.consumerGroup());
-                        pipelines.add(p);
-                    }
-                    out.put("pipelines", pipelines);
-                    return out;
+        public Checkpoint triggerCheckpointNow() {
+            if (canceled.get()) {
+                return null;
+            }
+            if (!checkpointing.compareAndSet(false, true)) {
+                return null;
+            }
+            try {
+                return triggerCheckpointInternal(consumers, runners, checkpointManager, pipelineKeys, deferredAcks);
+            } finally {
+                checkpointing.set(false);
+            }
+        }
+
+                @Override
+                public Checkpoint getLatestCheckpoint() {
+                    return checkpointManager.getLatestCheckpoint();
                 }
 
-	            @Override
-	            public boolean awaitTermination(Duration timeout) throws InterruptedException {
-	                Duration t = timeout == null ? Duration.ZERO : timeout;
-	                return stopped.await(Math.max(0, t.toMillis()), TimeUnit.MILLISECONDS);
-	            }
+                @Override
+                public void pause() {
+                    for (MessageConsumer c : consumers) {
+                        if (c instanceof PausableMessageConsumer pc) {
+                            try {
+                                pc.pause();
+                            } catch (Exception ignore) {
+                            }
+                        }
+                    }
+                }
+
+                @Override
+                public void resume() {
+                    for (MessageConsumer c : consumers) {
+                        if (c instanceof PausableMessageConsumer pc) {
+                            try {
+                                pc.resume();
+                            } catch (Exception ignore) {
+                            }
+                        }
+                    }
+                }
+
+                @Override
+                public long inFlight() {
+                    long total = 0;
+                    boolean any = false;
+                    for (MessageConsumer c : consumers) {
+                        if (c instanceof PausableMessageConsumer pc) {
+                            any = true;
+                            try {
+                                total += Math.max(0, pc.inFlight());
+                            } catch (Exception ignore) {
+                            }
+                        }
+                    }
+                    return any ? total : -1L;
+                }
+
+            @Override
+                    public Map<String, Object> diagnostics() {
+                        Map<String, Object> out = new HashMap<>();
+                out.put("jobName", config.getJobName());
+                out.put("jobInstanceId", config.getJobInstanceId());
+                out.put("pipelineParallelism", config.getPipelineParallelism());
+                out.put("timerThreads", config.getTimerThreads());
+                out.put("checkpointThreads", config.getCheckpointThreads());
+                out.put("deferAckUntilCheckpoint", config.isDeferAckUntilCheckpoint());
+                out.put("ackDeferredMessagesOnCheckpoint", config.isAckDeferredMessagesOnCheckpoint());
+                out.put("checkpointIntervalMs", config.getCheckpointInterval() == null ? 0L : Math.max(0L, config.getCheckpointInterval().toMillis()));
+                out.put("restoreFromLatestCheckpoint", config.isRestoreFromLatestCheckpoint());
+                out.put("sinkDeduplicationEnabled", config.isSinkDeduplicationEnabled());
+                out.put("sinkDeduplicationTtlMs", config.getSinkDeduplicationTtl() == null ? 0L : Math.max(0L, config.getSinkDeduplicationTtl().toMillis()));
+                out.put("watermarkOutOfOrdernessMs", config.getWatermarkOutOfOrderness() == null ? 0L : Math.max(0L, config.getWatermarkOutOfOrderness().toMillis()));
+                out.put("windowAllowedLatenessMs", config.getWindowAllowedLateness() == null ? 0L : Math.max(0L, config.getWindowAllowedLateness().toMillis()));
+                out.put("eventTimeTimerMaxSize", config.getEventTimeTimerMaxSize());
+                out.put("consumerCount", consumers.size());
+                        out.put("runnerCount", runners.size());
+                        out.put("inFlight", inFlight());
+                        out.put("checkpointing", checkpointing.get());
+                        out.put("restoredCheckpointId", restoredCheckpointId.get());
+                        try {
+                            Checkpoint latest = checkpointManager.getLatestCheckpoint();
+                            out.put("latestCheckpointId", latest == null ? null : latest.getCheckpointId());
+                        } catch (Exception ignore) {
+                }
+                try {
+                    Checkpoint latestCommitted = checkpointManager.getLatestSinkCommittedCheckpoint();
+                    out.put("latestSinkCommittedCheckpointId", latestCommitted == null ? null : latestCommitted.getCheckpointId());
+                } catch (Exception ignore) {
+                }
+                List<Map<String, Object>> pipelines = new ArrayList<>();
+                for (RedisRuntimeCheckpointManager.PipelineKey pk : pipelineKeys) {
+                    Map<String, Object> p = new HashMap<>();
+                    p.put("topic", pk.topic());
+                    p.put("consumerGroup", pk.consumerGroup());
+                    pipelines.add(p);
+                }
+                out.put("pipelines", pipelines);
+                return out;
+            }
+
+                @Override
+                public boolean awaitTermination(Duration timeout) throws InterruptedException {
+                    Duration t = timeout == null ? Duration.ZERO : timeout;
+                    return stopped.await(Math.max(0, t.toMillis()), TimeUnit.MILLISECONDS);
+                }
+    }
+
+    private static void stopConsumersQuietly(List<MessageConsumer> consumers) {
+        for (MessageConsumer c : consumers) {
+            try {
+                c.stop();
+            } catch (Exception ignore) {
+            }
+            try {
+                c.close();
+            } catch (Exception ignore) {
+            }
+        }
+    }
+
+    private static void closeRunnersQuietly(List<RedisPipelineRunner<?>> runners) {
+        for (RedisPipelineRunner<?> r : runners) {
+            try {
+                r.close();
+            } catch (Exception ignore) {
+            }
+        }
+    }
+
+    private static void shutdownExecutorQuietly(java.util.concurrent.ExecutorService executor) {
+        if (executor == null) {
+            return;
+        }
+        try {
+            executor.shutdownNow();
+        } catch (Exception ignore) {
+        }
+    }
+    private MessageHandler createMessageHandler(RedisPipelineRunner<?> runner, RedisPipeline<?> p,
+                                                 String consumerName, DeferredAcks deferredAcks) {
+        return (Message m) -> {
+            long startNs = System.nanoTime();
+            boolean installMdc = config.isMdcEnabled() && shouldInstallMdc(m);
+            if (installMdc) {
+                try {
+                    MDC.put("rs.job", config.getJobName());
+                    MDC.put("rs.topic", p.topic());
+                    MDC.put("rs.group", p.consumerGroup());
+                    MDC.put("rs.consumer", consumerName);
+                    if (m != null) {
+                        try { MDC.put("rs.id", m.getId()); } catch (Exception ignore) {}
+                        try { MDC.put("rs.key", m.getKey()); } catch (Exception ignore) {}
+                        try {
+                            String pid = m.getHeaders() == null ? null : m.getHeaders().get(io.github.cuihairu.redis.streaming.mq.MqHeaders.PARTITION_ID);
+                            if (pid != null) {
+                                MDC.put("rs.partition", pid);
+                            }
+                        } catch (Exception ignore) {
+                        }
+                    }
+                } catch (Exception ignore) {
+                }
+            }
+            try {
+                boolean ok = runner.handle(m);
+                try {
+                    RedisRuntimeMetrics.get().recordHandleLatency(config.getJobName(), p.topic(), p.consumerGroup(),
+                            (System.nanoTime() - startNs) / 1_000_000);
+                    if (ok) {
+                        RedisRuntimeMetrics.get().incHandleSuccess(config.getJobName(), p.topic(), p.consumerGroup());
+                    } else {
+                        RedisRuntimeMetrics.get().incHandleError(config.getJobName(), p.topic(), p.consumerGroup());
+                    }
+                } catch (Exception ignore) {
+                }
+                if (!ok) {
+                    return MessageHandleResult.RETRY;
+                }
+                if (config.isDeferAckUntilCheckpoint()) {
+                    markDeferAck(m, deferredAcks, p.topic(), p.consumerGroup());
+                }
+                return MessageHandleResult.SUCCESS;
+            } catch (Exception e) {
+                annotateRuntimeError(m, p.consumerGroup(), e);
+                try {
+                    RedisRuntimeMetrics.get().recordHandleLatency(config.getJobName(), p.topic(), p.consumerGroup(),
+                            (System.nanoTime() - startNs) / 1_000_000);
+                    RedisRuntimeMetrics.get().incHandleError(config.getJobName(), p.topic(), p.consumerGroup());
+                } catch (Exception ignore) {
+                }
+                try {
+                    String id = m == null ? null : m.getId();
+                    String key = m == null ? null : m.getKey();
+                    log.error("Redis runtime pipeline failed (jobName={}, topic={}, group={}, consumer={}, id={}, key={})",
+                            config.getJobName(), p.topic(), p.consumerGroup(), consumerName, id, key, e);
+                } catch (Exception ignore) {
+                    // best-effort logging only
+                }
+                return config.getProcessingErrorResult();
+            } finally {
+                if (installMdc) {
+                    try {
+                        MDC.remove("rs.id");
+                        MDC.remove("rs.key");
+                        MDC.remove("rs.partition");
+                        MDC.remove("rs.consumer");
+                        MDC.remove("rs.group");
+                        MDC.remove("rs.topic");
+                        MDC.remove("rs.job");
+                    } catch (Exception ignore) {
+                    }
+                }
+            }
         };
+    }
+
+    private static io.github.cuihairu.redis.streaming.mq.SubscriptionOptions optionsForSubtask(
+            io.github.cuihairu.redis.streaming.mq.SubscriptionOptions opts, int parallelism, int subtask) {
+        if (parallelism <= 1) {
+            return opts;
+        }
+        io.github.cuihairu.redis.streaming.mq.SubscriptionOptions.Builder b =
+                io.github.cuihairu.redis.streaming.mq.SubscriptionOptions.builder();
+        if (opts != null) {
+            try {
+                Integer bc = opts.getBatchCount();
+                if (bc != null) b.batchCount(bc);
+            } catch (Exception ignore) {
+            }
+            try {
+                Long to = opts.getPollTimeoutMs();
+                if (to != null) b.pollTimeoutMs(to);
+            } catch (Exception ignore) {
+            }
+        }
+        b.partitionModulo(parallelism).partitionRemainder(subtask);
+        return b.build();
     }
 
     private void warnDeferAckConfiguration() {
@@ -600,15 +633,15 @@ public final class RedisStreamExecutionEnvironment {
         }
         boolean pausable = true;
         for (MessageConsumer c : consumers) {
-	            if (!(c instanceof PausableMessageConsumer)) {
-	                pausable = false;
-	                break;
-	            }
-	        }
-	        if (!pausable) {
-	            log.warn("Skip checkpoint: consumer is not pausable (jobName={})", config.getJobName());
-	            return null;
-	        }
+                if (!(c instanceof PausableMessageConsumer)) {
+                    pausable = false;
+                    break;
+                }
+            }
+            if (!pausable) {
+                log.warn("Skip checkpoint: consumer is not pausable (jobName={})", config.getJobName());
+                return null;
+            }
 
         for (MessageConsumer c : consumers) {
             ((PausableMessageConsumer) c).pause();
@@ -626,20 +659,20 @@ public final class RedisStreamExecutionEnvironment {
             long drainStartNs = System.nanoTime();
             while (true) {
                 long total = 0;
-	                for (MessageConsumer c : consumers) {
-	                    total += ((PausableMessageConsumer) c).inFlight();
-	                }
-	                if (total <= 0) {
-	                    break;
-	                }
-	                if (drainTimeout != null && drainTimeout.toMillis() > 0 && System.currentTimeMillis() > deadline) {
-	                    log.warn("Checkpoint drain timeout (jobName={}, inFlight={})", config.getJobName(), total);
-	                    break;
-	                }
-	                try {
-	                    Thread.sleep(20);
-	                } catch (InterruptedException ie) {
-	                    Thread.currentThread().interrupt();
+                    for (MessageConsumer c : consumers) {
+                        total += ((PausableMessageConsumer) c).inFlight();
+                    }
+                    if (total <= 0) {
+                        break;
+                    }
+                    if (drainTimeout != null && drainTimeout.toMillis() > 0 && System.currentTimeMillis() > deadline) {
+                        log.warn("Checkpoint drain timeout (jobName={}, inFlight={})", config.getJobName(), total);
+                        break;
+                    }
+                    try {
+                        Thread.sleep(20);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
                     break;
                 }
             }
@@ -720,13 +753,14 @@ public final class RedisStreamExecutionEnvironment {
                 RedisRuntimeMetrics.get().recordCheckpointDuration(config.getJobName(), (System.nanoTime() - overallStartNs) / 1_000_000);
             } catch (Exception ignore) {
             }
-            try {
-                for (MessageConsumer c : consumers) {
-                    if (c instanceof PausableMessageConsumer pc) {
-	                        pc.resume();
+            for (MessageConsumer c : consumers) {
+                if (c instanceof PausableMessageConsumer pc) {
+                    try {
+                        pc.resume();
+                    } catch (Exception e) {
+                        log.warn("Failed to resume consumer after checkpoint (jobName={})", config.getJobName(), e);
                     }
                 }
-	            } catch (Exception ignore) {
             }
         }
     }
@@ -908,7 +942,7 @@ public final class RedisStreamExecutionEnvironment {
                 String startId = (committedId == null || committedId.isBlank()) ? "0-0" : committedId;
                 String streamKey = StreamKeys.partitionStream(topic, pid);
                 try {
-                    Object r = script.eval(RScript.Mode.READ_WRITE, ensureGroupLua, RScript.ReturnType.STATUS,
+                    Object r = script.eval(RScript.Mode.READ_WRITE, ensureGroupLua, RScript.ReturnType.STRING,
                             java.util.Collections.singletonList(streamKey), consumerGroup, startId);
                     String s = String.valueOf(r);
                     if (!"OK".equals(s) && !"EXISTS".equals(s)) {

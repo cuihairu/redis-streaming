@@ -244,7 +244,8 @@ public final class RedisRuntimeCheckpointManager {
                     if (isSinkCommittedMarkerPresent(c.getCheckpointId())) {
                         return c;
                     }
-                } catch (Exception ignore) {
+                } catch (Exception ex) {
+                    log.debug("Checkpoint state operation failed", ex);
                 }
                 @SuppressWarnings("unchecked")
                 Map<String, Object> meta = c.getStateSnapshot().getState(SNAPSHOT_KEY_META);
@@ -285,7 +286,8 @@ public final class RedisRuntimeCheckpointManager {
                     RMap frontier = redissonClient.getMap(StreamKeys.commitFrontier(p.topic(), pid));
                     Object v = frontier.get(p.consumerGroup());
                     committed = v == null ? null : String.valueOf(v);
-                } catch (Exception ignore) {
+                } catch (Exception ex) {
+                    log.debug("Checkpoint state operation failed", ex);
                 }
                 perPartition.put(pid, committed);
             }
@@ -301,7 +303,8 @@ public final class RedisRuntimeCheckpointManager {
         List<String> keys = new ArrayList<>();
         try {
             keys.addAll(index.readAll());
-        } catch (Exception ignore) {
+        } catch (Exception ex) {
+            log.warn("Checkpoint state operation failed", ex);
         }
 
         RKeys rkeys = redissonClient.getKeys();
@@ -311,14 +314,16 @@ public final class RedisRuntimeCheckpointManager {
                 if (rkeys.countExists(k) <= 0) {
                     try {
                         index.remove(k);
-                    } catch (Exception ignore) {
+                    } catch (Exception ex) {
+                        log.debug("Checkpoint state operation failed", ex);
                     }
                     continue;
                 }
                 RType type = null;
                 try {
                     type = rkeys.getType(k);
-                } catch (Exception ignore) {
+                } catch (Exception ex) {
+                    log.debug("Checkpoint state operation failed", ex);
                 }
                 if (type == RType.ZSET) {
                     RScoredSortedSet<String> set = redissonClient.getScoredSortedSet(k, StringCodec.INSTANCE);
@@ -334,7 +339,8 @@ public final class RedisRuntimeCheckpointManager {
                     } else {
                         try {
                             index.remove(k);
-                        } catch (Exception ignore) {
+                        } catch (Exception ex) {
+                            log.debug("Checkpoint state operation failed", ex);
                         }
                     }
                 } else if (type == RType.MAP || type == null) {
@@ -345,7 +351,8 @@ public final class RedisRuntimeCheckpointManager {
                     } else {
                         try {
                             index.remove(k);
-                        } catch (Exception ignore) {
+                        } catch (Exception ex) {
+                            log.debug("Checkpoint state operation failed", ex);
                         }
                     }
                 } else {
@@ -366,7 +373,8 @@ public final class RedisRuntimeCheckpointManager {
         List<String> keys = new ArrayList<>();
         try {
             keys.addAll(index.readAll());
-        } catch (Exception ignore) {
+        } catch (Exception ex) {
+            log.warn("Checkpoint state operation failed", ex);
         }
 
         RMap<String, String> schema = redissonClient.getMap(schemaKey, StringCodec.INSTANCE);
@@ -377,7 +385,8 @@ public final class RedisRuntimeCheckpointManager {
                 if (v != null && !v.isBlank()) {
                     out.put(k, v);
                 }
-            } catch (Exception ignore) {
+            } catch (Exception ex) {
+                log.debug("Checkpoint state operation failed", ex);
             }
         }
         return out;
@@ -411,7 +420,7 @@ public final class RedisRuntimeCheckpointManager {
                 String startId = (id == null || id.isBlank()) ? "0-0" : id;
                 String streamKey = StreamKeys.partitionStream(p.topic(), pid);
                 try {
-                    script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.STATUS,
+                    script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.STRING,
                             java.util.Collections.singletonList(streamKey), p.consumerGroup(), startId);
                 } catch (Exception e) {
                     log.debug("Failed to restore group offset: topic={}, group={}, partition={}, id={}",
@@ -460,7 +469,8 @@ public final class RedisRuntimeCheckpointManager {
         List<String> existing = new ArrayList<>();
         try {
             existing.addAll(index.readAll());
-        } catch (Exception ignore) {
+        } catch (Exception ex) {
+            log.warn("Checkpoint state operation failed", ex);
         }
 
         RKeys rkeys = redissonClient.getKeys();
@@ -468,16 +478,19 @@ public final class RedisRuntimeCheckpointManager {
             if (k == null || k.isBlank()) continue;
             try {
                 rkeys.delete(k);
-            } catch (Exception ignore) {
+            } catch (Exception ex) {
+                log.warn("Checkpoint state operation failed", ex);
             }
         }
         try {
             index.clear();
-        } catch (Exception ignore) {
+        } catch (Exception ex) {
+            log.warn("Checkpoint state operation failed", ex);
         }
         try {
             schema.clear();
-        } catch (Exception ignore) {
+        } catch (Exception ex) {
+            log.warn("Checkpoint state operation failed", ex);
         }
 
         Duration ttl = config.getStateTtl();
@@ -496,7 +509,8 @@ public final class RedisRuntimeCheckpointManager {
                         if (ttl != null && !ttl.isZero() && !ttl.isNegative()) {
                             try {
                                 set.expire(ttl);
-                            } catch (Exception ignore) {
+                            } catch (Exception ex) {
+                                log.debug("Checkpoint state operation failed", ex);
                             }
                         }
                     }
@@ -508,21 +522,24 @@ public final class RedisRuntimeCheckpointManager {
                         if (ttl != null && !ttl.isZero() && !ttl.isNegative()) {
                             try {
                                 map.expire(ttl);
-                            } catch (Exception ignore) {
+                            } catch (Exception ex) {
+                                log.debug("Checkpoint state operation failed", ex);
                             }
                         }
                     }
                 }
                 try {
                     index.add(redisKey);
-                } catch (Exception ignore) {
+                } catch (Exception ex) {
+                    log.warn("Checkpoint state operation failed", ex);
                 }
                 if (schemaSnap != null) {
                     String sv = schemaSnap.get(redisKey);
                     if (sv != null && !sv.isBlank()) {
                         try {
                             schema.put(redisKey, sv);
-                        } catch (Exception ignore) {
+                        } catch (Exception ex) {
+                            log.warn("Checkpoint state operation failed", ex);
                         }
                     }
                 }
@@ -546,12 +563,14 @@ public final class RedisRuntimeCheckpointManager {
                 long checkpointId = all.get(i).getCheckpointId();
                 try {
                     storage.deleteCheckpoint(checkpointId);
-                } catch (Exception ignore) {
+                } catch (Exception ex) {
+                    log.warn("Checkpoint state operation failed", ex);
                 }
                 try {
                     RBucket<String> b = redissonClient.getBucket(sinkCommittedMarkerKey(checkpointId), StringCodec.INSTANCE);
                     b.delete();
-                } catch (Exception ignore) {
+                } catch (Exception ex) {
+                    log.warn("Checkpoint state operation failed", ex);
                 }
             }
         } catch (Exception e) {

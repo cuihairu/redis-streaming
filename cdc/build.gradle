@@ -6,29 +6,29 @@ dependencies {
     api project(':core')
 
     // MySQL CDC support
-    implementation 'com.mysql:mysql-connector-j:8.3.0'
+    implementation libs.mysql.connector
     // For MySQL Binlog parsing
-    implementation 'com.zendesk:mysql-binlog-connector-java:0.29.2'
+    implementation libs.mysql.binlog
 
     // PostgreSQL CDC support
-    implementation 'org.postgresql:postgresql:42.7.1'
+    implementation libs.postgresql
 
     // JDBC pooling
-    implementation 'com.zaxxer:HikariCP:5.1.0'
+    implementation libs.hikaricp
 
     // JSON processing
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.0'
+    implementation libs.jackson.databind
 
     // SLF4J for logging
-    implementation 'org.slf4j:slf4j-api:1.7.36'
+    implementation libs.slf4j.api
 
-    compileOnly 'org.projectlombok:lombok:1.18.34'
-    annotationProcessor 'org.projectlombok:lombok:1.18.34'
-    testCompileOnly 'org.projectlombok:lombok:1.18.34'
-    testAnnotationProcessor 'org.projectlombok:lombok:1.18.34'
+    compileOnly libs.lombok
+    annotationProcessor libs.lombok
+    testCompileOnly libs.lombok
+    testAnnotationProcessor libs.lombok
 
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.9.2'
-    testImplementation 'org.mockito:mockito-core:4.6.1'
-    testImplementation 'ch.qos.logback:logback-classic:1.5.13'
-    testImplementation 'org.assertj:assertj-core:3.24.2'
+    testImplementation libs.junit.jupiter
+    testImplementation libs.mockito.core
+    testImplementation libs.logback.classic
+    testImplementation libs.assertj.core
 }

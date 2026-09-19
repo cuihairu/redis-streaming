@@ -387,7 +387,7 @@ class RedisMessageConsumerTest {
         java.lang.reflect.Method method = RedisMessageConsumer.class.getDeclaredMethod("parseStreamId", String.class);
         method.setAccessible(true);
 
-        org.redisson.api.StreamMessageId result = (org.redisson.api.StreamMessageId) method.invoke(consumer, "1234567890-0");
+        org.redisson.api.stream.StreamMessageId result = (org.redisson.api.stream.StreamMessageId) method.invoke(consumer, "1234567890-0");
 
         assertNotNull(result);
     }
@@ -398,9 +398,9 @@ class RedisMessageConsumerTest {
         java.lang.reflect.Method method = RedisMessageConsumer.class.getDeclaredMethod("parseStreamId", String.class);
         method.setAccessible(true);
 
-        org.redisson.api.StreamMessageId result = (org.redisson.api.StreamMessageId) method.invoke(consumer, (String) null);
+        org.redisson.api.stream.StreamMessageId result = (org.redisson.api.stream.StreamMessageId) method.invoke(consumer, (String) null);
 
-        assertEquals(org.redisson.api.StreamMessageId.MIN, result);
+        assertEquals(org.redisson.api.stream.StreamMessageId.MIN, result);
     }
 
     @Test

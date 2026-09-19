@@ -6,18 +6,18 @@ dependencies {
     api project(':core')
 
     // Redis client for Redis Source
-    implementation 'org.redisson:redisson:3.52.0'
+    implementation libs.redisson
 
     // Kafka client for Kafka Source (optional)
     // Keep Kafka optional for compile classpath of consumers (java-library: implementation is runtime-transitive).
-    implementation 'org.apache.kafka:kafka-clients:3.6.1'
+    implementation libs.kafka.clients
 
     // Jackson for JSON serialization
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.0'
+    implementation libs.jackson.databind
 
-    compileOnly 'org.projectlombok:lombok:1.18.34'
-    annotationProcessor 'org.projectlombok:lombok:1.18.34'
+    compileOnly libs.lombok
+    annotationProcessor libs.lombok
 
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.9.2'
-    testImplementation 'org.mockito:mockito-core:4.6.1'
+    testImplementation libs.junit.jupiter
+    testImplementation libs.mockito.core
 }

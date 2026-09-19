@@ -10,7 +10,7 @@ import org.mockito.MockitoAnnotations;
 import org.redisson.api.RScript;
 import org.redisson.api.RSet;
 import org.redisson.api.RStream;
-import org.redisson.api.StreamMessageId;
+import org.redisson.api.stream.StreamMessageId;
 
 import java.time.Instant;
 

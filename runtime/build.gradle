@@ -8,26 +8,28 @@ dependencies {
 
     // Implementation dependencies
     implementation project(':mq')
-    implementation project(':state')
-    implementation project(':watermark')
     implementation project(':window')
     implementation project(':checkpoint')
 
     // External dependencies
-    implementation 'org.redisson:redisson:3.52.0'
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.0'
-    // Use SLF4J 2.x which is required by Redisson 3.52.0
-    implementation 'org.slf4j:slf4j-api:2.0.17'
+    implementation libs.redisson
+    implementation libs.jackson.databind
+    // Use SLF4J 2.x which is required by Redisson 4.7.0
+    implementation libs.slf4j.api
 
-    compileOnly 'org.projectlombok:lombok:1.18.34'
-    annotationProcessor 'org.projectlombok:lombok:1.18.34'
-    testCompileOnly 'org.projectlombok:lombok:1.18.34'
-    testAnnotationProcessor 'org.projectlombok:lombok:1.18.34'
+    compileOnly libs.lombok
+    annotationProcessor libs.lombok
+    testCompileOnly libs.lombok
+    testAnnotationProcessor libs.lombok
 
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.9.2'
-    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.2'
-    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.9.2'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.9.2'
-    testImplementation 'org.mockito:mockito-core:4.6.1'
-    testRuntimeOnly 'org.slf4j:slf4j-simple:2.0.17'
+    // Only referenced from tests / example code, not the main runtime pipeline
+    testImplementation project(':state')
+    testImplementation project(':watermark')
+    testImplementation project(':window')
+    testImplementation libs.junit.jupiter
+    testImplementation libs.junit.api
+    testRuntimeOnly libs.junit.engine
+    testRuntimeOnly libs.junit.launcher
+    testImplementation libs.mockito.core
+    testRuntimeOnly libs.slf4j.simple
 }

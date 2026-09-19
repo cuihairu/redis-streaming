@@ -4,19 +4,19 @@ plugins {
 
 dependencies {
     api project(':core')
-    api 'org.redisson:redisson:3.52.0'
-    api 'com.fasterxml.jackson.core:jackson-databind:2.17.0'
+    api libs.redisson
+    api libs.jackson.databind
 
-    compileOnly 'org.projectlombok:lombok:1.18.34'
-    annotationProcessor 'org.projectlombok:lombok:1.18.34'
+    compileOnly libs.lombok
+    annotationProcessor libs.lombok
 
-    // Use SLF4J 2.x which is required by Redisson 3.52.0 to avoid binding incompatibilities in tests
-    implementation 'org.slf4j:slf4j-api:2.0.17'
-    testRuntimeOnly 'org.slf4j:slf4j-simple:2.0.17'
+    // Use SLF4J 2.x which is required by Redisson 4.7.0 to avoid binding incompatibilities in tests
+    implementation libs.slf4j.api
+    testRuntimeOnly libs.slf4j.simple
 
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.9.2'
-    testImplementation 'org.mockito:mockito-core:4.6.1'
+    testImplementation libs.junit.jupiter
+    testImplementation libs.mockito.core
 
-    testCompileOnly 'org.projectlombok:lombok:1.18.34'
-    testAnnotationProcessor 'org.projectlombok:lombok:1.18.34'
+    testCompileOnly libs.lombok
+    testAnnotationProcessor libs.lombok
 }

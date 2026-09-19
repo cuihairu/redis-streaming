@@ -25,14 +25,15 @@ dependencies {
     implementation project(':reliability')
 
     // Redis for examples
-    implementation 'org.redisson:redisson:3.52.0'
+    implementation libs.redisson
 
     // Logging
-    implementation 'ch.qos.logback:logback-classic:1.5.13'
+    implementation libs.logback.classic
 
     // Jackson for JSON processing
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.0'
+    implementation libs.jackson.databind
+    implementation libs.jackson.jsr310
 
-    compileOnly 'org.projectlombok:lombok:1.18.34'
-    annotationProcessor 'org.projectlombok:lombok:1.18.34'
+    compileOnly libs.lombok
+    annotationProcessor libs.lombok
 }

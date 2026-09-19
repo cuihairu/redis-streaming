@@ -7,14 +7,14 @@ import io.github.cuihairu.redis.streaming.mq.impl.PayloadLifecycleManager;
 import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
 import org.junit.jupiter.api.Test;
-import org.redisson.api.PendingEntry;
+import org.redisson.api.stream.PendingEntry;
 import org.redisson.api.RKeys;
 import org.redisson.api.RScript;
 import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
-import org.redisson.api.StreamGroup;
-import org.redisson.api.StreamMessageId;
-import org.redisson.api.StreamInfo;
+import org.redisson.api.stream.StreamGroup;
+import org.redisson.api.stream.StreamMessageId;
+import org.redisson.api.stream.StreamInfo;
 import org.redisson.api.stream.StreamCreateGroupArgs;
 import org.redisson.client.codec.StringCodec;
 
@@ -75,10 +75,11 @@ class RedisMessageQueueAdminBehaviorTest {
         RStream<String, Object> partitionStream = mock(RStream.class);
         @SuppressWarnings({"rawtypes", "unchecked"})
         RStream<String, Object> legacyStream = mock(RStream.class);
-        @SuppressWarnings("unchecked")
-        StreamInfo<String, Object> info = mock(StreamInfo.class);
-        @SuppressWarnings("unchecked")
-        StreamInfo.Entry<String, Object> first = mock(StreamInfo.Entry.class);
+        StreamInfo<String, Object> info = new StreamInfo<>();
+        StreamInfo.Entry<String, Object> first = new StreamInfo.Entry<>(new StreamMessageId(1, 0), java.util.Map.of());
+        info.setGroups(2);
+        info.setFirstEntry(first);
+        info.setLastGeneratedId(new StreamMessageId(123, 0));
 
         when(partitionRegistry.getPartitionCount("topic")).thenReturn(1);
         when(redisson.getStream(eq(StreamKeys.partitionStream("topic", 0)), eq(StringCodec.INSTANCE))).thenReturn((RStream) partitionStream);
@@ -88,10 +89,6 @@ class RedisMessageQueueAdminBehaviorTest {
         when(legacyStream.isExists()).thenReturn(true);
         when(legacyStream.size()).thenReturn(7L);
         when(legacyStream.getInfo()).thenReturn(info);
-        when(info.getGroups()).thenReturn(2);
-        when(info.getFirstEntry()).thenReturn(first);
-        when(first.getId()).thenReturn(new StreamMessageId(1, 0));
-        when(info.getLastGeneratedId()).thenReturn(new StreamMessageId(123, 0));
 
         RedisMessageQueueAdmin admin = new RedisMessageQueueAdmin(redisson, topicRegistry, partitionRegistry, payloadLifecycleManager);
         QueueInfo qi = admin.getQueueInfo("topic");
@@ -116,16 +113,8 @@ class RedisMessageQueueAdminBehaviorTest {
         @SuppressWarnings({"rawtypes", "unchecked"})
         RStream<String, Object> s1 = mock(RStream.class);
 
-        StreamGroup g0 = mock(StreamGroup.class);
-        StreamGroup g1 = mock(StreamGroup.class);
-        when(g0.getName()).thenReturn("g");
-        when(g0.getConsumers()).thenReturn(1);
-        when(g0.getPending()).thenReturn(2);
-        when(g0.getLastDeliveredId()).thenReturn(new StreamMessageId(10, 0));
-        when(g1.getName()).thenReturn("g");
-        when(g1.getConsumers()).thenReturn(3);
-        when(g1.getPending()).thenReturn(4);
-        when(g1.getLastDeliveredId()).thenReturn(new StreamMessageId(11, 0));
+        StreamGroup g0 = new StreamGroup("g", 1, 2, new StreamMessageId(10, 0));
+        StreamGroup g1 = new StreamGroup("g", 3, 4, new StreamMessageId(11, 0));
 
         when(partitionRegistry.getPartitionCount("t")).thenReturn(2);
         when(redisson.getStream(eq(StreamKeys.partitionStream("t", 0)), eq(StringCodec.INSTANCE))).thenReturn((RStream) s0);
@@ -163,12 +152,12 @@ class RedisMessageQueueAdminBehaviorTest {
         when(stream.isExists()).thenReturn(true);
 
         when(p0.getIdleTime()).thenReturn(5000L);
-        when(p0.getLastTimeDelivered()).thenReturn(1L);
+        when(p0.getDeliveryCount()).thenReturn(1L);
         when(p0.getId()).thenReturn(new StreamMessageId(1, 0));
         when(p0.getConsumerName()).thenReturn("c1");
 
         when(p1.getIdleTime()).thenReturn(1000L);
-        when(p1.getLastTimeDelivered()).thenReturn(2L);
+        when(p1.getDeliveryCount()).thenReturn(2L);
         when(p1.getId()).thenReturn(new StreamMessageId(2, 0));
         when(p1.getConsumerName()).thenReturn("c2");
 
@@ -210,7 +199,7 @@ class RedisMessageQueueAdminBehaviorTest {
         when(script.eval(
                 eq(RScript.Mode.READ_ONLY),
                 any(String.class),
-                eq(RScript.ReturnType.MULTI),
+                eq(RScript.ReturnType.LIST),
                 any(List.class),
                 any(),
                 any(),
@@ -291,8 +280,8 @@ class RedisMessageQueueAdminBehaviorTest {
         RStream<String, Object> s0 = mock(RStream.class);
         @SuppressWarnings({"rawtypes", "unchecked"})
         RStream<String, Object> s1 = mock(RStream.class);
-        StreamGroup g0 = mock(StreamGroup.class);
-        StreamGroup g1 = mock(StreamGroup.class);
+        StreamGroup g0 = new StreamGroup("g", 0, 2, null);
+        StreamGroup g1 = new StreamGroup("g", 0, 3, null);
 
         when(partitionRegistry.getPartitionCount("t")).thenReturn(2);
         when(redisson.getStream(eq(StreamKeys.partitionStream("t", 0)), eq(StringCodec.INSTANCE))).thenReturn((RStream) s0);
@@ -300,10 +289,6 @@ class RedisMessageQueueAdminBehaviorTest {
 
         when(s0.isExists()).thenReturn(true);
         when(s1.isExists()).thenReturn(true);
-        when(g0.getName()).thenReturn("g");
-        when(g0.getPending()).thenReturn(2);
-        when(g1.getName()).thenReturn("g");
-        when(g1.getPending()).thenReturn(3);
         when(s0.listGroups()).thenReturn(List.of(g0));
         when(s1.listGroups()).thenReturn(List.of(g1));
 
@@ -430,7 +415,7 @@ class RedisMessageQueueAdminBehaviorTest {
         when(script.eval(
                 eq(RScript.Mode.READ_ONLY),
                 any(String.class),
-                eq(RScript.ReturnType.MULTI),
+                eq(RScript.ReturnType.LIST),
                 any(List.class),
                 any(),
                 any(),

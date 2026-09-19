@@ -320,7 +320,7 @@ class RedisConfigServiceTest {
     void testPublishConfigLuaSuccessPublishesChangeEvent() {
         RScript script = mock(RScript.class);
         when(mockRedissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE)).thenReturn(script);
-        doReturn(0L).when(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.INTEGER), anyList(),
+        doReturn(0L).when(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG), anyList(),
                 any(), any(), any(), any(), any());
 
         RTopic topic = mock(RTopic.class);
@@ -344,7 +344,7 @@ class RedisConfigServiceTest {
     void testPublishConfigLuaFailureFallsBackToJavaWritePath() {
         RScript script = mock(RScript.class);
         when(mockRedissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE)).thenReturn(script);
-        doThrow(new RuntimeException("lua fail")).when(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.INTEGER), anyList(),
+        doThrow(new RuntimeException("lua fail")).when(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG), anyList(),
                 any(), any(), any(), any(), any());
 
         @SuppressWarnings("unchecked")
@@ -374,7 +374,7 @@ class RedisConfigServiceTest {
     void testRemoveConfigLuaDeletedPublishesDeleteEventAndClearsSubscribers() {
         RScript script = mock(RScript.class);
         when(mockRedissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE)).thenReturn(script);
-        doReturn(1L).when(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.INTEGER), anyList(),
+        doReturn(1L).when(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG), anyList(),
                 any(), any(), any(), any());
 
         @SuppressWarnings("unchecked")
@@ -404,7 +404,7 @@ class RedisConfigServiceTest {
     void testRemoveConfigLuaNotDeletedDoesNotPublishEventButStillClearsSubscribers() {
         RScript script = mock(RScript.class);
         when(mockRedissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE)).thenReturn(script);
-        doReturn(0L).when(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.INTEGER), anyList(),
+        doReturn(0L).when(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG), anyList(),
                 any(), any(), any(), any());
 
         @SuppressWarnings("unchecked")
@@ -522,7 +522,7 @@ class RedisConfigServiceTest {
     void testTrimHistoryBySizeUsesLua() {
         RScript script = mock(RScript.class);
         when(mockRedissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE)).thenReturn(script);
-        doReturn(3L).when(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.INTEGER), anyList(), any());
+        doReturn(3L).when(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG), anyList(), any());
 
         ConfigService service = new RedisConfigService(mockRedissonClient);
         service.start();
@@ -534,7 +534,7 @@ class RedisConfigServiceTest {
     void testTrimHistoryByAgeUsesLua() {
         RScript script = mock(RScript.class);
         when(mockRedissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE)).thenReturn(script);
-        doReturn(2L).when(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.INTEGER), anyList(), any());
+        doReturn(2L).when(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG), anyList(), any());
 
         ConfigService service = new RedisConfigService(mockRedissonClient);
         service.start();

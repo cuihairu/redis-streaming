@@ -5,8 +5,8 @@ plugins {
 dependencies {
     api project(':core')
 
-    compileOnly 'org.projectlombok:lombok:1.18.34'
-    annotationProcessor 'org.projectlombok:lombok:1.18.34'
+    compileOnly libs.lombok
+    annotationProcessor libs.lombok
 
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.9.2'
+    testImplementation libs.junit.jupiter
 }

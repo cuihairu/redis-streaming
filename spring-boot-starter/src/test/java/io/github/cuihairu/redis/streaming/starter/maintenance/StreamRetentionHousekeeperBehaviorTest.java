@@ -77,10 +77,10 @@ class StreamRetentionHousekeeperBehaviorTest {
             keeper.close();
         }
 
-        verify(script, atLeastOnce()).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.INTEGER),
+        verify(script, atLeastOnce()).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG),
                 eq(List.of(StreamKeys.dlq("topicA"))), any());
         // At least one trim invocation for partitions should happen.
-        verify(script, atLeastOnce()).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.INTEGER),
+        verify(script, atLeastOnce()).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG),
                 eq(List.of(StreamKeys.partitionStream("topicA", 0))), any());
     }
 }

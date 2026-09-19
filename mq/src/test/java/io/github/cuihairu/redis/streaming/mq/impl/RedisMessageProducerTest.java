@@ -36,8 +36,7 @@ class RedisMessageProducerTest {
     @Mock
     private org.redisson.api.RStream<Object, Object> mockStream;
 
-    @Mock
-    private org.redisson.api.StreamMessageId mockMessageId;
+    private final org.redisson.api.stream.StreamMessageId mockMessageId = new org.redisson.api.stream.StreamMessageId(1234567, 0);
 
     private RedisMessageProducer createProducer(MqOptions options) {
         MockitoAnnotations.openMocks(this);
@@ -46,7 +45,6 @@ class RedisMessageProducerTest {
         when(mockRedissonClient.getStream(anyString(), any(org.redisson.client.codec.StringCodec.class)))
                 .thenReturn(mockStream);
         when(mockStream.add(any(org.redisson.api.stream.StreamAddArgs.class))).thenReturn(mockMessageId);
-        when(mockMessageId.toString()).thenReturn("1234567-0");
 
         return new RedisMessageProducer(mockRedissonClient, mockPartitioner, mockPartitionRegistry,
                 options != null ? options : MqOptions.builder().build());

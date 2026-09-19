@@ -11,8 +11,8 @@ import org.redisson.api.RScript;
 import org.redisson.api.RSet;
 import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
-import org.redisson.api.StreamGroup;
-import org.redisson.api.StreamMessageId;
+import org.redisson.api.stream.StreamGroup;
+import org.redisson.api.stream.StreamMessageId;
 import org.redisson.api.stream.StreamReadGroupArgs;
 
 import java.time.Duration;
@@ -76,7 +76,7 @@ class DefaultBrokerUnitTest {
 
         RScript script = mock(RScript.class);
         when(client.getScript(org.redisson.client.codec.StringCodec.INSTANCE)).thenReturn(script);
-        doReturn(1L).when(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.INTEGER), anyList(), anyString());
+        doReturn(1L).when(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG), anyList(), anyString());
 
         when(stream.readGroup(eq("cg"), eq("c1"), any(StreamReadGroupArgs.class)))
                 .thenThrow(new RuntimeException("NOGROUP No such key"))
@@ -113,10 +113,8 @@ class DefaultBrokerUnitTest {
         RStream<String, Object> stream = mock(RStream.class);
         when(client.getStream(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn((RStream) stream);
 
-        StreamGroup g1 = mock(StreamGroup.class);
-        when(g1.getName()).thenReturn("g1");
-        StreamGroup g2 = mock(StreamGroup.class);
-        when(g2.getName()).thenReturn("g2");
+        StreamGroup g1 = new StreamGroup("g1", 0, 0, null);
+        StreamGroup g2 = new StreamGroup("g2", 0, 0, null);
         when(stream.listGroups()).thenReturn(List.of(g1, g2));
 
         @SuppressWarnings("unchecked")

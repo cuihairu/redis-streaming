@@ -96,7 +96,7 @@ public class StreamRetentionHousekeeper implements AutoCloseable {
                     if (maxLen > 0) {
                         // Use precise MAXLEN for deterministic bounds; write-path also trims precisely
                         String lua = "return redis.call('XTRIM', KEYS[1], 'MAXLEN', ARGV[1])";
-                        Long deleted = redissonClient.getScript().eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.INTEGER,
+                        Long deleted = redissonClient.getScript().eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.LONG,
                                 java.util.Collections.singletonList(streamKey), String.valueOf(maxLen));
                         try { io.github.cuihairu.redis.streaming.mq.metrics.RetentionMetrics.get().recordTrim(topic, i, deleted != null ? deleted : 0L, "maxlen"); } catch (Exception ignore) {}
                     }
@@ -105,7 +105,7 @@ public class StreamRetentionHousekeeper implements AutoCloseable {
                         String minId = Long.toString(minTs) + "-0";
                         // XTRIM stream MINID ~ minId (approximate is acceptable for time-based)
                         String lua2 = "return redis.call('XTRIM', KEYS[1], 'MINID', '~', ARGV[1])";
-                        Long deleted = redissonClient.getScript().eval(RScript.Mode.READ_WRITE, lua2, RScript.ReturnType.INTEGER,
+                        Long deleted = redissonClient.getScript().eval(RScript.Mode.READ_WRITE, lua2, RScript.ReturnType.LONG,
                                 java.util.Collections.singletonList(streamKey), minId);
                         try { io.github.cuihairu.redis.streaming.mq.metrics.RetentionMetrics.get().recordTrim(topic, i, deleted != null ? deleted : 0L, "minid"); } catch (Exception ignore) {}
                     }
@@ -127,7 +127,7 @@ public class StreamRetentionHousekeeper implements AutoCloseable {
                         }
                         if (minId != null) {
                             String lua3 = "return redis.call('XTRIM', KEYS[1], 'MINID', '~', ARGV[1])";
-                            Long deleted = redissonClient.getScript().eval(RScript.Mode.READ_WRITE, lua3, RScript.ReturnType.INTEGER,
+                            Long deleted = redissonClient.getScript().eval(RScript.Mode.READ_WRITE, lua3, RScript.ReturnType.LONG,
                                     java.util.Collections.singletonList(streamKey), minId);
                             try { io.github.cuihairu.redis.streaming.mq.metrics.RetentionMetrics.get().recordTrim(topic, i, deleted != null ? deleted : 0L, "frontier"); } catch (Exception ignore) {}
                         }
@@ -150,7 +150,7 @@ public class StreamRetentionHousekeeper implements AutoCloseable {
             String dlqKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.dlq(topic);
             if (maxLen > 0) {
                 String lua = "return redis.call('XTRIM', KEYS[1], 'MAXLEN', ARGV[1])";
-                Long deleted = redissonClient.getScript().eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.INTEGER,
+                Long deleted = redissonClient.getScript().eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.LONG,
                         java.util.Collections.singletonList(dlqKey), String.valueOf(maxLen));
                 try { io.github.cuihairu.redis.streaming.mq.metrics.RetentionMetrics.get().recordDlqTrim(topic, deleted != null ? deleted : 0L, "maxlen"); } catch (Exception ignore) {}
             }
@@ -158,7 +158,7 @@ public class StreamRetentionHousekeeper implements AutoCloseable {
                 long minTs = System.currentTimeMillis() - retentionMs;
                 String minId = Long.toString(minTs) + "-0";
                 String lua2 = "return redis.call('XTRIM', KEYS[1], 'MINID', '~', ARGV[1])";
-                Long deleted = redissonClient.getScript().eval(RScript.Mode.READ_WRITE, lua2, RScript.ReturnType.INTEGER,
+                Long deleted = redissonClient.getScript().eval(RScript.Mode.READ_WRITE, lua2, RScript.ReturnType.LONG,
                         java.util.Collections.singletonList(dlqKey), minId);
                 try { io.github.cuihairu.redis.streaming.mq.metrics.RetentionMetrics.get().recordDlqTrim(topic, deleted != null ? deleted : 0L, "minid"); } catch (Exception ignore) {}
             }

@@ -150,7 +150,8 @@ public final class RedisKeyedStateStore<K> {
         RMap<String, String> map = maps.computeIfAbsent(redisKey, k -> {
             try {
                 stateKeyIndex.add(k);
-            } catch (Exception ignore) {
+            } catch (Exception ex) {
+                log.warn("Keyed state operation failed", ex);
             }
             return redissonClient.getMap(k, StringCodec.INSTANCE);
         });
@@ -182,12 +183,14 @@ public final class RedisKeyedStateStore<K> {
         String stored = null;
         try {
             stored = stateSchema.get(redisKey);
-        } catch (Exception ignore) {
+        } catch (Exception ex) {
+            log.debug("Keyed state operation failed", ex);
         }
         if (stored == null || stored.isBlank()) {
             try {
                 stateSchema.put(redisKey, expected);
-            } catch (Exception ignore) {
+            } catch (Exception ex) {
+                log.debug("Keyed state operation failed", ex);
             }
             schemaCache.put(redisKey, expected);
             return;
@@ -206,11 +209,13 @@ public final class RedisKeyedStateStore<K> {
             case CLEAR: {
                 try {
                     redissonClient.getKeys().delete(redisKey);
-                } catch (Exception ignore) {
+                } catch (Exception ex) {
+                    log.debug("Keyed state operation failed", ex);
                 }
                 try {
                     stateSchema.put(redisKey, expected);
-                } catch (Exception ignore) {
+                } catch (Exception ex) {
+                    log.debug("Keyed state operation failed", ex);
                 }
                 schemaCache.put(redisKey, expected);
                 break;
@@ -232,7 +237,8 @@ public final class RedisKeyedStateStore<K> {
         } else {
             try {
                 map.expire(ttl);
-            } catch (Exception ignore) {
+            } catch (Exception ex) {
+                log.debug("Keyed state operation failed", ex);
             }
         }
 
@@ -262,13 +268,15 @@ public final class RedisKeyedStateStore<K> {
                     }
                     try {
                         RedisRuntimeMetrics.get().incKeyedStateHotKey(jobName, topic, consumerGroup, operatorId, stateName, pid, size);
-                    } catch (Exception ignore) {
+                    } catch (Exception ex) {
+                        log.debug("Keyed state operation failed", ex);
                     }
                     log.warn("Redis runtime hot keyed-state detected (jobName={}, topic={}, group={}, operator={}, state={}, partition={}, fields={}, redisKey={})",
                             jobName, topic, consumerGroup, operatorId, stateName, pid, size, redisKey);
                 }
             }
-        } catch (Exception ignore) {
+        } catch (Exception ex) {
+            log.debug("Keyed state operation failed", ex);
         }
     }
 
@@ -283,7 +291,8 @@ public final class RedisKeyedStateStore<K> {
         }
         try {
             stateKeyIndex.add(redisKey);
-        } catch (Exception ignore) {
+        } catch (Exception ex) {
+            log.warn("Keyed state operation failed", ex);
         }
         Duration ttl = stateTtl;
         if (ttl == null || ttl.isZero() || ttl.isNegative()) {
@@ -291,8 +300,9 @@ public final class RedisKeyedStateStore<K> {
         }
         try {
             RKeys keys = redissonClient.getKeys();
-            keys.expire(redisKey, ttl.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (Exception ignore) {
+            keys.expire(ttl, redisKey);
+        } catch (Exception ex) {
+            log.debug("Keyed state operation failed", ex);
         }
     }
 
@@ -303,12 +313,14 @@ public final class RedisKeyedStateStore<K> {
         }
         try {
             RedisRuntimeMetrics.get().incKeyedStateRead(jobName, topic, consumerGroup, operatorId, stateName, pid);
-        } catch (Exception ignore) {
+        } catch (Exception ex) {
+            log.debug("Keyed state operation failed", ex);
         }
         if (millis >= 0) {
             try {
                 RedisRuntimeMetrics.get().recordKeyedStateReadLatency(jobName, topic, consumerGroup, operatorId, stateName, pid, millis);
-            } catch (Exception ignore) {
+            } catch (Exception ex) {
+                log.debug("Keyed state operation failed", ex);
             }
         }
     }
@@ -320,12 +332,14 @@ public final class RedisKeyedStateStore<K> {
         }
         try {
             RedisRuntimeMetrics.get().incKeyedStateWrite(jobName, topic, consumerGroup, operatorId, stateName, pid);
-        } catch (Exception ignore) {
+        } catch (Exception ex) {
+            log.debug("Keyed state operation failed", ex);
         }
         if (millis >= 0) {
             try {
                 RedisRuntimeMetrics.get().recordKeyedStateWriteLatency(jobName, topic, consumerGroup, operatorId, stateName, pid, millis);
-            } catch (Exception ignore) {
+            } catch (Exception ex) {
+                log.debug("Keyed state operation failed", ex);
             }
         }
     }
@@ -337,7 +351,8 @@ public final class RedisKeyedStateStore<K> {
         }
         try {
             RedisRuntimeMetrics.get().incKeyedStateDelete(jobName, topic, consumerGroup, operatorId, stateName, pid);
-        } catch (Exception ignore) {
+        } catch (Exception ex) {
+            log.debug("Keyed state operation failed", ex);
         }
     }
 

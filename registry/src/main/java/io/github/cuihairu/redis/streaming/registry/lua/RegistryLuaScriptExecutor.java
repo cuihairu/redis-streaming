@@ -630,14 +630,14 @@ public class RegistryLuaScriptExecutor {
         try {
             if (cleanupExpiredInstancesScriptSha != null) {
                 try {
-                    return (List<String>) script.evalSha(RScript.Mode.READ_WRITE, cleanupExpiredInstancesScriptSha, RScript.ReturnType.MULTI,
+                    return (List<String>) script.evalSha(RScript.Mode.READ_WRITE, cleanupExpiredInstancesScriptSha, RScript.ReturnType.LIST,
                             List.of(heartbeatKey),
                             serviceName, String.valueOf(currentTime), String.valueOf(timeoutMs), keyPrefix);
                 } catch (RedisException e) {
                     if (e.getMessage() != null && e.getMessage().contains("NOSCRIPT")) {
                         logger.warn("Cleanup script not found in Redis cache, reloading...");
                         cleanupExpiredInstancesScriptSha = reloadScript(CLEANUP_EXPIRED_INSTANCES_SCRIPT);
-                        return (List<String>) script.evalSha(RScript.Mode.READ_WRITE, cleanupExpiredInstancesScriptSha, RScript.ReturnType.MULTI,
+                        return (List<String>) script.evalSha(RScript.Mode.READ_WRITE, cleanupExpiredInstancesScriptSha, RScript.ReturnType.LIST,
                                 List.of(heartbeatKey),
                                 serviceName, String.valueOf(currentTime), String.valueOf(timeoutMs), keyPrefix);
                     }
@@ -645,7 +645,7 @@ public class RegistryLuaScriptExecutor {
                 }
             }
 
-            return (List<String>) script.eval(RScript.Mode.READ_WRITE, CLEANUP_EXPIRED_INSTANCES_SCRIPT, RScript.ReturnType.MULTI,
+            return (List<String>) script.eval(RScript.Mode.READ_WRITE, CLEANUP_EXPIRED_INSTANCES_SCRIPT, RScript.ReturnType.LIST,
                     List.of(heartbeatKey),
                     serviceName, String.valueOf(currentTime), String.valueOf(timeoutMs), keyPrefix);
         } catch (Exception e) {
@@ -663,14 +663,14 @@ public class RegistryLuaScriptExecutor {
         try {
             if (cleanupExpiredInstancesWithSnapshotsScriptSha != null) {
                 try {
-                    return (List<Object>) script.evalSha(RScript.Mode.READ_WRITE, cleanupExpiredInstancesWithSnapshotsScriptSha, RScript.ReturnType.MULTI,
+                    return (List<Object>) script.evalSha(RScript.Mode.READ_WRITE, cleanupExpiredInstancesWithSnapshotsScriptSha, RScript.ReturnType.LIST,
                             List.of(heartbeatKey),
                             serviceName, String.valueOf(currentTime), String.valueOf(timeoutMs), keyPrefix);
                 } catch (RedisException e) {
                     if (e.getMessage() != null && e.getMessage().contains("NOSCRIPT")) {
                         logger.warn("Cleanup-with-snapshots script not found, reloading...");
                         cleanupExpiredInstancesWithSnapshotsScriptSha = reloadScript(CLEANUP_EXPIRED_INSTANCES_WITH_SNAPSHOTS_SCRIPT);
-                        return (List<Object>) script.evalSha(RScript.Mode.READ_WRITE, cleanupExpiredInstancesWithSnapshotsScriptSha, RScript.ReturnType.MULTI,
+                        return (List<Object>) script.evalSha(RScript.Mode.READ_WRITE, cleanupExpiredInstancesWithSnapshotsScriptSha, RScript.ReturnType.LIST,
                                 List.of(heartbeatKey),
                                 serviceName, String.valueOf(currentTime), String.valueOf(timeoutMs), keyPrefix);
                     }
@@ -678,7 +678,7 @@ public class RegistryLuaScriptExecutor {
                 }
             }
 
-            return (List<Object>) script.eval(RScript.Mode.READ_WRITE, CLEANUP_EXPIRED_INSTANCES_WITH_SNAPSHOTS_SCRIPT, RScript.ReturnType.MULTI,
+            return (List<Object>) script.eval(RScript.Mode.READ_WRITE, CLEANUP_EXPIRED_INSTANCES_WITH_SNAPSHOTS_SCRIPT, RScript.ReturnType.LIST,
                     List.of(heartbeatKey),
                     serviceName, String.valueOf(currentTime), String.valueOf(timeoutMs), keyPrefix);
         } catch (Exception e) {
@@ -695,14 +695,14 @@ public class RegistryLuaScriptExecutor {
         try {
             if (getActiveInstancesScriptSha != null) {
                 try {
-                    return (List<Object>) script.evalSha(RScript.Mode.READ_ONLY, getActiveInstancesScriptSha, RScript.ReturnType.MULTI,
+                    return (List<Object>) script.evalSha(RScript.Mode.READ_ONLY, getActiveInstancesScriptSha, RScript.ReturnType.LIST,
                             List.of(heartbeatKey),
                             String.valueOf(currentTime), String.valueOf(timeoutMs));
                 } catch (RedisException e) {
                     if (e.getMessage() != null && e.getMessage().contains("NOSCRIPT")) {
                         logger.warn("Get active instances script not found in Redis cache, reloading...");
                         getActiveInstancesScriptSha = reloadScript(GET_ACTIVE_INSTANCES_SCRIPT);
-                        return (List<Object>) script.evalSha(RScript.Mode.READ_ONLY, getActiveInstancesScriptSha, RScript.ReturnType.MULTI,
+                        return (List<Object>) script.evalSha(RScript.Mode.READ_ONLY, getActiveInstancesScriptSha, RScript.ReturnType.LIST,
                                 List.of(heartbeatKey),
                                 String.valueOf(currentTime), String.valueOf(timeoutMs));
                     }
@@ -710,7 +710,7 @@ public class RegistryLuaScriptExecutor {
                 }
             }
 
-            return (List<Object>) script.eval(RScript.Mode.READ_ONLY, GET_ACTIVE_INSTANCES_SCRIPT, RScript.ReturnType.MULTI,
+            return (List<Object>) script.eval(RScript.Mode.READ_ONLY, GET_ACTIVE_INSTANCES_SCRIPT, RScript.ReturnType.LIST,
                     List.of(heartbeatKey),
                     String.valueOf(currentTime), String.valueOf(timeoutMs));
         } catch (Exception e) {
@@ -827,7 +827,7 @@ public class RegistryLuaScriptExecutor {
 
             if (getInstancesByMetadataScriptSha != null) {
                 try {
-                    return (List<String>) script.evalSha(RScript.Mode.READ_ONLY, getInstancesByMetadataScriptSha, RScript.ReturnType.MULTI,
+                    return (List<String>) script.evalSha(RScript.Mode.READ_ONLY, getInstancesByMetadataScriptSha, RScript.ReturnType.LIST,
                             List.of(heartbeatKey),
                             keyPrefix, serviceName, String.valueOf(currentTime), String.valueOf(timeoutMs),
                             filtersJson != null ? filtersJson : "");
@@ -835,7 +835,7 @@ public class RegistryLuaScriptExecutor {
                     if (e.getMessage() != null && e.getMessage().contains("NOSCRIPT")) {
                         logger.warn("Get instances by filters script not found in Redis cache, reloading...");
                         getInstancesByMetadataScriptSha = reloadScript(GET_INSTANCES_BY_METADATA_SCRIPT);
-                        return (List<String>) script.evalSha(RScript.Mode.READ_ONLY, getInstancesByMetadataScriptSha, RScript.ReturnType.MULTI,
+                        return (List<String>) script.evalSha(RScript.Mode.READ_ONLY, getInstancesByMetadataScriptSha, RScript.ReturnType.LIST,
                                 List.of(heartbeatKey),
                                 keyPrefix, serviceName, String.valueOf(currentTime), String.valueOf(timeoutMs),
                                 filtersJson != null ? filtersJson : "");
@@ -844,7 +844,7 @@ public class RegistryLuaScriptExecutor {
                 }
             }
 
-            return (List<String>) script.eval(RScript.Mode.READ_ONLY, GET_INSTANCES_BY_METADATA_SCRIPT, RScript.ReturnType.MULTI,
+            return (List<String>) script.eval(RScript.Mode.READ_ONLY, GET_INSTANCES_BY_METADATA_SCRIPT, RScript.ReturnType.LIST,
                     List.of(heartbeatKey),
                     keyPrefix, serviceName, String.valueOf(currentTime), String.valueOf(timeoutMs),
                     filtersJson != null ? filtersJson : "");

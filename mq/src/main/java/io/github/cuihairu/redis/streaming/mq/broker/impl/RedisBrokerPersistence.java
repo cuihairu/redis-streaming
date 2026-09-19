@@ -9,7 +9,7 @@ import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import org.redisson.api.RScript;
 import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
-import org.redisson.api.StreamMessageId;
+import org.redisson.api.stream.StreamMessageId;
 import org.redisson.api.stream.StreamAddArgs;
 
 import java.util.Map;
@@ -99,13 +99,13 @@ public class RedisBrokerPersistence implements BrokerPersistence {
                 // Prefer exact trimming when available (Redis 7+)
                 try {
                     String lua = "return redis.call('XTRIM', KEYS[1], 'MAXLEN', '=', ARGV[1])";
-                    redissonClient.getScript().eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.STATUS,
+                    redissonClient.getScript().eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.STRING,
                             java.util.Collections.singletonList(streamKey), String.valueOf(maxLen));
                 } catch (Exception eExact) {
                     // Compatibility fallback for older Redis: approximate trimming (may exceed bound transiently)
                     try {
                         String luaApprox = "return redis.call('XTRIM', KEYS[1], 'MAXLEN', ARGV[1])";
-                        redissonClient.getScript().eval(RScript.Mode.READ_WRITE, luaApprox, RScript.ReturnType.STATUS,
+                        redissonClient.getScript().eval(RScript.Mode.READ_WRITE, luaApprox, RScript.ReturnType.STRING,
                                 java.util.Collections.singletonList(streamKey), String.valueOf(maxLen));
                     } catch (Exception ignore2) {}
                 }

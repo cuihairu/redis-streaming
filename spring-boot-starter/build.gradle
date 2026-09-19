@@ -9,20 +9,20 @@ dependencies {
     api project(':mq')
     api project(':runtime')
     api project(':reliability')
-    api 'org.springframework.boot:spring-boot-starter:3.2.0'
-    api 'org.springframework.boot:spring-boot-configuration-processor:3.2.0'
+    api libs.springboot.starter
+    api libs.springboot.config.processor
     // For HealthIndicator compile-time visibility (do not force runtime)
-    compileOnly 'org.springframework.boot:spring-boot-actuator:3.2.0'
-    compileOnly 'org.springframework.boot:spring-boot-starter-actuator:3.2.0'
-    api 'io.micrometer:micrometer-core:1.12.0'
+    compileOnly libs.springboot.actuator
+    compileOnly libs.springboot.starter.actuator
+    api libs.micrometer.core
 
-    compileOnly 'org.projectlombok:lombok:1.18.34'
-    annotationProcessor 'org.projectlombok:lombok:1.18.34'
-    annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor:3.2.0'
+    compileOnly libs.lombok
+    annotationProcessor libs.lombok
+    annotationProcessor libs.springboot.config.processor
 
-    testImplementation 'org.springframework.boot:spring-boot-starter-test:3.2.0'
-    testImplementation 'org.springframework.boot:spring-boot-starter-web:3.2.0'
-    testImplementation 'org.springframework.boot:spring-boot-starter-actuator:3.2.0'
-    testCompileOnly 'org.projectlombok:lombok:1.18.34'
-    testAnnotationProcessor 'org.projectlombok:lombok:1.18.34'
+    testImplementation libs.springboot.starter.test
+    testImplementation libs.springboot.starter.web
+    testImplementation libs.springboot.starter.actuator
+    testCompileOnly libs.lombok
+    testAnnotationProcessor libs.lombok
 }

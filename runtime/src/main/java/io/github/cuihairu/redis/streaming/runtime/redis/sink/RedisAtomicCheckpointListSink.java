@@ -136,7 +136,7 @@ public final class RedisAtomicCheckpointListSink<T> implements CheckpointAwareSi
                 args.add(encode(r.value()));
                 args.add(r.messageId());
             }
-            script.eval(RScript.Mode.READ_WRITE, LUA, RScript.ReturnType.INTEGER,
+            script.eval(RScript.Mode.READ_WRITE, LUA, RScript.ReturnType.LONG,
                     List.of(dedupSetKey, listKey, streamKey, frontierKey), args.toArray());
         }
     }

@@ -63,6 +63,7 @@ public class RedisStreamingAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
+    @SuppressWarnings("deprecation") // setUsername/setPassword replaced by CredentialsResolver in Redisson 4.x; still functional
     public RedissonClient redissonClient(RedisStreamingProperties properties) {
         Config config = new Config();
         RedisStreamingProperties.RedisProperties redis = properties.getRedis();

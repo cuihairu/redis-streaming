@@ -47,15 +47,15 @@ class RegistryLuaScriptExecutorTest {
 
         // initScripts catches and allows fallback to eval mode
         when(script.scriptLoad(anyString())).thenThrow(new RuntimeException("redis down"));
-        when(script.eval(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.MULTI), anyList(), any(), any()))
+        when(script.eval(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.LIST), anyList(), any(), any()))
                 .thenReturn(List.of("a", "b"));
 
         RegistryLuaScriptExecutor exec = new RegistryLuaScriptExecutor(redisson);
         List<Object> out = exec.executeGetActiveInstances("hb", 100L, 10L);
         assertEquals(List.of("a", "b"), out);
 
-        verify(script).eval(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.MULTI), anyList(), any(), any());
-        verify(script, never()).evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.MULTI), anyList(), any(), any());
+        verify(script).eval(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.LIST), anyList(), any(), any());
+        verify(script, never()).evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.LIST), anyList(), any(), any());
     }
 
     @Test
@@ -71,14 +71,14 @@ class RegistryLuaScriptExecutorTest {
         doThrow(new RedisException("NOSCRIPT"))
                 .doReturn(List.of("id1", "100"))
                 .when(script)
-                .evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.MULTI), anyList(),
+                .evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.LIST), anyList(),
                         any(), any());
 
         RegistryLuaScriptExecutor exec = new RegistryLuaScriptExecutor(redisson);
         List<Object> out = exec.executeGetActiveInstances("hb", 1L, 2L);
         assertEquals(List.of("id1", "100"), out);
 
-        verify(script, times(2)).evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.MULTI), anyList(),
+        verify(script, times(2)).evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.LIST), anyList(),
                 eq("1"), eq("2"));
     }
 
@@ -142,14 +142,14 @@ class RegistryLuaScriptExecutorTest {
         doThrow(new RedisException("NOSCRIPT"))
                 .doReturn(List.of("id1", "id2"))
                 .when(script)
-                .evalSha(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.MULTI), anyList(),
+                .evalSha(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LIST), anyList(),
                         any(), any(), any(), any());
 
         RegistryLuaScriptExecutor exec = new RegistryLuaScriptExecutor(redisson);
         List<String> out = exec.executeCleanupExpiredInstances("hb", "svc", 1L, 2L, "pfx");
         assertEquals(List.of("id1", "id2"), out);
 
-        verify(script, times(2)).evalSha(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.MULTI), anyList(),
+        verify(script, times(2)).evalSha(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LIST), anyList(),
                 eq("svc"), eq("1"), eq("2"), eq("pfx"));
     }
 
@@ -166,14 +166,14 @@ class RegistryLuaScriptExecutorTest {
         doThrow(new RedisException("NOSCRIPT"))
                 .doReturn(List.of("id1", "{\"json\":1}"))
                 .when(script)
-                .evalSha(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.MULTI), anyList(),
+                .evalSha(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LIST), anyList(),
                         any(), any(), any(), any());
 
         RegistryLuaScriptExecutor exec = new RegistryLuaScriptExecutor(redisson);
         List<Object> out = exec.executeCleanupExpiredInstancesWithSnapshots("hb", "svc", 1L, 2L, "pfx");
         assertEquals(List.of("id1", "{\"json\":1}"), out);
 
-        verify(script, times(2)).evalSha(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.MULTI), anyList(),
+        verify(script, times(2)).evalSha(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LIST), anyList(),
                 eq("svc"), eq("1"), eq("2"), eq("pfx"));
     }
 
@@ -187,7 +187,7 @@ class RegistryLuaScriptExecutorTest {
         when(script.scriptLoad(anyString()))
                 .thenReturn("sha1", "sha2", "sha3", "sha4", "sha5", "sha6", "sha7");
 
-        when(script.evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.MULTI), anyList(),
+        when(script.evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.LIST), anyList(),
                 any(), any(), any(), any(), any()))
                 .thenReturn(List.of("i1"));
 
@@ -200,7 +200,7 @@ class RegistryLuaScriptExecutorTest {
         assertEquals(List.of("i1"), out);
 
         // Verify last arg (filters json) is combined structure
-        verify(script).evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.MULTI), anyList(),
+        verify(script).evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.LIST), anyList(),
                 eq("pfx"), eq("svc"), eq("1"), eq("2"),
                 eq("{\"metadata\":{\"region\":\"us\"},\"metrics\":{\"cpu:\">\":\"0.5\"}}"));
     }
@@ -215,7 +215,7 @@ class RegistryLuaScriptExecutorTest {
         when(script.scriptLoad(anyString()))
                 .thenReturn("sha1", "sha2", "sha3", "sha4", "sha5", "sha6", "sha7");
 
-        when(script.evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.MULTI), anyList(),
+        when(script.evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.LIST), anyList(),
                 any(), any(), any(), any(), any()))
                 .thenReturn(List.of("i1"));
 
@@ -228,7 +228,7 @@ class RegistryLuaScriptExecutorTest {
         );
         assertEquals(List.of("i1"), out);
 
-        verify(script).evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.MULTI), anyList(),
+        verify(script).evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.LIST), anyList(),
                 eq("pfx"), eq("svc"), eq("1"), eq("2"),
                 eq(metadataJson));
     }
@@ -243,7 +243,7 @@ class RegistryLuaScriptExecutorTest {
         when(script.scriptLoad(anyString()))
                 .thenReturn("sha1", "sha2", "sha3", "sha4", "sha5", "sha6", "sha7");
 
-        when(script.evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.MULTI), anyList(),
+        when(script.evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.LIST), anyList(),
                 any(), any(), any(), any(), any()))
                 .thenReturn(List.of("i1"));
 

@@ -140,7 +140,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
             String streamKey = StreamKeys.partitionStream(topic, i);
             try {
                 Object r = script.eval(org.redisson.api.RScript.Mode.READ_WRITE, lua,
-                        org.redisson.api.RScript.ReturnType.STATUS,
+                        org.redisson.api.RScript.ReturnType.STRING,
                         java.util.Collections.singletonList(streamKey), consumerGroup, "0-0");
                 if (!"OK".equals(String.valueOf(r)) && !"EXISTS".equals(String.valueOf(r))) {
                     log.debug("Ensure group via Lua returned {} for {} @ {}", String.valueOf(r), consumerGroup, streamKey);
@@ -933,7 +933,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                         + "redis.call('XADD', sk, '*', unpack(args)); redis.call('ZREM', z, id); redis.call('DEL', id); table.insert(moved, id); end; end; return moved;";
                 // Use StringCodec and pass ARGV as strings to avoid non-string arg issues in Lua (tonumber())
                 RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
-                List<Object> moved = script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.MULTI, java.util.Collections.singletonList(bucketKey),
+                List<Object> moved = script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.LIST, java.util.Collections.singletonList(bucketKey),
                         String.valueOf(System.currentTimeMillis()), String.valueOf(options.getRetryMoverBatch()), Instant.now().toString(), StreamKeys.streamPrefix());
                 if (moved != null && !moved.isEmpty()) {
                     log.debug("Moved {} retry items for topic {}", moved.size(), topic);
