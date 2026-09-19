@@ -496,7 +496,8 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             int pc = Math.max(1, partitionRegistry.getPartitionCount(topic));
             StreamMessageId targetId;
             if ("0".equals(messageId)) {
-                targetId = StreamMessageId.MIN;
+                // explicit 0-0: StreamMessageId.MIN ("-") is invalid for XGROUP CREATE/SETID before Redis 7.0
+                targetId = new StreamMessageId(0, 0);
             } else if ("$".equals(messageId)) {
                 targetId = StreamMessageId.MAX;
             } else {

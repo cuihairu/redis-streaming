@@ -57,7 +57,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
         String dlqKey = DlqKeys.dlq(topic);
         try {
             redissonClient.getStream(dlqKey)
-                    .createGroup(StreamCreateGroupArgs.name(group).id(StreamMessageId.MIN).makeStream());
+                    .createGroup(StreamCreateGroupArgs.name(group).id(new StreamMessageId(0, 0)).makeStream());
         } catch (Exception ignore) {}
         subs.put(topic, new Sub(topic, group, handler));
         log.info("Subscribed DLQ: topic='{}', group='{}', consumer='{}'", topic, group, consumerName);
@@ -98,7 +98,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
 
                     Map<StreamMessageId, Map<String, Object>> messages = java.util.Collections.emptyMap();
                     try {
-                        streamDefault.createGroup(StreamCreateGroupArgs.name(s.group).id(StreamMessageId.MIN).makeStream());
+                        streamDefault.createGroup(StreamCreateGroupArgs.name(s.group).id(new StreamMessageId(0, 0)).makeStream());
                     } catch (Exception ignore) {}
                     try {
                         messages = streamDefault.readGroup(s.group, consumerName,
@@ -106,7 +106,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                         stream = streamDefault;
                     } catch (Exception ignore) {}
                     if (messages == null || messages.isEmpty()) {
-                        try { streamString.createGroup(StreamCreateGroupArgs.name(s.group).id(StreamMessageId.MIN).makeStream()); } catch (Exception ignore) {}
+                        try { streamString.createGroup(StreamCreateGroupArgs.name(s.group).id(new StreamMessageId(0, 0)).makeStream()); } catch (Exception ignore) {}
                         try {
                             messages = streamString.readGroup(s.group, consumerName,
                                     StreamReadGroupArgs.neverDelivered().count(10).timeout(Duration.ofMillis(500)));
