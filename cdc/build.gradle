@@ -4,6 +4,7 @@ plugins {
 
 dependencies {
     api project(':core')
+    implementation project(':mq')
 
     // MySQL CDC support
     implementation libs.mysql.connector

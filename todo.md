@@ -548,7 +548,7 @@ void testRedisIntegration() {
 - [ ] `aggregation`:与 core `AggregateFunction`、window 模块的第三套 `TimeWindow/TumblingWindow` 统一(现三套并行抽象互不兼容,喂不进 `WindowedStream.aggregate`)
 - [ ] `join`/`cep`:包装为 DataStream 算子(现为纯内存工具类,无法参与 pipeline);join 与 table 的 join 语义二选一
 - [ ] `table.RedisKTable.toStream()`:由静态快照导出改为持续 changelog
-- [ ] `source.RedisListSource`:改真 XREADGROUP 或并入 runtime;`cdc` 事件到 mq topic 的桥接器
+- [x] 桥接完成(本轮):新增 `source.redis.RedisStreamSource implements StreamSource`——真 XREADGROUP、自动建组(用 `0-0` 而非 `StreamMessageId.MIN`,后者需 Redis≥7)、ack、有界排空;单测 4 个 + 真 Redis round-trip 集成测试。CDC→mq:`cdc.mq.ChangeEventQueueSink implements StreamSink<ChangeEvent>`(自描述 payload、key 作分区键、失败上抛),cdc 增 mq 依赖;单测 3 个。`RedisListSource` 保留原样(其名字与 List 语义相符,Consumer 风格工具类无错)
 - [ ] `metrics` 模块与 `RedisRuntimeMetrics`/`CDCMetrics`/`MqMetrics` 四套体系统一
 - [ ] `reliability` 与 mq 的 DLQ/重试、runtime 幂等 sink 的去重职责划界
 
@@ -557,6 +557,7 @@ void testRedisIntegration() {
 - [ ] `config.RedisConfigCenter` 冗余门面;两个 `BaseRedisConfig` 已合并,继续收敛 `ConfigManager/ConfigService/ConfigCenter` 接口堆叠
 
 ### E. 其他
-- [ ] examples 增加 `redis-streaming:` 配置样例(starter 无示例配置);`StreamSource` 侧生命周期与 `SourceContext.getCheckpointLock` 真实接入
+- [ ] examples 增加 `redis-streaming:` 配置样例(starter 无示例配置)
+- [ ] `SourceContext.getCheckpointLock` 真实接入(两引擎均返回无锁对象);`StreamSource` 无 open/close 生命周期(与 StreamSink 已补齐形成对照,source 侧未做)
 - [ ] 发布说明记录 Redisson 4.7.0 升级与 API 迁移(README/docs 已同步版本号)
 - [ ] 覆盖率:延续上文"优先级 1-4"清单;把 JaCoCo 聚合门槛从 0.25 逐步上调(建议下一档 0.40)
