@@ -10,9 +10,20 @@ import static org.junit.jupiter.api.Assertions.*;
 class TableGrandStormTest {
 
     @Test
-    void sweepAllClasses() {
-        int total = Storms.grandStorm(StreamTableConverter.class, "io.github.cuihairu.redis.streaming.table", java.util.Map.of(), 150);
+    void sweepAllClasses() throws Exception {
+        int total = Storms.grandStorm(StreamTableConverter.class, "io.github.cuihairu.redis.streaming.table", REAL_HINTS, 150);
         System.err.println("GRAND table invocations=" + total);
         assertTrue(total >= 0);
     }
+
+    static final java.util.Map<Class<?>, Object> REAL_HINTS = buildRealHints();
+
+    private static java.util.Map<Class<?>, Object> buildRealHints() {
+        org.redisson.config.Config redisCfg = new org.redisson.config.Config();
+        redisCfg.useSingleServer().setAddress(System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379"));
+        java.util.Map<Class<?>, Object> h = new java.util.HashMap<>();
+        h.put(org.redisson.api.RedissonClient.class, org.redisson.Redisson.create(redisCfg));
+        return h;
+    }
+
 }
