@@ -228,11 +228,10 @@ tasks.register('jacocoRootReport', JacocoReport) {
     // protocol, PostgreSQL logical replication) cannot be executed without those services;
     // they are excluded from the aggregate gate (industry-standard jacoco scoping).
     def covClassDirs = { proj ->
-        fileTree(dir: "${proj.buildDir}/classes/java/main") {
-            exclude '**/kafka/**'
-            exclude '**/MySQLBinlogCDCConnector*'
-            exclude '**/PostgreSQLLogicalReplicationCDCConnector*'
-        }
+        fileTree(dir: "${proj.buildDir}/classes/java/main", excludes: [
+                '**/kafka/**',
+                '**/MySQLBinlogCDCConnector*',
+                '**/PostgreSQLLogicalReplicationCDCConnector*'])
     }
     additionalSourceDirs.from files(covProjects.collect { it.file('src/main/java') })
     sourceDirectories.from files(covProjects.collect { it.file('src/main/java') })
@@ -257,11 +256,10 @@ tasks.register('jacocoRootCoverageVerification', JacocoCoverageVerification) {
     def covProjects = subprojects.findAll { it.name != 'examples' }
     executionData.from files(covProjects.collect { fileTree(dir: it.buildDir, includes: ['jacoco/*.exec']) })
     def covClassDirs = { proj ->
-        fileTree(dir: "${proj.buildDir}/classes/java/main") {
-            exclude '**/kafka/**'
-            exclude '**/MySQLBinlogCDCConnector*'
-            exclude '**/PostgreSQLLogicalReplicationCDCConnector*'
-        }
+        fileTree(dir: "${proj.buildDir}/classes/java/main", excludes: [
+                '**/kafka/**',
+                '**/MySQLBinlogCDCConnector*',
+                '**/PostgreSQLLogicalReplicationCDCConnector*'])
     }
     classDirectories.from files(covProjects.collect { covClassDirs(it) })
     doFirst { executionData.files.removeIf { !it.exists() } }
