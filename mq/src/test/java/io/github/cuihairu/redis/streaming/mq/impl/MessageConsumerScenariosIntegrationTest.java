@@ -148,6 +148,12 @@ class MessageConsumerScenariosIntegrationTest {
                 Thread.sleep(50);
             }
             assertEquals(4, processed.size());
+            // in-flight accounting decrements after the handler returns; give it a bounded
+            // window to drain instead of asserting immediately (racy on slow runners)
+            deadline = System.currentTimeMillis() + 5_000;
+            while (control.inFlight() > 0 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50);
+            }
             assertEquals(0L, control.inFlight());
 
             // pause stops intake of further batches; at most one already-polled batch may finish
