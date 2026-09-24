@@ -81,7 +81,7 @@ class RedisMessageConsumerDispatchCoverageTest {
     private static final Class<?>[] REQUEUE = {RStream.class, String.class, String.class, int.class, Message.class, Map.class};
     private static final Class<?>[] DISPATCH = {String.class, String.class, String.class, int.class, Message.class, MessageHandleResult.class, Map.class, RStream.class};
     private static final Class<?>[] ACK = {String.class, String.class, int.class, RStream.class, String.class, Map.class};
-    private static final Class<?>[] SEND_DLQ = {Message.class};
+    private static final Class<?>[] SEND_DLQ = {Message.class, int.class};
 
     private Message message(String payload, int retryCount, int maxRetries) {
         Message m = new Message();
@@ -145,7 +145,7 @@ class RedisMessageConsumerDispatchCoverageTest {
     void sendToDeadLetterQueuePublishesRecord() throws Exception {
         Message m = message("p", 1, 3);
         m.setKey("kk");
-        invoke(consumer, "sendToDeadLetterQueue", SEND_DLQ, m);
+        invoke(consumer, "sendToDeadLetterQueue", SEND_DLQ, m, 0);
         verify(dlqStream).add(any());
         verify(dlqStream, never()).add(argThat(a -> false));
     }

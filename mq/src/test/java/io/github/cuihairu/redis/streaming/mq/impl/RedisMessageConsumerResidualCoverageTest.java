@@ -547,7 +547,7 @@ class RedisMessageConsumerResidualCoverageTest {
     void sendToDeadLetterQueueUsesNowWhenTimestampMissing() throws Exception {
         Message m = message("p", 0, 3);
         m.setTimestamp(null);
-        assertDoesNotThrow(() -> invoke(consumer, "sendToDeadLetterQueue", new Class<?>[]{Message.class}, m));
+        assertDoesNotThrow(() -> invoke(consumer, "sendToDeadLetterQueue", new Class<?>[]{Message.class, int.class}, m, 0));
     }
 
     // ===== requeueOrDeadLetter residual =====

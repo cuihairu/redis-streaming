@@ -434,9 +434,13 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
 
             case FAIL:
             case DEAD_LETTER:
-                sendToDeadLetterQueue(message);
-                MqMetrics.get().incDeadLetter(message.getTopic(), partitionId);
-                ackViaBackend(topic, consumerGroup, partitionId, streamOrNull, messageId, messageData);
+                if (sendToDeadLetterQueue(message, partitionId)) {
+                    MqMetrics.get().incDeadLetter(message.getTopic(), partitionId);
+                    ackViaBackend(topic, consumerGroup, partitionId, streamOrNull, messageId, messageData);
+                } else {
+                    // DLQ write failed: leave the original un-acked in the PEL so it is not lost
+                    log.error("DLQ write failed for message {}; left un-acked for redelivery", messageId);
+                }
                 break;
         }
     }
@@ -576,20 +580,24 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
             if (ref != null) headers.put(io.github.cuihairu.redis.streaming.mq.MqHeaders.PAYLOAD_MISSING_REF, ref);
             m.setHeaders(headers);
 
-            // send to DLQ then ACK original
-            sendToDeadLetterQueue(m);
-            MqMetrics.get().incDeadLetter(topic, partitionId);
-            try { MqMetrics.get().incPayloadMissing(topic, partitionId); } catch (Throwable ignore) {}
-            ackViaBackend(topic, group, partitionId, streamOrNull, messageId, messageData);
+            // send to DLQ then ACK original (only ack when the DLQ write actually landed)
+            if (sendToDeadLetterQueue(m, partitionId)) {
+                MqMetrics.get().incDeadLetter(topic, partitionId);
+                try { MqMetrics.get().incPayloadMissing(topic, partitionId); } catch (Throwable ignore) {}
+                ackViaBackend(topic, group, partitionId, streamOrNull, messageId, messageData);
+            } else {
+                log.error("DLQ write failed for missing-payload message {}; left un-acked", messageId);
+            }
         } catch (Exception e) {
             log.error("Failed to handle missing payload for {}:{} id={}", topic, partitionId, messageId, e);
         }
     }
 
-    private void sendToDeadLetterQueue(Message message) {
+    private boolean sendToDeadLetterQueue(Message message, int partitionId) {
         try {
             io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterRecord record = new io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterRecord();
             record.originalTopic = message.getTopic();
+            record.originalPartition = partitionId;
             record.payload = message.getPayload();
             record.retryCount = message.getRetryCount();
             record.maxRetries = message.getMaxRetries();
@@ -599,8 +607,10 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
             if (message.getKey() != null) record.headers.put("key", message.getKey());
             deadLetterService.send(record);
             log.warn("Message sent to dead letter queue via DeadLetterService: topic={}", message.getTopic());
+            return true;
         } catch (Exception e) {
             log.error("Failed to send message to dead letter queue", e);
+            return false;
         }
     }
 
@@ -615,9 +625,12 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         try {
             // If current retry count already at/over limit, send to DLQ immediately
             if (message.hasExceededMaxRetries()) {
-                sendToDeadLetterQueue(message);
-                MqMetrics.get().incDeadLetter(message.getTopic(), partitionId);
-                ackViaBackend(message.getTopic(), consumerGroup, partitionId, stream, messageId, messageData);
+                if (sendToDeadLetterQueue(message, partitionId)) {
+                    MqMetrics.get().incDeadLetter(message.getTopic(), partitionId);
+                    ackViaBackend(message.getTopic(), consumerGroup, partitionId, stream, messageId, messageData);
+                } else {
+                    log.error("DLQ write failed for exhausted message {}; left un-acked for redelivery", messageId);
+                }
                 return;
             }
             // Preserve original message id across retries (stream entry id changes on retry re-enqueue).
@@ -636,26 +649,34 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 }
             } catch (Exception ignore) {
             }
-            // ACK original and either re-enqueue directly (for tiny backoffs) or schedule via retry bucket
-            ackViaBackend(message.getTopic(), consumerGroup, partitionId, stream, messageId, messageData);
+            // Re-enqueue first (directly for tiny backoffs, otherwise via the retry bucket),
+            // then ACK the original. ACK-before-enqueue lost messages when the enqueue failed.
             int nextRetry = message.getRetryCount() + 1;
             long delayMs = retryPolicy.nextBackoffMs(nextRetry);
             long dueAt = System.currentTimeMillis() + delayMs;
 
             // If next retry would exceed max retries, dead-letter instead of rescheduling.
             if (nextRetry > message.getMaxRetries()) {
-                sendToDeadLetterQueue(message);
-                MqMetrics.get().incDeadLetter(message.getTopic(), partitionId);
+                if (sendToDeadLetterQueue(message, partitionId)) {
+                    MqMetrics.get().incDeadLetter(message.getTopic(), partitionId);
+                    ackViaBackend(message.getTopic(), consumerGroup, partitionId, stream, messageId, messageData);
+                } else {
+                    log.error("DLQ write failed for exhausted message {}; left un-acked for redelivery", messageId);
+                }
                 return;
             }
 
             String topic = message.getTopic();
             if (delayMs <= 50) {
                 // Fast path: re-enqueue directly to stream for tiny backoffs to avoid relying on the mover
+                boolean requeued = false;
                 try {
                     Map<String, Object> data = new HashMap<>();
                     if (message.getPayload() != null) {
-                        data.put("payload", objectToJson(message.getPayload()));
+                        // Strings pass through verbatim; re-encoding them would corrupt the payload
+                        // across retries (a literal "\"hello\"" after the second attempt).
+                        data.put("payload", (message.getPayload() instanceof String)
+                                ? message.getPayload() : objectToJson(message.getPayload()));
                     }
                     data.put("timestamp", Instant.now().toString());
                     data.put("retryCount", nextRetry);
@@ -669,55 +690,70 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                             ? stream
                             : redissonClient.getStream(StreamKeys.partitionStream(topic, partitionId), org.redisson.client.codec.StringCodec.INSTANCE);
                     target.add(StreamAddArgs.entries(data));
-                    MqMetrics.get().incRetried(topic, partitionId);
-                    log.debug("Message {} re-enqueued directly for retry ({} ms)", messageId, delayMs);
+                    requeued = true;
                 } catch (Exception ex) {
                     log.error("Failed to directly re-enqueue message {} for retry", messageId, ex);
+                }
+                if (requeued) {
+                    MqMetrics.get().incRetried(topic, partitionId);
+                    ackViaBackend(message.getTopic(), consumerGroup, partitionId, stream, messageId, messageData);
+                    log.debug("Message {} re-enqueued directly for retry ({} ms)", messageId, delayMs);
                 }
                 return;
             }
 
             // Default path: schedule into retry bucket with backoff (Hash + ZSET id)
-            String itemId = java.util.UUID.randomUUID().toString();
-            String itemKey = StreamKeys.retryItem(topic, itemId);
-            // Use StringCodec to ensure plain string fields readable by Lua (HGET) and avoid binary values
-            org.redisson.api.RMap<String, String> item = redissonClient.getMap(itemKey, org.redisson.client.codec.StringCodec.INSTANCE);
-            // Store as strings for Lua simplicity; payload/headers JSON-encoded
-            item.put("topic", topic);
-            item.put("partitionId", Integer.toString(partitionId));
-            if (message.getPayload() != null) {
-                item.put("payload", objectToJson(message.getPayload()));
-            }
-            item.put("key", message.getKey() != null ? message.getKey() : "");
-            item.put("headers", objectToJson(message.getHeaders() != null ? message.getHeaders() : java.util.Collections.emptyMap()));
-            item.put("retryCount", Integer.toString(nextRetry));
-            item.put("maxRetries", Integer.toString(message.getMaxRetries()));
-            String orig = "";
+            boolean scheduled = false;
             try {
-                java.util.Map<String, String> headers = message.getHeaders();
-                if (headers != null) {
-                    String v = headers.get(io.github.cuihairu.redis.streaming.mq.MqHeaders.ORIGINAL_MESSAGE_ID);
-                    if (v != null) orig = v;
+                String itemId = java.util.UUID.randomUUID().toString();
+                String itemKey = StreamKeys.retryItem(topic, itemId);
+                // Use StringCodec to ensure plain string fields readable by Lua (HGET) and avoid binary values
+                org.redisson.api.RMap<String, String> item = redissonClient.getMap(itemKey, org.redisson.client.codec.StringCodec.INSTANCE);
+                // Store as strings for Lua simplicity; payload/headers JSON-encoded
+                item.put("topic", topic);
+                item.put("partitionId", Integer.toString(partitionId));
+                if (message.getPayload() != null) {
+                    // Strings pass through verbatim; only non-String payloads are JSON-encoded.
+                    item.put("payload", (message.getPayload() instanceof String)
+                            ? (String) message.getPayload() : objectToJson(message.getPayload()));
                 }
-            } catch (Exception ignore) {
-            }
-            if (orig == null || orig.isBlank()) {
-                orig = message.getId() != null ? message.getId() : "";
-            }
-            item.put("originalMessageId", orig);
+                item.put("key", message.getKey() != null ? message.getKey() : "");
+                item.put("headers", objectToJson(message.getHeaders() != null ? message.getHeaders() : java.util.Collections.emptyMap()));
+                item.put("retryCount", Integer.toString(nextRetry));
+                item.put("maxRetries", Integer.toString(message.getMaxRetries()));
+                String orig = "";
+                try {
+                    java.util.Map<String, String> headers = message.getHeaders();
+                    if (headers != null) {
+                        String v = headers.get(io.github.cuihairu.redis.streaming.mq.MqHeaders.ORIGINAL_MESSAGE_ID);
+                        if (v != null) orig = v;
+                    }
+                } catch (Exception ignore) {
+                }
+                if (orig == null || orig.isBlank()) {
+                    orig = message.getId() != null ? message.getId() : "";
+                }
+                item.put("originalMessageId", orig);
 
-            String bucketKey = StreamKeys.retryBucket(topic);
-            // Use StringCodec so ZSET members are plain strings (keys), matching hash keys for Lua mover
-            org.redisson.api.RScoredSortedSet<String> bucket = redissonClient.getScoredSortedSet(bucketKey, org.redisson.client.codec.StringCodec.INSTANCE);
-            bucket.add(dueAt, itemKey);
-            MqMetrics.get().incRetried(topic, partitionId);
-            log.debug("Message {} scheduled for retry at {} ({} ms), item {}", messageId, dueAt, delayMs, itemKey);
+                String bucketKey = StreamKeys.retryBucket(topic);
+                // Use StringCodec so ZSET members are plain strings (keys), matching hash keys for Lua mover
+                org.redisson.api.RScoredSortedSet<String> bucket = redissonClient.getScoredSortedSet(bucketKey, org.redisson.client.codec.StringCodec.INSTANCE);
+                bucket.add(dueAt, itemKey);
+                scheduled = true;
 
-            // Opportunistically trigger a near-term retry mover run to reduce latency/flakiness
-            long jitterMs = Math.min(100L, Math.max(10L, delayMs));
-            try {
-                schedulerPool.schedule(this::moveDueRetries, jitterMs, TimeUnit.MILLISECONDS);
-            } catch (Exception ignore) {}
+                // Opportunistically trigger a near-term retry mover run to reduce latency/flakiness
+                long jitterMs = Math.min(100L, Math.max(10L, delayMs));
+                try {
+                    schedulerPool.schedule(this::moveDueRetries, jitterMs, TimeUnit.MILLISECONDS);
+                } catch (Exception ignore) {}
+            } catch (Exception ex) {
+                log.error("Failed to schedule retry for message {} (topic {})", messageId, topic, ex);
+            }
+            if (scheduled) {
+                MqMetrics.get().incRetried(topic, partitionId);
+                ackViaBackend(message.getTopic(), consumerGroup, partitionId, stream, messageId, messageData);
+                log.debug("Message {} scheduled for retry at {} ({} ms)", messageId, dueAt, delayMs);
+            }
         } catch (Exception e) {
             log.error("Failed to requeue message {} for topic {}", messageId, message.getTopic(), e);
         }
