@@ -15,6 +15,22 @@ Change Data Capture connectors (MySQL Binlog / PostgreSQL logical replication / 
 - `cdc.impl.PostgreSQLLogicalReplicationCDCConnector`
 - `cdc.impl.DatabasePollingCDCConnector`
 
+## Polling 语义（重要）
+
+### 调度轮询 vs 拉取
+- `pollingIntervalMs > 0`（默认 1000）时，后台调度器周期性排空批次，并把事件交付到
+  `CDCEventListener.onEvents(connectorName, events)`——**事件不会被丢弃**。
+- 外部拉取消费者请设置 `pollingIntervalMs(0)`，只用 `poll()` 主动拉取，避免与调度器抢批次。
+
+### 初始快照（DatabasePollingCDCConnector）
+| 配置 | 行为 |
+|------|------|
+| `snapshot.enabled=true` + `snapshot.mode=initial`/`when_needed`（默认） | 启动时把**已存在的行**作为 INSERT 事件发出（`onSnapshotStarted`/`onSnapshotCompleted`） |
+| `snapshot.enabled=true` + `snapshot.mode=never` | 不捕获存量行，基线取 `MAX(incremental/timestamp column)` |
+| `snapshot.enabled=false`（默认） | 同 `never`：跳过存量行，从当前最大值开始增量轮询 |
+
+> 未开启快照时存量行被跳过是刻意行为（默认值），如需全量导入历史数据请显式开启 `snapshot.enabled=true`。
+
 ## Minimal Sample (MySQL binlog; simplified)
 ```java
 import io.github.cuihairu.redis.streaming.cdc.CDCConfiguration;

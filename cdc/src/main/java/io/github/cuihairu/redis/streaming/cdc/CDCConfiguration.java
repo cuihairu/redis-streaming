@@ -103,14 +103,26 @@ public interface CDCConfiguration {
     boolean isAutoStart();
 
     /**
-     * Check if snapshots should be taken on startup
+     * Check if an initial snapshot of existing rows should be taken on startup.
+     *
+     * <p>When {@code true} (property {@code snapshot.enabled}) and the snapshot mode is not
+     * {@code never}, polling connectors emit rows that already exist as INSERT events at
+     * startup instead of starting from {@code MAX(incremental column)} and silently skipping
+     * them. Defaults to {@code false} (baseline at MAX, existing rows skipped).
      *
      * @return true if snapshot enabled
      */
     boolean isSnapshotEnabled();
 
     /**
-     * Get snapshot mode
+     * Get snapshot mode (property {@code snapshot.mode}).
+     *
+     * <ul>
+     *   <li>{@code initial} (default): with snapshot enabled, capture existing rows at startup</li>
+     *   <li>{@code when_needed}: for polling connectors equivalent to {@code initial}</li>
+     *   <li>{@code never}: never capture existing rows; always baseline at MAX even if
+     *       {@code snapshot.enabled=true}</li>
+     * </ul>
      *
      * @return snapshot mode (initial, never, when_needed, etc.)
      */

@@ -1,5 +1,7 @@
 package io.github.cuihairu.redis.streaming.cdc;
 
+import java.util.List;
+
 /**
  * CDC connector event listener interface
  */
@@ -26,6 +28,19 @@ public interface CDCEventListener {
      * @param eventCount number of events captured
      */
     default void onEventsCapture(String connectorName, int eventCount) {}
+
+    /**
+     * Called when change events are captured by scheduled (push) polling.
+     *
+     * <p>When scheduled polling is enabled ({@code pollingIntervalMs > 0}), events drained
+     * from the connector are delivered here instead of being dropped or left for a later
+     * pull {@code poll()} call. Pull consumers should set {@code pollingIntervalMs = 0} so
+     * they do not compete with the scheduler for batches.
+     *
+     * @param connectorName the connector name
+     * @param events the captured events (never null; never empty when invoked)
+     */
+    default void onEvents(String connectorName, List<ChangeEvent> events) {}
 
     /**
      * Called when an error occurs in the connector

@@ -10,6 +10,8 @@ import java.sql.*;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Generic database polling CDC connector implementation
@@ -33,6 +35,8 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
     private String incrementalColumn;
     private int queryTimeoutSeconds;
     private TableFilter tableFilter;
+    private final AtomicBoolean snapshotPending = new AtomicBoolean(false);
+    private final AtomicLong snapshotRecordCount = new AtomicLong();
 
     public DatabasePollingCDCConnector(CDCConfiguration configuration) {
         super(configuration);
@@ -82,7 +86,7 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
 
         this.dataSource = createDataSource(jdbcUrl, driverClass, username, password);
 
-        initializeLastPolledValues();
+        initializeSnapshotOrBaseline();
 
         startScheduledPolling();
 
@@ -96,6 +100,8 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
         }
         eventQueue.clear();
         lastPolledValues.clear();
+        snapshotPending.set(false);
+        snapshotRecordCount.set(0);
     }
 
     @Override
@@ -178,6 +184,35 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
         return result;
     }
 
+    /**
+     * Decide how to start the polling baseline.
+     *
+     * <p>When an initial snapshot is configured ({@code snapshot.enabled=true} and
+     * {@code snapshot.mode != never}), {@code lastPolledValues} is left empty so the first
+     * scans emit rows that already exist as INSERT events. Otherwise {@link
+     * #initializeLastPolledValues()} baselines at MAX(incremental column) and existing rows
+     * are skipped.
+     */
+    private void initializeSnapshotOrBaseline() throws SQLException {
+        if (shouldCaptureSnapshot()) {
+            snapshotPending.set(true);
+            snapshotRecordCount.set(0);
+            notifyEvent(listener -> listener.onSnapshotStarted(getName(), tables.size()));
+            log.info("Snapshot enabled (mode={}): existing rows of tables {} will be emitted as INSERT events",
+                    configuration.getSnapshotMode(), tables);
+        } else {
+            initializeLastPolledValues();
+        }
+    }
+
+    private boolean shouldCaptureSnapshot() {
+        if (!configuration.isSnapshotEnabled()) {
+            return false;
+        }
+        String mode = configuration.getSnapshotMode();
+        return mode == null || !"never".equalsIgnoreCase(mode.trim());
+    }
+
     private void initializeLastPolledValues() throws SQLException {
         try (Connection connection = dataSource.getConnection()) {
             for (String table : tables) {
@@ -213,6 +248,12 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
         } catch (SQLException e) {
             log.error("Error polling tables for changes", e);
             notifyEvent(listener -> listener.onConnectorError(getName(), e));
+            return;
+        }
+        if (snapshotPending.compareAndSet(true, false)) {
+            long records = snapshotRecordCount.getAndSet(0);
+            notifyEvent(listener -> listener.onSnapshotCompleted(getName(), records));
+            log.info("Snapshot completed for connector {}: {} records captured", getName(), records);
         }
     }
 
@@ -264,6 +305,9 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
 
                     setEventMetadata(changeEvent, table, currentValue);
                     eventQueue.offer(changeEvent);
+                    if (snapshotPending.get()) {
+                        snapshotRecordCount.incrementAndGet();
+                    }
                 }
 
                 if (newLastValue != null && !Objects.equals(newLastValue, lastValue)) {

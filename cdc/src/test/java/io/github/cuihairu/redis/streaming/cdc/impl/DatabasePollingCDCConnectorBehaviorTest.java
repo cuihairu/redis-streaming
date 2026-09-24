@@ -28,6 +28,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -193,6 +194,116 @@ class DatabasePollingCDCConnectorBehaviorTest {
         DatabasePollingCDCConnector c = new DatabasePollingCDCConnector(cfg);
         setField(c, "dataSource", ds);
         assertFalse(c.isDataSourceAvailable());
+    }
+
+    @Test
+    void snapshotEnabledArmsSnapshotInsteadOfBaseline() throws Exception {
+        CDCConfiguration cfg = CDCConfigurationBuilder.forDatabasePolling("polling")
+                .jdbcUrl("jdbc:noop")
+                .tables("db.t")
+                .property("snapshot.enabled", true)
+                .build();
+
+        DatabasePollingCDCConnector c = new DatabasePollingCDCConnector(cfg);
+        setField(c, "tables", List.of("db.t"));
+
+        CDCEventListener listener = mock(CDCEventListener.class);
+        c.setEventListener(listener);
+
+        invoke(c, "initializeSnapshotOrBaseline");
+
+        assertTrue(c.getLastPolledValues().isEmpty());
+        verify(listener).onSnapshotStarted("polling", 1);
+    }
+
+    @Test
+    void snapshotModeNeverSeedsBaselineEvenWhenEnabled() throws Exception {
+        CDCConfiguration cfg = CDCConfigurationBuilder.forDatabasePolling("polling")
+                .jdbcUrl("jdbc:noop")
+                .tables("db.t")
+                .property("snapshot.enabled", true)
+                .property("snapshot.mode", "never")
+                .build();
+
+        DataSource ds = mock(DataSource.class);
+        Connection conn = mock(Connection.class);
+        Statement stmt = mock(Statement.class);
+        ResultSet rsMax = mock(ResultSet.class);
+
+        when(ds.getConnection()).thenReturn(conn);
+        when(conn.createStatement()).thenReturn(stmt);
+        when(stmt.executeQuery("SELECT MAX(updated_at) FROM db.t")).thenReturn(rsMax);
+        when(rsMax.next()).thenReturn(true, false);
+        when(rsMax.getObject(1)).thenReturn(100L);
+
+        DatabasePollingCDCConnector c = new DatabasePollingCDCConnector(cfg);
+        setField(c, "dataSource", ds);
+        setField(c, "tables", List.of("db.t"));
+        setField(c, "timestampColumn", "updated_at");
+        setField(c, "incrementalColumn", null);
+        setField(c, "queryTimeoutSeconds", 5);
+
+        CDCEventListener listener = mock(CDCEventListener.class);
+        c.setEventListener(listener);
+
+        invoke(c, "initializeSnapshotOrBaseline");
+
+        assertEquals(100L, c.getLastPolledValues().get("db.t"));
+        verify(listener, never()).onSnapshotStarted(anyString(), anyInt());
+    }
+
+    @Test
+    void snapshotScanEmitsExistingRowsAndCompletes() throws Exception {
+        CDCConfiguration cfg = CDCConfigurationBuilder.forDatabasePolling("polling")
+                .jdbcUrl("jdbc:noop")
+                .tables("db.t")
+                .property("snapshot.enabled", true)
+                .build();
+
+        DataSource ds = mock(DataSource.class);
+        Connection conn = mock(Connection.class);
+        PreparedStatement ps = mock(PreparedStatement.class);
+        ResultSet rs = mock(ResultSet.class);
+        ResultSetMetaData md = mock(ResultSetMetaData.class);
+
+        when(ds.getConnection()).thenReturn(conn);
+        // Snapshot path: no WHERE clause, full scan of existing rows
+        String fullScanQuery = "SELECT * FROM db.t ORDER BY updated_at";
+        when(conn.prepareStatement(fullScanQuery)).thenReturn(ps);
+        when(ps.executeQuery()).thenReturn(rs);
+        when(rs.getMetaData()).thenReturn(md);
+        when(md.getColumnCount()).thenReturn(3);
+        when(md.getColumnLabel(1)).thenReturn("id");
+        when(md.getColumnLabel(2)).thenReturn("name");
+        when(md.getColumnLabel(3)).thenReturn("updated_at");
+
+        AtomicInteger rowIndex = new AtomicInteger(-1);
+        when(rs.next()).thenAnswer(inv -> rowIndex.incrementAndGet() < 1);
+        when(rs.getObject(anyInt())).thenAnswer(inv -> switch ((int) inv.getArgument(0)) {
+            case 1 -> 1;
+            case 2 -> "a";
+            case 3 -> 100L;
+            default -> null;
+        });
+        when(rs.getObject("updated_at")).thenReturn(100L);
+
+        DatabasePollingCDCConnector c = new DatabasePollingCDCConnector(cfg);
+        setField(c, "dataSource", ds);
+        setField(c, "tables", List.of("db.t"));
+        setField(c, "timestampColumn", "updated_at");
+        setField(c, "incrementalColumn", null);
+        setField(c, "queryTimeoutSeconds", 5);
+
+        CDCEventListener listener = mock(CDCEventListener.class);
+        c.setEventListener(listener);
+
+        invoke(c, "initializeSnapshotOrBaseline");
+        invoke(c, "pollTablesForChanges");
+
+        verify(listener).onSnapshotStarted("polling", 1);
+        verify(listener).onSnapshotCompleted("polling", 1);
+        // Baseline is now seeded from the scan, so later polls are incremental
+        assertEquals(100L, c.getLastPolledValues().get("db.t"));
     }
 
     private static void invoke(Object target, String methodName) throws Exception {

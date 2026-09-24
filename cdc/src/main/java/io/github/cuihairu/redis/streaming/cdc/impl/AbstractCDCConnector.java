@@ -217,7 +217,12 @@ public abstract class AbstractCDCConnector implements CDCConnector {
     protected abstract void doResetToPosition(String position) throws Exception;
 
     /**
-     * Start scheduled polling if enabled
+     * Start scheduled polling if enabled.
+     *
+     * <p>When {@code pollingIntervalMs > 0}, the background scheduler drains batches via
+     * {@link #poll()} and delivers the events to {@link CDCEventListener#onEvents}. Events
+     * captured by the scheduler are never dropped. External pull consumers must set
+     * {@code pollingIntervalMs = 0} so they do not compete with the scheduler for batches.
      */
     protected void startScheduledPolling() {
         long pollingIntervalMs = configuration.getPollingIntervalMs();
@@ -225,13 +230,18 @@ public abstract class AbstractCDCConnector implements CDCConnector {
             scheduler = Executors.newScheduledThreadPool(1);
             scheduler.scheduleWithFixedDelay(() -> {
                 try {
-                    poll();
+                    List<ChangeEvent> events = poll();
+                    if (events != null && !events.isEmpty()) {
+                        notifyEvent(listener -> listener.onEvents(getName(), events));
+                    }
                 } catch (Exception e) {
                     log.error("Error in scheduled polling for connector: {}", getName(), e);
                 }
             }, pollingIntervalMs, pollingIntervalMs, TimeUnit.MILLISECONDS);
 
-            log.info("Started scheduled polling for connector: {} with interval: {}ms", getName(), pollingIntervalMs);
+            log.info("Started scheduled polling for connector: {} with interval: {}ms"
+                            + " (captured events are delivered to the registered CDCEventListener)",
+                    getName(), pollingIntervalMs);
         }
     }
 

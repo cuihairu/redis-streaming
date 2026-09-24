@@ -344,6 +344,35 @@ class AbstractCDCConnectorTest {
         assertThat(connector.getMetrics().getTotalEventsCaptured()).isEqualTo(1);
     }
 
+    @Test
+    void scheduledPollingDeliversEventsToListenerInsteadOfDropping() throws Exception {
+        // Given
+        ChangeEvent event = new ChangeEvent(
+                ChangeEvent.EventType.INSERT,
+                "test-db",
+                "test-table",
+                Map.of("id", 1)
+        );
+        connector.addEventToReturn(event);
+        CountDownLatch delivered = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<List<ChangeEvent>> seen =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        doAnswer(inv -> {
+            seen.set(inv.getArgument(1));
+            delivered.countDown();
+            return null;
+        }).when(mockListener).onEvents(eq("test-connector"), any());
+
+        // When
+        connector.start().get(5, TimeUnit.SECONDS);
+
+        // Then: the scheduler-polled batch reaches the listener instead of vanishing
+        assertThat(delivered.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(seen.get()).containsExactly(event);
+        verify(mockListener, atLeastOnce()).onEventsCapture(eq("test-connector"), eq(1));
+        connector.stop().get(5, TimeUnit.SECONDS);
+    }
+
     /**
      * Test implementation of AbstractCDCConnector
      */
