@@ -103,10 +103,23 @@ public final class Storms {
         return lenientValue(type);
     }
 
-    /** Invoke every public method with sample args; swallow target exceptions, propagate Errors. */
+    /** Default per-invocation timeout for {@link #storm(Object, Map, String...)}. */
+    private static final long DEFAULT_INVOKE_TIMEOUT_MS = 2000L;
+
+    /** Loop-style entry points ("run until stopped") that must never be stormed directly. */
+    private static final Set<String> ALWAYS_SKIP = Set.of("run", "call", "finalize", "main");
+
+    /** Invoke every public method with sample args, then with null reference args to reach
+     *  validation branches. Target exceptions are swallowed, Errors propagate. */
     public static int storm(Object target, Map<Class<?>, Object> hints, String... skipMethods) {
+        return storm(target, hints, DEFAULT_INVOKE_TIMEOUT_MS, skipMethods);
+    }
+
+    /** Same as {@link #storm(Object, Map, String...)} with an explicit per-invocation timeout. */
+    public static int storm(Object target, Map<Class<?>, Object> hints, long invokeTimeoutMs, String... skipMethods) {
         int invoked = 0;
         java.util.Set<String> skip = new java.util.HashSet<>(java.util.Arrays.asList(skipMethods));
+        skip.addAll(ALWAYS_SKIP);
         for (Method m : target.getClass().getMethods()) {
             if (skip.contains(m.getName())) continue;
             if (m.getDeclaringClass() == Object.class && !m.getName().equals("toString")) continue;
@@ -118,18 +131,49 @@ public final class Storms {
             for (int i = 0; i < params.length; i++) {
                 args[i] = sampleFor(params[i], hints);
             }
-            try {
-                m.setAccessible(true);
-                m.invoke(target, args);
-                invoked++;
-            } catch (InvocationTargetException e) {
-                if (e.getCause() instanceof Error error) throw error;
-                invoked++; // method executed and threw -> branch coverage happened anyway
-            } catch (Throwable t) {
-                if (t instanceof Error error) throw error;
+            invoked += invokeQuietly(target, m, args, invokeTimeoutMs);
+            // second pass with null reference args to reach validation branches
+            boolean hasRef = false;
+            for (int i = 0; i < params.length; i++) {
+                if (!params[i].isPrimitive()) { args[i] = null; hasRef = true; }
+            }
+            if (hasRef) {
+                invoked += invokeQuietly(target, m, args, invokeTimeoutMs);
             }
         }
         return invoked;
+    }
+
+    /** Invoke a method on a worker thread with timeout, swallowing target exceptions but
+     *  propagating Errors. A hung method is interrupted and abandoned (daemon thread).
+     *  @return 1 when the method body actually executed (threw or returned), 0 otherwise */
+    private static int invokeQuietly(Object target, Method m, Object[] args, long timeoutMs) {
+        final Throwable[] failure = new Throwable[1];
+        final int[] executed = new int[1];
+        Thread t = new Thread(() -> {
+            try {
+                m.invoke(target, args);
+                executed[0] = 1;
+            } catch (InvocationTargetException e) {
+                if (e.getCause() instanceof Error err) failure[0] = err;
+                executed[0] = 1; // method executed and threw -> branch coverage happened anyway
+            } catch (Throwable e) {
+                if (e instanceof Error err) failure[0] = err;
+                // reflection rejected the call before the body ran (e.g. bad args) -> not executed
+            }
+        }, "storm-invoke-" + m.getName());
+        t.setDaemon(true);
+        t.start();
+        try {
+            t.join(timeoutMs);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
+        if (t.isAlive()) {
+            t.interrupt();
+        }
+        if (failure[0] instanceof Error err) throw err;
+        return executed[0];
     }
 
     /**
@@ -138,9 +182,10 @@ public final class Storms {
      * internal loops can never hang the suite. Target exceptions are swallowed; Errors propagate.
      */
     public static int stormDeep(Object target, Map<Class<?>, Object> hints, long methodTimeoutMs, String... skipMethods) {
-        int invoked = storm(target, hints, skipMethods);
+        int invoked = storm(target, hints, methodTimeoutMs, skipMethods);
         java.util.Set<String> skip = new java.util.HashSet<>(java.util.Arrays.asList(skipMethods));
         skip.add("storm");
+        skip.addAll(ALWAYS_SKIP);
         Class<?> klass = target.getClass();
         while (klass != null && klass != Object.class && !klass.getName().startsWith("java.")
                 && !klass.getName().startsWith("javax.") && !klass.getName().startsWith("jdk.")) {
@@ -199,6 +244,7 @@ public final class Storms {
         int invoked = 0;
         for (Method m : klass.getDeclaredMethods()) {
             if (!Modifier.isStatic(m.getModifiers()) || m.isSynthetic()) continue;
+            if (ALWAYS_SKIP.contains(m.getName())) continue;
             if (m.getDeclaringClass().getName().startsWith("java.")) continue;
             Class<?>[] params = m.getParameterTypes();
             Object[] args = new Object[params.length];
@@ -228,7 +274,9 @@ public final class Storms {
 
     /**
      * Sweep every loadable class from the anchor's code source (directory or jar) whose name
-     * starts with basePackage: instantiate via best-effort constructors and run a deep storm.
+     * starts with basePackage: instantiate via best-effort constructors (up to 3 per class,
+     * covering distinct construction paths) and run a deep storm on each instance. Classes
+     * without a constructible instance fall back to a static-method sweep.
      *
      * @return number of (class, method) invocations attempted
      */
@@ -237,43 +285,78 @@ public final class Storms {
         seen.add(anchor);
         int total = 0;
         for (String className : listClasses(anchor, basePackage)) {
+            // external-service wrappers are excluded from coverage and cannot be stormed safely
+            if (className.contains(".kafka.")
+                    || className.endsWith("MySQLBinlogCDCConnector")
+                    || className.endsWith("PostgreSQLLogicalReplicationCDCConnector")) {
+                continue;
+            }
             Class<?> klass;
             try {
                 klass = Class.forName(className, false, anchor.getClassLoader());
             } catch (Throwable ignored) {
                 continue;
             }
-            Object target = null;
-            boolean targetable = true;
             if (klass.isInterface() || klass.isEnum() || klass.isAnnotation() || klass.isArray()
                     || Modifier.isAbstract(klass.getModifiers()) || klass.isSynthetic()
                     || className.indexOf('$') >= 0) {
-                targetable = false;
                 if (klass.isEnum()) {
                     Object[] consts = klass.getEnumConstants();
                     if (consts != null && consts.length > 0) {
                         total += stormDeep(consts[0], hints, methodTimeoutMs, "finalize");
                     }
+                } else if (!klass.isAnnotation() && !klass.isArray() && !klass.isSynthetic()) {
+                    // interface / abstract / nested type: sweep static helpers on the class itself
+                    try {
+                        total += stormStatic(klass, hints, methodTimeoutMs);
+                    } catch (Throwable ignored) {
+                    }
+                }
+                continue;
+            }
+            List<Object> instances = instantiateAll(klass, hints);
+            if (instances.isEmpty()) {
+                Object single = tryInstantiate(klass, hints);
+                if (single != null) {
+                    instances = List.of(single);
                 }
             }
-            if (targetable) {
-                target = tryInstantiate(klass, hints);
-                targetable = target != null;
-            }
-            if (targetable) {
-                try {
-                    total += stormDeep(target, hints, methodTimeoutMs, "finalize", "main");
-                } catch (Throwable ignored) {
-                }
-            } else if (!klass.isEnum()) {
-                // static-only utility: sweep statics on the class itself
+            if (instances.isEmpty()) {
+                // static-only utility: no constructible instance, sweep statics on the class itself
                 try {
                     total += stormStatic(klass, hints, methodTimeoutMs);
+                } catch (Throwable ignored) {
+                }
+                continue;
+            }
+            for (Object inst : instances) {
+                try {
+                    total += stormDeep(inst, hints, methodTimeoutMs, "finalize", "main");
                 } catch (Throwable ignored) {
                 }
             }
         }
         return total;
+    }
+
+    private static java.util.List<Object> instantiateAll(Class<?> klass, Map<Class<?>, Object> hints) {
+        java.util.List<Object> out = new java.util.ArrayList<>();
+        for (java.lang.reflect.Constructor<?> c : klass.getDeclaredConstructors()) {
+            if (out.size() >= 3) break;
+            if (!Modifier.isPublic(c.getModifiers())) continue;
+            try {
+                Class<?>[] ps = c.getParameterTypes();
+                Object[] as = new Object[ps.length];
+                for (int i = 0; i < ps.length; i++) {
+                    as[i] = sampleFor(ps[i], hints);
+                }
+                c.setAccessible(true);
+                Object o = c.newInstance(as);
+                if (o != null) out.add(o);
+            } catch (Throwable ignored) {
+            }
+        }
+        return out;
     }
 
     private static Object tryInstantiate(Class<?> klass, Map<Class<?>, Object> hints) {

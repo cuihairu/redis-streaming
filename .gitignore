@@ -89,3 +89,13 @@ docs/.vuepress/dist/
 
 # Eclipse default output
 /*/bin/
+
+# Test storm harness side-effect files (sample values used as file names by FileSink etc.)
+/storm
+/*/storm
+/null
+/*/null
+/lenient-proxy
+/*/lenient-proxy
+/exploding-proxy
+/*/exploding-proxy

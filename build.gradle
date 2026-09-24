@@ -87,9 +87,16 @@ subprojects {
 
     // Configure source sets for integration tests
     sourceSets {
+        // Shared test helpers (single copy of the reflection storm harness for all modules)
+        test {
+            java {
+                srcDir rootProject.file('test-support/src')
+            }
+        }
         integrationTest {
             java {
                 srcDir 'src/test/java'
+                srcDir rootProject.file('test-support/src')
             }
             resources {
                 srcDir 'src/test/resources'
