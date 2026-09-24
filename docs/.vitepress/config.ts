@@ -25,6 +25,9 @@ export default withMermaid(
 
   themeConfig: {
     repo: 'cuihairu/redis-streaming',
+    socialLinks: [
+      { icon: 'github', link: 'https://github.com/cuihairu/redis-streaming' },
+    ],
 
     nav: [
       { text: '首页', link: '/' },
