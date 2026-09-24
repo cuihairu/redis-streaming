@@ -494,8 +494,8 @@ void testRedisIntegration() {
 
 ## 成功标准
 
-- [ ] 总体指令覆盖率 ≥ 70%
-- [ ] 总体分支覆盖率 ≥ 60%
+- [x] 总体指令覆盖率 ≥ 98%（2026-09-24 实测 **99.210%**，60496/60978 指令，missed 482；JaCoCo 门槛冻结于 0.99）
+- [x] 总体分支覆盖率 ≥ 60%（实测 **90.88%**，4675/5144 分支）
 - [ ] 所有核心包（mq, registry, cdc）覆盖率 ≥ 70%
 - [ ] 所有关键业务类覆盖率 ≥ 80%
 - [ ] CI/CD 集成测试通过率 100%
@@ -512,7 +512,9 @@ void testRedisIntegration() {
 # 架构评审重构进度与遗留待办
 
 > 记录时间:2026-09-19。全仓设计评审(四路并行分析 core/runtime、mq/registry/config、功能模块层、工程化)后的修复轮。
-> 验证:`./gradlew clean check`(全部单测 + `@Tag("integration")` 集成测试 + JaCoCo 门槛)在 Redis 6.2 / JDK 21 / Gradle 8.5 下全绿。**本轮变更尚未 git commit,全部在工作区。**
+> 验证:`./gradlew clean check`(全部单测 + `@Tag("integration")` 集成测试 + JaCoCo 门槛)在 Redis 6.2 / JDK 21 / Gradle 8.5 下全绿。**该轮变更已全部 git commit(至 a841acf)。**
+> 2026-09-20 追加修复:C.5 CDC 调度丢事件/快照语义、Storms 测试工具去重(20 份副本→test-support 共享)与 invoked 统计修复、docs mermaid 经 vitepress-plugin-mermaid 正确接线、清理误入库的 sink/storm 垃圾文件。
+> 2026-09-24 覆盖率收口:指令 99.210%(60496/60978,missed 482)/分支 90.88%;门槛 minimum=0.99(实测水位),`./gradlew clean check` 全绿。**JaCoCo 排除项逐条记录**:本轮无新增排除——残余 482 条多为不可达防御 catch/死分支,全部位于含可执行代码的类内,按口径不整类排除;既有排除为 `**/kafka/**`(外部服务包装类)、`MySQLBinlogCDCConnector*`/`PostgreSQLLogicalReplicationCDCConnector*`(需真实 binlog/逻辑复制环境,无法本地确定性测试)。
 
 ## 已完成(本轮)
 
@@ -526,7 +528,7 @@ void testRedisIntegration() {
 - [x] **P2 名实相符**:`sink.redis.RedisStreamSink` 改为真 XADD(`RStream`+`StreamAddArgs`)并实现 core `StreamSink`;原 List 语义拆为 `RedisListSink implements StreamSink`(该类全仓无其它引用,破坏面为零)
 - [x] **P2 CDC 接入主 API**:新增 `cdc.CDCSource implements StreamSource<ChangeEvent>`(有界排空:连续 N 次空 poll 即返回,兼容拉式引擎),含 3 个单测
 - [x] **P2 registry 分叉消除**:`registry.BaseRedisConfig` 改为继承 `config.BaseRedisConfig`(registry 对 config 升为 implementation);`MessagingProtocol` 删除无实现的 Kafka/Pulsar/RabbitMQ/NATS/MQTT 常量,仅保留 Redis 系协议并加防回归测试;删除 `MessageQueueFactory` 对遗留 `RedisMessageProducer` 的死 import(保留该类以兼容公开 API)
-- [x] **P3 JaCoCo 文档对齐**:AGENTS.md/CLAUDE.md 声明现实门槛为 25% 聚合,80%/70% 标注为 aspirational
+- [x] **P3 JaCoCo 文档对齐**:AGENTS.md/CLAUDE.md 声明现实门槛为 25% 聚合,80%/70% 标注为 aspirational(后门槛已上调至 70%,见 build.gradle `jacocoRootCoverageVerification`)
 - [x] **executeAsync 拆分**(400 行→~125 行):`ENSURE_GROUP_LUA` 常量、`createMessageHandler`、`optionsForSubtask`、匿名 JobClient→命名内部类 `LaunchedJobClient`、关停序列收敛为 `stopConsumersQuietly/closeRunnersQuietly/shutdownExecutorQuietly`;并规范 80 行遗留 tab 缩进
 
 ## 遗留待办(大型专项,建议单独立项)
@@ -552,9 +554,9 @@ void testRedisIntegration() {
 - [ ] `metrics` 模块与 `RedisRuntimeMetrics`/`CDCMetrics`/`MqMetrics` 四套体系统一
 - [ ] `reliability` 与 mq 的 DLQ/重试、runtime 幂等 sink 的去重职责划界
 
-### C.5 CDC 拉取模型陷阱(新发现,建议尽快修)
-- [ ] `AbstractCDCConnector.startScheduledPolling`:当 `pollingIntervalMs>0`(默认 1000ms)时后台调度器周期调用 `poll()` 并**丢弃取回的事件**,与外部拉取消费者竞争队列(几乎必然抢空)。修复方向:调度器只做"填充"(scan-only)或将事件交付 listener(需在 CDCEventListener 上增加带事件的 default 回调)。当前测试以 pollingIntervalMs=0 规避。
-- [ ] 连接器启动时 `initializeLastPolledValues` 会跳过存量行(无初始快照捕获)——与 `snapshot.mode` 命名语义不符,文档与实现需对齐。
+### C.5 CDC 拉取模型陷阱(已修复 2026-09-20)
+- [x] `AbstractCDCConnector.startScheduledPolling` 原先周期调用 `poll()` 并**丢弃取回的事件**,与外部拉取消费者竞争队列。已修复:调度器把批次交付给 `CDCEventListener.onEvents(connectorName, events)`(新增 default 回调),事件不再丢失;拉取消费者应设 `pollingIntervalMs=0`。含测试 `AbstractCDCConnectorTest.scheduledPollingDeliversEventsToListenerInsteadOfDropping`。
+- [x] `DatabasePollingCDCConnector.initializeLastPolledValues` 跳过存量行问题已与 `snapshot.enabled`/`snapshot.mode` 语义对齐:`snapshot.enabled=true` 且 mode≠never 时启动捕获存量行为 INSERT 事件(`onSnapshotStarted`/`onSnapshotCompleted`),否则基线取 MAX 跳过存量(默认,已文档化)。含 3 个行为测试;见 docs/CDC.md「Polling 语义」。
 
 ### D. registry 瘦身(破坏公开 API,建议放到 1.0 周期)
 - [ ] `metrics/` APM 采集 14 类(与 metrics 模块重叠)、`client/` RPC 调用端(与 reliability 重叠)、`WebSocketHealthChecker`(实为裸 TCP,等价 TcpHealthChecker)、四套同义接口(Registry/Provider、Discovery/Consumer)与 `RedisNamingService` 纯委托门面
@@ -563,6 +565,6 @@ void testRedisIntegration() {
 ### E. 其他
 - [x] examples 新增 `springboot.StarterExampleApplication` + 注释版 `application.yml`(registry/discovery/config/mq/ratelimit 全键样例)。**首次真实启动 starter 暴露并修复 4 个潜伏 bug**:logback 1.5.13 与 Spring Boot 3.2 不兼容(`LoggerContext.getConfigurationLock` 移除,降到 1.4.14)、默认空密码仍发送 AUTH 导致连接失败(改为仅非空才 set)、`MqHealthIndicator` bean 在无 actuator 时使配置类内省失败(下沉到类级 `@ConditionalOnClass` 嵌套配置)、5 个 micrometer collector/installer bean 缺 `@ConditionalOnBean(MeterRegistry/collector)` 守卫。示例已在本地 Redis 端到端跑通(注册/配置/MQ 全通)
 - [x] `StreamSource` 生命周期与 StreamSink 对称补齐:`open()/close()` 默认方法,InMemory 引擎 addSource 已接线(source.open → run → finally close)
-- [ ] `SourceContext.getCheckpointLock` 真实接入(两引擎均返回无锁对象;需与检查点屏障协议一并设计)
+- [ ] `SourceContext.getCheckpointLock` 真实接入(in-memory 引擎返回的 `new Object()` 无任何 `synchronized` 使用者;Redis 引擎尚无 SourceContext 调用路径。需与检查点屏障协议一并设计)
 - [ ] 发布说明记录 Redisson 4.7.0 升级与 API 迁移(README/docs 已同步版本号)
 - [ ] 覆盖率:延续上文"优先级 1-4"清单;JaCoCo 聚合门槛上调尝试见提交历史(下一档视实测覆盖而定)
