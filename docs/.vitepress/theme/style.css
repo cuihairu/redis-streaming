@@ -1,0 +1,376 @@
+/* ============================================================
+   BigWorld-Inspired Warm Forest / Clay Theme for VitePress
+   ============================================================ */
+
+/* ---------- Custom Properties (Light) ---------- */
+:root {
+  /* BigWorld brand palette */
+  --bw-clay: #7a4e20;
+  --bw-clay-light: #9a6e3a;
+  --bw-forest: #284331;
+  --bw-forest-light: #3a5f45;
+  --bw-moss: #6f7f49;
+  --bw-moss-light: #8a9a60;
+  --bw-paper: #fff9eb;
+  --bw-paper-warm: #fef6e4;
+  --bw-amber: #b8860b;
+  --bw-amber-glow: rgba(184, 134, 11, 0.08);
+  --bw-sand: #e8dcc8;
+  --bw-bark: #5c4033;
+
+  /* VitePress overrides */
+  --vp-c-brand-1: var(--bw-clay);
+  --vp-c-brand-2: var(--bw-clay-light);
+  --vp-c-brand-3: var(--bw-forest);
+  --vp-c-brand-soft: rgba(122, 78, 32, 0.14);
+
+  --vp-c-bg: var(--bw-paper);
+  --vp-c-bg-alt: var(--bw-paper-warm);
+  --vp-c-bg-soft: #f5edd6;
+
+  --vp-sidebar-bg-color: #faf3e6;
+  --vp-sidebar-border-color: var(--bw-sand);
+
+  --vp-c-text-1: #2c2416;
+  --vp-c-text-2: #5a4d3e;
+  --vp-c-text-3: #8a7d6e;
+
+  --vp-nav-bg-color: rgba(255, 249, 235, 0.92);
+
+  --vp-c-divider: rgba(122, 78, 32, 0.12);
+
+  /* Hero & accent */
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(135deg, var(--bw-clay), var(--bw-forest));
+  --vp-home-hero-image-background-image: radial-gradient(
+    circle at 50% 40%,
+    rgba(111, 127, 73, 0.18),
+    rgba(40, 67, 49, 0.08) 60%,
+    transparent 100%
+  );
+
+  /* Custom component tokens */
+  --arch-hero-bg: linear-gradient(135deg, var(--bw-forest) 0%, var(--bw-clay) 100%);
+  --decision-grid-bg: var(--bw-paper-warm);
+  --topology-card-border: var(--bw-moss);
+}
+
+/* ---------- Dark Mode ---------- */
+.dark {
+  --vp-c-bg: #1a1612;
+  --vp-c-bg-alt: #221e18;
+  --vp-c-bg-soft: #2a2520;
+
+  --vp-sidebar-bg-color: #1e1a14;
+  --vp-sidebar-border-color: #3a3530;
+
+  --vp-c-text-1: #e8dcc8;
+  --vp-c-text-2: #c4b8a4;
+  --vp-c-text-3: #8a7d6e;
+
+  --vp-nav-bg-color: rgba(26, 22, 18, 0.95);
+  --vp-c-divider: rgba(122, 78, 32, 0.2);
+
+  --vp-c-brand-1: var(--bw-clay-light);
+  --vp-c-brand-2: var(--bw-amber);
+  --vp-c-brand-3: var(--bw-moss-light);
+  --vp-c-brand-soft: rgba(154, 110, 58, 0.16);
+
+  --vp-home-hero-name-background: linear-gradient(135deg, var(--bw-clay-light), var(--bw-moss-light));
+  --vp-home-hero-image-background-image: radial-gradient(
+    circle at 50% 40%,
+    rgba(111, 127, 73, 0.12),
+    rgba(122, 78, 32, 0.06) 60%,
+    transparent 100%
+  );
+}
+
+/* ---------- Typography ---------- */
+:root {
+  --vp-font-family-base: 'Noto Serif SC', 'Source Han Serif SC', 'Georgia',
+    'Times New Roman', serif;
+  --vp-font-family-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code',
+    Menlo, Monaco, Consolas, monospace;
+}
+
+/* ---------- Global Overrides ---------- */
+.vp-doc h1,
+.vp-doc h2,
+.vp-doc h3 {
+  color: var(--bw-forest);
+  border-bottom-color: var(--bw-sand);
+  font-weight: 700;
+}
+
+.dark .vp-doc h1,
+.dark .vp-doc h2,
+.dark .vp-doc h3 {
+  color: var(--bw-moss-light);
+  border-bottom-color: #3a3530;
+}
+
+.vp-doc a {
+  color: var(--bw-clay);
+  text-decoration-color: rgba(122, 78, 32, 0.3);
+  transition: color 0.2s, text-decoration-color 0.2s;
+}
+
+.vp-doc a:hover {
+  color: var(--bw-clay-light);
+  text-decoration-color: var(--bw-clay);
+}
+
+/* Code blocks */
+:root {
+  --vp-code-block-bg: #f8f2e4;
+  --vp-code-block-divider-color: rgba(122, 78, 32, 0.1);
+}
+
+.dark {
+  --vp-code-block-bg: #1e1a14;
+  --vp-code-block-divider-color: rgba(122, 78, 32, 0.15);
+}
+
+/* Inline code */
+.vp-doc :not(pre) > code {
+  background: var(--bw-amber-glow);
+  color: var(--bw-clay);
+  border: 1px solid rgba(122, 78, 32, 0.1);
+  font-weight: 500;
+}
+
+.dark .vp-doc :not(pre) > code {
+  background: rgba(184, 134, 11, 0.12);
+  color: var(--bw-clay-light);
+  border-color: rgba(154, 110, 58, 0.2);
+}
+
+/* Blockquote */
+.vp-doc blockquote {
+  border-left-color: var(--bw-moss);
+  background: linear-gradient(135deg, rgba(111, 127, 73, 0.06), rgba(122, 78, 32, 0.04));
+  border-radius: 0 8px 8px 0;
+}
+
+.dark .vp-doc blockquote {
+  background: linear-gradient(135deg, rgba(111, 127, 73, 0.08), rgba(122, 78, 32, 0.05));
+}
+
+/* Tip / Warning / Danger containers */
+.vp-doc .custom-block.tip {
+  border-color: var(--bw-moss);
+  background: rgba(111, 127, 73, 0.06);
+}
+
+.vp-doc .custom-block.warning {
+  border-color: var(--bw-amber);
+  background: rgba(184, 134, 11, 0.06);
+}
+
+.vp-doc .custom-block.danger {
+  border-color: #b85450;
+  background: rgba(184, 84, 80, 0.06);
+}
+
+/* ---------- Sidebar ---------- */
+.VPSidebar .group .title {
+  font-weight: 600;
+  color: var(--bw-forest);
+}
+
+.dark .VPSidebar .group .title {
+  color: var(--bw-moss-light);
+}
+
+.VPSidebarItem.is-active > .item > .indicator {
+  background-color: var(--bw-clay);
+}
+
+/* ---------- Navigation ---------- */
+.VPNav .title {
+  font-weight: 700;
+  color: var(--bw-clay);
+}
+
+.VPNavBar .VPNavBarTitle .title-text {
+  color: var(--bw-clay);
+}
+
+/* ---------- Table ---------- */
+.vp-doc table {
+  border-color: var(--bw-sand);
+}
+
+.vp-doc th {
+  background: var(--bw-paper-warm);
+  border-color: var(--bw-sand);
+  color: var(--bw-forest);
+  font-weight: 600;
+}
+
+.dark .vp-doc th {
+  background: #2a2520;
+  border-color: #3a3530;
+  color: var(--bw-moss-light);
+}
+
+.vp-doc td {
+  border-color: var(--bw-sand);
+}
+
+/* ---------- Custom Components ---------- */
+
+/* Architecture Hero Banner */
+.arch-hero {
+  background: var(--arch-hero-bg);
+  border-radius: 16px;
+  padding: 3rem 2.5rem;
+  color: #fff;
+  text-align: center;
+  margin: 2rem 0;
+  box-shadow: 0 8px 32px rgba(40, 67, 49, 0.2);
+  position: relative;
+  overflow: hidden;
+}
+
+.arch-hero::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(
+    circle at 30% 40%,
+    rgba(255, 255, 255, 0.08) 0%,
+    transparent 50%
+  );
+  pointer-events: none;
+}
+
+.arch-hero h2 {
+  color: #fff !important;
+  font-size: 1.8rem;
+  margin-bottom: 0.8rem;
+  position: relative;
+}
+
+.arch-hero p {
+  opacity: 0.9;
+  font-size: 1.1rem;
+  position: relative;
+}
+
+/* Decision Grid */
+.decision-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1.25rem;
+  margin: 1.5rem 0;
+}
+
+.decision-grid > div {
+  background: var(--decision-grid-bg);
+  border: 1px solid var(--bw-sand);
+  border-radius: 12px;
+  padding: 1.5rem;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.decision-grid > div:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(122, 78, 32, 0.12);
+}
+
+.decision-grid h4 {
+  color: var(--bw-forest);
+  margin-bottom: 0.5rem;
+}
+
+.dark .decision-grid > div {
+  background: #2a2520;
+  border-color: #3a3530;
+}
+
+.dark .decision-grid h4 {
+  color: var(--bw-moss-light);
+}
+
+/* Topology Card */
+.topology-card {
+  border: 2px solid var(--topology-card-border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin: 1rem 0;
+  background: var(--bw-paper-warm);
+  position: relative;
+}
+
+.topology-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, var(--bw-forest), var(--bw-moss), var(--bw-clay));
+  border-radius: 12px 12px 0 0;
+}
+
+.dark .topology-card {
+  background: #2a2520;
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 768px) {
+  .arch-hero {
+    padding: 2rem 1.5rem;
+    border-radius: 12px;
+  }
+
+  .arch-hero h2 {
+    font-size: 1.4rem;
+  }
+
+  .decision-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- Scrollbar ---------- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bw-paper);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bw-sand);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--bw-clay-light);
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: #1a1612;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #3a3530;
+}
+
+/* ---------- Selection ---------- */
+::selection {
+  background: rgba(122, 78, 32, 0.2);
+  color: var(--bw-forest);
+}
+
+.dark ::selection {
+  background: rgba(154, 110, 58, 0.3);
+  color: #e8dcc8;
+}

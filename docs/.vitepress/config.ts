@@ -1,22 +1,19 @@
 import { defineConfig } from 'vitepress'
+import { withMermaid } from 'vitepress-plugin-mermaid'
 
 const base =
   process.env.DOCS_BASE ??
   (process.env.GITHUB_REPOSITORY ? `/${process.env.GITHUB_REPOSITORY.split('/')[1]}/` : '/')
 
-export default defineConfig({
-  lang: 'zh-CN',
-  title: 'Redis Streaming',
-  description: '基于 Redis 的流处理框架',
-  base,
+export default withMermaid(
+  defineConfig({
+    lang: 'zh-CN',
+    title: 'Redis Streaming',
+    description: '基于 Redis 的流处理框架',
+    base,
 
-  // 忽略死链接检查（链接大小写敏感问题）
-  ignoreDeadLinks: true,
-
-  // Mermaid 支持
-  markdown: {
-    mermaid: true
-  },
+    // 忽略死链接检查（链接大小写敏感问题）
+    ignoreDeadLinks: true,
 
   themeConfig: {
     repo: 'cuihairu/redis-streaming',
@@ -147,4 +144,5 @@ export default defineConfig({
       ],
     }
   }
-})
+  })
+)
