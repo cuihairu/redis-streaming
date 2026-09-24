@@ -373,6 +373,34 @@ class AbstractCDCConnectorTest {
         connector.stop().get(5, TimeUnit.SECONDS);
     }
 
+    @Test
+    void scheduledPollingWithoutListenerLeavesEventsForPull() throws Exception {
+        // Given: a connector with scheduled push polling but NO listener registered
+        CDCConfiguration cfg = CDCConfigurationBuilder.forDatabasePolling("test-no-listener")
+                .jdbcUrl("jdbc:h2:mem:test")
+                .username("sa")
+                .password("")
+                .pollingIntervalMs(100)
+                .build();
+        TestCDCConnector silent = new TestCDCConnector(cfg);
+        ChangeEvent event = new ChangeEvent(
+                ChangeEvent.EventType.INSERT,
+                "test-db",
+                "test-table",
+                Map.of("id", 1)
+        );
+        silent.addEventToReturn(event);
+
+        // When: the scheduler runs several ticks while nobody listens
+        silent.start().get(5, TimeUnit.SECONDS);
+        Thread.sleep(450);
+
+        // Then: pull consumers still get the events (the scheduler must not drain and drop them)
+        List<ChangeEvent> events = silent.poll();
+        assertThat(events).containsExactly(event);
+        silent.stop().get(5, TimeUnit.SECONDS);
+    }
+
     /**
      * Test implementation of AbstractCDCConnector
      */

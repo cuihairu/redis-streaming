@@ -98,10 +98,9 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
         if (dataSource instanceof HikariDataSource) {
             ((HikariDataSource) dataSource).close();
         }
-        eventQueue.clear();
-        lastPolledValues.clear();
-        snapshotPending.set(false);
-        snapshotRecordCount.set(0);
+        // Keep eventQueue and lastPolledValues across stop/start: undelivered events survive a
+        // graceful restart and the polling position is not re-baselined at MAX (which silently
+        // skipped everything scanned-but-not-delivered plus everything inserted while stopped).
     }
 
     @Override
@@ -194,6 +193,12 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
      * are skipped.
      */
     private void initializeSnapshotOrBaseline() throws SQLException {
+        if (!lastPolledValues.isEmpty()) {
+            // Restart of the same instance: resume from the preserved polling positions instead
+            // of re-baselining at MAX(col), which skipped rows the previous run never delivered.
+            log.info("Resuming polling positions for tables {}: {}", lastPolledValues.keySet(), lastPolledValues);
+            return;
+        }
         if (shouldCaptureSnapshot()) {
             snapshotPending.set(true);
             snapshotRecordCount.set(0);

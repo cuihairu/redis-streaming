@@ -1,10 +1,11 @@
 package io.github.cuihairu.redis.streaming.cdc;
 
 import io.github.cuihairu.redis.streaming.api.stream.StreamSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Objects;
-
 /**
  * Adapter that bridges a {@link CDCConnector} into the streaming API as a {@link StreamSource}.
  *
@@ -17,6 +18,7 @@ import java.util.Objects;
 public class CDCSource implements StreamSource<ChangeEvent> {
 
     private static final long serialVersionUID = 1L;
+    private static final Logger log = LoggerFactory.getLogger(CDCSource.class);
 
     private final CDCConnector connector;
     private final long pollIntervalMs;
@@ -41,6 +43,15 @@ public class CDCSource implements StreamSource<ChangeEvent> {
         }
         this.pollIntervalMs = pollIntervalMs;
         this.maxIdlePolls = maxIdlePolls;
+        try {
+            CDCConfiguration cfg = connector.getConfiguration();
+            if (cfg != null && cfg.getPollingIntervalMs() > 0) {
+                log.warn("connector {} has pollingIntervalMs={} (scheduled push polling enabled); "
+                                + "pull consumers race the scheduler for batches - set pollingIntervalMs=0",
+                        connector.getName(), cfg.getPollingIntervalMs());
+            }
+        } catch (Exception ignore) {
+        }
     }
 
     @Override

@@ -230,6 +230,11 @@ public abstract class AbstractCDCConnector implements CDCConnector {
             scheduler = Executors.newScheduledThreadPool(1);
             scheduler.scheduleWithFixedDelay(() -> {
                 try {
+                    if (eventListener == null) {
+                        // No push subscriber: leave the events for pull consumers (poll()) instead
+                        // of draining and silently dropping them.
+                        return;
+                    }
                     List<ChangeEvent> events = poll();
                     if (events != null && !events.isEmpty()) {
                         notifyEvent(listener -> listener.onEvents(getName(), events));
