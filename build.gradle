@@ -114,6 +114,11 @@ subprojects {
         integrationTestAnnotationProcessor.extendsFrom testAnnotationProcessor
     }
 
+    // Suite size grew (storm sweeps + mock-heavy coverage tests); the 512m default OOMs in :mq:test.
+    tasks.withType(Test).configureEach {
+        maxHeapSize = '1536m'
+    }
+
     // Unit tests: exclude integration tests
     tasks.named('test') {
         useJUnitPlatform {
