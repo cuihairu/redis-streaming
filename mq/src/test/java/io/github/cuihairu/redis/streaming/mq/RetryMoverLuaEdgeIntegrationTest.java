@@ -53,10 +53,14 @@ public class RetryMoverLuaEdgeIntegrationTest {
                 item.put("maxRetries", "3");
                 RScoredSortedSet<String> z = client.getScoredSortedSet(bucketKey, StringCodec.INSTANCE);
                 z.add((double) System.currentTimeMillis(), itemKey);
-                // Wait for the periodic mover (runs every 1s) to pick this up.
+                // Wait (bounded) for the periodic mover (runs every 1s) to pick this up.
                 // The initial run may have occurred before this item was enqueued,
-                // so give it a full interval plus a little buffer for scheduling.
-                Thread.sleep(1200);
+                // so poll for a few intervals instead of a single fixed sleep.
+                long deadline = System.currentTimeMillis() + 5_000;
+                while (client.getMap(itemKey, StringCodec.INSTANCE).isExists()
+                        && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(100);
+                }
                 // item should be removed from ZSET and hash deleted
                 assertFalse(client.getMap(itemKey, StringCodec.INSTANCE).isExists());
             }
@@ -73,8 +77,12 @@ public class RetryMoverLuaEdgeIntegrationTest {
                 item.put("maxRetries", "3");
                 RScoredSortedSet<String> z = client.getScoredSortedSet(bucketKey, StringCodec.INSTANCE);
                 z.add((double) System.currentTimeMillis(), itemKey);
-                // wait for mover run
-                Thread.sleep(1200);
+                // wait (bounded) for mover run
+                long deadline = System.currentTimeMillis() + 5_000;
+                while (client.getMap(itemKey, StringCodec.INSTANCE).isExists()
+                        && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(100);
+                }
                 // bucket entry should be gone
                 assertFalse(client.getMap(itemKey, StringCodec.INSTANCE).isExists());
                 // original stream should receive an entry on partition 0
