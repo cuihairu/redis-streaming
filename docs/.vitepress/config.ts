@@ -15,6 +15,14 @@ export default withMermaid(
     // 忽略死链接检查（链接大小写敏感问题）
     ignoreDeadLinks: true,
 
+    // mermaid 11 用到的解构语法无法降级到 VitePress 默认的旧浏览器目标，
+    // 显式抬到 es2022（mermaid 11 本身要求现代浏览器）
+    vite: {
+      build: {
+        target: 'es2022',
+      },
+    },
+
   themeConfig: {
     repo: 'cuihairu/redis-streaming',
 
