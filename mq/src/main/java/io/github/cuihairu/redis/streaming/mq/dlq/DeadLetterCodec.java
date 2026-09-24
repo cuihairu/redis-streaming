@@ -22,6 +22,7 @@ final class DeadLetterCodec {
         if (r.headers != null && !r.headers.isEmpty()) m.put("headers", r.headers);
         if (r.originalMessageId != null) m.put("originalMessageId", r.originalMessageId);
         m.put("maxRetries", r.maxRetries);
+        m.values().removeIf(java.util.Objects::isNull);
         return m;
     }
 
@@ -38,6 +39,7 @@ final class DeadLetterCodec {
         data.put("partitionId", partitionId);
         Object key = dlq.get("key"); if (key != null) data.put("key", key);
         Object hdr = dlq.get("headers"); if (hdr != null) data.put("headers", hdr);
+        data.values().removeIf(java.util.Objects::isNull);
         return data;
     }
 

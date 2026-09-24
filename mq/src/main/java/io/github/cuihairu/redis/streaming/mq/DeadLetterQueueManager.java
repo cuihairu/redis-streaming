@@ -155,7 +155,7 @@ public class DeadLetterQueueManager {
                     Object obj = plm.loadPayload(oldRef);
                     String newRef = plm.storeLargePayload(topic, pid, obj);
                     headers.put(PayloadHeaders.PAYLOAD_HASH_REF, newRef);
-                    replay.put("payload", null);
+                    // payload field is omitted (Redisson rejects null values); hash ref lives in headers
                 } else {
                     // Fallback: keep inline payload if available
                     replay.put("payload", payload);
@@ -181,6 +181,7 @@ public class DeadLetterQueueManager {
 
             String streamKey = StreamKeys.partitionStream(topic, pid);
             RStream<String, Object> orig = redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE);
+            replay.values().removeIf(java.util.Objects::isNull);
             return orig.add(StreamAddArgs.entries(replay)) != null;
         } catch (Exception e) {
             return false;

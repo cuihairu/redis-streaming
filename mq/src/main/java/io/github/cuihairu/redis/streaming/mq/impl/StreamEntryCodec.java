@@ -44,14 +44,15 @@ public final class StreamEntryCodec {
         if (lifecycleManager != null && shouldStoreInHash(payload)) {
             // Store large payload via lifecycle manager
             String hashKey = lifecycleManager.storeLargePayload(m.getTopic(), partitionId, payload);
-            // Store reference in headers and set payload to null
+            // Store reference in headers; payload field is omitted (Redisson rejects null values)
             headers.put(PayloadHeaders.PAYLOAD_HASH_REF, hashKey);
             headers.put(PayloadHeaders.PAYLOAD_STORAGE_TYPE, PayloadHeaders.STORAGE_TYPE_HASH);
-            data.put("payload", null);
         } else {
             // Store payload inline
             headers.put(PayloadHeaders.PAYLOAD_STORAGE_TYPE, PayloadHeaders.STORAGE_TYPE_INLINE);
-            data.put("payload", payload);
+            if (payload != null) {
+                data.put("payload", payload);
+            }
         }
 
         Instant ts = m.getTimestamp() != null ? m.getTimestamp() : Instant.now();
@@ -62,6 +63,7 @@ public final class StreamEntryCodec {
         data.put("partitionId", partitionId);
         if (m.getKey() != null) data.put("key", m.getKey());
         if (!headers.isEmpty()) data.put("headers", headers);
+        data.values().removeIf(java.util.Objects::isNull);
         return data;
     }
 
@@ -180,15 +182,16 @@ public final class StreamEntryCodec {
             // Store large payload for DLQ via lifecycle manager
             String hashKey = lifecycleManager.storeLargePayload("dlq:" + m.getTopic(), 0, payload);
 
-            // Store reference in headers
+            // Store reference in headers; payload field is omitted (Redisson rejects null values)
             headers.put(PayloadHeaders.PAYLOAD_HASH_REF, hashKey);
             headers.put(PayloadHeaders.PAYLOAD_STORAGE_TYPE, PayloadHeaders.STORAGE_TYPE_HASH);
             headers.put(PayloadHeaders.PAYLOAD_ORIGINAL_SIZE, String.valueOf(getPayloadSize(payload)));
-            dlqData.put("payload", null);
         } else {
             // Store payload inline
             headers.put(PayloadHeaders.PAYLOAD_STORAGE_TYPE, PayloadHeaders.STORAGE_TYPE_INLINE);
-            dlqData.put("payload", payload);
+            if (payload != null) {
+                dlqData.put("payload", payload);
+            }
         }
 
         Instant ts = m.getTimestamp() != null ? m.getTimestamp() : Instant.now();
@@ -201,6 +204,7 @@ public final class StreamEntryCodec {
         if (m.getKey() != null) dlqData.put("key", m.getKey());
         if (!headers.isEmpty()) dlqData.put("headers", headers);
         if (m.getId() != null) dlqData.put("originalMessageId", m.getId());
+        dlqData.values().removeIf(java.util.Objects::isNull);
         return dlqData;
     }
 

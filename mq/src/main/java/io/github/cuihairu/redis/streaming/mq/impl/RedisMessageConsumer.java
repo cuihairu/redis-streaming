@@ -654,7 +654,9 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 // Fast path: re-enqueue directly to stream for tiny backoffs to avoid relying on the mover
                 try {
                     Map<String, Object> data = new HashMap<>();
-                    data.put("payload", objectToJson(message.getPayload()));
+                    if (message.getPayload() != null) {
+                        data.put("payload", objectToJson(message.getPayload()));
+                    }
                     data.put("timestamp", Instant.now().toString());
                     data.put("retryCount", nextRetry);
                     data.put("maxRetries", message.getMaxRetries());
@@ -662,6 +664,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                     data.put("partitionId", partitionId);
                     if (message.getKey() != null) data.put("key", message.getKey());
                     if (message.getHeaders() != null && !message.getHeaders().isEmpty()) data.put("headers", objectToJson(message.getHeaders()));
+                    data.values().removeIf(java.util.Objects::isNull);
                     RStream<String, Object> target = (stream != null)
                             ? stream
                             : redissonClient.getStream(StreamKeys.partitionStream(topic, partitionId), org.redisson.client.codec.StringCodec.INSTANCE);
@@ -682,7 +685,9 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
             // Store as strings for Lua simplicity; payload/headers JSON-encoded
             item.put("topic", topic);
             item.put("partitionId", Integer.toString(partitionId));
-            item.put("payload", objectToJson(message.getPayload()));
+            if (message.getPayload() != null) {
+                item.put("payload", objectToJson(message.getPayload()));
+            }
             item.put("key", message.getKey() != null ? message.getKey() : "");
             item.put("headers", objectToJson(message.getHeaders() != null ? message.getHeaders() : java.util.Collections.emptyMap()));
             item.put("retryCount", Integer.toString(nextRetry));
