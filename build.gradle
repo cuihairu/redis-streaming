@@ -82,6 +82,8 @@ subprojects {
     dependencies {
         testImplementation libs.junit.jupiter
         testImplementation libs.junit.api
+        // inline mock maker: mock final classes and static methods for error-path tests
+        testImplementation libs.mockito.inline
         testRuntimeOnly libs.junit.engine
     }
 

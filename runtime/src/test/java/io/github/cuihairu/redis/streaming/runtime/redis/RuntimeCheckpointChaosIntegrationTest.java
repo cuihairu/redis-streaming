@@ -135,7 +135,9 @@ class RuntimeCheckpointChaosIntegrationTest {
                 MessageQueueFactory mq2 = new MessageQueueFactory(redis, cfg2.getMqOptions());
                 MessageProducer p2 = mq2.createProducer();
                 p2.send(topic, "k-y", "b-1").get(5, TimeUnit.SECONDS);
-                deadline = System.currentTimeMillis() + 15_000;
+                // restored job rebuilds the consumer group and drains state first; under full-suite
+                // load 15s was flaky (failed twice in CI/local) — allow a generous bounded wait
+                deadline = System.currentTimeMillis() + 45_000;
                 while (sink2.values.isEmpty() && System.currentTimeMillis() < deadline) {
                     Thread.sleep(100);
                 }
