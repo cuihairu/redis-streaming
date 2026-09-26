@@ -279,9 +279,10 @@
 - **位置**：`reliability/.../DeadLetterQueue.java:34-37,47-69,130-134`
 - **影响**：`maxSize<=0` → add 恒 false 全静默丢弃；`clear()` 两步非原子，计数可漂移，容量永久缩水。
 
-### B-36 外连接立即发 unmatched，对端稍后到达又发 match：同元素双发 ⏳
-- **位置**：`join/.../StreamJoiner.java:62-65,100-103`
+### B-36 外连接立即发 unmatched，对端稍后到达又发 match：同元素双发 ✅已缓解（语义明示化）
+- **位置**：`join/.../StreamJoiner.java`
 - **影响**：LEFT/FULL_OUTER 下游对同一左元素先收 join(L,null) 后收 join(L,R)（无 watermark barrier/retraction；类文档已声明"测试与简单场景"，低）。
+- **处置说明**：行为本身正确实现了"立即 unmatched + 窗口内迟到配对"的直通语义；修复它需要等待再决定（延迟=窗口时长）或撤回（retraction）机制，属于面向生产 join 的重设计，非本测试型 joiner 的目标。本轮把该语义显式写入类 javadoc（含对下游的双发警示），并加语义锚定测试防止未来无意识变更。与 RT-M5 同为"缓解"计。
 
 ### B-37 WindowAggregator 以窗口类简名为 key：同类不同参数窗口互相截断 ⏳
 - **位置**：`aggregation/.../WindowAggregator.java:159-163`

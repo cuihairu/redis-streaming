@@ -8,6 +8,15 @@ import java.util.function.Function;
  * In-memory implementation of stream join for testing and simple use cases.
  * Maintains buffered elements from both streams and performs joins based on configuration.
  *
+ * <p><b>Outer-join semantics (B-36).</b> For {@code LEFT}/{@code RIGHT}/{@code FULL_OUTER}
+ * an element that finds no match is emitted immediately as {@code join(elem, null)} /
+ * {@code join(null, elem)}. There is no watermark barrier or retraction: if the peer
+ * element arrives afterwards (still inside the join window), the pair is emitted as a
+ * second record {@code join(L, R)}. Downstreams therefore see the same key element
+ * twice — first unmatched, then matched — and must tolerate that (or deduplicate) if
+ * they use outer joins here. A waiting-then-decide or retracting implementation is a
+ * deliberate non-goal for this test-oriented joiner.
+ *
  * @param <L> The type of left stream elements
  * @param <R> The type of right stream elements
  * @param <K> The type of the join key
