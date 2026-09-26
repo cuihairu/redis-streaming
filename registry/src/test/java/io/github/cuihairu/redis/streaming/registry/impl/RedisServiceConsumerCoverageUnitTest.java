@@ -391,11 +391,12 @@ class RedisServiceConsumerCoverageUnitTest {
         consumer.discover("svc");
 
         // seed a foreign service entry directly to cover the predicate false branch
+        // (B-45: the cache is keyed by uniqueId)
         Field field = RedisServiceConsumer.class.getDeclaredField("discoveredInstances");
         field.setAccessible(true);
         @SuppressWarnings("unchecked")
         Map<String, ServiceInstance> cache = (Map<String, ServiceInstance>) field.get(consumer);
-        cache.put("o1", InstanceEntryCodec.parseInstance("other", "o1", instanceData()));
+        cache.put("other:o1", InstanceEntryCodec.parseInstance("other", "o1", instanceData()));
 
         ServiceChangeListener l1 = (serviceName, action, instance, instances) -> { };
         ServiceChangeListener l2 = (serviceName, action, instance, instances) -> { };
@@ -405,7 +406,7 @@ class RedisServiceConsumerCoverageUnitTest {
         consumer.unsubscribe("unknown-service", l1); // no listeners -> no-op
         consumer.unsubscribe("svc", l2); // last listener -> full teardown incl. health checkers
 
-        assertTrue(cache.containsKey("o1"), "foreign service entries must survive");
+        assertTrue(cache.containsKey("other:o1"), "foreign service entries must survive");
         consumer.stop();
     }
 
@@ -452,11 +453,12 @@ class RedisServiceConsumerCoverageUnitTest {
             throw new IllegalStateException("listener failure");
         };
 
-        // failure and recovery notifications with listeners (one of them throws)
+        // failure and recovery notifications with listeners (one of them throws);
+        // the reporter is keyed by uniqueId, which is the cache key since B-45
         consumer.subscribe("svc", ok);
         consumer.subscribe("svc", bad);
-        report.invoke(consumer, "i1", false);
-        report.invoke(consumer, "i1", true);
+        report.invoke(consumer, "svc:i1", false);
+        report.invoke(consumer, "svc:i1", true);
         assertTrue(actions.contains(ServiceChangeAction.HEALTH_FAILURE));
         assertTrue(actions.contains(ServiceChangeAction.HEALTH_RECOVERY));
 
@@ -465,7 +467,7 @@ class RedisServiceConsumerCoverageUnitTest {
         field.setAccessible(true);
         @SuppressWarnings("unchecked")
         Map<String, ServiceInstance> cache = (Map<String, ServiceInstance>) field.get(consumer);
-        cache.put("custom", new ServiceInstance() {
+        cache.put("svc:custom", new ServiceInstance() {
             @Override
             public String getServiceName() {
                 return "svc";
@@ -502,7 +504,7 @@ class RedisServiceConsumerCoverageUnitTest {
             }
         });
         actions.clear();
-        report.invoke(consumer, "custom", true);
+        report.invoke(consumer, "svc:custom", true);
         assertTrue(actions.contains(ServiceChangeAction.HEALTH_RECOVERY));
 
         consumer.stop();

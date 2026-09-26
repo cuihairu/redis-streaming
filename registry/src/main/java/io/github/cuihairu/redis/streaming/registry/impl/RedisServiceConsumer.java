@@ -49,13 +49,14 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
      */
     @Getter
     private HealthCheckManager healthCheckManager;
-    private final Map<String, ServiceInstance> discoveredInstances = new ConcurrentHashMap<>();
     /**
-     * B-04: health checkers are keyed (and report) by {@link ServiceInstance#getUniqueId()}
-     * ("serviceName:instanceId") while {@link #discoveredInstances} is keyed by the bare
-     * instanceId; this reverse map translates between the two key spaces.
+     * B-45: discovered instances are cached under the globally unique
+     * {@link ServiceInstance#getUniqueId()} ("serviceName:instanceId") — the same key
+     * space the health checkers use (B-04). Keying by the bare instanceId instead made
+     * two services reusing the same instanceId (e.g. the default hostname) overwrite
+     * each other's entry, and entries of removed/expired instances lingered forever.
      */
-    private final Map<String, String> uniqueIdToInstanceId = new ConcurrentHashMap<>();
+    private final Map<String, ServiceInstance> discoveredInstances = new ConcurrentHashMap<>();
 
     public RedisServiceConsumer(RedissonClient redissonClient) {
         this(redissonClient, new ServiceConsumerConfig());
@@ -102,35 +103,38 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
     }
 
     /**
-     * Cache a discovered instance and register its health checker (B-04: recording the
-     * uniqueId -> instanceId translation here keeps the reporter's uniqueId resolvable).
+     * Cache a discovered instance and register its health checker (B-45: the cache key
+     * is the instance's uniqueId, i.e. the same key the checker is registered under).
      */
     private void cacheInstanceAndRegisterHealthCheck(String instanceId, ServiceInstance instance) {
-        discoveredInstances.put(instanceId, instance);
+        discoveredInstances.put(cacheKey(instance, instanceId), instance);
         if (config.isEnableHealthCheck() && healthCheckManager != null) {
-            String uniqueId = instance.getUniqueId();
-            if (uniqueId != null) {
-                uniqueIdToInstanceId.put(uniqueId, instanceId);
-            }
             healthCheckManager.registerServiceInstance(instance);
         }
+    }
+
+    /**
+     * B-45: cache key — the globally unique "serviceName:instanceId" when the instance
+     * carries one, falling back to the bare instanceId for degenerate instances.
+     */
+    private static String cacheKey(ServiceInstance instance, String instanceId) {
+        String uniqueId = instance.getUniqueId();
+        return uniqueId != null ? uniqueId : instanceId;
     }
 
     /**
      * Report health status changes
      */
     private void reportHealthStatus(String uniqueId, boolean isHealthy) {
-        // B-04: the reporter hands us the checker key (uniqueId); the old code looked it up
-        // directly in discoveredInstances (keyed by bare instanceId), always missed, and so
-        // silently dropped every health status change.
-        String instanceId = uniqueIdToInstanceId.getOrDefault(uniqueId, uniqueId);
-        ServiceInstance instance = discoveredInstances.get(instanceId);
+        // B-04/B-45: the checker key (uniqueId) IS the cache key now — the reporter's
+        // status lands on the cached instance without any translation step.
+        ServiceInstance instance = discoveredInstances.get(uniqueId);
         if (instance != null) {
-            logger.info("Service instance {} health status changed to: {}", instanceId, isHealthy);
+            logger.info("Service instance {} health status changed to: {}", instance.getInstanceId(), isHealthy);
 
             // Update instance health status
             if (instance instanceof DefaultServiceInstance) {
-                ServiceInstance updatedInstance = DefaultServiceInstance.builder()
+                instance = DefaultServiceInstance.builder()
                     .serviceName(instance.getServiceName())
                     .instanceId(instance.getInstanceId())
                     .host(instance.getHost())
@@ -142,34 +146,32 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                     .metadata(instance.getMetadata())
                     .build();
 
-                discoveredInstances.put(instanceId, updatedInstance);
+                discoveredInstances.put(uniqueId, instance);
             }
 
             // Trigger service change event
-            notifyHealthStatusChange(instance.getServiceName(), instanceId, isHealthy);
+            notifyHealthStatusChange(instance, isHealthy);
         }
     }
 
     /**
      * Notify health status changes
      */
-    private void notifyHealthStatusChange(String serviceName, String instanceId, boolean isHealthy) {
+    private void notifyHealthStatusChange(ServiceInstance instance, boolean isHealthy) {
+        String serviceName = instance.getServiceName();
         Set<ServiceChangeListener> serviceListeners = listeners.get(serviceName);
         if (serviceListeners != null && !serviceListeners.isEmpty()) {
             ServiceChangeAction action = isHealthy ?
                 ServiceChangeAction.HEALTH_RECOVERY : ServiceChangeAction.HEALTH_FAILURE;
-            ServiceInstance instance = discoveredInstances.get(instanceId);
 
-            if (instance != null) {
-                // Get all current instances
-                List<ServiceInstance> allInstances = discover(serviceName);
+            // Get all current instances
+            List<ServiceInstance> allInstances = discover(serviceName);
 
-                for (ServiceChangeListener listener : serviceListeners) {
-                    try {
-                        listener.onServiceChange(serviceName, action, instance, allInstances);
-                    } catch (Exception e) {
-                        logger.error("Error notifying health status change to listener", e);
-                    }
+            for (ServiceChangeListener listener : serviceListeners) {
+                try {
+                    listener.onServiceChange(serviceName, action, instance, allInstances);
+                } catch (Exception e) {
+                    logger.error("Error notifying health status change to listener", e);
                 }
             }
         }
@@ -212,6 +214,18 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                     logger.warn("Failed to load instance {} for service {}", instanceId, serviceName, e);
                 }
             }
+
+            // B-45: reconcile the cache for this service — entries whose instance no
+            // longer passes the heartbeat window (deregistered or expired) must not
+            // linger feeding health lookups and instance counts.
+            Set<String> liveIds = instances.stream()
+                    .map(ServiceInstance::getInstanceId)
+                    .collect(Collectors.toSet());
+            discoveredInstances.entrySet().removeIf(entry -> {
+                ServiceInstance cached = entry.getValue();
+                return serviceName.equals(cached.getServiceName())
+                        && !liveIds.contains(cached.getInstanceId());
+            });
 
             logger.debug("Discovered {} instances for service: {}", instances.size(), serviceName);
             return instances;
@@ -319,7 +333,6 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                             String uniqueId = instance.getUniqueId();
                             if (uniqueId != null) {
                                 healthCheckManager.unregisterServiceInstance(uniqueId);
-                                uniqueIdToInstanceId.remove(uniqueId);
                             }
                             return true;
                         }
@@ -371,7 +384,6 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
         subscriptions.clear();
         listeners.clear();
         discoveredInstances.clear();
-        uniqueIdToInstanceId.clear();
 
         logger.info("RedisServiceConsumer stopped");
     }
@@ -408,6 +420,11 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
             // Build changed instance
             ServiceInstance changedInstance = null;
             if (action == ServiceChangeAction.REMOVED) {
+                // B-45: drop the cached entry right away — a removed instance must not
+                // keep answering health lookups and counting toward discovery until the
+                // next discovery cycle happens to reconcile it away.
+                discoveredInstances.remove(serviceName + ":" + instanceId);
+
                 // For delete events, build instance info from message snapshot
                 var snap = message.getInstance();
                 if (snap != null) {
@@ -537,19 +554,41 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
 
     /**
      * Get instance health status
+     *
+     * <p>B-45: the cache is keyed by uniqueId, so a bare instanceId may legitimately
+     * match several services (e.g. the default hostname id). The id is considered
+     * healthy only when every cached instance carrying it is healthy.</p>
      */
     public boolean isInstanceHealthy(String instanceId) {
+        List<ServiceInstance> matches = new ArrayList<>();
+        for (ServiceInstance candidate : discoveredInstances.values()) {
+            if (instanceId.equals(candidate.getInstanceId())) {
+                matches.add(candidate);
+            }
+        }
+
         if (healthCheckManager != null) {
-            // B-04: checkers are keyed by uniqueId — translate the bare instanceId first
-            ServiceInstance instance = discoveredInstances.get(instanceId);
-            String uniqueId = (instance != null && instance.getUniqueId() != null)
-                    ? instance.getUniqueId() : instanceId;
-            return healthCheckManager.isInstanceHealthy(uniqueId);
+            if (matches.isEmpty()) {
+                // B-04: nothing cached under this id — pass it through as the checker key
+                return healthCheckManager.isInstanceHealthy(instanceId);
+            }
+            for (ServiceInstance match : matches) {
+                String uniqueId = match.getUniqueId() != null
+                        ? match.getUniqueId() : match.getInstanceId();
+                if (!healthCheckManager.isInstanceHealthy(uniqueId)) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         // If health checking is not enabled, get from cached instances
-        ServiceInstance instance = discoveredInstances.get(instanceId);
-        return instance != null && instance.isHealthy();
+        for (ServiceInstance match : matches) {
+            if (!match.isHealthy()) {
+                return false;
+            }
+        }
+        return !matches.isEmpty();
     }
 
     /**
@@ -651,13 +690,10 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                         if (instance != null) {
                             instances.add(instance);
 
-                            // Cache discovered instances
-                            discoveredInstances.put(instanceId, instance);
-
-                            // If health checking is enabled, register health checker
-                            if (config.isEnableHealthCheck() && healthCheckManager != null) {
-                                healthCheckManager.registerServiceInstance(instance);
-                            }
+                            // B-45: cache under the uniqueId key and register the health
+                            // checker through the shared path (the old inline put keyed by
+                            // the bare instanceId collided across services)
+                            cacheInstanceAndRegisterHealthCheck(instanceId, instance);
                         }
                     }
                 } catch (Exception e) {

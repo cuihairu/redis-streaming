@@ -325,9 +325,11 @@
 - **影响**：Lua 可能已生效（响应丢失）又走 5+ 步 Java 回退：重新 generateVersion 双写历史、同一次发布两个版本事件，且逐字段 fastPut 非原子。
 - **验证与修复**：版本号一次生成全链路复用；回退先比对已存 version——等于 Lua 尝试版本则说明脚本已生效，跳过重写只补发事件；回退散写改为单次 REDIS_WRITE_ATOMIC 批。新增 `RedisConfigServiceFallbackTest`（旧代码：已生效仍 fastPut 重写、putAsync 未调用），更新 4 个钉死 fastPut 链的既有测试。
 
-### B-45 discoveredInstances 缓存永不失效且跨服务按裸 instanceId 键控 ⏳
+### B-45 discoveredInstances 缓存永不失效且跨服务按裸 instanceId 键控 ✅
 - **位置**：`registry/.../RedisServiceConsumer.java:52,185,292-299,381-408`
 - **影响**：实例移除/过期后仍被健康检查、计数错；不同服务同 instanceId（默认 hostname）互相覆盖。
+- **修复**：缓存改按 uniqueId（`serviceName:instanceId`，与健康检查器同键空间）键控，删除 uniqueIdToInstanceId 翻译表；`discover()` 每轮按本次存活集对该服务的缓存条目做对账（心跳过期的条目随发现周期淘汰）；REMOVED 变更事件立即驱逐缓存条目；`discoverByMetadata()` 复用统一缓存+注册路径。裸 instanceId 查询改为按值匹配：多服务共享同一 id 时仅当全部命中健康才报告健康（不再"最后写入者获胜"）。限定：`discoverByMetadata()` 的过滤子集不做对账（非全量存活集），由下一轮全量 `discover()` 或 REMOVED 事件兜底。
+- **测试**：RedisServiceConsumerDiscoveredCacheTest（5 项旧代码失败判别 + 1 项契约钉）、DiscoveredInstancesCacheIntegrationTest（真实 Redis 跨服务同 id + 反注册驱逐）、ConsumerHealthKeyTranslationTest/RedisServiceConsumerCoverageUnitTest 按新键空间更新。
 
 ---
 

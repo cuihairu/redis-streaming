@@ -142,13 +142,13 @@ class RegistryConsumerCoverageIntegrationTest {
             consumer.subscribe(svc, listener);
             assertFalse(consumer.discover(svc).isEmpty());
 
-            // the manager callback passes uniqueId while the cache is keyed by instanceId
-            // (production key mismatch), so drive the private entry point directly.
+            // B-45: the manager callback key (uniqueId) IS the cache key now — drive the
+            // private entry point exactly the way the manager does.
             Method report = RedisServiceConsumer.class
                     .getDeclaredMethod("reportHealthStatus", String.class, boolean.class);
             report.setAccessible(true);
-            report.invoke(consumer, "a", false);
-            report.invoke(consumer, "a", true);
+            report.invoke(consumer, svc + ":a", false);
+            report.invoke(consumer, svc + ":a", true);
 
             assertTrue(actions.contains(ServiceChangeAction.HEALTH_FAILURE));
             assertTrue(actions.contains(ServiceChangeAction.HEALTH_RECOVERY));
