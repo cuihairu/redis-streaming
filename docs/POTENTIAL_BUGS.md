@@ -434,10 +434,12 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 ### 低（Low）
 
-### MQ-11 commit frontier 更新是非原子 read-modify-write：并发 ACK 可使 frontier 回退 ⏳
+### MQ-11 commit frontier 更新是非原子 read-modify-write：并发 ACK 可使 frontier 回退 ✅
 - **位置**：`mq/.../impl/RedisMessageConsumer.java:805-816`
 - **触发**：两个 worker/扫描线程并发 ack 同组同分区不同消息；都读到同一 `prev`，较小 id 后写。
 - **影响**：frontier 回退；`StreamRetentionHousekeeper`（按最小 frontier trim）少 trim（安全方向），lag 指标不准。应改 Lua HSET-with-compare。
+- **修复**：frontier 更新改为单个 Lua 脚本原子 compare-and-set（HSET 仅当新 id 更新；prev 不可解析时自愈覆写，新 id 非法则不写），脚本走 StringCodec 明文 hash（"ms-seq"，与客户端 codec 无关，二进制 codec 留下的旧值由 Lua 自愈覆写）；best-effort 语义不变（脚本失败仅 debug 日志）。runtime 同源修复：`RedisStreamExecutionEnvironment` 延迟 ack 刷新改同一原子 CAS、缺失 group 恢复读改 StringCodec；`RedisRuntimeCheckpointManager` 快照读改 StringCodec（506c11c）。
+- **测试**：RedisMessageConsumerCommitFrontierScriptTest——eval 契约（旧代码零 eval 调用，"Wanted but not invoked"）、脚本失败被吞、8 线程×250 id 并发 ack 以内存 CAS 钉死 max 归约；CommitFrontierAtomicityIntegrationTest（真 Redis，40 轮×8 线程乱序 ack，frontier 必须收在最大 id；旧代码 round 0 即 expected 5-8 but was 5-0）；CommitFrontierUpdate/MultiGroupIntegrationTest 读端改 StringCodec 适配明文 hash。
 - **审计置信度**：高（竞态真实，影响良性方向）
 
 ### MQ-12 管理路径全库 SCAN：`getKeys()` 不带 pattern ⏳

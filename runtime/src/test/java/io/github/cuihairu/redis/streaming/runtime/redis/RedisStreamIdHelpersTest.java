@@ -1,7 +1,8 @@
 package io.github.cuihairu.redis.streaming.runtime.redis;
 
+import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import org.junit.jupiter.api.Test;
-import org.redisson.api.RMap;
+import org.redisson.api.RScript;
 import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
 import org.redisson.api.stream.StreamMessageId;
@@ -13,6 +14,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -66,13 +68,12 @@ class RedisStreamIdHelpersTest {
 
     @Test
     @SuppressWarnings({"unchecked", "rawtypes"})
-    void ackAllParsesIdsAcksAndAdvancesFrontier() throws Exception {
+    void ackAllParsesIdsAcksAndHandsFrontierToAtomicScript() throws Exception {
         RedissonClient redisson = mock(RedissonClient.class);
         RStream<String, Object> stream = mock(RStream.class);
-        RMap frontier = mock(RMap.class);
+        RScript script = mock(RScript.class);
         when(redisson.<String, Object>getStream(anyString(), any())).thenReturn(stream);
-        when(redisson.getMap(anyString())).thenReturn(frontier);
-        when(frontier.get("g")).thenReturn(null);
+        when(redisson.getScript(any(org.redisson.client.codec.Codec.class))).thenReturn(script);
 
         Object deferred = newDeferredAcks();
         record(deferred, "t", "g", 0, "5-1");
@@ -81,63 +82,62 @@ class RedisStreamIdHelpersTest {
         invoke(deferred, "ackAll", redisson);
 
         verify(stream).ack("g", new StreamMessageId(5, 1), new StreamMessageId(7), StreamMessageId.MIN);
-        verify(frontier).put("g", "nope");
+        // MQ-11: the raw max id is handed to the atomic Lua CAS — unparseable new ids
+        // are rejected server-side, and no read-modify-write getMap/put path remains
+        verify(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG),
+                eq(java.util.Collections.singletonList(StreamKeys.commitFrontier("t", 0))), eq("g"), eq("nope"));
+        verify(redisson, never()).getMap(anyString());
     }
 
     @Test
     @SuppressWarnings({"unchecked", "rawtypes"})
-    void ackAllRespectsHigherExistingFrontier() throws Exception {
+    void ackAllSendsEachPartitionFrontierThroughTheCasScript() throws Exception {
         RedissonClient redisson = mock(RedissonClient.class);
         RStream<String, Object> stream = mock(RStream.class);
-        RMap frontier = mock(RMap.class);
+        RScript script = mock(RScript.class);
         when(redisson.<String, Object>getStream(anyString(), any())).thenReturn(stream);
-        when(redisson.getMap(anyString())).thenReturn(frontier);
-        when(frontier.get("g")).thenReturn("999999-9");
+        when(redisson.getScript(any(org.redisson.client.codec.Codec.class))).thenReturn(script);
 
         Object deferred = newDeferredAcks();
         record(deferred, "t", "g", 0, "5-1");
+        record(deferred, "t", "g", 1, "9-2");
+        record(deferred, "u", "h", 0, "1-0");
         invoke(deferred, "ackAll", redisson);
 
-        verify(stream).ack("g", new StreamMessageId(5, 1));
-        verify(frontier, never()).put(any(), any());
+        // prev-frontier handling (higher existing id, garbage value) lives inside the
+        // Lua script now — ackAll just hands every partition's max id to it
+        verify(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG),
+                eq(java.util.Collections.singletonList(StreamKeys.commitFrontier("t", 0))), eq("g"), eq("5-1"));
+        verify(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG),
+                eq(java.util.Collections.singletonList(StreamKeys.commitFrontier("t", 1))), eq("g"), eq("9-2"));
+        verify(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG),
+                eq(java.util.Collections.singletonList(StreamKeys.commitFrontier("u", 0))), eq("h"), eq("1-0"));
     }
 
     @Test
     @SuppressWarnings({"unchecked", "rawtypes"})
-    void ackAllFallsBackToLexicographicCompareOnGarbageFrontier() throws Exception {
-        RedissonClient redisson = mock(RedissonClient.class);
-        RStream<String, Object> stream = mock(RStream.class);
-        RMap frontier = mock(RMap.class);
-        when(redisson.<String, Object>getStream(anyString(), any())).thenReturn(stream);
-        when(redisson.getMap(anyString())).thenReturn(frontier);
-        when(frontier.get("g")).thenReturn("zzz");
-
-        Object deferred = newDeferredAcks();
-        record(deferred, "t", "g", 0, "5-1");
-        invoke(deferred, "ackAll", redisson);
-
-        verify(stream).ack("g", new StreamMessageId(5, 1));
-        // "5-1".compareTo("zzz") is negative -> frontier keeps the garbage marker
-        verify(frontier, never()).put(any(), any());
-    }
-
-    @Test
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    void ackAllToleratesAckAndFrontierErrorsAndNullClient() throws Exception {
+    void ackAllToleratesAckAndScriptErrorsAndNullClient() throws Exception {
         invoke(newDeferredAcks(), "ackAll", new Object[]{null});
 
         RedissonClient redisson = mock(RedissonClient.class);
         RStream<String, Object> stream = mock(RStream.class);
-        RMap frontier = mock(RMap.class);
+        RScript script = mock(RScript.class);
         when(redisson.<String, Object>getStream(anyString(), any())).thenReturn(stream);
-        when(redisson.getMap(anyString())).thenReturn(frontier);
-        when(frontier.get("g")).thenReturn("1-0");
+        when(redisson.getScript(any(org.redisson.client.codec.Codec.class))).thenReturn(script);
         doThrow(new RuntimeException("ack down")).when(stream).ack(anyString(), any(StreamMessageId[].class));
 
         Object deferred = newDeferredAcks();
         record(deferred, "t", "g", 0, "5-1");
         assertDoesNotThrow(() -> invoke(deferred, "ackAll", redisson));
-        verify(frontier).put("g", "5-1");
+        // ack failure must not block the frontier hand-off
+        verify(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG),
+                eq(java.util.Collections.singletonList(StreamKeys.commitFrontier("t", 0))), eq("g"), eq("5-1"));
+
+        // a script failure is swallowed too (best-effort frontier update)
+        doThrow(new RuntimeException("script down")).when(script).eval(any(RScript.Mode.class), anyString(),
+                any(RScript.ReturnType.class), anyList(), any(Object.class));
+        record(deferred, "t", "g", 0, "6-0");
+        assertDoesNotThrow(() -> invoke(deferred, "ackAll", redisson));
     }
 
     private static StreamMessageId parseStreamId(String id) throws Exception {

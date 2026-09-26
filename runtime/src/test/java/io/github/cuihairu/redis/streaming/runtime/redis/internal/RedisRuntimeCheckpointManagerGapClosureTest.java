@@ -145,7 +145,7 @@ class RedisRuntimeCheckpointManagerGapClosureTest {
         swapField(m, "partitionRegistry", registry);
         RMap<String, String> frontier = mock(RMap.class);
         when(frontier.get("g")).thenReturn("9-9");
-        when(redisson.getMap(anyString())).thenReturn((RMap) frontier);
+        when(redisson.getMap(anyString(), any(Codec.class))).thenReturn((RMap) frontier);
 
         Map<String, Map<Integer, String>> override = new HashMap<>();
         override.put("t|g", new HashMap<>(Map.of(0, "5-5", 1, "   ")));
