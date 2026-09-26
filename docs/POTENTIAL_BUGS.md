@@ -197,11 +197,12 @@
 - **影响**：两个不同发布携带相同 version；按 version 去重/排序的消费者丢事件或乱序。
 - **审计置信度**：中
 
-### B-28 historySize=0 语义反转：无界保留历史（LTRIM 0 -1）⏳
+### B-28 historySize=0 语义反转：无界保留历史（LTRIM 0 -1）✅已修复
 - **位置**：`config/.../ConfigServiceConfig.java:29-31`；`RedisConfigService.java:85,413-414`
 - **触发**：`setHistorySize(0)`。
 - **影响**：`LTRIM hist 0 maxhist-1` = `LTRIM 0 -1` 全保留，与"不留历史"意图相反；每发布一条历史无界增长。
 - **审计置信度**：高
+- **验证与修复**：修复：发布/删除两条 Lua 脚本的历史写入条件改为 `oldc and maxhist>0`（historySize=0 完全跳过历史记录而非 LTRIM 到 keep-all）；Java 回退路径 `saveConfigHistory` 对 `maxHistorySize<=0` 直接返回。回归：`ConfigHistorySizeZeroFallbackTest`（mock RList，historySize=0 断言从不 add/trim——旧代码实测 NeverWantedButInvoked；historySize=1 仍正常 trim(0,0)）+ `ConfigHistorySizeZeroIntegrationTest`（真实 Redis：historySize=0 发布两次+删除后历史键恒为 0——旧代码实测 expected <0> but was <1>；historySize=1 发布 3 次恰保留 1 条）。
 
 ### B-29 Provider 清理在空集 check-then-act 移除服务索引：孤儿心跳 ZSet 且永不再清理 ⏳
 - **位置**：`registry/.../impl/RedisServiceProvider.java:536-542`

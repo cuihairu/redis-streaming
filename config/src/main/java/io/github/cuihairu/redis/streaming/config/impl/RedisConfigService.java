@@ -82,7 +82,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
 
             String lua = "local key=KEYS[1]; local hist=KEYS[2]; local dataId=ARGV[1]; local grp=ARGV[2]; local entryJson=ARGV[3]; local now=ARGV[4]; local maxhist=tonumber(ARGV[5]); "
                     + "local existed=redis.call('EXISTS', key); local oldc=redis.call('HGET', key, 'content'); local oldv=redis.call('HGET', key, 'version'); local oldu=redis.call('HGET', key, 'updateTime'); "
-                    + "if oldc then local ctime=nil; if oldu then ctime=tonumber(oldu) end; if not ctime then ctime=tonumber(now) end; local rec=cjson.encode({dataId=dataId,group=grp,content=oldc,version=oldv,operation='UPDATED',changeTime=ctime,operator='system'}); redis.call('LPUSH', hist, rec); redis.call('LTRIM', hist, 0, maxhist-1); end; "
+                    + "if oldc and maxhist>0 then local ctime=nil; if oldu then ctime=tonumber(oldu) end; if not ctime then ctime=tonumber(now) end; local rec=cjson.encode({dataId=dataId,group=grp,content=oldc,version=oldv,operation='UPDATED',changeTime=ctime,operator='system'}); redis.call('LPUSH', hist, rec); redis.call('LTRIM', hist, 0, maxhist-1); end; "
                     + "local e=cjson.decode(entryJson); if existed==0 and e.createTime then redis.call('HSET', key, 'createTime', tostring(e.createTime)); end; "
                     + "if e.content then redis.call('HSET', key, 'content', e.content); else redis.call('HDEL', key, 'content'); end; "
                     + "if e.version then redis.call('HSET', key, 'version', e.version); end; "
@@ -155,7 +155,7 @@ public class RedisConfigService implements ConfigService, ConfigManager {
             long nowMs = System.currentTimeMillis();
             String lua = "local key=KEYS[1]; local hist=KEYS[2]; local dataId=ARGV[1]; local grp=ARGV[2]; local now=ARGV[3]; local maxhist=tonumber(ARGV[4]); "
                     + "if redis.call('EXISTS', key)==0 then return 0 end; local oldc=redis.call('HGET', key, 'content'); local oldv=redis.call('HGET', key, 'version'); "
-                    + "if oldc then local rec=cjson.encode({dataId=dataId,group=grp,content=oldc,version=oldv,operation='DELETED',changeTime=tonumber(now),operator='system'}); redis.call('LPUSH', hist, rec); redis.call('LTRIM', hist, 0, maxhist-1); end; redis.call('DEL', key); return 1;";
+                    + "if oldc and maxhist>0 then local rec=cjson.encode({dataId=dataId,group=grp,content=oldc,version=oldv,operation='DELETED',changeTime=tonumber(now),operator='system'}); redis.call('LPUSH', hist, rec); redis.call('LTRIM', hist, 0, maxhist-1); end; redis.call('DEL', key); return 1;";
             RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
             Long deleted = script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.LONG,
                     java.util.Arrays.asList(configKey, historyKey), dataId, group, String.valueOf(nowMs), String.valueOf(maxHistorySize));
@@ -401,6 +401,11 @@ public class RedisConfigService implements ConfigService, ConfigManager {
      */
     private void saveConfigHistory(String dataId, String group, String content, String version,
                                  LocalDateTime changeTime, String operation) {
+        // historySize=0 means "keep no history"; trimming to `LTRIM 0 maxhist-1` would
+        // degrade to `LTRIM 0 -1` — Redis' keep-everything (B-28) — so skip the write.
+        if (maxHistorySize <= 0) {
+            return;
+        }
         try {
             String key = config.getConfigHistoryKey(group, dataId);
             RList<String> list = redissonClient.getList(key, org.redisson.client.codec.StringCodec.INSTANCE);
