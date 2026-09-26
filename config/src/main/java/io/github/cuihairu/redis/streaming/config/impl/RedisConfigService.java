@@ -214,6 +214,13 @@ public class RedisConfigService implements ConfigService, ConfigManager {
             RTopic topic = redissonClient.getTopic(
                 config.getConfigChangeChannelKey(group, dataId), new JsonJacksonCodec());
             topic.addListener(ConfigChangeEvent.class, (channel, message) -> {
+                // B-07: this JVM already delivered its own event synchronously in
+                // publishConfigChangeEvent, so the pub/sub loopback must not dispatch it
+                // again or in-process listeners fire twice per change. Events without a
+                // publisher marker (pre-B-07 publishers) still dispatch here.
+                if (message.getPublisherId() != null && message.getPublisherId().equals(clientId)) {
+                    return;
+                }
                 handleConfigChangeEvent(dataId, group, message);
             });
 
@@ -441,11 +448,13 @@ public class RedisConfigService implements ConfigService, ConfigManager {
     private void publishConfigChangeEvent(String dataId, String group, String content, String version) {
         try {
             RTopic topic = redissonClient.getTopic(config.getConfigChangeChannelKey(group, dataId), new JsonJacksonCodec());
-            ConfigChangeEvent evt = new ConfigChangeEvent(dataId, group, content, version, System.currentTimeMillis());
+            ConfigChangeEvent evt = new ConfigChangeEvent(dataId, group, content, version, System.currentTimeMillis(),
+                    clientId);
             topic.publish(evt);
-            // Also deliver locally to in-process listeners to reduce timing flakiness
+            // Deliver locally to in-process listeners so a change is visible when publish
+            // returns; the subscription skips this publisher's own loopback (B-07).
             try { handleConfigChangeEvent(dataId, group, evt); } catch (Exception ignore) {}
-            
+
         } catch (Exception e) {
             logger.warn("Failed to publish config change event for {}:{}", group, dataId, e);
         }

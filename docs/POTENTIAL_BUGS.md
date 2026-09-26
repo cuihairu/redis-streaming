@@ -59,11 +59,13 @@
 - **影响**：监听器持有过期配置直至同 dataId 下次发布；无版本对账、无轮询兜底。registry 消费端事件处理同为纯响应式。
 - **审计置信度**：高（语义缺失类）
 
-### B-07 配置变更监听器每次发布收到两次通知（本地重放 + pub/sub 回环）⏳
+### B-07 配置变更监听器每次发布收到两次通知（本地重放 + pub/sub 回环）✅已修复
 - **位置**：`config/.../impl/RedisConfigService.java:424-435`
 - **触发**：任何 `publishConfig`/`removeConfig`：先 `topic.publish(evt)` 又同步 `handleConfigChangeEvent(evt)`，消息再经订阅回环送达同一 JVM。
 - **影响**：进程内监听器对每次变更收到两次（且来自不同线程并发）；非幂等监听器（计数、一次性 reload）行为错误。
 - **审计置信度**：高
+- **验证与修复**：`ConfigChangeEvent` 新增 `publisherId` 标记（旧事件无标记仍按原路径投递，跨版本兼容）；`publishConfigChangeEvent` 发布时盖上本实例 `clientId`；订阅回调对 `publisherId==自己` 的回环事件直接跳过——本 JVM 的同步投递只此一份，远端 JVM 仍各收一次。
+- **回归测试**：`ConfigChangeSingleDeliveryIntegrationTest`（@Tag("integration")，真实 Redis，3 用例：发布方自身监听器恰好一次且 publish 返回时已送达、回环落地后仍一次、远端监听器恰好一次、删除监听后不再通知）。旧代码复现：git stash 还原 main 代码后跑同一测试，removal/publishing 两条以 "expected 1 but was 2" 失败——双投递坐实；新代码全绿。
 
 ### B-08 ClientHealthChecker 每实例一个非守护线程且首次检查在调用线程同步执行 ⏳
 - **位置**：`registry/.../health/ClientHealthChecker.java:39-56`；`HealthCheckManager.java:78-89`
