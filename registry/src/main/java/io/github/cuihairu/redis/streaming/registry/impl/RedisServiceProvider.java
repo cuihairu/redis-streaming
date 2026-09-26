@@ -337,8 +337,12 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
         Map<String, Object> currentMetadata = new HashMap<>(instance.getMetadata());
 
         // ========== 2. Decision: whether to update metrics ==========
+        // B-05: an empty collection (collector failure, timeout, everything disabled) used to
+        // short-circuit to NO_UPDATE, which also skipped the heartbeat — under load (exactly
+        // when collection struggles) the instance's Redis TTL/score stopped refreshing and
+        // the cleanup reaped a live instance after heartbeatTimeoutSeconds.
         UpdateDecision metricsDecision = currentMetrics.isEmpty() ?
-                UpdateDecision.NO_UPDATE :
+                stateManager.shouldHeartbeatOnly(safeServiceName, safeInstanceId) :
                 stateManager.shouldUpdateMetrics(safeServiceName, safeInstanceId, currentMetrics);
 
         // ========== 3. Decision: whether to update metadata (rarely triggered) ==========

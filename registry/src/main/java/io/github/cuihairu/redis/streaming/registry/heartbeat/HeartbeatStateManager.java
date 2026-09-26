@@ -110,6 +110,21 @@ public class HeartbeatStateManager {
     }
 
     /**
+     * Decide whether a bare heartbeat touch is due (B-05): used when metrics collection
+     * yielded nothing, so a failed/empty collection can never suppress the heartbeat that
+     * keeps the instance's Redis TTL and heartbeat zset score alive.
+     */
+    public UpdateDecision shouldHeartbeatOnly(String serviceName, String instanceId) {
+        long now = System.currentTimeMillis();
+        String stateKey = buildStateKey(serviceName, instanceId);
+        InstanceState state = instanceStates.computeIfAbsent(stateKey, k -> new InstanceState());
+        if (now - state.lastHeartbeatTime >= config.getHeartbeatInterval().toMillis()) {
+            return UpdateDecision.HEARTBEAT_ONLY;
+        }
+        return UpdateDecision.NO_UPDATE;
+    }
+
+    /**
      * Check if metadata needs to be updated (rarely triggered)
      *
      * @param serviceName service name

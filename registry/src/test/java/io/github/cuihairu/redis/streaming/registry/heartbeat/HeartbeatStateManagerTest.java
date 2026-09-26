@@ -130,6 +130,22 @@ public class HeartbeatStateManagerTest {
     }
 
     @Test
+    public void testShouldHeartbeatOnlyDecidesByHeartbeatInterval() {
+        // B-05: empty metrics collections route through this method; a due heartbeat must
+        // surface as HEARTBEAT_ONLY so the TTL/score refresh is never skipped.
+        HeartbeatConfig cfg = new HeartbeatConfig();
+        cfg.setHeartbeatInterval(Duration.ofSeconds(60));
+        HeartbeatStateManager mgr = new HeartbeatStateManager(cfg);
+
+        // first sight: state created with lastHeartbeatTime=0 -> heartbeat due
+        assertEquals(UpdateDecision.HEARTBEAT_ONLY, mgr.shouldHeartbeatOnly("svc-hb", "i1"));
+
+        // after the heartbeat is marked completed, within the interval -> no update
+        mgr.markHeartbeatOnlyCompleted("svc-hb", "i1");
+        assertEquals(UpdateDecision.NO_UPDATE, mgr.shouldHeartbeatOnly("svc-hb", "i1"));
+    }
+
+    @Test
     public void testGetInstanceStateInfoAndRemove() {
         HeartbeatConfig cfg = new HeartbeatConfig();
         cfg.setMetricsInterval(Duration.ZERO);

@@ -46,11 +46,12 @@
 - **审计置信度**：高
 - **验证与修复**：`RedisServiceConsumer` 新增 `uniqueIdToInstanceId` 反查表：三处发现路径统一经 `cacheInstanceAndRegisterHealthCheck` 登记映射；`reportHealthStatus` 先翻译 uniqueId→裸 id 再查缓存（无映射时回退原值）；`isInstanceHealthy` 先把裸 id 翻译成 uniqueId 再查 checker；`unsubscribe` 清理改用 uniqueId（旧裸 id 调用永不命中，每实例泄漏一个运行中 checker 线程——即 B-08 的放大器）；`stop()` 清空反查表。回归测试：`ConsumerHealthKeyTranslationTest`（翻译层，旧代码 2/2 失败）+ 集成测试 `ConsumerHealthEventIntegrationTest`（真实 Redis：不可达实例 → HEALTH_FAILURE 事件 + `isInstanceHealthy("i1")`=false + unsubscribe 后 checker 数归零；旧代码收不到事件）。
 
-### B-05 metrics 收集为空时心跳被静默跳过：实例在"正常心跳"中被过期清除 ⏳
+### B-05 metrics 收集为空时心跳被静默跳过：实例在"正常心跳"中被过期清除 ✅已修复
 - **位置**：`registry/.../impl/RedisServiceProvider.java:333-357`；`registry/.../metrics/MetricsCollectionManager.java:34-73,133-148`
 - **触发**：采集超时（默认 5s > 心跳间隔 3s）/采集器失败/enabledMetrics 为空 → `collectMetrics` 返回空 map → `NO_UPDATE`；默认 `enableMetadataChangeDetection=false` → 最终 `NO_UPDATE` → 不执行任何 Redis 写。
 - **影响**：负载高峰（恰恰最需要心跳时）ZSet score 与 hash TTL 停止刷新，`heartbeatTimeoutSeconds` 后实例被清除、消费者掉线。仅 TRACE 级日志。
 - **审计置信度**：高
+- **验证与修复**：`HeartbeatStateManager` 新增 `shouldHeartbeatOnly(serviceName, instanceId)`（按心跳间隔判定）；`processInstanceHeartbeat` 对空采集结果改走该判定而非直接 `NO_UPDATE`——到期即产生 `HEARTBEAT_ONLY`，`executeUpdate` 的 Lua 路径照常刷新 TTL/score；心跳未到期则仍 NO_UPDATE（不产生多余写）。回归测试 `ProviderEmptyMetricsHeartbeatTest`（把决策行还原为旧短路后 2/2 复现失败）与 `HeartbeatStateManagerTest.testShouldHeartbeatOnlyDecidesByHeartbeatInterval`。
 
 ### B-06 配置中心监听器纯 pub/sub 无重同步：断连期间错过的通知永久丢失 ⏳
 - **位置**：`config/.../impl/RedisConfigService.java:196-237,440-463`
@@ -582,7 +583,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 本轮系统性审计共产出 **103 项**发现（另：B-04 后补验证修复）：B-01..B-45（core/window/join/table/aggregation/reliability/cep/registry/config/checkpoint）、MQ-01..15、CDC-C1/H1-H5/M1-M7/L1-L9、RT-H1-H3/M1-M7/L1-L11。
 
-### 已修复并带回归测试（26 项 + 1 项缓解）
+### 已修复并带回归测试（27 项 + 1 项缓解）
 
 | 模块 | 修复项 |
 |---|---|
@@ -590,7 +591,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 | join | B-02（非对称窗口顺序依赖）、B-16（并发 CME） |
 | table | B-03（aggregate 丢累加值）、B-17（null 分组 key） |
 | reliability | B-12（clear 后过滤器失效） |
-| registry | B-32（首失败即熔断，顺带修复"窗口在成功调用上填满时不裁决"）、B-04（健康上报 key 错配：事件/缓存/反注册/查询四路全失效） |
+| registry | B-32（首失败即熔断，顺带修复"窗口在成功调用上填满时不裁决"）、B-04（健康上报 key 错配：事件/缓存/反注册/查询四路全失效）、B-05（metrics 采集为空不再跳过心跳） |
 | mq | MQ-02（DLQ RETRY 双写）、MQ-03（租约非原子）、MQ-05（重放前缀硬编码）、MQ-07（退避溢出）、MQ-09（claimIdleMs=0）、MQ-10（JSON 控制字符） |
 | cdc | CDC-C1（真实流格式全丢）、CDC-H1/H2（重启丢水位/队列）、CDC-H4（commit 冒号截断）、CDC-H5（NPE）、CDC-M6（调度器复用）、CDC-M7（值解析按空白切分） |
 | runtime redis | RT-H1（checkpoint 恢复失效）、RT-M5（快照错误被吞，缓解：WARN + 明示回退语义） |
