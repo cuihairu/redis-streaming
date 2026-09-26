@@ -457,20 +457,20 @@ class RedisMessageConsumerResidualCoverageTest {
     }
 
     @Test
-    void precheckExtractRefFailureIsIgnoredThenParseRethrows() {
+    void precheckExtractRefFailureIsIgnoredThenParseHandledByDlq() {
         MessageHandler handler = mock(MessageHandler.class);
         when(handler.handle(any())).thenReturn(MessageHandleResult.SUCCESS);
-        // the precheck swallows the hostile map failure, but parse re-throws it afterwards
-        assertThrows(Exception.class, () -> invoke(consumer, "processIncomingRecord", PROCESS_INCOMING,
+        // the precheck swallows the hostile map failure, parse error is now handled by DLQ (MQ-06)
+        assertDoesNotThrow(() -> invoke(consumer, "processIncomingRecord", PROCESS_INCOMING,
                 "t", "g", 0, "5-0", headersThrowingData(), dataStream, handler, true));
     }
 
     @Test
-    void nonPayloadParseErrorsAreRethrown() {
+    void nonPayloadParseErrorsAreHandledByDlq() {
         MessageHandler handler = mock(MessageHandler.class);
-        Exception e = assertThrows(Exception.class, () -> invoke(consumer, "processIncomingRecord", PROCESS_INCOMING,
+        // non-payload parse error is now handled by sending to DLQ (MQ-06)
+        assertDoesNotThrow(() -> invoke(consumer, "processIncomingRecord", PROCESS_INCOMING,
                 "t", "g", 0, "5-0", throwingData(), dataStream, handler, false));
-        assertTrue(e instanceof IllegalStateException);
     }
 
     @Test

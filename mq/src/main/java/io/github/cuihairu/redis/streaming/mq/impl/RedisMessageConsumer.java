@@ -485,12 +485,11 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         try {
             message = StreamEntryCodec.parsePartitionEntry(topic, messageId, data, payloadLifecycleManager);
         } catch (RuntimeException ex) {
-            if (isPayloadMissing(ex)) {
-                // Fallback: DLQ and ACK to avoid poison pending
-                handleMissingPayload(topic, consumerGroup, partitionId, messageId, data, streamOrNull);
-                return;
-            }
-            throw ex;
+            // Any parse failure (including malformed timestamp, corrupt payload, etc.)
+            // is treated as poison — send to DLQ and ACK original to avoid infinite
+            // re-claim loops (MQ-06). Payload-missing already handled by the same path.
+            handleMissingPayload(topic, consumerGroup, partitionId, messageId, data, streamOrNull);
+            return;
         }
         // include partitionId if present (support both numeric and string forms)
         Object pid = data.get("partitionId");
