@@ -77,11 +77,13 @@
 - **影响**：条目永不单独过期；整个 set 的 TTL 在每次 `markAsSeen` 被刷回 windowDuration，持续流量下 set 永不过期 → "A" 一年后仍判重；set 无界增长，与"Memory-bounded"文档相反。
 - **审计置信度**：高
 
-### B-10 PatternMatcher 开启 allowEventReuse 后活动序列每事件翻倍：指数膨胀 ⏳
+### B-10 PatternMatcher 开启 allowEventReuse 后活动序列每事件翻倍：指数膨胀 ✅已修复
 - **位置**：`cep/.../PatternMatcher.java:43-55,76-92`
 - **触发**：`allowEventReuse(true)`，N 个连续匹配事件。
 - **影响**：序列数 2^N（每事件克隆全部活动序列再新增）→ ~30 个事件即 OOM；仅靠时间窗清理，快速流撑不到过期。
 - **审计置信度**：高
+- **验证与修复**：实测增长基数为 2^(N+1)−2（newSeq 加入后 extendSequences 连它一起扩展），20 个事件即 2,097,150 个活动序列。沿 B-20 惯例加保留上限：新增 `DEFAULT_MAX_ACTIVE_SEQUENCES=1000` 与 2-arg 构造器（负数 IAE；0 完全关闭扩展跟踪），超出上限按最旧优先裁剪（subList 批量删除，保留最新部分序列——最可能被后续事件扩展），在 process() 扩展后调用。时间窗清理保留；`process()` 完成输出不受影响（每匹配事件仍恰一个完成序列）。裁剪不改变"扩展序列从不产出"的既有事实——活动序列仅供计数与扩展，上限化后内存有界 O(cap×maxSequenceLength)。
+- **回归测试**：`PatternMatcherActiveSequenceCapTest`——旧代码复现：临时旧 API 测试（1-arg 构造器）喂 20 事件断言 ≤1000，实测 2,097,150 失败后删除。永久测试 6 例：默认上限精确钳制在 1000、显式 cap=3 保留最新 3 个、cap=0 零跟踪但完成输出不变、负数 IAE、关闭 reuse 无部分序列、时间窗在满载状态下仍正常清空。
 
 ### B-11 窗口 assigner 接受 0/负大小：除零、死循环或静默丢数据 ✅已修复
 - **位置**：`window/.../assigners/TumblingWindow.java:32-35`、`SlidingWindow.java:35-47`；`aggregation/.../TumblingWindow.java:24-29`、`SlidingWindow.java:22-27,46-59`
