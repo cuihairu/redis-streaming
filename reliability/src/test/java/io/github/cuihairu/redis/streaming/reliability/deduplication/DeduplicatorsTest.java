@@ -2,6 +2,7 @@ package io.github.cuihairu.redis.streaming.reliability.deduplication;
 
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RBloomFilter;
+import org.redisson.api.RScoredSortedSet;
 import org.redisson.api.RSet;
 import org.redisson.api.RedissonClient;
 
@@ -61,13 +62,13 @@ class DeduplicatorsTest {
     }
 
     @Test
-    void windowedDeduplicatorSetsAndRefreshesTtl() {
+    void windowedDeduplicatorStampsBackstopTtlOnWrite() {
         RedissonClient redisson = mock(RedissonClient.class);
         @SuppressWarnings({"rawtypes", "unchecked"})
-        RSet set = mock(RSet.class);
-        when(redisson.getSet("win")).thenReturn(set);
+        RScoredSortedSet set = mock(RScoredSortedSet.class);
+        when(redisson.getScoredSortedSet("win")).thenReturn(set);
         when(set.expire(any(Duration.class))).thenReturn(true);
-        when(set.add("k")).thenReturn(true);
+        when(set.add(anyDouble(), any())).thenReturn(true);
         when(set.remainTimeToLive()).thenReturn(123L);
 
         WindowedDeduplicator<String> d = new WindowedDeduplicator<>(redisson, "win", Duration.ofSeconds(5), s -> "k");
@@ -76,7 +77,7 @@ class DeduplicatorsTest {
         d.markAsSeen("x");
         assertEquals(123L, d.getRemainingTTL());
 
-        verify(set, times(2)).expire(eq(Duration.ofSeconds(5))); // constructor + markAsSeen
+        verify(set, times(1)).expire(any(Duration.class)); // the write's backstop stamp
     }
 
     @Test
@@ -113,8 +114,8 @@ class DeduplicatorsTest {
     void factoryCreatesExpectedImplementations() {
         RedissonClient redisson = mock(RedissonClient.class);
         @SuppressWarnings({"rawtypes", "unchecked"})
-        RSet set = mock(RSet.class);
-        when(redisson.getSet("name")).thenReturn(set);
+        RScoredSortedSet set = mock(RScoredSortedSet.class);
+        when(redisson.getScoredSortedSet("name")).thenReturn(set);
         when(set.expire(any(Duration.class))).thenReturn(true);
 
         Deduplicator<String> w = DeduplicatorFactory.create(DeduplicatorFactory.DeduplicationStrategy.WINDOWED, redisson, "name", s -> s);
@@ -137,7 +138,6 @@ class DeduplicatorsTest {
     @Test
     void windowedDeduplicatorValidatesWindowDuration() {
         RedissonClient redisson = mock(RedissonClient.class);
-        when(redisson.getSet("win")).thenReturn(mock(RSet.class));
 
         assertThrows(IllegalArgumentException.class, () -> new WindowedDeduplicator<>(redisson, "win", Duration.ZERO, (String x) -> x));
         assertThrows(IllegalArgumentException.class, () -> new WindowedDeduplicator<>(redisson, "win", Duration.ofMillis(-1), (String x) -> x));

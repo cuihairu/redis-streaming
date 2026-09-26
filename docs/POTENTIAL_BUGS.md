@@ -73,11 +73,13 @@
 - **影响**：`subscribe()/discover()` 首次注册每实例阻塞至 connect+read 超时（默认 5s）；未 stop 的 checker（B-04 保证会发生）以非守护线程阻止 JVM 退出；线程数 O(实例数)。
 - **审计置信度**：高
 
-### B-09 WindowedDeduplicator 的"元素级时间窗"实为集合级 TTL 且每次写入刷新 ⏳
-- **位置**：`reliability/.../deduplication/WindowedDeduplicator.java:57-58,67-78`
+### B-09 WindowedDeduplicator 的"元素级时间窗"实为集合级 TTL 且每次写入刷新 ✅已修复
+- **位置**：`reliability/.../deduplication/WindowedDeduplicator.java`
 - **触发**：`windowDuration=1h` 持续有流量，元素 "A" 于 t=0 出现、一年后再次出现。
 - **影响**：条目永不单独过期；整个 set 的 TTL 在每次 `markAsSeen` 被刷回 windowDuration，持续流量下 set 永不过期 → "A" 一年后仍判重；set 无界增长，与"Memory-bounded"文档相反。
 - **审计置信度**：高
+- **验证与修复**：数据结构从 plain SET + 整键刷新 TTL 换成 ZSET（`RScoredSortedSet`，score=元素最近出现时间）：`isDuplicate`/`checkAndMark` 按元素 score 判窗（`now - score < window`），写入时 `removeRangeByScore` 剪掉窗口外旧条目使集合有界（≈ 流量速率 × 窗口），并盖 `window+60s` 背板 TTL 只负责在流量停止后回收整键（不再是过期机制）。时钟经包私有构造器注入（`LongSupplier`，公共构造器默认 `System::currentTimeMillis`）；构造期零 Redis 访问并补齐 NPE/IAE 校验。旧版 plain SET 键在首次访问时惰性迁移（getType==SET → readAll → delete → 以迁移时刻为 last-seen 重写为 ZSET，即旧成员视作再多看一次）。剪枝下界用 0 而非 "-Infinity"（后者过 Redisson 编码不可移植）。
+- **回归测试**：`WindowedDeduplicatorIntegrationTest`（只用公共 API，可直接对旧代码编译）——旧代码复现 2 项失败：`elementExpiresWhileTrafficContinues`（300ms 窗，标 "A" 后以 50ms 间隔持续泵入 "B" 共 700ms，`isDuplicate("A")` 旧=true（整键 TTL 被流量续命）/新=false ✓）、`legacyPlainSetIsMigratedToScoredLayout`（键类型旧=SET/新=ZSET ✓）；另 2 项（空闲过期、背板 TTL）新旧皆绿作守卫。单元 `WindowedDeduplicatorTest` 重写 9 例（注入时钟判窗/剪枝边界 now−window/背板 TTL/迁移/校验），`DelegateCoverageTest`、`DeduplicatorsTest` 同步迁移到 ZSET 布局。
 
 ### B-10 PatternMatcher 开启 allowEventReuse 后活动序列每事件翻倍：指数膨胀 ✅已修复
 - **位置**：`cep/.../PatternMatcher.java:43-55,76-92`
@@ -631,7 +633,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 ### 记为后续任务（未修复，原因见各条目）
 
 - **重构级**（需专项设计，非局部修复）：MQ-01/MQ-04（DLQ pending 回收与删除策略语义）、CDC-H3（断线重连框架）、RT-H2（checkpoint 全库 SCAN）、B-20（完成匹配的有界化）、B-24（KTable 物化清理）。
-- **设计决策类**：RT-H3（fire-and-purge 原子性，需两阶段提交）、B-06/B-07（配置通知重同步/去重，涉及 API 契约）、B-09（元素级 TTL 需换数据结构）。
+- **设计决策类**：RT-H3（fire-and-purge 原子性，需两阶段提交）、B-06（配置通知重同步，涉及 API 契约）。
 - **风险可控/影响良性**：MQ-11（frontier 回退方向安全）、RT-M3/M6/M7（文档化语义）、B-36（文档已声明测试用途）等。
 - 其余 ⏳ 条目为审计发现但本轮未逐条复现验证（范围限制），均已给出触发条件、位置与修复方向，可直接作为下轮输入。
 
