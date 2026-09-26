@@ -4,7 +4,11 @@ import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +24,20 @@ public class MetricsCollectionManager {
     private final MetricsConfig config;
     private final Map<String, Object> lastMetrics = new ConcurrentHashMap<>();
     private final Map<String, Long> lastCollectionTimes = new ConcurrentHashMap<>();
+
+    /**
+     * Collector calls run here instead of the common ForkJoinPool (B-43): a hung
+     * collector must not occupy common-pool threads (JVM-wide starvation), and its
+     * task is cancelled on timeout so nothing lingers past the call. Daemon threads
+     * die when idle, so the pool needs no explicit lifecycle.
+     */
+    private final ExecutorService collectorExecutor = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "metrics-collector-" + COLLECTOR_THREAD_SEQ.incrementAndGet());
+        t.setDaemon(true);
+        return t;
+    });
+
+    private static final AtomicInteger COLLECTOR_THREAD_SEQ = new AtomicInteger();
 
     private volatile boolean legacyWarnLogged = false;
 
@@ -135,16 +153,21 @@ public class MetricsCollectionManager {
             return null;
         }
 
-        // Use CompletableFuture for timeout control
         CompletableFuture<Object> future = CompletableFuture.supplyAsync(() -> {
             try {
                 return collector.collectMetric();
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
-        });
+        }, collectorExecutor);
 
-        return future.get(config.getCollectionTimeout().toMillis(), TimeUnit.MILLISECONDS);
+        try {
+            return future.get(config.getCollectionTimeout().toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            // interrupt the collector so a hung probe does not linger on the executor (B-43)
+            future.cancel(true);
+            throw e;
+        }
     }
 
     /**
