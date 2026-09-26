@@ -171,11 +171,13 @@
 - **验证与修复**：并发部分——`registerStore/triggerCheckpoint/restoreFromCheckpoint/getCheckpoint/getLatestCheckpoint/getRegisteredStores` 统一加 `synchronized`（单一监视器），`latestCheckpoint` 的 volatile 随之不再必要；`getRegisteredStores()` 从 live view 改为返回不可变**副本**，迭代不再与注册竞态。浅快照部分经核实 `InMemoryKeyedStateStore.snapshot()` 已是两层拷贝（外层 + 每个 state 的内层 map），仅用户 value 对象按引用共享——内存引擎无序列化的固有限制，值替换不会污染已完成快照（现有 `testRestoreFromCheckpointWithMultipleStores` 与新快照隔离测试共同钉住该语义），无需改动。
 - **回归测试**：`InMemoryCheckpointCoordinatorConcurrencyTest`——旧代码复现：①1600 store 并发注册 + 1800 次并发 trigger → 8 个 store 静默丢失（1592≠1600）；②读线程迭代 live view → `ConcurrentModificationException`；③另一轮复现 reader 20s 观察不到注册完成的可见性缺陷。修复代码上 3/3 通过，另含快照与后续状态变更隔离的语义测试。
 
-### B-23 RedisKTable.join/leftJoin 错误处理自身 NPE：掩盖原始异常 ⏳
+### B-23 RedisKTable.join/leftJoin 错误处理自身 NPE：掩盖原始异常 ✅已修复
 - **位置**：`table/.../impl/RedisKTable.java:273-276,317-320`
 - **触发**：join 函数抛错且对端是 InMemoryKTable（`otherTable` 为 null）。
 - **影响**：catch 内 `otherTable.tableName` NPE，调用方收到裸 NPE，真实根因丢失。
 - **审计置信度**：高
+- **验证与修复**：两个 catch 块改为 null 安全：`otherTable != null ? otherTable.tableName : "in-memory table"`，日志保留两张表名且原始 joiner 异常作为 cause 正常包装为 `Join failed`/`Left join failed` 向上抛。
+- **回归测试**：`RedisKTableJoinInMemoryPeerErrorTest`——旧代码复现：对 InMemoryKTable 对端 joiner 抛 `IllegalStateException("joiner bug")` 时，调用方收到 `Cannot read field "tableName" because "otherTable" is null` 的裸 NPE（cause 链全丢）；修复后收到 message=`Join failed`、cause=`IllegalStateException("joiner bug")` 的 RuntimeException；join/leftJoin 双路径 + 正常路径共 3 例。
 
 ### B-24 RedisKTable 每次转换物化新 Redis hash 且永不删除 ⏳
 - **位置**：`table/.../impl/RedisKTable.java:155,184,213,248,294`；`RedisKGroupedTable.java:128`

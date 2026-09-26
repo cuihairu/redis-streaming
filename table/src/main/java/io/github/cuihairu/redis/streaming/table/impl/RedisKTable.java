@@ -271,7 +271,10 @@ public class RedisKTable<K, V> implements KTable<K, V> {
             }
             return result;
         } catch (Exception e) {
-            log.error("Failed to join tables {} and {}", tableName, otherTable.tableName, e);
+            // otherTable is null when the peer is an InMemoryKTable; dereferencing it here used to
+            // throw a bare NPE that replaced the original exception (B-23)
+            String otherName = otherTable != null ? otherTable.tableName : "in-memory table";
+            log.error("Failed to join tables {} and {}", tableName, otherName, e);
             throw new RuntimeException("Join failed", e);
         }
     }
@@ -315,7 +318,8 @@ public class RedisKTable<K, V> implements KTable<K, V> {
             }
             return result;
         } catch (Exception e) {
-            log.error("Failed to left join tables {} and {}", tableName, otherTable.tableName, e);
+            String otherName = otherTable != null ? otherTable.tableName : "in-memory table";
+            log.error("Failed to left join tables {} and {}", tableName, otherName, e);
             throw new RuntimeException("Left join failed", e);
         }
     }
