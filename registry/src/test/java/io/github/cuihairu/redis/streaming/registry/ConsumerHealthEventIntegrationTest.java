@@ -99,12 +99,18 @@ class ConsumerHealthEventIntegrationTest {
         ServiceChangeListener listener = (serviceName, action, changed, all) -> events.offer(action);
         consumer.subscribe(SERVICE, listener);
 
-        // discover registers the health checker; the first check runs synchronously
+        // discover registers the health checker; since B-08 the first check runs
+        // asynchronously, and a discovery CURRENT event may be queued ahead of it —
+        // drain until the first probe's HEALTH_FAILURE arrives
         assertEquals(1, consumer.discover(SERVICE).size());
 
-        ServiceChangeAction action = events.poll(20, TimeUnit.SECONDS);
-        assertNotNull(action, "expected a health event within 20s");
-        assertEquals(ServiceChangeAction.HEALTH_FAILURE, action);
+        ServiceChangeAction action = null;
+        long healthDeadline = System.currentTimeMillis() + 20_000;
+        while (action != ServiceChangeAction.HEALTH_FAILURE) {
+            long remaining = healthDeadline - System.currentTimeMillis();
+            action = events.poll(Math.max(1, remaining), TimeUnit.MILLISECONDS);
+            assertNotNull(action, "expected a health failure event within 20s");
+        }
         assertFalse(consumer.isInstanceHealthy("i1"),
                 "bare instanceId lookup must resolve to the checker's uniqueId key");
 

@@ -7,23 +7,34 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 
 /**
  * Health check manager
  * Manages health checkers for multiple service instances
+ *
+ * <p>B-08: all checkers share one daemon-thread pool, so thread count does not grow
+ * with the number of discovered instances. The pool is created on first registration
+ * and its idle threads time out, an idle manager holds no threads.
  */
 public class HealthCheckManager {
     private static final Logger logger = LoggerFactory.getLogger(HealthCheckManager.class);
-    
+
+    private static final long SHARED_POOL_KEEP_ALIVE_SECONDS = 60;
+
     private final ConcurrentHashMap<String, ClientHealthChecker> healthCheckers;
     private final ConcurrentHashMap<Protocol, HealthChecker> protocolHealthCheckers;
     private final HealthChecker defaultHealthChecker;
     private final BiConsumer<String, Boolean> healthStatusReporter;
     private final long checkInterval;
     private final TimeUnit timeUnit;
-    
+
+    private volatile ScheduledThreadPoolExecutor sharedExecutor;
+
     public HealthCheckManager(HealthChecker defaultHealthChecker,
                              BiConsumer<String, Boolean> healthStatusReporter,
                              long checkInterval,
@@ -34,6 +45,28 @@ public class HealthCheckManager {
         this.healthStatusReporter = healthStatusReporter;
         this.checkInterval = checkInterval;
         this.timeUnit = timeUnit;
+    }
+
+    /**
+     * The pool is deliberately smaller than the instance count: probes are I/O-bound
+     * with their own connect/read timeouts, and excess due checks queue briefly rather
+     * than each claiming a thread (B-08).
+     */
+    private synchronized ScheduledExecutorService executor() {
+        ScheduledThreadPoolExecutor executor = sharedExecutor;
+        if (executor == null || executor.isShutdown()) {
+            AtomicInteger seq = new AtomicInteger();
+            int poolSize = Math.max(2, Runtime.getRuntime().availableProcessors() / 2);
+            executor = new ScheduledThreadPoolExecutor(poolSize, r -> {
+                Thread t = new Thread(r, "health-check-manager-" + seq.incrementAndGet());
+                t.setDaemon(true);
+                return t;
+            });
+            executor.setKeepAliveTime(SHARED_POOL_KEEP_ALIVE_SECONDS, TimeUnit.SECONDS);
+            executor.allowCoreThreadTimeOut(true);
+            sharedExecutor = executor;
+        }
+        return executor;
     }
     
     /**
@@ -81,7 +114,8 @@ public class HealthCheckManager {
             healthChecker,
             isHealthy -> healthStatusReporter.accept(uniqueId, isHealthy),
             checkInterval,
-            timeUnit
+            timeUnit,
+            executor()
         );
 
         // B-26: the authoritative guard must be putIfAbsent — two threads discovering the
@@ -126,11 +160,17 @@ public class HealthCheckManager {
     }
     
     /**
-     * Stop all health checkers
+     * Stop all health checkers and release the shared scheduler; a later registration
+     * creates a fresh one.
      */
-    public void stopAll() {
+    public synchronized void stopAll() {
         healthCheckers.values().forEach(ClientHealthChecker::stop);
         healthCheckers.clear();
+        ScheduledThreadPoolExecutor executor = sharedExecutor;
+        sharedExecutor = null;
+        if (executor != null) {
+            executor.shutdown();
+        }
         logger.info("Stopped all health checkers");
     }
     

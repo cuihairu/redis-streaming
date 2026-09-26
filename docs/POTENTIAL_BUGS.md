@@ -67,11 +67,13 @@
 - **验证与修复**：`ConfigChangeEvent` 新增 `publisherId` 标记（旧事件无标记仍按原路径投递，跨版本兼容）；`publishConfigChangeEvent` 发布时盖上本实例 `clientId`；订阅回调对 `publisherId==自己` 的回环事件直接跳过——本 JVM 的同步投递只此一份，远端 JVM 仍各收一次。
 - **回归测试**：`ConfigChangeSingleDeliveryIntegrationTest`（@Tag("integration")，真实 Redis，3 用例：发布方自身监听器恰好一次且 publish 返回时已送达、回环落地后仍一次、远端监听器恰好一次、删除监听后不再通知）。旧代码复现：git stash 还原 main 代码后跑同一测试，removal/publishing 两条以 "expected 1 but was 2" 失败——双投递坐实；新代码全绿。
 
-### B-08 ClientHealthChecker 每实例一个非守护线程且首次检查在调用线程同步执行 ⏳
-- **位置**：`registry/.../health/ClientHealthChecker.java:39-56`；`HealthCheckManager.java:78-89`
+### B-08 ClientHealthChecker 每实例一个非守护线程且首次检查在调用线程同步执行 ✅已修复
+- **位置**：`registry/.../health/ClientHealthChecker.java`；`HealthCheckManager.java`
 - **触发**：健康检查开启后 discover N 个实例。
 - **影响**：`subscribe()/discover()` 首次注册每实例阻塞至 connect+read 超时（默认 5s）；未 stop 的 checker（B-04 保证会发生）以非守护线程阻止 JVM 退出；线程数 O(实例数)。
 - **审计置信度**：高
+- **验证与修复**：三项并修——(1) 首检不再内联：`start()` 改为 `scheduleWithFixedDelay(checkHealth, 0, ...)`，首检落到执行器线程，`registerServiceInstance` 每实例不再阻塞至超时（首检完成前 `getLastHealthStatus()` 为默认 true，与注册即 UP 的注册中心语义一致）；(2) 线程转守护：自管调度器与共享池的线程工厂均 `setDaemon(true)`，泄漏的 checker 不再阻止 JVM 退出；(3) 共享池：`HealthCheckManager` 惰性建一个 `ScheduledThreadPoolExecutor`（core=max(2, cores/2)，keepalive 60s + allowCoreThreadTimeOut，空闲零线程），全部实例的检查经 `ClientHealthChecker` 包私有 6 参构造器跑在共享池上，公共 5 参构造器保留自管单线程调度器向后兼容；`stopAll()` 收口关闭共享池（此后注册会重建）。附带把 `checkHealth` 的 catch 从 Exception 放宽到 Throwable——未捕获 Error 会让 fixed-delay 调度静默死亡（无日志、永不再检），捕获后仍按"检查失败=不健康"上报。
+- **回归测试**：`HealthCheckThreadingTest`（只用公共 API，可直接对旧代码编译）——旧代码 3/3 按预期失败：首检线程="Test worker"（调用线程内联）、调度线程 isDaemon=false、检查线程名含 "Test worker"（无共享池）；新代码 3/3 绿。既有 `ClientHealthCheckerTest`/`CustomClientHealthCheckerCoverageTest`（含 stop 阻塞探针等待 5s 超时路径、stop 中断路径）全绿，行为兼容。
 
 ### B-09 WindowedDeduplicator 的"元素级时间窗"实为集合级 TTL 且每次写入刷新 ✅已修复
 - **位置**：`reliability/.../deduplication/WindowedDeduplicator.java`
