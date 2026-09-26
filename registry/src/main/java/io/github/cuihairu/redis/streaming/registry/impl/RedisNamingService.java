@@ -48,6 +48,14 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
         ServiceConsumerConfig consumerConfig = new ServiceConsumerConfig();
         consumerConfig.setKeyPrefix(this.config.getKeyPrefix());
         consumerConfig.setEnableKeyPrefix(this.config.isEnableKeyPrefix());
+        // Health-check and admin settings must reach the consumer config (B-30):
+        // they used to be silently dropped here while getConfig() kept reporting the
+        // user's values, making the misconfiguration impossible to see.
+        consumerConfig.setEnableHealthCheck(this.config.isEnableHealthCheck());
+        consumerConfig.setHealthCheckInterval(this.config.getHealthCheckInterval());
+        consumerConfig.setHealthCheckTimeUnit(this.config.getHealthCheckTimeUnit());
+        consumerConfig.setHealthCheckTimeout(this.config.getHealthCheckTimeout());
+        consumerConfig.setEnableAdminService(this.config.isEnableAdminService());
         
         this.serviceProvider = new RedisServiceProvider(redissonClient, providerConfig);
         this.serviceConsumer = new RedisServiceConsumer(redissonClient, consumerConfig);

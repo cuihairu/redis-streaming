@@ -214,11 +214,12 @@
 - **审计置信度**：高
 - **验证与修复**：修复：`cleanupExpiredInstancesForService` 的空集判断与 SREM 合并为单条原子 Lua（`ZCARD==0 则 SREM 服务索引`，经 RScript 直发），竞态窗口不复存在；同时把该原子步骤从 `if (!result.isEmpty())` 内移到每服务必经处——原位置只有"本批次恰好清掉了实例"才校验索引，早已为空的残留（前次清理被中断、或 B-29 竞态遗留）永不被修复。回归：`ProviderServiceIndexAtomicCleanupTest`（mock RScript：断言 eval 携带 ZCARD/SREM 原子脚本及 heartbeatKey+servicesIndexKey——旧代码零交互即失败）+ `ProviderServiceIndexCleanupIntegrationTest`（@Tag("integration") 真实 Redis：空 ZSet 服务被移出索引、有活跃心跳的服务保留且心跳不被触碰；旧代码因残留位置缺陷实测 expected false but was true 失败）。
 
-### B-30 RedisNamingService 构造子 Provider/Consumer 时静默丢弃健康检查等配置 ⏳
+### B-30 RedisNamingService 构造子 Provider/Consumer 时静默丢弃健康检查等配置 ✅已修复
 - **位置**：`registry/.../impl/RedisNamingService.java:43-53`
 - **触发**：`namingServiceConfig.setEnableHealthCheck(true)` 等设置后经 namingService 创建。
 - **影响**：healthCheck* 与 admin 开关被忽略（只拷贝 keyPrefix 两项）；`getConfig()` 仍返回用户配置 → 错配不可见。
 - **审计置信度**：高
+- **验证与修复**：修复：构造子创建角色配置时将 `enableHealthCheck`/`healthCheckInterval`/`healthCheckTimeUnit`/`healthCheckTimeout`/`enableAdminService` 五项全部拷贝到 `ServiceConsumerConfig`（Provider 侧无可对应的 Naming 级字段，keyPrefix 两项照旧）。回归：`RedisNamingServiceConfigPropagationTest` 3 用例（自定义五项反射断言到达 consumer 配置——旧代码实测 enableHealthCheck 断言失败；默认值传播；keyPrefix 双角色照常传播）。
 
 ### B-31 healthCheckTimeout 零/负值：构造抛 IAE 或 connect 无限阻塞 ✅已修复
 - **位置**：`registry/.../RedisServiceConsumer.java:74-77`；`HttpHealthChecker.java:30-37,69`；`TcpHealthChecker.java:33-35`
