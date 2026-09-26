@@ -6,6 +6,7 @@ import io.github.cuihairu.redis.streaming.checkpoint.storage.CheckpointStorage;
 import org.redisson.api.RBucket;
 import org.redisson.api.RKeys;
 import org.redisson.api.RedissonClient;
+import org.redisson.api.options.KeysScanOptions;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -49,15 +50,23 @@ public class RedisCheckpointStorage implements CheckpointStorage {
 
     @Override
     public Checkpoint getLatestCheckpoint() throws Exception {
-        List<Checkpoint> checkpoints = listCheckpoints(1);
-        return checkpoints.isEmpty() ? null : checkpoints.get(0);
+        // Only completed checkpoints are valid recovery points (B-14): one persisted by
+        // triggerCheckpoint but never completed must not be served as "latest".
+        for (Checkpoint checkpoint : listCheckpoints(Integer.MAX_VALUE)) {
+            if (checkpoint.isCompleted()) {
+                return checkpoint;
+            }
+        }
+        return null;
     }
 
     @Override
     public List<Checkpoint> listCheckpoints(int limit) throws Exception {
         RKeys keys = redisson.getKeys();
         List<Checkpoint> checkpoints = new ArrayList<>();
-        for (String key : keys.getKeys()) {
+        // Scan only this storage's prefix (B-15): a plain getKeys() walks the entire
+        // Redis keyspace, deserializing every checkpoint of every other user of the DB.
+        for (String key : keys.getKeys(KeysScanOptions.defaults().pattern(keyPrefix + "*"))) {
             if (key == null || !key.startsWith(keyPrefix)) continue;
             String suffix = key.substring(keyPrefix.length());
             // Only accept pure numeric checkpoint keys: {keyPrefix}{checkpointId}
@@ -95,10 +104,27 @@ public class RedisCheckpointStorage implements CheckpointStorage {
             return 0;
         }
 
+        // Evict incomplete checkpoints first (B-14): they can never be recovered from,
+        // so a newer incomplete checkpoint must not displace an older completed one.
+        // Within each class the oldest goes first. The number of surviving checkpoints
+        // still equals keepCount.
+        List<Checkpoint> evictionOrder = new ArrayList<>(checkpoints.size());
+        List<Checkpoint> completed = new ArrayList<>();
+        for (Checkpoint checkpoint : checkpoints) {
+            if (checkpoint.isCompleted()) {
+                completed.add(checkpoint);
+            } else {
+                evictionOrder.add(checkpoint);
+            }
+        }
+        Collections.reverse(evictionOrder); // input is newest-first; oldest incomplete first
+        Collections.reverse(completed);
+        evictionOrder.addAll(completed);
+
         int deleteCount = 0;
-        // Skip the first 'keepCount' checkpoints (newest)
-        for (int i = keepCount; i < checkpoints.size(); i++) {
-            if (deleteCheckpoint(checkpoints.get(i).getCheckpointId())) {
+        int toDelete = checkpoints.size() - keepCount;
+        for (int i = 0; i < toDelete; i++) {
+            if (deleteCheckpoint(evictionOrder.get(i).getCheckpointId())) {
                 deleteCount++;
             }
         }

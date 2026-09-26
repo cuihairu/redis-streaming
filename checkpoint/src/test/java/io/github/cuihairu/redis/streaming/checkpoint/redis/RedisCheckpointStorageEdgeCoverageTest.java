@@ -31,7 +31,7 @@ class RedisCheckpointStorageEdgeCoverageTest {
         RedissonClient redisson = mock(RedissonClient.class);
         RKeys keys = mock(RKeys.class);
         when(redisson.getKeys()).thenReturn(keys);
-        when(keys.getKeys()).thenReturn(List.of("p:", "p:12a", "p:3.5", "p:7", "p:9", "p:-4"));
+        when(keys.getKeys(org.mockito.ArgumentMatchers.any(org.redisson.api.options.KeysScanOptions.class))).thenReturn(List.of("p:", "p:12a", "p:3.5", "p:7", "p:9", "p:-4"));
 
         DefaultCheckpoint kept = new DefaultCheckpoint(7, 700L);
         RBucket<Checkpoint> b7 = bucket();
@@ -53,7 +53,7 @@ class RedisCheckpointStorageEdgeCoverageTest {
         RedissonClient redisson = mock(RedissonClient.class);
         RKeys keys = mock(RKeys.class);
         when(redisson.getKeys()).thenReturn(keys);
-        when(keys.getKeys()).thenReturn(List.of("p:1", "p:2", "p:3"));
+        when(keys.getKeys(org.mockito.ArgumentMatchers.any(org.redisson.api.options.KeysScanOptions.class))).thenReturn(List.of("p:1", "p:2", "p:3"));
 
         DefaultCheckpoint c1 = new DefaultCheckpoint(1, 1000L);
         DefaultCheckpoint c2 = new DefaultCheckpoint(2, 2000L);

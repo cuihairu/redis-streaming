@@ -142,14 +142,19 @@ public class CheckpointIntegrationTest {
     public void testGetLatestCheckpoint() {
         log.info("Testing get latest checkpoint");
 
-        // Trigger multiple checkpoints
+        // Trigger and fully acknowledge two checkpoints (requiredAcks=2); getLatestCheckpoint
+        // must only ever serve completed ones (B-14)
         long id1 = coordinator.triggerCheckpoint();
+        coordinator.acknowledgeCheckpoint(id1, "task-1");
+        coordinator.acknowledgeCheckpoint(id1, "task-2");
         try {
             Thread.sleep(10); // Ensure different timestamps
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
         long id2 = coordinator.triggerCheckpoint();
+        coordinator.acknowledgeCheckpoint(id2, "task-1");
+        coordinator.acknowledgeCheckpoint(id2, "task-2");
 
         Checkpoint latest = coordinator.getLatestCheckpoint();
         assertNotNull(latest);

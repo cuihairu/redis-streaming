@@ -36,10 +36,12 @@ class RedisCheckpointStorageTest {
         RedissonClient redisson = mock(RedissonClient.class);
         RKeys keys = mock(RKeys.class);
         when(redisson.getKeys()).thenReturn(keys);
-        when(keys.getKeys()).thenReturn(java.util.Arrays.asList(null, "other:9", "p:1", "p:2"));
+        when(keys.getKeys(org.mockito.ArgumentMatchers.any(org.redisson.api.options.KeysScanOptions.class))).thenReturn(java.util.Arrays.asList(null, "other:9", "p:1", "p:2"));
 
         DefaultCheckpoint c1 = new DefaultCheckpoint(1, 1000L);
         DefaultCheckpoint c2 = new DefaultCheckpoint(2, 2000L);
+        // getLatestCheckpoint only serves completed checkpoints (B-14)
+        c2.markCompleted();
 
         @SuppressWarnings("unchecked")
         RBucket<Checkpoint> b1 = mock(RBucket.class);
@@ -68,7 +70,7 @@ class RedisCheckpointStorageTest {
         RedissonClient redisson = mock(RedissonClient.class);
         RKeys keys = mock(RKeys.class);
         when(redisson.getKeys()).thenReturn(keys);
-        when(keys.getKeys()).thenReturn(List.of("p:1", "p:2", "p:3"));
+        when(keys.getKeys(org.mockito.ArgumentMatchers.any(org.redisson.api.options.KeysScanOptions.class))).thenReturn(List.of("p:1", "p:2", "p:3"));
 
         DefaultCheckpoint c1 = new DefaultCheckpoint(1, 1000L);
         DefaultCheckpoint c2 = new DefaultCheckpoint(2, 2000L);

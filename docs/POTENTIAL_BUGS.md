@@ -107,17 +107,19 @@
 - **影响**：未检查强转 `(T) stateMap.get(key)`，调用点首次使用才 CCE；无 schema/version 字段，状态类变更静默破坏旧 checkpoint；`restoreFromCheckpoint` 只打日志不恢复任何后端（呈现成功实为 no-op）。
 - **审计置信度**：高（设计类）
 
-### B-14 未完成的 checkpoint 被持久化、被当作 latest 返回、可被恢复 ⏳
+### B-14 未完成的 checkpoint 被持久化、被当作 latest 返回、可被恢复 ✅已修复
 - **位置**：`checkpoint/.../redis/RedisCheckpointCoordinator.java:74-91,168-195`；`RedisCheckpointStorage.java:50-54,91-107`
 - **触发**：`triggerCheckpoint()` 落盘后、`completeCheckpoint` 前崩溃/超时；重启后 `getLatestCheckpoint()` 取到不完整者。
 - **影响**：恢复只打 "Restoring from incomplete checkpoint" 继续执行；`cleanupOldCheckpoints` 按时间戳淘汰，可能删旧保新（不完整的）。
 - **审计置信度**：高
+- **验证与修复**：修复：`RedisCheckpointStorage.getLatestCheckpoint()` 只返回最新**已完成**的 checkpoint（按时间戳倒序找第一个 `isCompleted()`，全不完整则返回 null）；`cleanupOldCheckpoints(keepCount)` 淘汰顺序改为"先不完整、再最旧已完成"（各内 oldest-first，保留总数仍为 keepCount，全已完成时行为与原先完全一致）；`restoreFromCheckpoint` 对未完成 checkpoint 由 warn+继续恢复改为拒绝恢复（error 日志 + return）。checkpoint 按 id 仍可 `loadCheckpoint` 检查，不影响可观测性。回归：`RedisCheckpointStorageRecoveryFilterTest`（4 用例：latest 跳过不完整、全不完整→null、cleanup 先淘汰不完整者、断言不再调全库 getKeys()——旧代码 3 例失败）+ `CheckpointIncompleteRecoveryIntegrationTest`（真实 Redis：1/2 ack 后 latest 为 null、补满 ack 后可恢复；cleanup(2) 淘汰的是不完整的最新者而保留更旧的已完成者——旧代码两例全失败，stash 复现）。既有 `CheckpointIntegrationTest.testGetLatestCheckpoint` 原本对未 ack（不完整）checkpoint 断言 latest——属固化缺陷，已改为补满 ack 后断言。
 
-### B-15 RedisCheckpointStorage.listCheckpoints 全 keyspace 扫描并反序列化整个快照 ⏳
+### B-15 RedisCheckpointStorage.listCheckpoints 全 keyspace 扫描并反序列化整个快照 ✅已修复
 - **位置**：`checkpoint/.../redis/RedisCheckpointStorage.java:57-81`
 - **触发**：任何 `getLatestCheckpoint()`（含 coordinator 构造器）。
 - **影响**：`keys.getKeys()` 无 pattern 全库遍历；每个候选 key 完整反序列化 checkpoint（含全量状态快照）后才 `.limit(limit)`；limit=1 时 O(全部×快照大小)，共享库上启动即 OOM/卡死。
 - **审计置信度**：高
+- **验证与修复**：修复：keyspace 遍历改为前缀 SCAN——`keys.getKeys(KeysScanOptions.defaults().pattern(keyPrefix + "*"))`（Redisson 4.x 中旧的 getKeysByPattern(String) 已弃用且本项目 -Werror），只扫描本 storage 前缀；保留纯数字后缀过滤防误读同前缀辅助键。既有单测的 `keys.getKeys()` stub 相应改为 KeysScanOptions stub（impl 无值 equals，用 any(KeysScanOptions.class) 匹配；真实 pattern 行为由集成测试覆盖）。回归：`RedisCheckpointStorageRecoveryFilterTest.listCheckpointsScansOnlyTheStoragePrefix`（verify(never()).getKeys() + 结果正确——旧代码空扫描得 0 条失败）。
 
 ### B-16 StreamJoiner 缓冲为 ConcurrentHashMap + 裸 ArrayList：并发遍历/修改竞态 ✅已修复
 - **位置**：`join/.../StreamJoiner.java:22-23,44-45,50-59,122-148`

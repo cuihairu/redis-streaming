@@ -175,7 +175,11 @@ public class RedisCheckpointCoordinator implements CheckpointCoordinator {
             }
 
             if (!checkpoint.isCompleted()) {
-                log.warn("Restoring from incomplete checkpoint {}", checkpointId);
+                // B-14: an incomplete checkpoint never received all acknowledgements; its
+                // snapshot may be missing arbitrary state, so restoring from it would
+                // silently resume from a torn state. Refuse instead of warning-and-going.
+                log.error("Refusing to restore from incomplete checkpoint {}", checkpointId);
+                return;
             }
 
             log.info("Restoring from checkpoint {}", checkpointId);
