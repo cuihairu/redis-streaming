@@ -39,11 +39,12 @@
 
 ## 高（High）
 
-### B-04 消费端健康状态上报完全失效：uniqueId 与 instanceId key 错配 ⏳
+### B-04 消费端健康状态上报完全失效：uniqueId 与 instanceId key 错配 ✅已修复
 - **位置**：`registry/.../impl/RedisServiceConsumer.java:101-126,290-299,512-519`；`registry/.../health/HealthCheckManager.java:58,81,96-102`
 - **触发**：`enableHealthCheck=true` 后发现实例。`HealthCheckManager` 以 `getUniqueId()`（`"serviceName:instanceId"`）为 checker key 并作为 reporter 回调首参；`reportHealthStatus` 却用该值查 `discoveredInstances`（以裸 `instanceId` 为 key）。
 - **影响**：健康事件（HEALTH_FAILURE/RECOVERY）永不触发、缓存永不更新；`unsubscribe` 用裸 id 反注册同样永不命中 → checker 永不 stop；`isInstanceHealthy` 恒 false。
 - **审计置信度**：高
+- **验证与修复**：`RedisServiceConsumer` 新增 `uniqueIdToInstanceId` 反查表：三处发现路径统一经 `cacheInstanceAndRegisterHealthCheck` 登记映射；`reportHealthStatus` 先翻译 uniqueId→裸 id 再查缓存（无映射时回退原值）；`isInstanceHealthy` 先把裸 id 翻译成 uniqueId 再查 checker；`unsubscribe` 清理改用 uniqueId（旧裸 id 调用永不命中，每实例泄漏一个运行中 checker 线程——即 B-08 的放大器）；`stop()` 清空反查表。回归测试：`ConsumerHealthKeyTranslationTest`（翻译层，旧代码 2/2 失败）+ 集成测试 `ConsumerHealthEventIntegrationTest`（真实 Redis：不可达实例 → HEALTH_FAILURE 事件 + `isInstanceHealthy("i1")`=false + unsubscribe 后 checker 数归零；旧代码收不到事件）。
 
 ### B-05 metrics 收集为空时心跳被静默跳过：实例在"正常心跳"中被过期清除 ⏳
 - **位置**：`registry/.../impl/RedisServiceProvider.java:333-357`；`registry/.../metrics/MetricsCollectionManager.java:34-73,133-148`
@@ -579,9 +580,9 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 ## 验证与修复记录（本轮收尾）
 
-本轮系统性审计共产出 **103 项**发现：B-01..B-45（core/window/join/table/aggregation/reliability/cep/registry/config/checkpoint）、MQ-01..15、CDC-C1/H1-H5/M1-M7/L1-L9、RT-H1-H3/M1-M7/L1-L11。
+本轮系统性审计共产出 **103 项**发现（另：B-04 后补验证修复）：B-01..B-45（core/window/join/table/aggregation/reliability/cep/registry/config/checkpoint）、MQ-01..15、CDC-C1/H1-H5/M1-M7/L1-L9、RT-H1-H3/M1-M7/L1-L11。
 
-### 已修复并带回归测试（25 项 + 1 项缓解）
+### 已修复并带回归测试（26 项 + 1 项缓解）
 
 | 模块 | 修复项 |
 |---|---|
@@ -589,7 +590,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 | join | B-02（非对称窗口顺序依赖）、B-16（并发 CME） |
 | table | B-03（aggregate 丢累加值）、B-17（null 分组 key） |
 | reliability | B-12（clear 后过滤器失效） |
-| registry | B-32（首失败即熔断，顺带修复"窗口在成功调用上填满时不裁决"） |
+| registry | B-32（首失败即熔断，顺带修复"窗口在成功调用上填满时不裁决"）、B-04（健康上报 key 错配：事件/缓存/反注册/查询四路全失效） |
 | mq | MQ-02（DLQ RETRY 双写）、MQ-03（租约非原子）、MQ-05（重放前缀硬编码）、MQ-07（退避溢出）、MQ-09（claimIdleMs=0）、MQ-10（JSON 控制字符） |
 | cdc | CDC-C1（真实流格式全丢）、CDC-H1/H2（重启丢水位/队列）、CDC-H4（commit 冒号截断）、CDC-H5（NPE）、CDC-M6（调度器复用）、CDC-M7（值解析按空白切分） |
 | runtime redis | RT-H1（checkpoint 恢复失效）、RT-M5（快照错误被吞，缓解：WARN + 明示回退语义） |
