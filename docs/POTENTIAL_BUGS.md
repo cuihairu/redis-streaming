@@ -284,9 +284,10 @@
 - **影响**：LEFT/FULL_OUTER 下游对同一左元素先收 join(L,null) 后收 join(L,R)（无 watermark barrier/retraction；类文档已声明"测试与简单场景"，低）。
 - **处置说明**：行为本身正确实现了"立即 unmatched + 窗口内迟到配对"的直通语义；修复它需要等待再决定（延迟=窗口时长）或撤回（retraction）机制，属于面向生产 join 的重设计，非本测试型 joiner 的目标。本轮把该语义显式写入类 javadoc（含对下游的双发警示），并加语义锚定测试防止未来无意识变更。与 RT-M5 同为"缓解"计。
 
-### B-37 WindowAggregator 以窗口类简名为 key：同类不同参数窗口互相截断 ⏳
-- **位置**：`aggregation/.../WindowAggregator.java:159-163`
-- **影响**：`TumblingWindow`(1min) 与 (1hour) 同 key 使用时 key 无 size 维度，`removeRangeByScore` 用各自窗口起点互相删数据。
+### B-37 WindowAggregator 以窗口类简名为 key：同类不同参数窗口互相截断 ✅已修复
+- **位置**：`aggregation/.../WindowAggregator.java:159-167`
+- **影响**：`TumblingWindow`(1min) 与 (1hour) 同 key 使用时 key 无 size 维度：同刻窗口起点（整点）下两类窗口落同一 Redis key，互相 prune 对方数据、且小时窗口读区间会计入分钟窗口写入的值（读污染，1 变 2）。注：起点不相同时 prune 互删不发生，可确证缺陷为读污染。
+- **验证与修复**：`getWindowKey` 追加窗口 size 维度，key 格式改为 `prefix:window:key:startMillis:WindowSimpleName:sizeMillis`。新增 `WindowAggregatorKeyIsolationTest`（mock 验证两类窗口 captor 抓到不同 key，旧代码两 key 完全相同）与 `WindowAggregatorKeyIsolationIntegrationTest`（真实 Redis：小时窗口 COUNT 旧代码 2、新代码 1），同步更新 `WindowAggregatorTest` 13 处 key 期望。
 
 ### B-38 RedisListState.update 先清后写非原子：中途失败状态全丢 ⏳
 - **位置**：`state/.../redis/RedisListState.java:42-48`

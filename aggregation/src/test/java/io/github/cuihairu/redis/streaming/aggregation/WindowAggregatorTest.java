@@ -29,7 +29,7 @@ class WindowAggregatorTest {
         WindowAggregator aggregator = new WindowAggregator(redisson, "p");
         TimeWindow window = TumblingWindow.of(Duration.ofSeconds(10));
         Instant timestamp = Instant.ofEpochMilli(12_345);
-        String expectedKey = "p:window:k:10000:TumblingWindow";
+        String expectedKey = "p:window:k:10000:TumblingWindow:10000";
 
         when(redisson.<Object>getScoredSortedSet(expectedKey)).thenReturn(sortedSet);
 
@@ -50,7 +50,7 @@ class WindowAggregatorTest {
 
         TimeWindow window = TumblingWindow.of(Duration.ofSeconds(10));
         Instant timestamp = Instant.ofEpochMilli(12_345);
-        String expectedKey = "p:window:k:10000:TumblingWindow";
+        String expectedKey = "p:window:k:10000:TumblingWindow:10000";
 
         when(redisson.<Object>getScoredSortedSet(expectedKey)).thenReturn(sortedSet);
         when(sortedSet.valueRange(10_000L, true, 20_000L, false)).thenReturn(List.of("a", "b", "c"));
@@ -79,7 +79,7 @@ class WindowAggregatorTest {
         WindowAggregator aggregator = new WindowAggregator(redisson, "p");
         TimeWindow window = TumblingWindow.of(Duration.ofSeconds(10));
         Instant timestamp = Instant.ofEpochMilli(12_345);
-        String expectedKey = "p:window:k:10000:TumblingWindow";
+        String expectedKey = "p:window:k:10000:TumblingWindow:10000";
 
         when(redisson.<Object>getScoredSortedSet(expectedKey)).thenReturn(sortedSet);
         when(sortedSet.count(10_000L, true, 20_000L, false)).thenReturn(42);
@@ -105,7 +105,7 @@ class WindowAggregatorTest {
 
         TimeWindow window = TumblingWindow.of(Duration.ofSeconds(10));
         Instant timestamp = Instant.EPOCH;
-        String expectedKey = "p:window:k:0:TumblingWindow";
+        String expectedKey = "p:window:k:0:TumblingWindow:10000";
 
         when(redisson.<Object>getScoredSortedSet(expectedKey)).thenReturn(sortedSet);
         when(sortedSet.valueRange(0L, true, 10_000L, false)).thenReturn(List.of(1, 2, 3));
@@ -126,7 +126,7 @@ class WindowAggregatorTest {
 
         TimeWindow window = TumblingWindow.of(Duration.ofSeconds(10));
         Instant timestamp = Instant.ofEpochMilli(12_345);
-        String expectedKey = "p:window:k:10000:TumblingWindow";
+        String expectedKey = "p:window:k:10000:TumblingWindow:10000";
 
         when(redisson.<Object>getScoredSortedSet(expectedKey)).thenReturn(sortedSet);
         when(sortedSet.valueRange(10_000L, true, 20_000L, false)).thenReturn(Collections.emptyList());
@@ -147,7 +147,7 @@ class WindowAggregatorTest {
 
         TimeWindow window = TumblingWindow.of(Duration.ofSeconds(10));
         Instant timestamp = Instant.ofEpochMilli(12_345);
-        String expectedKey = "p:window:k:10000:TumblingWindow";
+        String expectedKey = "p:window:k:10000:TumblingWindow:10000";
 
         when(redisson.<Object>getScoredSortedSet(expectedKey)).thenReturn(sortedSet);
         when(sortedSet.valueRange(10_000L, true, 20_000L, false)).thenReturn(List.of("single-value"));
@@ -166,7 +166,7 @@ class WindowAggregatorTest {
         WindowAggregator aggregator = new WindowAggregator(redisson, "p");
         TimeWindow window = TumblingWindow.of(Duration.ofSeconds(10));
         Instant timestamp = Instant.ofEpochMilli(12_345);
-        String expectedKey = "p:window:k:10000:TumblingWindow";
+        String expectedKey = "p:window:k:10000:TumblingWindow:10000";
 
         when(redisson.<Object>getScoredSortedSet(expectedKey)).thenReturn(sortedSet);
         when(sortedSet.count(10_000L, true, 20_000L, false)).thenReturn(0);
@@ -265,7 +265,7 @@ class WindowAggregatorTest {
 
         TimeWindow window = TumblingWindow.of(Duration.ofSeconds(10));
         Instant timestamp = Instant.ofEpochMilli(12_345);
-        String expectedKey = "p:window:k:10000:TumblingWindow";
+        String expectedKey = "p:window:k:10000:TumblingWindow:10000";
 
         when(redisson.<Object>getScoredSortedSet(expectedKey)).thenReturn(sortedSet);
         when(sortedSet.valueRange(10_000L, true, 20_000L, false))
@@ -285,7 +285,7 @@ class WindowAggregatorTest {
         WindowAggregator aggregator = new WindowAggregator(redisson, "p");
         TimeWindow window = TumblingWindow.of(Duration.ofSeconds(10));
         Instant timestamp = Instant.ofEpochMilli(12_345);
-        String expectedKey = "p:window:k:10000:TumblingWindow";
+        String expectedKey = "p:window:k:10000:TumblingWindow:10000";
 
         when(redisson.<Object>getScoredSortedSet(expectedKey)).thenReturn(sortedSet);
 
@@ -305,7 +305,7 @@ class WindowAggregatorTest {
         WindowAggregator aggregator = new WindowAggregator(redisson, "p");
         TimeWindow window = TumblingWindow.of(Duration.ofSeconds(10));
         Instant timestamp = Instant.ofEpochMilli(12_345);
-        String expectedKey = "p:window:k:10000:TumblingWindow";
+        String expectedKey = "p:window:k:10000:TumblingWindow:10000";
 
         when(redisson.<Object>getScoredSortedSet(expectedKey)).thenReturn(sortedSet);
         when(sortedSet.count(10_000L, true, 20_000L, false)).thenReturn(100);
@@ -334,7 +334,7 @@ class WindowAggregatorTest {
 
         TimeWindow window = TumblingWindow.of(Duration.ofSeconds(10));
         Instant timestamp = Instant.ofEpochMilli(12_345);
-        String expectedKey = "p:window:k:10000:TumblingWindow";
+        String expectedKey = "p:window:k:10000:TumblingWindow:10000";
 
         when(redisson.<Object>getScoredSortedSet(expectedKey)).thenReturn(sortedSet);
         when(sortedSet.valueRange(10_000L, true, 20_000L, false))
@@ -356,7 +356,7 @@ class WindowAggregatorTest {
 
         TimeWindow window = TumblingWindow.of(Duration.ofSeconds(10));
         Instant timestamp = Instant.ofEpochMilli(12_345);
-        String expectedKey = "p:window:k:10000:TumblingWindow";
+        String expectedKey = "p:window:k:10000:TumblingWindow:10000";
 
         when(redisson.<Object>getScoredSortedSet(expectedKey)).thenReturn(sortedSet);
         when(sortedSet.valueRange(10_000L, true, 20_000L, false))
@@ -378,7 +378,7 @@ class WindowAggregatorTest {
 
         TimeWindow window = TumblingWindow.of(Duration.ofSeconds(10));
         Instant timestamp = Instant.ofEpochMilli(12_345);
-        String expectedKey = "p:window:k:10000:TumblingWindow";
+        String expectedKey = "p:window:k:10000:TumblingWindow:10000";
 
         when(redisson.<Object>getScoredSortedSet(expectedKey)).thenReturn(sortedSet);
         when(sortedSet.valueRange(10_000L, true, 20_000L, false))

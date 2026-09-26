@@ -158,8 +158,12 @@ public class WindowAggregator {
 
     private String getWindowKey(TimeWindow window, String key, Instant timestamp) {
         Instant windowStart = window.getWindowStart(timestamp);
-        return String.format("%s:window:%s:%d:%s",
-                keyPrefix, key, windowStart.toEpochMilli(), window.getClass().getSimpleName());
+        // include the window size: two windows of the same class can share a window
+        // start (a 1-minute and a 1-hour tumbling window both start on the hour), and
+        // without the size in the key they would read and prune each other's data (B-37)
+        return String.format("%s:window:%s:%d:%s:%d",
+                keyPrefix, key, windowStart.toEpochMilli(), window.getClass().getSimpleName(),
+                window.getSize().toMillis());
     }
 
     /**
