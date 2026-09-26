@@ -10,8 +10,11 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.redisson.api.BatchOptions;
+import org.redisson.api.RBatch;
 import org.redisson.api.RList;
 import org.redisson.api.RMap;
+import org.redisson.api.RMapAsync;
 import org.redisson.api.RScript;
 import org.redisson.api.RSet;
 import org.redisson.api.RTopic;
@@ -351,8 +354,13 @@ class RedisConfigServiceTest {
         RMap<String, String> map = mock(RMap.class);
         when(mockRedissonClient.getMap(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn((RMap) map);
         when(map.readAllMap()).thenReturn(java.util.Collections.emptyMap());
-        when(map.fastPut(anyString(), anyString())).thenReturn(true);
-        when(map.fastRemove(anyString())).thenReturn(1L);
+
+        // B-44: the fallback writes through one atomic batch instead of per-field fastPut
+        RBatch batch = mock(RBatch.class);
+        @SuppressWarnings("unchecked")
+        RMapAsync<String, String> entry = mock(RMapAsync.class);
+        when(mockRedissonClient.createBatch(any(BatchOptions.class))).thenReturn(batch);
+        when(batch.<String, String>getMap(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(entry);
 
         RTopic topic = mock(RTopic.class);
         when(mockRedissonClient.getTopic(anyString(), any())).thenReturn(topic);
@@ -363,11 +371,12 @@ class RedisConfigServiceTest {
 
         assertTrue(service.publishConfig("d1", "g1", "content", ""));
 
-        verify(map, atLeastOnce()).fastPut(eq("content"), eq("content"));
-        verify(map, atLeastOnce()).fastPut(eq("version"), anyString());
-        verify(map, atLeastOnce()).fastPut(eq("updateTime"), anyString());
-        verify(map, atLeastOnce()).fastPut(eq("createTime"), anyString());
-        verify(map, atLeastOnce()).fastRemove(eq("description"));
+        verify(entry).putAsync("content", "content");
+        verify(entry).putAsync(eq("version"), anyString());
+        verify(entry).putAsync(eq("updateTime"), anyString());
+        verify(entry).putAsync(eq("createTime"), anyString());
+        verify(entry).removeAsync("description");
+        verify(batch).execute();
     }
 
     @Test

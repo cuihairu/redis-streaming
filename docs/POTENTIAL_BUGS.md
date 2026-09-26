@@ -320,9 +320,10 @@
 - **验证与修复**：双重修复——(1) 采集调用改跑专用守护线程池（`newCachedThreadPool`，线程名 `metrics-collector-N`，空闲 60s 自灭，无需显式生命周期），挂死的采集器不再占用公共 ForkJoinPool 线程（common pool 容量 = cores−1，几个挂死探针即可饿死全 JVM 的并行流/异步任务）；(2) `future.get` 超时路径补 `future.cancel(true)` 中断采集器，任务不再滞留。超时语义不变：TimeoutException 仍由调用方按 WARN 吞掉。测试踩坑记录：`MetricsConfig.getEnabledMetrics()` 返回不可变 `Set.of(...)`，须用 `setEnabledMetrics` 整体替换。
 - **回归测试**：`MetricsCollectionTimeoutTest`（只用公共 API + 线程栈扫描，可对旧代码编译）——旧代码失败理由精确匹配："a timed-out collector must not linger on the common ForkJoinPool (B-43) ==> expected: <null> but was: <Unsafe.park 栈含 collectMetric 帧>"（超时探针卡死在 common-pool worker 上）；新代码全绿：采集在专用池执行、超时后中断、公共池无残留 collectMetric 帧。既有 MetricsCollectionManager 覆盖测试全绿。
 
-### B-44 publishConfig 降级路径非原子且换版本号重写 ⏳
-- **位置**：`config/.../impl/RedisConfigService.java:101-143`
-- **影响**：Lua 可能已生效又走 5+ 步 Java 回退（新 version 双写双事件）；仅 warn 标记降级。
+### B-44 publishConfig 降级路径非原子且换版本号重写 ✅已修复
+- **位置**：`config/.../impl/RedisConfigService.java`（publishConfig + 新 fallbackPublish）
+- **影响**：Lua 可能已生效（响应丢失）又走 5+ 步 Java 回退：重新 generateVersion 双写历史、同一次发布两个版本事件，且逐字段 fastPut 非原子。
+- **验证与修复**：版本号一次生成全链路复用；回退先比对已存 version——等于 Lua 尝试版本则说明脚本已生效，跳过重写只补发事件；回退散写改为单次 REDIS_WRITE_ATOMIC 批。新增 `RedisConfigServiceFallbackTest`（旧代码：已生效仍 fastPut 重写、putAsync 未调用），更新 4 个钉死 fastPut 链的既有测试。
 
 ### B-45 discoveredInstances 缓存永不失效且跨服务按裸 instanceId 键控 ⏳
 - **位置**：`registry/.../RedisServiceConsumer.java:52,185,292-299,381-408`

@@ -5,8 +5,11 @@ import io.github.cuihairu.redis.streaming.config.ConfigServiceConfig;
 import io.github.cuihairu.redis.streaming.config.event.ConfigChangeEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.redisson.api.BatchOptions;
+import org.redisson.api.RBatch;
 import org.redisson.api.RList;
 import org.redisson.api.RMap;
+import org.redisson.api.RMapAsync;
 import org.redisson.api.RScript;
 import org.redisson.api.RSet;
 import org.redisson.api.RTopic;
@@ -21,8 +24,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** Residual branch coverage for RedisConfigService fallback/parse/trim/cleanup edges. */
@@ -34,6 +39,8 @@ class RedisConfigServiceResidualBranchesTest {
     private RList<String> historyList;
     private RSet<String> subscribers;
     private RTopic topic;
+    private RBatch batch;
+    private RMapAsync<String, String> entryAsync;
 
     @BeforeEach
     @SuppressWarnings("unchecked")
@@ -44,7 +51,11 @@ class RedisConfigServiceResidualBranchesTest {
         historyList = mock(RList.class);
         subscribers = mock(RSet.class);
         topic = mock(RTopic.class);
+        batch = mock(RBatch.class);
+        entryAsync = mock(RMapAsync.class);
         when(redisson.getScript(any(org.redisson.client.codec.Codec.class))).thenReturn(script);
+        when(redisson.createBatch(any(BatchOptions.class))).thenReturn(batch);
+        when(batch.<String, String>getMap(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(entryAsync);
         when(redisson.<String, String>getMap(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(configMap);
         when(redisson.<String>getList(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(historyList);
         when(redisson.<String>getSet(anyString())).thenReturn(subscribers);
@@ -76,15 +87,19 @@ class RedisConfigServiceResidualBranchesTest {
         assertTrue(service.publishConfig("d", "g", "newer"));
     }
 
+    /**
+     * B-44: the fallback writes through one atomic batch; a batch-level failure is a
+     * failed publish (false), there is no per-field fastRemove to swallow anymore.
+     */
     @Test
-    void fallbackPublishSurvivesFastRemoveFailures() {
+    void fallbackReturnsFalseWhenBatchExecutionFails() {
         when(script.eval(any(RScript.Mode.class), anyString(), any(RScript.ReturnType.class), anyList(), any()))
                 .thenThrow(new IllegalStateException("NOSCRIPT"));
         when(configMap.readAllMap()).thenReturn(Map.of("content", "old"));
-        doThrow(new IllegalStateException("boom")).when(configMap).fastRemove(anyString());
+        when(batch.execute()).thenThrow(new IllegalStateException("redis gone"));
 
         RedisConfigService service = startedService();
-        assertTrue(service.publishConfig("d", "g", null, null));
+        assertFalse(service.publishConfig("d", "g", null, null));
     }
 
     @Test
@@ -96,6 +111,7 @@ class RedisConfigServiceResidualBranchesTest {
 
         RedisConfigService service = startedService();
         assertTrue(service.publishConfig("d", "g", "new"));
+        verify(historyList).add(eq(0), anyString());
     }
 
     @Test

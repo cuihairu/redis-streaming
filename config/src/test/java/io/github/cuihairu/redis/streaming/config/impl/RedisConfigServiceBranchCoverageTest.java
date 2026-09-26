@@ -5,8 +5,11 @@ import io.github.cuihairu.redis.streaming.config.ConfigHistory;
 import io.github.cuihairu.redis.streaming.config.ConfigServiceConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.redisson.api.BatchOptions;
+import org.redisson.api.RBatch;
 import org.redisson.api.RList;
 import org.redisson.api.RMap;
+import org.redisson.api.RMapAsync;
 import org.redisson.api.RScript;
 import org.redisson.api.RSet;
 import org.redisson.api.RTopic;
@@ -46,6 +49,8 @@ class RedisConfigServiceBranchCoverageTest {
     private RList<String> historyList;
     private RSet<String> subscribers;
     private RTopic topic;
+    private RBatch batch;
+    private RMapAsync<String, String> entryAsync;
 
     @BeforeEach
     @SuppressWarnings("unchecked")
@@ -56,8 +61,12 @@ class RedisConfigServiceBranchCoverageTest {
         historyList = mock(RList.class);
         subscribers = mock(RSet.class);
         topic = mock(RTopic.class);
+        batch = mock(RBatch.class);
+        entryAsync = mock(RMapAsync.class);
 
         when(redisson.getScript(any(org.redisson.client.codec.Codec.class))).thenReturn(script);
+        when(redisson.createBatch(any(BatchOptions.class))).thenReturn(batch);
+        when(batch.<String, String>getMap(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(entryAsync);
         when(redisson.<String, String>getMap(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(configMap);
         when(redisson.<String>getList(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(historyList);
         when(redisson.<String>getSet(anyString())).thenReturn(subscribers);
@@ -108,8 +117,11 @@ class RedisConfigServiceBranchCoverageTest {
         RedisConfigService service = startedService();
         assertTrue(service.publishConfig("d1", "g1", "new", "desc"));
         verify(historyList).add(eq(0), anyString());
-        verify(configMap).fastPut("content", "new");
-        verify(configMap).fastPut("description", "desc");
+        // B-44: the fallback writes through one atomic batch, not per-field fastPut
+        verify(entryAsync).putAsync("content", "new");
+        verify(entryAsync).putAsync("description", "desc");
+        verify(entryAsync).putAsync(eq("version"), anyString());
+        verify(batch).execute();
     }
 
     @Test
@@ -120,8 +132,9 @@ class RedisConfigServiceBranchCoverageTest {
 
         RedisConfigService service = startedService();
         assertTrue(service.publishConfig("d1", "g1", null, null));
-        verify(configMap).fastRemove("content");
-        verify(configMap).fastRemove("description");
+        verify(entryAsync).removeAsync("content");
+        verify(entryAsync).removeAsync("description");
+        verify(batch).execute();
     }
 
     @Test
@@ -129,7 +142,7 @@ class RedisConfigServiceBranchCoverageTest {
         when(script.eval(any(RScript.Mode.class), anyString(), any(RScript.ReturnType.class), anyList(), any()))
                 .thenThrow(new IllegalStateException("NOSCRIPT"));
         when(configMap.readAllMap()).thenThrow(new IllegalStateException("redis gone"));
-        when(configMap.fastPut(anyString(), anyString())).thenThrow(new IllegalStateException("redis gone"));
+        when(batch.execute()).thenThrow(new IllegalStateException("redis gone"));
 
         RedisConfigService service = startedService();
         assertFalse(service.publishConfig("d1", "g1", "v"));

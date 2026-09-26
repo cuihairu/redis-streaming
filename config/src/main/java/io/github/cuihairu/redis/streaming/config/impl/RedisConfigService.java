@@ -69,12 +69,15 @@ public class RedisConfigService implements ConfigService, ConfigManager {
         if (!running) {
             throw new IllegalStateException("ConfigService is not running");
         }
-        
+
+        String configKey = config.getConfigKey(group, dataId);
+        String historyKey = config.getConfigHistoryKey(group, dataId);
+        // one version for the whole publish: the fallback reuses it, so a lost Lua
+        // response can never re-emit the publish under a second version (B-44)
+        String newVersion = generateVersion();
+        long nowMs = System.currentTimeMillis();
+
         try {
-            String configKey = config.getConfigKey(group, dataId);
-            String historyKey = config.getConfigHistoryKey(group, dataId);
-            String newVersion = generateVersion();
-            long nowMs = System.currentTimeMillis();
 
             // Build entry JSON for Lua to decode (keeps write path unified)
             java.util.Map<String,String> entry = ConfigEntryCodec.toMap(content, newVersion, description, nowMs, nowMs);
@@ -98,48 +101,71 @@ public class RedisConfigService implements ConfigService, ConfigManager {
             publishConfigChangeEvent(dataId, group, content, newVersion);
             logger.info("Config published: {}:{}, version: {}", group, dataId, newVersion);
             return true;
-            } catch (Exception e) {
-                // Fallback: perform non-Lua update to keep tests and basic semantics working
-                try {
-                    String configKey = config.getConfigKey(group, dataId);
-                    String newVersion = generateVersion();
-                    long nowMs = System.currentTimeMillis();
+        } catch (Exception e) {
+            return fallbackPublish(dataId, group, content, description, configKey, newVersion, nowMs, e);
+        }
+    }
 
-                    RMap<String, String> map = redissonClient.getMap(configKey, org.redisson.client.codec.StringCodec.INSTANCE);
-                    Map<String, String> all = java.util.Collections.emptyMap();
-                    try { all = map.readAllMap(); } catch (Exception ignore) {}
-                    String oldContent = all.get("content");
-                    String oldVersion = all.get("version");
-                    String oldUpdateTime = all.get("updateTime");
-                    if (oldContent != null) {
-                    java.time.LocalDateTime ct = null;
-                    try { if (oldUpdateTime != null) ct = java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(Long.parseLong(oldUpdateTime)), java.time.ZoneId.systemDefault()); } catch (Exception ignore) {}
-                    if (ct == null) ct = java.time.LocalDateTime.now();
-                    saveConfigHistory(dataId, group, oldContent, oldVersion, ct, "UPDATED");
-                    }
-                if (!all.containsKey("createTime")) {
-                    map.fastPut("createTime", String.valueOf(nowMs));
-                }
-                if (content != null) {
-                    map.fastPut("content", content);
-                } else {
-                    try { map.fastRemove("content"); } catch (Exception ignore) {}
-                }
-                if (description != null && !description.isEmpty()) {
-                    map.fastPut("description", description);
-                } else {
-                    try { map.fastRemove("description"); } catch (Exception ignore) {}
-                }
-                map.fastPut("version", newVersion);
-                map.fastPut("updateTime", String.valueOf(nowMs));
+    /**
+     * Non-Lua publish used when the Lua path fails. Reuses the Lua attempt's version
+     * and skips the rewrite entirely when that version is already stored (the script
+     * applied on the server but its response was lost) — the old fallback regenerated
+     * a fresh version and rewrote unconditionally, double-pushing the history record
+     * and re-emitting the publish under two versions (B-44). The hash fields go out
+     * in one REDIS_WRITE_ATOMIC batch, so readers never observe a half-updated entry.
+     */
+    private boolean fallbackPublish(String dataId, String group, String content, String description,
+                                    String configKey, String newVersion, long nowMs, Exception cause) {
+        try {
+            RMap<String, String> map = redissonClient.getMap(configKey, org.redisson.client.codec.StringCodec.INSTANCE);
+            Map<String, String> all = java.util.Collections.emptyMap();
+            try { all = map.readAllMap(); } catch (Exception ignore) {}
 
+            if (newVersion.equals(all.get("version"))) {
                 publishConfigChangeEvent(dataId, group, content, newVersion);
-                logger.warn("Lua publish failed, applied Java fallback for {}:{}", group, dataId, e);
+                logger.warn("Lua publish response for {}:{} was lost but version {} is applied; kept it",
+                        group, dataId, newVersion);
                 return true;
-            } catch (Exception e2) {
-                logger.error("Failed to publish config {}:{} (fallback also failed)", group, dataId, e2);
-                return false;
             }
+
+            String oldContent = all.get("content");
+            String oldVersion = all.get("version");
+            String oldUpdateTime = all.get("updateTime");
+            if (oldContent != null) {
+                java.time.LocalDateTime ct = null;
+                try { if (oldUpdateTime != null) ct = java.time.LocalDateTime.ofInstant(
+                        java.time.Instant.ofEpochMilli(Long.parseLong(oldUpdateTime)), java.time.ZoneId.systemDefault()); } catch (Exception ignore) {}
+                if (ct == null) ct = java.time.LocalDateTime.now();
+                saveConfigHistory(dataId, group, oldContent, oldVersion, ct, "UPDATED");
+            }
+
+            RBatch batch = redissonClient.createBatch(BatchOptions.defaults()
+                    .executionMode(BatchOptions.ExecutionMode.REDIS_WRITE_ATOMIC));
+            RMapAsync<String, String> entry = batch.getMap(configKey, org.redisson.client.codec.StringCodec.INSTANCE);
+            if (!all.containsKey("createTime")) {
+                entry.putAsync("createTime", String.valueOf(nowMs));
+            }
+            if (content != null) {
+                entry.putAsync("content", content);
+            } else {
+                entry.removeAsync("content");
+            }
+            if (description != null && !description.isEmpty()) {
+                entry.putAsync("description", description);
+            } else {
+                entry.removeAsync("description");
+            }
+            entry.putAsync("version", newVersion);
+            entry.putAsync("updateTime", String.valueOf(nowMs));
+            batch.execute();
+
+            publishConfigChangeEvent(dataId, group, content, newVersion);
+            logger.warn("Lua publish failed, applied atomic fallback for {}:{} as version {}",
+                    group, dataId, newVersion, cause);
+            return true;
+        } catch (Exception e2) {
+            logger.error("Failed to publish config {}:{} (fallback also failed)", group, dataId, e2);
+            return false;
         }
     }
     
