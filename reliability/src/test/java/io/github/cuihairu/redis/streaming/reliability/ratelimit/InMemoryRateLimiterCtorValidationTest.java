@@ -40,4 +40,14 @@ class InMemoryRateLimiterCtorValidationTest {
         assertTrue(limiter.allowAt("k", 0));
         assertFalse(limiter.allowAt("k", 0));
     }
+
+    @Test
+    void sweepThresholdMustNotBeNegative() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new InMemorySlidingWindowRateLimiter(1_000, 1, -1));
+        assertThrows(IllegalArgumentException.class,
+                () -> new InMemoryTokenBucketRateLimiter(2, 1, -1));
+        assertThrows(IllegalArgumentException.class,
+                () -> new InMemoryLeakyBucketRateLimiter(2, 1, -1));
+    }
 }

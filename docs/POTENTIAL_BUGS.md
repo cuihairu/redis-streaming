@@ -269,9 +269,11 @@
 
 ## 低（Low）
 
-### B-34 In-memory 限流器 per-key 状态永不淘汰（无界 map）⏳
-- **位置**：`reliability/.../ratelimit/InMemorySlidingWindowRateLimiter.java:27,37-52`（Token/Leaky 同型）
+### B-34 In-memory 限流器 per-key 状态永不淘汰（无界 map）✅已修复
+- **位置**：`reliability/.../ratelimit/InMemorySlidingWindowRateLimiter.java`（Token/Leaky 同型已同批修复）
 - **影响**：高基数 key（IP/用户）churn 下限流器自身成内存泄漏。算法本身同步正确。
+- **验证与修复**：三个 in-memory 限流器（滑窗/令牌桶/漏桶）的 per-key map 增加写路径惰性清扫：状态变为"语义等价于不存在"（滑窗 deque 全过期 / 令牌桶按已流逝时间回满 / 漏桶按已流逝时间漏空）即从 map 摘除——淘汰对限流判定完全透明，不改变任何 allow/deny 结果。清扫按规模阈值（默认 256，包私有构造器可调）+ 最小间隔（max(1s, 半过期周期)）CAS 门控，稳态调用零额外开销、无后台线程、无生命周期负担；活跃 key 永不被淘汰。新增 `trackedKeyCount()` 供监控。坑位记录：门控时间戳哨兵不能用 `Long.MIN_VALUE`（`now-哨兵` 溢出为负使清扫永不触发，测试立即暴露，改 0）。
+- **回归测试**：`InMemoryRateLimiterKeyEvictionTest`（公共构造器 + 反射读私有 map 字段，字段名新旧一致，可直接对旧代码编译）——旧代码 3/3 泄漏断言按预期失败（"expected 1 but was 301"：300 个过期 key + 1 个新 key 全部滞留），新代码 6/6 绿（3 个淘汰 + 3 个活跃 key 不误删）；既有行为测试全绿证明淘汰零语义漂移；`sweepThreshold` 负数校验入 `InMemoryRateLimiterCtorValidationTest`。
 
 ### B-35 DeadLetterQueue maxSize 未校验 + clear 与 add 竞态 ⏳
 - **位置**：`reliability/.../DeadLetterQueue.java:34-37,47-69,130-134`
