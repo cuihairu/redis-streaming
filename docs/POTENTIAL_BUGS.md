@@ -138,11 +138,13 @@
 - **审计置信度**：高
 - **验证与修复**：`count/aggregate/reduce` 三个操作统一跳过 null 分组 key；回归测试 `nullGroupKeyRowsAreSkippedLikeRedisImplementation` 断言两个实现行为一致。
 
-### B-18 TopKAnalyzer 忽略 windowSize："窗口化 Top-K"实为全时段 Top-K ⏳
+### B-18 TopKAnalyzer 忽略 windowSize："窗口化 Top-K"实为全时段 Top-K ✅已修复
 - **位置**：`aggregation/.../analytics/TopKAnalyzer.java:24-31,52-70`
 - **触发**：`createTopKAnalyzer(10, Duration.ofMinutes(5))` 做 5 分钟滚动热榜。
 - **影响**：`windowSize` 字段从不读取；分数只增不减、只按 rank 裁剪（保留 2k）不按时间；跌出 top-2k 的条目分数永久丢失 → 窗口语义完全错误。
 - **审计置信度**：高
+- **验证与修复**：重构为时间桶窗口实现，公共 API 签名不变：记录落入 `windowSize/10`（下限 1ms）宽度的桶（`<prefix>:topk:<category>:b:<bucketIndex>`），每次写刷新桶 TTL（窗口 + 2 桶，Redis 自动回收过期桶）；查询合并尾随窗口覆盖的全部桶（`entryRangeReversed` 读 (value,score)，分数按项求和、按分数降序 + 项名并列裁决）。getTopK/getRank/getScore/removeItem/reset 全部改为窗口视图；2k rank 裁剪保留但作用域缩到单桶；旧布局 key 被忽略不破坏。构造器新增校验（k>0、window 正数）；包级私有时钟注入构造器供测试。旧实现测试中 8 个布局耦合用例按新语义重写（意图保留），新增跨桶合并/过期/桶粒度/TTL/参数校验用例。
+- **回归测试**：`TopKAnalyzerWindowDecayIntegrationTest`（integration，仅用公共构造器，旧码可编译）——旧代码复现：record 3 次（score=3.0 可见）→ 睡 1.2s（窗口 500ms）→ 旧码 getScore 仍 3.0、getTopK 仍报该项（失败）；对照用例"窗口内聚合"旧码即通过（隔离缺陷）。新码上两用例通过。`TopKAnalyzerWindowTest`（注入时钟）：桶离开尾随窗口后贡献清零、与窗口仍重叠的桶继续计数、相邻桶分数合并、写入 TTL 精确到 now+window+2 桶、1ms 桶下限。
 
 ### B-19 BloomFilterDeduplicator.checkAndMark 非原子 contains→add：并发同 key 双双通过 ✅已修复
 - **位置**：`reliability/.../deduplication/BloomFilterDeduplicator.java:100-115`
@@ -620,7 +622,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 ### 记为后续任务（未修复，原因见各条目）
 
-- **重构级**（需专项设计，非局部修复）：MQ-01/MQ-04（DLQ pending 回收与删除策略语义）、CDC-H3（断线重连框架）、RT-H2（checkpoint 全库 SCAN）、B-18/B-20（TopK/完成匹配的有界化）、B-24（KTable 物化清理）、B-13/B-14/B-15/B-22（checkpoint 序列化/完整性/扫描设计）。
+- **重构级**（需专项设计，非局部修复）：MQ-01/MQ-04（DLQ pending 回收与删除策略语义）、CDC-H3（断线重连框架）、RT-H2（checkpoint 全库 SCAN）、B-20（完成匹配的有界化）、B-24（KTable 物化清理）、B-13/B-14/B-15/B-22（checkpoint 序列化/完整性/扫描设计）。
 - **设计决策类**：RT-H3（fire-and-purge 原子性，需两阶段提交）、B-06/B-07（配置通知重同步/去重，涉及 API 契约）、B-09（元素级 TTL 需换数据结构）。
 - **风险可控/影响良性**：MQ-11（frontier 回退方向安全）、RT-M3/M6/M7（文档化语义）、B-36（文档已声明测试用途）等。
 - 其余 ⏳ 条目为审计发现但本轮未逐条复现验证（范围限制），均已给出触发条件、位置与修复方向，可直接作为下轮输入。

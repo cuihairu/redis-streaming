@@ -3,48 +3,81 @@ package io.github.cuihairu.redis.streaming.aggregation.analytics;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RScoredSortedSet;
 import org.redisson.api.RedissonClient;
+import org.redisson.client.protocol.ScoredEntry;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/**
+ * Unit tests for the bucketed windowed TopKAnalyzer (B-18). Buckets are keyed
+ * {@code <prefix>:topk:<category>:b:<index>}; the analyzer sums the trailing window's
+ * buckets, so these tests stub per-bucket sorted sets selected by key.
+ */
 class TopKAnalyzerTest {
+
+    /** 10-minute window, 1-minute buckets, fixed "now" = 1,000,000 -> live buckets 6..16. */
+    private static final long NOW = 1_000_000L;
+    private static final String CURRENT_BUCKET_KEY = "p:topk:pages:b:16";
+    private static final String OLDER_BUCKET_KEY = "p:topk:pages:b:6";
+
+    private RedissonClient redisson;
+    private Map<String, RScoredSortedSet<String>> bucketsByKey;
+
+    private TopKAnalyzer newAnalyzer(int k) {
+        redisson = mock(RedissonClient.class);
+        bucketsByKey = new ConcurrentHashMap<>();
+        when(redisson.<String>getScoredSortedSet(anyString())).thenAnswer(inv ->
+                bucketsByKey.computeIfAbsent(inv.getArgument(0), key -> mock(RScoredSortedSet.class)));
+        return new TopKAnalyzer(redisson, "p", k, Duration.ofMinutes(10), () -> NOW);
+    }
+
+    @SuppressWarnings("unchecked")
+    private RScoredSortedSet<String> bucket(String key) {
+        return (RScoredSortedSet<String>) bucketsByKey.computeIfAbsent(key, k -> mock(RScoredSortedSet.class));
+    }
+
+    @SafeVarargs
+    private final void withEntries(RScoredSortedSet<String> bucket, ScoredEntry<String>... entries) {
+        Collection<ScoredEntry<String>> asList = List.of(entries);
+        when(bucket.entryRangeReversed(0, Integer.MAX_VALUE)).thenReturn(asList);
+    }
+
+    private static ScoredEntry<String> entry(String item, double score) {
+        return new ScoredEntry<>(score, item);
+    }
 
     @Test
     void recordItemAddsScoreAndOptionallyTrims() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
+        TopKAnalyzer analyzer = newAnalyzer(4);
+        RScoredSortedSet<String> current = bucket(CURRENT_BUCKET_KEY);
 
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 4, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet);
-
-        when(sortedSet.addScore("home", 2.0)).thenReturn(7.0);
-        when(sortedSet.size()).thenReturn(9); // k*2 = 8, triggers trim
+        when(current.addScore("home", 2.0)).thenReturn(7.0);
+        when(current.size()).thenReturn(9); // k*2 = 8, triggers trim
 
         double score = analyzer.recordItem("pages", "home", 2.0);
         assertEquals(7.0, score);
 
-        verify(sortedSet).removeRangeByRank(0, 1);
+        verify(current).removeRangeByRank(0, 1);
+        verify(current).expire(any(Instant.class));
     }
 
     @Test
     void getTopKReturnsItemsWithScores() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
-
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 3, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet);
-
-        when(sortedSet.valueRangeReversed(0, 2)).thenReturn(List.of("a", "b"));
-        when(sortedSet.getScore("a")).thenReturn(2.0);
-        when(sortedSet.getScore("b")).thenReturn(null);
+        TopKAnalyzer analyzer = newAnalyzer(3);
+        withEntries(bucket(CURRENT_BUCKET_KEY), entry("a", 2.0), entry("b", 0.5));
 
         List<TopKAnalyzer.TopKItem> items = analyzer.getTopK("pages");
         assertEquals(2, items.size());
@@ -53,84 +86,67 @@ class TopKAnalyzerTest {
         assertNotNull(items.get(0).getTimestamp());
 
         assertEquals("b", items.get(1).getItem());
-        assertEquals(0.0, items.get(1).getScore());
+        assertEquals(0.5, items.get(1).getScore());
     }
 
     @Test
     void getRankIsOneBasedAndMissingIsMinusOne() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
-
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 3, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet);
-
-        when(sortedSet.revRank("a")).thenReturn(0);
-        when(sortedSet.revRank("missing")).thenReturn(null);
+        TopKAnalyzer analyzer = newAnalyzer(3);
+        withEntries(bucket(CURRENT_BUCKET_KEY), entry("a", 3.0), entry("b", 1.0));
 
         assertEquals(1, analyzer.getRank("pages", "a"));
+        assertEquals(2, analyzer.getRank("pages", "b"));
         assertEquals(-1, analyzer.getRank("pages", "missing"));
     }
 
     @Test
     void getScoreFallsBackToZero() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
-
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 3, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet);
-
-        when(sortedSet.getScore("a")).thenReturn(1.5);
-        when(sortedSet.getScore("missing")).thenReturn(null);
+        TopKAnalyzer analyzer = newAnalyzer(3);
+        when(bucket(CURRENT_BUCKET_KEY).getScore("a")).thenReturn(1.5);
 
         assertEquals(1.5, analyzer.getScore("pages", "a"));
-        assertEquals(0.0, analyzer.getScore("pages", "missing"));
+        assertEquals(0.0, analyzer.getScore("pages", "missing"),
+                "missing in every live bucket must fall back to 0.0");
     }
 
     @Test
-    void resetDelegatesToClear() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
+    void getScoreSumsAcrossWindowBuckets() {
+        TopKAnalyzer analyzer = newAnalyzer(3);
+        when(bucket(CURRENT_BUCKET_KEY).getScore("a")).thenReturn(100.5);
+        when(bucket(OLDER_BUCKET_KEY).getScore("a")).thenReturn(25.75);
 
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 3, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet);
+        assertEquals(126.25, analyzer.getScore("pages", "a"),
+                "an item's window score is the sum of its bucket scores");
+    }
+
+    @Test
+    void resetDeletesEveryLiveWindowBucket() {
+        TopKAnalyzer analyzer = newAnalyzer(3);
 
         analyzer.reset("pages");
 
-        verify(sortedSet).clear();
+        bucketsByKey.values().forEach(bucketMock -> verify(bucketMock).delete());
+        // 11 buckets cover a 10-minute window of 1-minute buckets
+        assertEquals(11, bucketsByKey.size());
     }
 
     @Test
     void recordItemDoesNotTrimWhenBelowThreshold() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
+        TopKAnalyzer analyzer = newAnalyzer(4);
+        RScoredSortedSet<String> current = bucket(CURRENT_BUCKET_KEY);
 
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 4, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet);
-
-        when(sortedSet.addScore("home", 2.0)).thenReturn(5.0);
-        when(sortedSet.size()).thenReturn(5); // k*2 = 8, does not trigger trim
+        when(current.addScore("home", 2.0)).thenReturn(5.0);
+        when(current.size()).thenReturn(5); // k*2 = 8, does not trigger trim
 
         double score = analyzer.recordItem("pages", "home", 2.0);
         assertEquals(5.0, score);
 
-        // Should not trim
-        verify(sortedSet).addScore("home", 2.0);
+        verify(current, never()).removeRangeByRank(anyInt(), anyInt());
     }
 
     @Test
     void getTopKReturnsEmptyListWhenNoItems() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
-
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 3, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet);
-
-        when(sortedSet.valueRangeReversed(0, 2)).thenReturn(List.of());
+        TopKAnalyzer analyzer = newAnalyzer(3);
 
         List<TopKAnalyzer.TopKItem> items = analyzer.getTopK("pages");
         assertTrue(items.isEmpty());
@@ -138,61 +154,35 @@ class TopKAnalyzerTest {
 
     @Test
     void recordItemWithNegativeScore() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
+        TopKAnalyzer analyzer = newAnalyzer(3);
+        RScoredSortedSet<String> current = bucket(CURRENT_BUCKET_KEY);
+        when(current.addScore("home", -5.0)).thenReturn(-3.0);
 
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 3, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet);
-
-        when(sortedSet.addScore("home", -5.0)).thenReturn(-3.0);
-
-        double score = analyzer.recordItem("pages", "home", -5.0);
-        assertEquals(-3.0, score);
+        assertEquals(-3.0, analyzer.recordItem("pages", "home", -5.0));
     }
 
     @Test
     void recordItemWithZeroScore() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
+        TopKAnalyzer analyzer = newAnalyzer(3);
+        RScoredSortedSet<String> current = bucket(CURRENT_BUCKET_KEY);
+        when(current.addScore("home", 0.0)).thenReturn(0.0);
 
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 3, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet);
-
-        when(sortedSet.addScore("home", 0.0)).thenReturn(0.0);
-
-        double score = analyzer.recordItem("pages", "home", 0.0);
-        assertEquals(0.0, score);
+        assertEquals(0.0, analyzer.recordItem("pages", "home", 0.0));
     }
 
     @Test
     void getRankReturnsOneForTopItem() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
-
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 3, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet);
-
-        when(sortedSet.revRank("top")).thenReturn(0);
+        TopKAnalyzer analyzer = newAnalyzer(3);
+        withEntries(bucket(CURRENT_BUCKET_KEY), entry("top", 5.0));
 
         assertEquals(1, analyzer.getRank("pages", "top"));
     }
 
     @Test
     void getRankForMultipleItems() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
-
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 5, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet);
-
-        when(sortedSet.revRank("first")).thenReturn(0);
-        when(sortedSet.revRank("second")).thenReturn(1);
-        when(sortedSet.revRank("third")).thenReturn(2);
-        when(sortedSet.revRank("fourth")).thenReturn(3);
+        TopKAnalyzer analyzer = newAnalyzer(5);
+        withEntries(bucket(CURRENT_BUCKET_KEY),
+                entry("first", 10.0), entry("second", 8.0), entry("third", 6.0), entry("fourth", 4.0));
 
         assertEquals(1, analyzer.getRank("pages", "first"));
         assertEquals(2, analyzer.getRank("pages", "second"));
@@ -201,36 +191,9 @@ class TopKAnalyzerTest {
     }
 
     @Test
-    void getScoreForMultipleItems() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
-
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 3, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet);
-
-        when(sortedSet.getScore("item1")).thenReturn(100.5);
-        when(sortedSet.getScore("item2")).thenReturn(50.0);
-        when(sortedSet.getScore("item3")).thenReturn(25.75);
-
-        assertEquals(100.5, analyzer.getScore("pages", "item1"));
-        assertEquals(50.0, analyzer.getScore("pages", "item2"));
-        assertEquals(25.75, analyzer.getScore("pages", "item3"));
-    }
-
-    @Test
     void getTopKWithFullResults() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
-
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 3, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet);
-
-        when(sortedSet.valueRangeReversed(0, 2)).thenReturn(List.of("a", "b", "c"));
-        when(sortedSet.getScore("a")).thenReturn(10.0);
-        when(sortedSet.getScore("b")).thenReturn(5.0);
-        when(sortedSet.getScore("c")).thenReturn(1.0);
+        TopKAnalyzer analyzer = newAnalyzer(3);
+        withEntries(bucket(CURRENT_BUCKET_KEY), entry("a", 10.0), entry("b", 5.0), entry("c", 1.0));
 
         List<TopKAnalyzer.TopKItem> items = analyzer.getTopK("pages");
         assertEquals(3, items.size());
@@ -240,47 +203,41 @@ class TopKAnalyzerTest {
     }
 
     @Test
+    void getTopKMergesScoresAcrossBuckets() {
+        TopKAnalyzer analyzer = newAnalyzer(3);
+        withEntries(bucket(CURRENT_BUCKET_KEY), entry("a", 10.0), entry("b", 5.0));
+        withEntries(bucket(OLDER_BUCKET_KEY), entry("b", 6.0));
+
+        List<TopKAnalyzer.TopKItem> items = analyzer.getTopK("pages");
+        assertEquals(2, items.size());
+        assertEquals("b", items.get(0).getItem(),
+                "b's combined 11.0 must outrank a's 10.0 (old code could not see this merge)");
+        assertEquals(11.0, items.get(0).getScore());
+        assertEquals(10.0, items.get(1).getScore());
+    }
+
+    @Test
     void recordItemWithLargeScore() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
+        TopKAnalyzer analyzer = newAnalyzer(3);
+        RScoredSortedSet<String> current = bucket(CURRENT_BUCKET_KEY);
+        when(current.addScore("viral", 1000000.0)).thenReturn(1000000.0);
 
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 3, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet);
-
-        when(sortedSet.addScore("viral", 1000000.0)).thenReturn(1000000.0);
-
-        double score = analyzer.recordItem("pages", "viral", 1000000.0);
-        assertEquals(1000000.0, score);
+        assertEquals(1000000.0, analyzer.recordItem("pages", "viral", 1000000.0));
     }
 
     @Test
     void recordItemWithFractionalScore() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
+        TopKAnalyzer analyzer = newAnalyzer(3);
+        RScoredSortedSet<String> current = bucket(CURRENT_BUCKET_KEY);
+        when(current.addScore("item", 3.14159)).thenReturn(6.28318);
 
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 3, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet);
-
-        when(sortedSet.addScore("item", 3.14159)).thenReturn(6.28318);
-
-        double score = analyzer.recordItem("pages", "item", 3.14159);
-        assertEquals(6.28318, score);
+        assertEquals(6.28318, analyzer.recordItem("pages", "item", 3.14159));
     }
 
     @Test
     void getTopKTimestampIsNotNull() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
-
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 3, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet);
-
-        when(sortedSet.valueRangeReversed(0, 2)).thenReturn(List.of("x", "y"));
-        when(sortedSet.getScore("x")).thenReturn(1.0);
-        when(sortedSet.getScore("y")).thenReturn(2.0);
+        TopKAnalyzer analyzer = newAnalyzer(3);
+        withEntries(bucket(CURRENT_BUCKET_KEY), entry("x", 1.0), entry("y", 2.0));
 
         List<TopKAnalyzer.TopKItem> items = analyzer.getTopK("pages");
         assertNotNull(items.get(0).getTimestamp());
@@ -288,39 +245,19 @@ class TopKAnalyzerTest {
     }
 
     @Test
-    void resetClearsAllData() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
-
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 3, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet);
-
-        analyzer.reset("pages");
-
-        verify(sortedSet).clear();
-    }
-
-    @Test
     void multipleCategories() {
-        RedissonClient redisson = mock(RedissonClient.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet1 = mock(RScoredSortedSet.class);
-        @SuppressWarnings("unchecked")
-        RScoredSortedSet<String> sortedSet2 = mock(RScoredSortedSet.class);
+        TopKAnalyzer analyzer = newAnalyzer(3);
+        RScoredSortedSet<String> pages = bucket("p:topk:pages:b:16");
+        RScoredSortedSet<String> products = bucket("p:topk:products:b:16");
 
-        TopKAnalyzer analyzer = new TopKAnalyzer(redisson, "p", 3, Duration.ofMinutes(10));
-        when(redisson.<String>getScoredSortedSet("p:topk:pages")).thenReturn(sortedSet1);
-        when(redisson.<String>getScoredSortedSet("p:topk:products")).thenReturn(sortedSet2);
-
-        when(sortedSet1.addScore("home", 1.0)).thenReturn(1.0);
-        when(sortedSet2.addScore("widget", 1.0)).thenReturn(1.0);
+        when(pages.addScore("home", 1.0)).thenReturn(1.0);
+        when(products.addScore("widget", 1.0)).thenReturn(1.0);
 
         analyzer.recordItem("pages", "home", 1.0);
         analyzer.recordItem("products", "widget", 1.0);
 
-        verify(sortedSet1).addScore("home", 1.0);
-        verify(sortedSet2).addScore("widget", 1.0);
+        verify(pages).addScore("home", 1.0);
+        verify(products).addScore("widget", 1.0);
     }
 
     @Test
@@ -330,5 +267,16 @@ class TopKAnalyzerTest {
 
         assertTrue(str.contains("test"));
         assertTrue(str.contains("5.0"));
+    }
+
+    @Test
+    void invalidConstructionIsRejected() {
+        RedissonClient client = mock(RedissonClient.class);
+        assertThrows(NullPointerException.class, () -> new TopKAnalyzer(null, "p", 3, Duration.ofMinutes(1)));
+        assertThrows(NullPointerException.class, () -> new TopKAnalyzer(client, null, 3, Duration.ofMinutes(1)));
+        assertThrows(IllegalArgumentException.class, () -> new TopKAnalyzer(client, "p", 0, Duration.ofMinutes(1)));
+        assertThrows(IllegalArgumentException.class, () -> new TopKAnalyzer(client, "p", 3, null));
+        assertThrows(IllegalArgumentException.class, () -> new TopKAnalyzer(client, "p", 3, Duration.ZERO));
+        assertThrows(IllegalArgumentException.class, () -> new TopKAnalyzer(client, "p", 3, Duration.ofMillis(-5)));
     }
 }
