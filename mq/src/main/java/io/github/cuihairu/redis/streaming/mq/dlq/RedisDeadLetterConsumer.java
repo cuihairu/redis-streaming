@@ -32,6 +32,15 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final Map<String, Sub> subs = new ConcurrentHashMap<>();
     private final Map<String, StreamMessageId> lastIds = new ConcurrentHashMap<>();
+    // MQ-01: pending sweep cadence — a PEL entry whose handler threw or whose replay
+    // failed is otherwise never re-read (neverDelivered() only). Same convention as the
+    // main consumer's processPendingMessages: claim idle entries and re-run the handler.
+    // Read per instance (not static) so tests can tune them for a fresh consumer even
+    // when the class was already loaded with defaults by an earlier test.
+    private final Map<String, Long> lastSweepAt = new ConcurrentHashMap<>();
+    private final long claimIdleMs = Long.getLong("mq.dlq.test.claimIdleMs", 300_000L);
+    private final long pendingSweepMs = Long.getLong("mq.dlq.test.pendingSweepMs", 5_000L);
+    private static final int PENDING_SWEEP_BATCH = 50;
     private static final com.fasterxml.jackson.databind.ObjectMapper _om = new com.fasterxml.jackson.databind.ObjectMapper();
 
     public RedisDeadLetterConsumer(RedissonClient redissonClient, String consumerName, String defaultGroup) {
@@ -129,63 +138,123 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                     }
                     try { if (messages!=null && !messages.isEmpty()) log.info("DLQ group read: topic={}, codec=default, messages={}", s.topic, messages.size()); } catch (Exception ignore) {}
                     for (Map.Entry<StreamMessageId, Map<String, Object>> e : messages.entrySet()) {
-                        StreamMessageId id = e.getKey();
-                        Map<String, Object> data = e.getValue();
-                        DeadLetterEntry entry = DeadLetterCodec.parseEntry(id.toString(), data);
-                        try {
-                            long holdMs = Long.getLong("mq.dlq.test.holdBeforeHandleMs", 0L);
-                            if (holdMs > 0) { try { Thread.sleep(holdMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); } }
-                            DeadLetterConsumer.HandleResult r = s.handler.handle(entry);
-                            switch (r) {
-                                case SUCCESS:
-                                    stream.ack(s.group, id);
-                                    try { log.info("DLQ group SUCCESS: topic={}, id={}", s.topic, id); } catch (Exception ignore) {}
-                                    break;
-                                case RETRY: {
-                                    long start = System.nanoTime();
-                                    boolean ok = false;
-                                    try {
-                                        if (replayHandler != null) {
-                                            ok = replayHandler.publish(entry.getOriginalTopic(), entry.getPartitionId(), entry.getPayload(), entry.getHeaders(), entry.getMaxRetries());
-                                        } else {
-                                            String topic = entry.getOriginalTopic();
-                                            int pid = entry.getPartitionId();
-                                            RStream<String, Object> p = redissonClient.getStream(
-                                                    io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, pid),
-                                                    org.redisson.client.codec.StringCodec.INSTANCE);
-                                            Map<String, Object> d = DeadLetterCodec.buildPartitionEntryFromDlq(data, topic, pid);
-                                            p.add(StreamAddArgs.entries(d));
-                                            ok = true;
-                                            try {
-                                                boolean visible = p.isExists() && p.size() > 0;
-                                                if (!visible) { Thread.sleep(50); p.add(StreamAddArgs.entries(d)); }
-                                                try { log.info("DLQ group RETRY replay ok={}, origKey={}, visible={} size={}", ok, io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, pid), (p.isExists() && p.size()>0), p.size()); } catch (Exception ignore) {}
-                                            } catch (Exception ignore) {}
-                                        }
-                                    } catch (Exception ex) {
-                                        log.error("DLQ replay failed", ex);
-                                    } finally {
-                                        try {
-                                            MqMetrics.get()
-                                                    .recordDlqReplay(entry.getOriginalTopic(), entry.getPartitionId(), ok,
-                                                            System.nanoTime() - start);
-                                        } catch (Exception ignore) {}
-                                        if (ok) stream.ack(s.group, id);
-                                    }
-                                    break;
-                                }
-                                case FAIL:
-                                    stream.ack(s.group, id);
-                                    break;
-                            }
-                        } catch (Exception ex) {
-                            log.error("DLQ handler error for {}", id, ex);
-                        }
+                        processEntry(s, stream, e.getKey(), e.getValue());
+                    }
+
+                    // MQ-01: reclaim PEL entries the failure paths left behind (handler
+                    // threw / replay failed) — neverDelivered() never returns them again
+                    long nowMs = System.currentTimeMillis();
+                    Long sweptAt = lastSweepAt.get(s.topic);
+                    if (sweptAt == null || nowMs - sweptAt >= pendingSweepMs) {
+                        lastSweepAt.put(s.topic, nowMs);
+                        sweepPending(s, streamDefault, streamString);
                     }
                 }
             } catch (Exception e) {
                 try { Thread.sleep(200); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
             }
+        }
+    }
+
+    /**
+     * Single entry disposition shared by the live read and the pending sweep (MQ-01):
+     * handler SUCCESS/FAIL ack, RETRY acks only when the replay succeeded. A handler
+     * throw or failed replay leaves the id pending — the sweep re-claims it after the
+     * idle threshold, mirroring the main consumer's convention (unbounded retry).
+     */
+    private void processEntry(Sub s, RStream<String, Object> stream, StreamMessageId id, Map<String, Object> data) {
+        DeadLetterEntry entry = DeadLetterCodec.parseEntry(id.toString(), data);
+        try {
+            long holdMs = Long.getLong("mq.dlq.test.holdBeforeHandleMs", 0L);
+            if (holdMs > 0) { try { Thread.sleep(holdMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); } }
+            DeadLetterConsumer.HandleResult r = s.handler.handle(entry);
+            switch (r) {
+                case SUCCESS:
+                    stream.ack(s.group, id);
+                    try { log.info("DLQ group SUCCESS: topic={}, id={}", s.topic, id); } catch (Exception ignore) {}
+                    break;
+                case RETRY: {
+                    long start = System.nanoTime();
+                    boolean ok = false;
+                    try {
+                        if (replayHandler != null) {
+                            ok = replayHandler.publish(entry.getOriginalTopic(), entry.getPartitionId(), entry.getPayload(), entry.getHeaders(), entry.getMaxRetries());
+                        } else {
+                            String topic = entry.getOriginalTopic();
+                            int pid = entry.getPartitionId();
+                            RStream<String, Object> p = redissonClient.getStream(
+                                    io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, pid),
+                                    org.redisson.client.codec.StringCodec.INSTANCE);
+                            Map<String, Object> d = DeadLetterCodec.buildPartitionEntryFromDlq(data, topic, pid);
+                            p.add(StreamAddArgs.entries(d));
+                            ok = true;
+                            try {
+                                boolean visible = p.isExists() && p.size() > 0;
+                                if (!visible) { Thread.sleep(50); p.add(StreamAddArgs.entries(d)); }
+                                try { log.info("DLQ group RETRY replay ok={}, origKey={}, visible={} size={}", ok, io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, pid), (p.isExists() && p.size()>0), p.size()); } catch (Exception ignore) {}
+                            } catch (Exception ignore) {}
+                        }
+                    } catch (Exception ex) {
+                        log.error("DLQ replay failed", ex);
+                    } finally {
+                        try {
+                            MqMetrics.get()
+                                    .recordDlqReplay(entry.getOriginalTopic(), entry.getPartitionId(), ok,
+                                            System.nanoTime() - start);
+                        } catch (Exception ignore) {}
+                        if (ok) stream.ack(s.group, id);
+                    }
+                    break;
+                }
+                case FAIL:
+                    stream.ack(s.group, id);
+                    break;
+            }
+        } catch (Exception ex) {
+            log.error("DLQ handler error for {}", id, ex);
+        }
+    }
+
+    /**
+     * MQ-01: re-claim idle PEL entries and run them through the same disposition as
+     * live deliveries. Entries were written under two codecs historically; claiming
+     * through the wrong one throws on decode — fall back to the other handle (the same
+     * dance the read path does).
+     */
+    @SuppressWarnings("deprecation")
+    private void sweepPending(Sub s, RStream<String, Object> streamDefault, RStream<String, Object> streamString) {
+        try {
+            java.util.List<org.redisson.api.stream.PendingEntry> pending = streamDefault.listPending(
+                    s.group, StreamMessageId.MIN, StreamMessageId.MAX, PENDING_SWEEP_BATCH);
+            for (org.redisson.api.stream.PendingEntry pe : pending) {
+                if (pe.getIdleTime() < claimIdleMs) {
+                    continue;
+                }
+                StreamMessageId id = pe.getId();
+                if (claimAndProcess(s, streamDefault, id)) {
+                    continue;
+                }
+                claimAndProcess(s, streamString, id);
+            }
+        } catch (Exception e) {
+            log.error("DLQ pending sweep failed for topic {}", s.topic, e);
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private boolean claimAndProcess(Sub s, RStream<String, Object> stream, StreamMessageId id) {
+        try {
+            Map<StreamMessageId, Map<String, Object>> claimed = stream.claim(
+                    s.group, consumerName, claimIdleMs, TimeUnit.MILLISECONDS, id);
+            if (claimed == null || claimed.isEmpty()) {
+                return false;
+            }
+            for (Map.Entry<StreamMessageId, Map<String, Object>> ce : claimed.entrySet()) {
+                processEntry(s, stream, ce.getKey(), ce.getValue());
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
         }
     }
 
