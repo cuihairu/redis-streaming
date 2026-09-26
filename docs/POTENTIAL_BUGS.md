@@ -309,9 +309,10 @@
 - **影响**：`add(score=ts)` 后立即按墙钟 `removeRangeByScore(0, now-window)` → 旧于窗口的事件写入即被静默删除；count 用无上界 `size()` → 未来时间戳事件长期计入（永生虚高）。
 - **验证与修复**：统一 trailing-window 语义 `[now-window, now]`：count 改为区间 `count(cutoff,true,now,true)`；早于窗口的事件直接拒收不写入（返回当前计数）；未来事件照存（score=ts）但不计数，墙钟越过其 ts+window 后由保留裁剪回收。新增 `PVCounterWindowSemanticsTest`（旧代码：未来事件 count 0→5、无上界 7→9、迟到事件仍写入）+ `PVCounterWindowIntegrationTest`（真实 Redis），更新 3 个钉死旧行为的测试文件。
 
-### B-42 RedisClientMetricsReporter 非原子读改写共享 metrics JSON 且全吞错误 ⏳
-- **位置**：`registry/.../client/metrics/RedisClientMetricsReporter.java:59-74`
-- **影响**：并发下 `clientInflight` 丢失更新（不归零，扭曲 maxInflight 均衡）。
+### B-42 RedisClientMetricsReporter 非原子读改写共享 metrics JSON 且全吞错误 ✅已修复
+- **位置**：`registry/.../client/metrics/RedisClientMetricsReporter.java`（mutateMetrics）
+- **影响**：并发下 `clientInflight` 丢失更新（不归零，扭曲 maxInflight 均衡）；异常全吞无任何日志。
+- **验证与修复**：`mutateMetrics` 按实例键分条 `ReentrantLock` 串行化读改写（实例 hash 归单进程所有，请求线程并发即真实竞态；metrics JSON 被负载均衡/管理端整体读取，不改存储格式）；全吞改为 `log.debug` 带上下文。新增 `RedisClientMetricsReporterConcurrencyTest`：旧代码 8 线程×250 次自增仅落 448/2000、加减两阶段后残留 8；新代码精确 2000/归零。
 
 ### B-43 collectWithTimeout 超时任务不取消，泄漏到公共 ForkJoinPool ✅已修复
 - **位置**：`registry/.../metrics/MetricsCollectionManager.java`
