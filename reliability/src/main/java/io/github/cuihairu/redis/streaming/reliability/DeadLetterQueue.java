@@ -29,9 +29,14 @@ public class DeadLetterQueue<T> implements Serializable {
     /**
      * Create a dead letter queue with a maximum size
      *
-     * @param maxSize Maximum number of elements to store
+     * @param maxSize Maximum number of elements to store; must be positive — a
+     *                non-positive cap would silently discard every failure,
+     *                defeating the queue's purpose (B-35)
      */
     public DeadLetterQueue(int maxSize) {
+        if (maxSize <= 0) {
+            throw new IllegalArgumentException("maxSize must be positive");
+        }
         this.queue = new ConcurrentLinkedQueue<>();
         this.maxSize = maxSize;
     }
@@ -126,10 +131,16 @@ public class DeadLetterQueue<T> implements Serializable {
 
     /**
      * Clear all elements from the queue
+     *
+     * <p>Drains element-by-element with a matching counter decrement per removal
+     * instead of queue.clear() + set(0): a bulk reset wipes the increments of adds
+     * that land concurrently between the two steps, so the counter permanently
+     * under-counts and the queue can exceed maxSize (B-35).
      */
     public void clear() {
-        queue.clear();
-        sizeCounter.set(0);
+        while (queue.poll() != null) {
+            sizeCounter.decrementAndGet();
+        }
     }
 
     /**
