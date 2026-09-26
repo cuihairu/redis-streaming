@@ -498,10 +498,10 @@ try {
 
 ## 获取帮助
 
-- 📖 文档: [README.md](README.md)
-- 🐛 问题反馈: [GitHub Issues](https://github.com/cuihairu/redis-streaming/issues)
-- 💬 讨论: [GitHub Discussions](https://github.com/cuihairu/redis-streaming/discussions)
-- 📧 邮件: chuihairu@gmail.com
+- [文档: [README.md](README.md)]
+- [问题反馈: [GitHub Issues](https://github.com/cuihairu/redis-streaming/issues)]
+- [讨论: [GitHub Discussions](https://github.com/cuihairu/redis-streaming/discussions)]
+- [邮件: chuihairu@gmail.com]
 
 ---
 

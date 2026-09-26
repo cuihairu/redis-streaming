@@ -1,6 +1,6 @@
 # 迁移到 Central Portal 指南
 
-## 📢 重要通知
+## 重要通知
 
 **OSSRH 已于 2025年6月30日关闭!** 所有发布到 Maven Central 的操作必须迁移到新的 Central Portal。
 
@@ -13,10 +13,10 @@
 ```
 
 **特点**:
-- ❌ 需要在 JIRA 注册账号
-- ❌ 使用 Nexus 界面手动操作
-- ❌ 需要手动 Close 和 Release
-- ❌ 配置复杂
+- [需要在 JIRA 注册账号]
+- [使用 Nexus 界面手动操作]
+- [需要手动 Close 和 Release]
+- [配置复杂]
 
 ### 新方式 (Central Portal - 现在使用)
 
@@ -25,10 +25,10 @@
 ```
 
 **特点**:
-- ✅ 使用 GitHub 账号登录
-- ✅ 现代化 Web 界面
-- ✅ 自动验证,一键发布
-- ✅ 配置简单
+- [使用 GitHub 账号登录]
+- [现代化 Web 界面]
+- [自动验证,一键发布]
+- [配置简单]
 
 ## 迁移步骤
 
@@ -112,12 +112,12 @@ repositories {
 在 GitHub 仓库设置中:
 
 **删除旧 Secrets**:
-- ❌ `OSSRH_USERNAME`
-- ❌ `OSSRH_PASSWORD`
+- [`OSSRH_USERNAME`]
+- [`OSSRH_PASSWORD`]
 
 **添加新 Secrets**:
-- ✅ `CENTRAL_PORTAL_USERNAME`（用户名）
-- ✅ `CENTRAL_PORTAL_TOKEN`（User Token；在工作流中映射为 PASSWORD）
+- [`CENTRAL_PORTAL_USERNAME`（用户名）]
+- [`CENTRAL_PORTAL_TOKEN`（User Token；在工作流中映射为 PASSWORD）]
 
 ### 步骤 7: 更新 GitHub Actions 工作流
 
@@ -172,9 +172,9 @@ env:
 5. 等待同步到 Maven Central (10-30 分钟)
 
 **简化点**:
-- ✅ 不再需要 Close 操作
-- ✅ 自动验证,更快
-- ✅ 界面更友好
+- [不再需要 Close 操作]
+- [自动验证,更快]
+- [界面更友好]
 
 ## 常见问题
 
@@ -206,9 +206,9 @@ A: 命名空间迁移后立即可以发布,无需等待。
 ### 1. 检查 Central Portal
 
 登录 https://central.sonatype.com,确认:
-- ✅ 命名空间已显示
-- ✅ 可以生成 User Token
-- ✅ 可以查看 Deployments
+- [命名空间已显示]
+- [可以生成 User Token]
+- [可以查看 Deployments]
 
 ### 2. 测试本地发布
 

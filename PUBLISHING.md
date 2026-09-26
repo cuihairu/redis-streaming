@@ -39,9 +39,9 @@ signing.secretKeyRingFile=/path/to/.gnupg/secring.gpg
 ```
 
 ### 已完成的配置：
-- ✅ Maven Central 账号（使用 GitHub 登录）
-- ✅ GPG 密钥生成和上传
-- ✅ 本地 `~/.gradle/gradle.properties` 配置
+- [Maven Central 账号（使用 GitHub 登录）]
+- [GPG 密钥生成和上传]
+- [本地 `~/.gradle/gradle.properties` 配置]
 
 ## 本地发布
 
@@ -70,8 +70,8 @@ signing.secretKeyRingFile=/path/to/.gnupg/secring.gpg
 2. 点击左侧 **Publishing** → **Deployments**
 3. 找到你刚才上传的部署
 4. 检查状态:
-   - ✅ **VALIDATED**: 验证通过,可以发布
-   - ❌ **FAILED**: 查看错误信息
+   - [**VALIDATED**: 验证通过,可以发布]
+   - [**FAILED**: 查看错误信息]
 5. 点击 **Publish** 按钮
 6. 等待同步到 Maven Central (约 10-30 分钟)
 7. 检查发布状态: https://search.maven.org/search?q=g:io.github.cuihairu.redis-streaming
@@ -140,14 +140,14 @@ git push origin v0.1.0
 
 ### 自动发布流程
 
-1. ✅ Checkout 代码
-2. ✅ 更新 `build.gradle` 中的版本号（或用 `-Pversion=...` 覆盖）
-3. ✅ 导入 GPG 私钥
-4. ✅ 创建临时 `gradle.properties`
-5. ✅ 编译和测试（排除集成测试）
-6. ✅ 通过 `publishAllPublicationsToMavenCentralRepository` 上传到 Central Portal
-7. ✅ 生成 Release Notes
-8. ⚠️ **需要手动在 Sonatype 完成 Close 和 Release**
+1. [Checkout 代码]
+2. [更新 `build.gradle` 中的版本号（或用 `-Pversion=...` 覆盖）]
+3. [导入 GPG 私钥]
+4. [创建临时 `gradle.properties`]
+5. [编译和测试（排除集成测试）]
+6. [通过 `publishAllPublicationsToMavenCentralRepository` 上传到 Central Portal]
+7. [生成 Release Notes]
+8. [**需要手动在 Sonatype 完成 Close 和 Release**]
 
 ### 手动操作步骤 (新方式)
 
@@ -257,11 +257,11 @@ Invalid POM
 
 ## 安全注意事项
 
-- ❌ **绝对不要**将 `~/.gradle/gradle.properties` 提交到 Git
-- ❌ **绝对不要**将 GPG 私钥明文存储在仓库中
-- ✅ 使用 GitHub Secrets 存储敏感信息
-- ✅ 定期更新 Sonatype User Token
-- ✅ GPG 密钥使用强密码保护
+- [**绝对不要**将 `~/.gradle/gradle.properties` 提交到 Git]
+- [**绝对不要**将 GPG 私钥明文存储在仓库中]
+- [使用 GitHub Secrets 存储敏感信息]
+- [定期更新 Sonatype User Token]
+- [GPG 密钥使用强密码保护]
 
 ## 相关链接
 

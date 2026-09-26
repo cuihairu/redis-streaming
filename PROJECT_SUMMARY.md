@@ -43,9 +43,9 @@ The goal is to keep the core APIs small and composable, while shipping productio
 
 ## Runtime Status (Intentional Scope)
 `runtime` includes two runtimes with intentionally different scope:
-- ✅ In-memory runtime: deterministic unit tests / examples (single-thread)
-- ✅ Redis runtime: Redis Streams consumer groups + Redis keyed state + checkpoint (experimental) + window/watermark/timers (best-effort)
-- ⚠️ Checkpoint is stop-the-world per process (not cross-instance barrier); strict end-to-end exactly-once across external sinks still requires idempotency/2PC/outbox designs
+- [In-memory runtime: deterministic unit tests / examples (single-thread)]
+- [Redis runtime: Redis Streams consumer groups + Redis keyed state + checkpoint (experimental) + window/watermark/timers (best-effort)]
+- [Checkpoint is stop-the-world per process (not cross-instance barrier); strict end-to-end exactly-once across external sinks still requires idempotency/2PC/outbox designs]
 
 If you need a distributed engine, you can still reuse most infrastructure/operator modules (`mq`, `registry`, `state`, `reliability`, etc.) independently.
 

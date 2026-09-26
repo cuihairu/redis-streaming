@@ -2,7 +2,7 @@
 
 模块目录:`spring-boot-starter/`。把 core/runtime/mq/registry/config/reliability 组件装配成 Spring Bean。自动配置注册于 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`。
 
-## 🚀 快速开始
+## 快速开始
 
 ### 1. 添加依赖
 
@@ -20,7 +20,7 @@ implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:<version>
 完整可运行样例:`examples/src/main/resources/application.yml`
 启动示例:`./gradlew :examples:run -PmainClass=io.github.cuihairu.redis.streaming.examples.springboot.StarterExampleApplication`
 
-## 🧩 自动配置结构(0.3 起拆分)
+## 自动配置结构(0.3 起拆分)
 
 | 类 | 属性开关 | 职责 |
 |---|---|---|
@@ -36,7 +36,7 @@ implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:<version>
 - `MqHealthIndicator` 位于独立嵌套配置,以类级 `@ConditionalOnClass(HealthIndicator)` 守卫;
 - Redisson 仅在有 `RedissonClient` Bean 缺失时创建简化单机客户端;生产集群/SSL 建议自置 `RedissonClient`(此时本 Bean 自动让位),空密码不会发送 `AUTH`。
 
-## 📋 配置项参考(实测前缀 `redis-streaming.`)
+## 配置项参考(实测前缀 `redis-streaming.`)
 
 ### redis
 `address`(默认 `redis://127.0.0.1:6379`)、`password`、`database`、`connect-timeout`、`timeout`、`connection-pool-size`、`connection-minimum-idle-size`
@@ -58,7 +58,7 @@ implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:<version>
 ### ratelimit
 `enabled`、`backend(memory|redis)`、`window-ms`、`limit`、`key-prefix`、`default-name`、`policies.<名称>.{algorithm(sliding|token-bucket|leaky-bucket),backend,window-ms,limit,capacity,rate-per-second,key-prefix}`
 
-## 🧪 注入示例
+## 注入示例
 
 ```java
 @RestController
@@ -79,11 +79,11 @@ public class DemoController {
 }
 ```
 
-## 📊 指标导出
+## 指标导出
 
 micrometer-core 为 `api` 依赖、actuator 为 optional。桥接链路:`RedisRuntimeMetrics/MqMetrics/RetentionMetrics/ReliabilityMetrics/RateLimitMetrics` 单例 → `*MicrometerCollector` → `MeterRegistry`(指标前缀 `redis_streaming_runtime_*`、`mq_*`、`retention_*`、`reliability_*`、`ratelimit_*`)。
 
-## ❓ 常见问题
+## 常见问题
 
 - **与 redisson-spring-boot-starter 共存**:对方提供 `RedissonClient` 即覆盖本 starter 的兜底客户端(注意其前缀是 `spring.data.redis*`)。
 - **redis-streaming 与 spring.data 混淆**:本 starter 只读 `redis-streaming.*`;历史文档中的 `streaming.*` 前缀均已废弃。

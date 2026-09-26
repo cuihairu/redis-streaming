@@ -4,11 +4,11 @@
 The CEP (Complex Event Processing) module has advanced pattern matching features that are partially implemented. Some advanced quantifier patterns need fixes.
 
 ## Working Features
-- ✅ Basic pattern sequences (A → B → C)
-- ✅ oneOrMore quantifier (A+)
-- ✅ Exact quantifiers (A{3})
-- ✅ Relaxed contiguity (followedBy)
-- ✅ Time constraints (within)
+- [Basic pattern sequences (A → B → C)]
+- [oneOrMore quantifier (A+)]
+- [Exact quantifiers (A{3})]
+- [Relaxed contiguity (followedBy)]
+- [Time constraints (within)]
 
 ## Issues to Fix
 

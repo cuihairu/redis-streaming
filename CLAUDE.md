@@ -277,11 +277,11 @@ The project includes comprehensive test infrastructure:
 - **Elasticsearch** (9200/9300): Sink connector testing
 
 #### Key Features
-- ✅ **No data persistence** - All data stored in memory (`tmpfs`)
-- ✅ **Health checks** - Automatic service readiness detection
-- ✅ **Clean isolation** - Each test run starts with fresh environment
-- ✅ **Parallel testing** - Safe concurrent test execution
-- ✅ **Auto-cleanup** - Containers removed after tests
+- [**No data persistence** - All data stored in memory (`tmpfs`)]
+- [**Health checks** - Automatic service readiness detection]
+- [**Clean isolation** - Each test run starts with fresh environment]
+- [**Parallel testing** - Safe concurrent test execution]
+- [**Auto-cleanup** - Containers removed after tests]
 
 Cleanup volumes:
 ```bash

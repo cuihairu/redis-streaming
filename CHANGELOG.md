@@ -9,7 +9,7 @@ All notable changes to this project are documented here (Conventional Commits st
 - **SLF4J unified to 2.0.17** across all modules (previously mixed 1.7.36 / 2.0.17; Redisson requires the 2.x API).
 - **Redisson upgraded 3.52.0 → 4.7.0** (latest stable).
   - Migrated to Redisson 4.x APIs: `StreamMessageId`/`StreamGroup`/`StreamInfo`/`PendingEntry` moved to `org.redisson.api.stream`; `RScript.ReturnType` constants renamed (`INTEGER→LONG`, `MULTI→LIST`, `STATUS→STRING`); `RKeys.expire(Duration, String...)`.
-  - ⚠️ Redisson 4.x `StreamMessageId.MIN` sends the `-` special stream id, which requires **Redis ≥ 7.0**. New code (`RedisStreamSource`) uses an explicit `0-0` id for Redis 6 compatibility; library users passing `MIN` to `XGROUP CREATE` on Redis 6 should switch to an explicit id.
+  - [Redisson 4.x `StreamMessageId.MIN` sends the `-` special stream id, which requires **Redis ≥ 7.0**. New code (`RedisStreamSource`) uses an explicit `0-0` id for Redis 6 compatibility; library users passing `MIN` to `XGROUP CREATE` on Redis 6 should switch to an explicit id.]
 - `sink.redis.RedisStreamSink` now performs real **XADD** onto a Redis Stream and implements `core StreamSink`. The previous (misnamed) List behavior is preserved as the new `sink.redis.RedisListSink`.
 - `core StreamSink` gained an optional lifecycle: `open()` / `close()` default methods. Both runtime engines now call them (InMemory engine around the terminal iteration; the Redis engine lazily on first message and on job close). Implementations holding resources should override them.
 - `core StreamSource` gained the symmetric `open()` / `close()` lifecycle, wired into the in-memory engine's `addSource`.

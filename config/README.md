@@ -5,9 +5,9 @@
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/cuihairu/redis-streaming)
 [![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/cuihairu/redis-streaming)
 
-## 🚀 核心特性
+## 核心特性
 
-### ✅ 已实现功能
+### 已实现功能
 
 - **配置发布与获取** - 基于 Redis 的配置存储和读取
 - **配置分组管理** - 支持多环境、多应用的配置隔离
@@ -17,7 +17,7 @@
 - **历史记录查询** - 查询配置的历史版本和变更记录
 - **默认值支持** - 配置不存在时返回默认值
 
-## 📦 快速开始
+## 快速开始
 
 ### 1. 添加依赖
 
@@ -126,7 +126,7 @@ if (deleted) {
 }
 ```
 
-## 🎯 实际应用场景
+## 实际应用场景
 
 ### 场景 1: 数据库配置热加载
 
@@ -261,7 +261,7 @@ public void rollbackConfig(String dataId, String group) {
 }
 ```
 
-## 🏗️ 架构设计
+## 架构设计
 
 ### 三级存储结构
 
@@ -281,7 +281,7 @@ public void rollbackConfig(String dataId, String group) {
 - **自动监听** - 客户端自动订阅配置变更频道
 - **即时回调** - 配置变更时立即触发监听器回调
 
-## 📖 API 参考
+## API 参考
 
 ### ConfigService 接口
 
@@ -338,7 +338,7 @@ public class ConfigHistory {
 }
 ```
 
-## 🧪 测试
+## 测试
 
 ```bash
 # 运行单元测试
@@ -349,7 +349,7 @@ docker-compose up -d
 ./gradlew :config:integrationTest
 ```
 
-## 📝 最佳实践
+## 最佳实践
 
 ### 1. 配置命名规范
 
@@ -417,7 +417,7 @@ if (history.size() >= 50) {
 }
 ```
 
-## 🔗 相关链接
+## 相关链接
 
 - [主项目文档](../README.md)
 - [集成指南](../INTEGRATION_GUIDE.md)

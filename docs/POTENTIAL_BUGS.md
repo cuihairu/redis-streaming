@@ -14,21 +14,21 @@
 
 ## 严重（Critical）
 
-### B-01 In-memory 引擎不合并会话窗口：SessionWindow 下每个元素自成窗口 ✅已修复
+### B-01 In-memory 引擎不合并会话窗口：SessionWindow 下每个元素自成窗口 [已修复]
 - **位置**：`runtime/.../internal/InMemoryWindowedStream.java`（drive 分桶逻辑）；`window/.../assigners/SessionWindow.java:31-36`
 - **触发**：`env.fromCollection(events).keyBy(k).window(SessionWindow.withGap(5min)).count()`，事件间隔 1 分钟。
 - **影响**：`SessionWindow.assignWindows` 对每个元素返回 `[ts, ts+gap)` 窗口，引擎按 start/end 精确分桶且无任何合并逻辑（`shouldMerge`/`TimeWindow.merge` 全仓无调用方），每个元素产生独立结果（count=1）。会话窗口功能完全失效。
 - **审计置信度**：高
 - **验证与修复**：core `WindowAssigner` 新增 `supportsWindowMerging()` 钩子（默认 false，含契约 javadoc：合并语义、trigger 状态丢弃限制）；`SessionWindow` 声明支持；`InMemoryWindowedStream` 在入桶前对同 key 的相交桶做单趟合并（不变量：同 key 桶两两不相交，故单趟扫描完备，代码注释含证明）。回归测试 `InMemoryWindowedStreamSessionMergeTest` 5 个用例：连续事件合并为单一会话 [0,270)=4、间隔超 gap 分裂、恰好等于 gap 不合并（半开区间）、链式桥接合并 [0,350)=5、多 key 独立合并。
 
-### B-02 StreamJoiner 匹配条件依赖到达顺序：非对称 JoinWindow 下同一对数据是否 join 取决于先到方 ✅已修复
+### B-02 StreamJoiner 匹配条件依赖到达顺序：非对称 JoinWindow 下同一对数据是否 join 取决于先到方 [已修复]
 - **位置**：`join/.../StreamJoiner.java:54,68`（配 `JoinWindow.java:74-77`）
 - **触发**：`JoinWindow.afterOnly(10s)`（before=0）。右元素 R(ts=T+5) 先到、左元素 L(ts=T) 后到：`processLeft` 计算 `contains(R.ts, L.ts)` → diff=L−R=−5s，`-5 >= 0` 为假 → 不匹配；若 L 先到则 `processRight` 计算 `contains(L.ts, R.ts)` → +5s∈[0,10] → 匹配。
 - **影响**：join 结果取决于到达顺序而非数据本身。两处调用点条件互为镜像，任何非对称窗口必有一侧是错的。INNER/LEFT/RIGHT/FULL_OUTER 全部静默出错。
 - **审计置信度**：高
 - **验证**：已用 `StreamJoinerOrderIndependenceTest` 复现（旧代码 6 个用例中 5 个失败：afterOnly/beforeOnly 双向 + of(3s,7s) 边界）。修复：`processLeft` 改为 `contains(L.ts, R.ts)`，两条路径统一为左锚定谓词 `R.ts − L.ts ∈ [−before, +after]`（与 Kafka Streams 语义一致），并补充 `JoinWindow.contains` 的锚定契约 javadoc。修复后 join 模块全部测试通过。
 
-### B-03 KGroupedTable.aggregate 同时丢弃初始值与累加值：多行分组坍缩为最后一行 ✅已修复
+### B-03 KGroupedTable.aggregate 同时丢弃初始值与累加值：多行分组坍缩为最后一行 [已修复]
 - **位置**：`table/.../impl/InMemoryKGroupedTable.java:45-51`；`table/.../impl/RedisKGroupedTable.java:54-56`
 - **触发**：`table.groupBy(...).aggregate(() -> 0L, (k, v) -> v)` 聚合同组 5 行。
 - **影响**：adder 签名 `BiFunction<K,V,VR>` 根本拿不到当前累加值；`current = initializer.get()` 计算后即被丢弃。结果= `adder(key, 最后一行的值)`，任何需要历史的聚合（count/sum/reduce）全错。
@@ -39,14 +39,14 @@
 
 ## 高（High）
 
-### B-04 消费端健康状态上报完全失效：uniqueId 与 instanceId key 错配 ✅已修复
+### B-04 消费端健康状态上报完全失效：uniqueId 与 instanceId key 错配 [已修复]
 - **位置**：`registry/.../impl/RedisServiceConsumer.java:101-126,290-299,512-519`；`registry/.../health/HealthCheckManager.java:58,81,96-102`
 - **触发**：`enableHealthCheck=true` 后发现实例。`HealthCheckManager` 以 `getUniqueId()`（`"serviceName:instanceId"`）为 checker key 并作为 reporter 回调首参；`reportHealthStatus` 却用该值查 `discoveredInstances`（以裸 `instanceId` 为 key）。
 - **影响**：健康事件（HEALTH_FAILURE/RECOVERY）永不触发、缓存永不更新；`unsubscribe` 用裸 id 反注册同样永不命中 → checker 永不 stop；`isInstanceHealthy` 恒 false。
 - **审计置信度**：高
 - **验证与修复**：`RedisServiceConsumer` 新增 `uniqueIdToInstanceId` 反查表：三处发现路径统一经 `cacheInstanceAndRegisterHealthCheck` 登记映射；`reportHealthStatus` 先翻译 uniqueId→裸 id 再查缓存（无映射时回退原值）；`isInstanceHealthy` 先把裸 id 翻译成 uniqueId 再查 checker；`unsubscribe` 清理改用 uniqueId（旧裸 id 调用永不命中，每实例泄漏一个运行中 checker 线程——即 B-08 的放大器）；`stop()` 清空反查表。回归测试：`ConsumerHealthKeyTranslationTest`（翻译层，旧代码 2/2 失败）+ 集成测试 `ConsumerHealthEventIntegrationTest`（真实 Redis：不可达实例 → HEALTH_FAILURE 事件 + `isInstanceHealthy("i1")`=false + unsubscribe 后 checker 数归零；旧代码收不到事件）。
 
-### B-05 metrics 收集为空时心跳被静默跳过：实例在"正常心跳"中被过期清除 ✅已修复
+### B-05 metrics 收集为空时心跳被静默跳过：实例在"正常心跳"中被过期清除 [已修复]
 - **位置**：`registry/.../impl/RedisServiceProvider.java:333-357`；`registry/.../metrics/MetricsCollectionManager.java:34-73,133-148`
 - **触发**：采集超时（默认 5s > 心跳间隔 3s）/采集器失败/enabledMetrics 为空 → `collectMetrics` 返回空 map → `NO_UPDATE`；默认 `enableMetadataChangeDetection=false` → 最终 `NO_UPDATE` → 不执行任何 Redis 写。
 - **影响**：负载高峰（恰恰最需要心跳时）ZSet score 与 hash TTL 停止刷新，`heartbeatTimeoutSeconds` 后实例被清除、消费者掉线。仅 TRACE 级日志。
@@ -59,7 +59,7 @@
 - **影响**：监听器持有过期配置直至同 dataId 下次发布；无版本对账、无轮询兜底。registry 消费端事件处理同为纯响应式。
 - **审计置信度**：高（语义缺失类）
 
-### B-07 配置变更监听器每次发布收到两次通知（本地重放 + pub/sub 回环）✅已修复
+### B-07 配置变更监听器每次发布收到两次通知（本地重放 + pub/sub 回环） [已修复]
 - **位置**：`config/.../impl/RedisConfigService.java:424-435`
 - **触发**：任何 `publishConfig`/`removeConfig`：先 `topic.publish(evt)` 又同步 `handleConfigChangeEvent(evt)`，消息再经订阅回环送达同一 JVM。
 - **影响**：进程内监听器对每次变更收到两次（且来自不同线程并发）；非幂等监听器（计数、一次性 reload）行为错误。
@@ -67,7 +67,7 @@
 - **验证与修复**：`ConfigChangeEvent` 新增 `publisherId` 标记（旧事件无标记仍按原路径投递，跨版本兼容）；`publishConfigChangeEvent` 发布时盖上本实例 `clientId`；订阅回调对 `publisherId==自己` 的回环事件直接跳过——本 JVM 的同步投递只此一份，远端 JVM 仍各收一次。
 - **回归测试**：`ConfigChangeSingleDeliveryIntegrationTest`（@Tag("integration")，真实 Redis，3 用例：发布方自身监听器恰好一次且 publish 返回时已送达、回环落地后仍一次、远端监听器恰好一次、删除监听后不再通知）。旧代码复现：git stash 还原 main 代码后跑同一测试，removal/publishing 两条以 "expected 1 but was 2" 失败——双投递坐实；新代码全绿。
 
-### B-08 ClientHealthChecker 每实例一个非守护线程且首次检查在调用线程同步执行 ✅已修复
+### B-08 ClientHealthChecker 每实例一个非守护线程且首次检查在调用线程同步执行 [已修复]
 - **位置**：`registry/.../health/ClientHealthChecker.java`；`HealthCheckManager.java`
 - **触发**：健康检查开启后 discover N 个实例。
 - **影响**：`subscribe()/discover()` 首次注册每实例阻塞至 connect+read 超时（默认 5s）；未 stop 的 checker（B-04 保证会发生）以非守护线程阻止 JVM 退出；线程数 O(实例数)。
@@ -75,7 +75,7 @@
 - **验证与修复**：三项并修——(1) 首检不再内联：`start()` 改为 `scheduleWithFixedDelay(checkHealth, 0, ...)`，首检落到执行器线程，`registerServiceInstance` 每实例不再阻塞至超时（首检完成前 `getLastHealthStatus()` 为默认 true，与注册即 UP 的注册中心语义一致）；(2) 线程转守护：自管调度器与共享池的线程工厂均 `setDaemon(true)`，泄漏的 checker 不再阻止 JVM 退出；(3) 共享池：`HealthCheckManager` 惰性建一个 `ScheduledThreadPoolExecutor`（core=max(2, cores/2)，keepalive 60s + allowCoreThreadTimeOut，空闲零线程），全部实例的检查经 `ClientHealthChecker` 包私有 6 参构造器跑在共享池上，公共 5 参构造器保留自管单线程调度器向后兼容；`stopAll()` 收口关闭共享池（此后注册会重建）。附带把 `checkHealth` 的 catch 从 Exception 放宽到 Throwable——未捕获 Error 会让 fixed-delay 调度静默死亡（无日志、永不再检），捕获后仍按"检查失败=不健康"上报。
 - **回归测试**：`HealthCheckThreadingTest`（只用公共 API，可直接对旧代码编译）——旧代码 3/3 按预期失败：首检线程="Test worker"（调用线程内联）、调度线程 isDaemon=false、检查线程名含 "Test worker"（无共享池）；新代码 3/3 绿。既有 `ClientHealthCheckerTest`/`CustomClientHealthCheckerCoverageTest`（含 stop 阻塞探针等待 5s 超时路径、stop 中断路径）全绿，行为兼容。
 
-### B-09 WindowedDeduplicator 的"元素级时间窗"实为集合级 TTL 且每次写入刷新 ✅已修复
+### B-09 WindowedDeduplicator 的"元素级时间窗"实为集合级 TTL 且每次写入刷新 [已修复]
 - **位置**：`reliability/.../deduplication/WindowedDeduplicator.java`
 - **触发**：`windowDuration=1h` 持续有流量，元素 "A" 于 t=0 出现、一年后再次出现。
 - **影响**：条目永不单独过期；整个 set 的 TTL 在每次 `markAsSeen` 被刷回 windowDuration，持续流量下 set 永不过期 → "A" 一年后仍判重；set 无界增长，与"Memory-bounded"文档相反。
@@ -83,7 +83,7 @@
 - **验证与修复**：数据结构从 plain SET + 整键刷新 TTL 换成 ZSET（`RScoredSortedSet`，score=元素最近出现时间）：`isDuplicate`/`checkAndMark` 按元素 score 判窗（`now - score < window`），写入时 `removeRangeByScore` 剪掉窗口外旧条目使集合有界（≈ 流量速率 × 窗口），并盖 `window+60s` 背板 TTL 只负责在流量停止后回收整键（不再是过期机制）。时钟经包私有构造器注入（`LongSupplier`，公共构造器默认 `System::currentTimeMillis`）；构造期零 Redis 访问并补齐 NPE/IAE 校验。旧版 plain SET 键在首次访问时惰性迁移（getType==SET → readAll → delete → 以迁移时刻为 last-seen 重写为 ZSET，即旧成员视作再多看一次）。剪枝下界用 0 而非 "-Infinity"（后者过 Redisson 编码不可移植）。
 - **回归测试**：`WindowedDeduplicatorIntegrationTest`（只用公共 API，可直接对旧代码编译）——旧代码复现 2 项失败：`elementExpiresWhileTrafficContinues`（300ms 窗，标 "A" 后以 50ms 间隔持续泵入 "B" 共 700ms，`isDuplicate("A")` 旧=true（整键 TTL 被流量续命）/新=false ✓）、`legacyPlainSetIsMigratedToScoredLayout`（键类型旧=SET/新=ZSET ✓）；另 2 项（空闲过期、背板 TTL）新旧皆绿作守卫。单元 `WindowedDeduplicatorTest` 重写 9 例（注入时钟判窗/剪枝边界 now−window/背板 TTL/迁移/校验），`DelegateCoverageTest`、`DeduplicatorsTest` 同步迁移到 ZSET 布局。
 
-### B-10 PatternMatcher 开启 allowEventReuse 后活动序列每事件翻倍：指数膨胀 ✅已修复
+### B-10 PatternMatcher 开启 allowEventReuse 后活动序列每事件翻倍：指数膨胀 [已修复]
 - **位置**：`cep/.../PatternMatcher.java:43-55,76-92`
 - **触发**：`allowEventReuse(true)`，N 个连续匹配事件。
 - **影响**：序列数 2^N（每事件克隆全部活动序列再新增）→ ~30 个事件即 OOM；仅靠时间窗清理，快速流撑不到过期。
@@ -91,14 +91,14 @@
 - **验证与修复**：实测增长基数为 2^(N+1)−2（newSeq 加入后 extendSequences 连它一起扩展），20 个事件即 2,097,150 个活动序列。沿 B-20 惯例加保留上限：新增 `DEFAULT_MAX_ACTIVE_SEQUENCES=1000` 与 2-arg 构造器（负数 IAE；0 完全关闭扩展跟踪），超出上限按最旧优先裁剪（subList 批量删除，保留最新部分序列——最可能被后续事件扩展），在 process() 扩展后调用。时间窗清理保留；`process()` 完成输出不受影响（每匹配事件仍恰一个完成序列）。裁剪不改变"扩展序列从不产出"的既有事实——活动序列仅供计数与扩展，上限化后内存有界 O(cap×maxSequenceLength)。
 - **回归测试**：`PatternMatcherActiveSequenceCapTest`——旧代码复现：临时旧 API 测试（1-arg 构造器）喂 20 事件断言 ≤1000，实测 2,097,150 失败后删除。永久测试 6 例：默认上限精确钳制在 1000、显式 cap=3 保留最新 3 个、cap=0 零跟踪但完成输出不变、负数 IAE、关闭 reuse 无部分序列、时间窗在满载状态下仍正常清空。
 
-### B-11 窗口 assigner 接受 0/负大小：除零、死循环或静默丢数据 ✅已修复
+### B-11 窗口 assigner 接受 0/负大小：除零、死循环或静默丢数据 [已修复]
 - **位置**：`window/.../assigners/TumblingWindow.java:32-35`、`SlidingWindow.java:35-47`；`aggregation/.../TumblingWindow.java:24-29`、`SlidingWindow.java:22-27,46-59`
 - **触发**：`TumblingWindow.ofMillis(0)` → `%0` ArithmeticException；`SlidingWindow.ofMillis(10000, -1)` → slide 循环死循环/OOM；负 size → `end<start`、`contains()` 恒假 → 元素静默消失。
 - **影响**：构造或首元素崩溃、挂死或静默丢数据，无指向错误配置的校验报错。
 - **审计置信度**：高
 - **验证与修复**：四个类的构造路径统一加正数校验（window 模块两个私有构造器 + aggregation 模块把 `@AllArgsConstructor` 换成显式校验构造器，杜绝绕过工厂直构）；`SlidingWindow.of` 先构造后比较 slide<=size，null 参数不再 NPE；B-39 的 `CountTrigger` 同步加校验。回归测试 `WindowAssignerValidationTest`（window）与 `WindowValidationTest`（aggregation）。原有断言旧错误行为的用例（`TumblingWindowAssignerTest.testAssignWindowsNegativeTimestamps`、`CountTriggerTest.testWithZeroCount`）改为断言新语义。
 
-### B-12 BloomFilterDeduplicator.clear() 删除过滤器后所有后续操作失败 ✅已修复
+### B-12 BloomFilterDeduplicator.clear() 删除过滤器后所有后续操作失败 [已修复]
 - **位置**：`reliability/.../deduplication/BloomFilterDeduplicator.java:118-121` vs `73-77`
 - **触发**：`clear()` 后调用 `markAsSeen`/`isDuplicate`。
 - **影响**：`clear()` 只 `delete()` 不重建（构造器有 `tryInit`）；对已删除过滤器操作抛错（"Bloom filter is not initialized"），重置后每个元素都异常。
@@ -109,7 +109,7 @@
 
 ## 中（Medium）
 
-### B-13 Checkpoint 快照无类型无版本：恢复侧 LinkedHashMap/ClassCastException ✅已修复
+### B-13 Checkpoint 快照无类型无版本：恢复侧 LinkedHashMap/ClassCastException [已修复]
 - **位置**：`checkpoint/.../DefaultCheckpoint.java:65-93`；`RedisCheckpointStorage.java:37-48`；`RedisCheckpointCoordinator.java:184-188`
 - **触发**：快照放入 POJO → JSON 系 codec 存取 → `getState` 反序列化为 `LinkedHashMap`。
 - **影响**：未检查强转 `(T) stateMap.get(key)`，调用点首次使用才 CCE；无 schema/version 字段，状态类变更静默破坏旧 checkpoint；`restoreFromCheckpoint` 只打日志不恢复任何后端（呈现成功实为 no-op）。
@@ -121,21 +121,21 @@
   - 修复三（恢复诚实化 + 能力）：`RedisCheckpointCoordinator.restoreFromCheckpoint(long, BiConsumer<String,Object>)` 新增重载——校验存在且 completed（B-14 语义）后把每个 `(key, value)` 交给调用方 sink，返回移交条数，不存在/未完成返回 -1 且零移交；接口方法改为走同一实现，日志如实说明协调器不持有后端、状态落库由调用方完成，不再输出 "Successfully restored" 假成功。
 - **回归测试**：`DefaultCheckpointTest`（新实例版本=1、typed read 同型/转换/透 null/不可能转换报错、无标记实现读作 legacy 0）；`CheckpointSnapshotRoundTripIntegrationTest`（@Tag("integration")，真实 Redis：POJO+Integer 键 Map 往返保真、快照版本往返=1、sink 恢复移交 2 条且内容正确、未知/未完成 checkpoint 拒绝且零移交、遗留解码形状经 typed read 转回 POJO）。既有 `CheckpointIntegrationTest` 未改一字全绿（接口新增默认方法向后兼容）。
 
-### B-14 未完成的 checkpoint 被持久化、被当作 latest 返回、可被恢复 ✅已修复
+### B-14 未完成的 checkpoint 被持久化、被当作 latest 返回、可被恢复 [已修复]
 - **位置**：`checkpoint/.../redis/RedisCheckpointCoordinator.java:74-91,168-195`；`RedisCheckpointStorage.java:50-54,91-107`
 - **触发**：`triggerCheckpoint()` 落盘后、`completeCheckpoint` 前崩溃/超时；重启后 `getLatestCheckpoint()` 取到不完整者。
 - **影响**：恢复只打 "Restoring from incomplete checkpoint" 继续执行；`cleanupOldCheckpoints` 按时间戳淘汰，可能删旧保新（不完整的）。
 - **审计置信度**：高
 - **验证与修复**：修复：`RedisCheckpointStorage.getLatestCheckpoint()` 只返回最新**已完成**的 checkpoint（按时间戳倒序找第一个 `isCompleted()`，全不完整则返回 null）；`cleanupOldCheckpoints(keepCount)` 淘汰顺序改为"先不完整、再最旧已完成"（各内 oldest-first，保留总数仍为 keepCount，全已完成时行为与原先完全一致）；`restoreFromCheckpoint` 对未完成 checkpoint 由 warn+继续恢复改为拒绝恢复（error 日志 + return）。checkpoint 按 id 仍可 `loadCheckpoint` 检查，不影响可观测性。回归：`RedisCheckpointStorageRecoveryFilterTest`（4 用例：latest 跳过不完整、全不完整→null、cleanup 先淘汰不完整者、断言不再调全库 getKeys()——旧代码 3 例失败）+ `CheckpointIncompleteRecoveryIntegrationTest`（真实 Redis：1/2 ack 后 latest 为 null、补满 ack 后可恢复；cleanup(2) 淘汰的是不完整的最新者而保留更旧的已完成者——旧代码两例全失败，stash 复现）。既有 `CheckpointIntegrationTest.testGetLatestCheckpoint` 原本对未 ack（不完整）checkpoint 断言 latest——属固化缺陷，已改为补满 ack 后断言。
 
-### B-15 RedisCheckpointStorage.listCheckpoints 全 keyspace 扫描并反序列化整个快照 ✅已修复
+### B-15 RedisCheckpointStorage.listCheckpoints 全 keyspace 扫描并反序列化整个快照 [已修复]
 - **位置**：`checkpoint/.../redis/RedisCheckpointStorage.java:57-81`
 - **触发**：任何 `getLatestCheckpoint()`（含 coordinator 构造器）。
 - **影响**：`keys.getKeys()` 无 pattern 全库遍历；每个候选 key 完整反序列化 checkpoint（含全量状态快照）后才 `.limit(limit)`；limit=1 时 O(全部×快照大小)，共享库上启动即 OOM/卡死。
 - **审计置信度**：高
 - **验证与修复**：修复：keyspace 遍历改为前缀 SCAN——`keys.getKeys(KeysScanOptions.defaults().pattern(keyPrefix + "*"))`（Redisson 4.x 中旧的 getKeysByPattern(String) 已弃用且本项目 -Werror），只扫描本 storage 前缀；保留纯数字后缀过滤防误读同前缀辅助键。既有单测的 `keys.getKeys()` stub 相应改为 KeysScanOptions stub（impl 无值 equals，用 any(KeysScanOptions.class) 匹配；真实 pattern 行为由集成测试覆盖）。回归：`RedisCheckpointStorageRecoveryFilterTest.listCheckpointsScansOnlyTheStoragePrefix`（verify(never()).getKeys() + 结果正确——旧代码空扫描得 0 条失败）。
 
-### B-16 StreamJoiner 缓冲为 ConcurrentHashMap + 裸 ArrayList：并发遍历/修改竞态 ✅已修复
+### B-16 StreamJoiner 缓冲为 ConcurrentHashMap + 裸 ArrayList：并发遍历/修改竞态 [已修复]
 - **位置**：`join/.../StreamJoiner.java:22-23,44-45,50-59,122-148`
 - **触发**：双线程并发 `processLeft`/`processRight`（类用 CHM 即为支持并发）。
 - **影响**：遍历匹配循环 vs `add`/`cleanup().removeIf` → CME 或静默漏配/重复配；`cleanup()` 每元素 O(总缓冲) 扫描。
@@ -143,14 +143,14 @@
 - **验证与修复**：与 B-02 一并处理：`processLeft/processRight/clear/getLeftBufferSize/getRightBufferSize` 全部加 `synchronized`（粗粒度锁），消除遍历 vs 修改竞态与 `workers` 类 check-then-act 问题。该类定位为测试/简单场景引擎，吞吐损失可接受。每元素 O(n) 的 cleanup 扫描保留（标记为后续优化项，非正确性问题）。
 - **回归测试**：`StreamJoinerConcurrencyTest`（补于后续批次）——旧代码复现：定点剥离 5 处 `synchronized` 后 4/4 失败，全部 `ConcurrentModificationException`（16 线程同 key 写入、40+40 左右流并发全交叉配对、读线程并发取缓冲 size、`clear()` 与处理并发）；修复代码上 4/4 通过，并断言精确配对数 `left×right` 与缓冲无损。
 
-### B-17 InMemoryKGroupedTable 对 null 分组 key NPE（Redis 版容忍，行为不一致）✅已修复
+### B-17 InMemoryKGroupedTable 对 null 分组 key NPE（Redis 版容忍，行为不一致） [已修复]
 - **位置**：`table/.../impl/InMemoryKGroupedTable.java:41-84`
 - **触发**：`groupBy` 对某行返回 null 后 `count()/aggregate()/reduce()`。
 - **影响**：CHM `merge/compute` 对 null key 抛 NPE；`RedisKGroupedTable` 显式 `continue` 跳过。同样输入内存崩、Redis 正常。
 - **审计置信度**：高
 - **验证与修复**：`count/aggregate/reduce` 三个操作统一跳过 null 分组 key；回归测试 `nullGroupKeyRowsAreSkippedLikeRedisImplementation` 断言两个实现行为一致。
 
-### B-18 TopKAnalyzer 忽略 windowSize："窗口化 Top-K"实为全时段 Top-K ✅已修复
+### B-18 TopKAnalyzer 忽略 windowSize："窗口化 Top-K"实为全时段 Top-K [已修复]
 - **位置**：`aggregation/.../analytics/TopKAnalyzer.java:24-31,52-70`
 - **触发**：`createTopKAnalyzer(10, Duration.ofMinutes(5))` 做 5 分钟滚动热榜。
 - **影响**：`windowSize` 字段从不读取；分数只增不减、只按 rank 裁剪（保留 2k）不按时间；跌出 top-2k 的条目分数永久丢失 → 窗口语义完全错误。
@@ -158,28 +158,28 @@
 - **验证与修复**：重构为时间桶窗口实现，公共 API 签名不变：记录落入 `windowSize/10`（下限 1ms）宽度的桶（`<prefix>:topk:<category>:b:<bucketIndex>`），每次写刷新桶 TTL（窗口 + 2 桶，Redis 自动回收过期桶）；查询合并尾随窗口覆盖的全部桶（`entryRangeReversed` 读 (value,score)，分数按项求和、按分数降序 + 项名并列裁决）。getTopK/getRank/getScore/removeItem/reset 全部改为窗口视图；2k rank 裁剪保留但作用域缩到单桶；旧布局 key 被忽略不破坏。构造器新增校验（k>0、window 正数）；包级私有时钟注入构造器供测试。旧实现测试中 8 个布局耦合用例按新语义重写（意图保留），新增跨桶合并/过期/桶粒度/TTL/参数校验用例。
 - **回归测试**：`TopKAnalyzerWindowDecayIntegrationTest`（integration，仅用公共构造器，旧码可编译）——旧代码复现：record 3 次（score=3.0 可见）→ 睡 1.2s（窗口 500ms）→ 旧码 getScore 仍 3.0、getTopK 仍报该项（失败）；对照用例"窗口内聚合"旧码即通过（隔离缺陷）。新码上两用例通过。`TopKAnalyzerWindowTest`（注入时钟）：桶离开尾随窗口后贡献清零、与窗口仍重叠的桶继续计数、相邻桶分数合并、写入 TTL 精确到 now+window+2 桶、1ms 桶下限。
 
-### B-19 BloomFilterDeduplicator.checkAndMark 非原子 contains→add：并发同 key 双双通过 ✅已修复
+### B-19 BloomFilterDeduplicator.checkAndMark 非原子 contains [add：并发同 key 双双通过 ✅已修复]
 - **位置**：`reliability/.../deduplication/BloomFilterDeduplicator.java:100-115`
 - **触发**：两线程并发 `checkAndMark(同id)`。
 - **影响**：双双返回 false（"新元素"）→ 处理两次；接口文档自称"原子"。`seenCount` 非 volatile 多线程丢失更新。`SetDeduplicator` 用单 `add()` 是对的。
 - **审计置信度**：高
 - **验证与修复**：修复：checkAndMark 的 contains→add 临界区与 clear() 收敛到同一 `stateLock` 监视器（进程内原子），`seenCount` 改 `AtomicLong`；类 javadoc 明确作用域——Redisson RBloomFilter 无服务端 check-and-add，跨进程首次并发 sighting 仍可能双双通过（需要跨进程精确去重请用 SetDeduplicator 的单 SADD）。回归：`BloomFilterDeduplicatorCheckAndMarkRaceTest`——mock 模拟真实布隆成员语义 + contains 内延时，24 线程 barrier 并发 checkAndMark 同一元素断言恰 1 个"新"（旧代码实测 2 个通过即失败）；另附 8×250 个不同元素并发 markAsSeen 断言计数无丢失。旧代码复现：expected <1> but was <2>。
 
-### B-20 PatternSequenceMatcher 完整匹配永不清理：无界增长 ✅已修复
+### B-20 PatternSequenceMatcher 完整匹配永不清理：无界增长 [已修复]
 - **位置**：`cep/.../PatternSequenceMatcher.java:23,62,84,187-189`
 - **触发**：高频匹配模式长时间运行。
 - **影响**：`completeMatches` 只增不删（清理仅作用于部分匹配），`getCompleteMatches()` 每次全量拷贝 → 长跑 OOM。
 - **审计置信度**：高
 - **验证与修复**：修复：新增 `maxRetainedMatches` 保留上限（默认 1000，新双参构造器指定；负数 IAE、0 表示不留历史但 process() 照常逐条交付匹配），process() 末尾 `trimCompleteMatches()` 淘汰最旧者。消费主通道仍是 process() 返回值，保留历史仅供查询。回归：`PatternSequenceMatcherRetentionTest` 5 用例（默认上限有界、显式上限保留最新 3 条按事件标记断言、上限 0 不留历史仍逐条交付、负数 IAE、单参构造器默认行为）；旧代码复现用仅含单参构造器调用的临时测试（aria：1005 条全保留，"old code grew to 1005"），修复后删除。
 
-### B-21 负时间戳窗口对齐用 `%` 而非 floorMod：窗口错位甚至不包含元素自身 ✅已修复
+### B-21 负时间戳窗口对齐用 `%` 而非 floorMod：窗口错位甚至不包含元素自身 [已修复]
 - **位置**：`window/.../TumblingWindow.java:33`、`SlidingWindow.java:38`；`aggregation/.../TumblingWindow.java:27`
 - **触发**：`assignWindows(elem, -1)`，size=1000：`-1%1000=-1` → start=0 → 窗口 [0,1000) 不含 ts=-1；正确对齐是 [-1000,0)。
 - **影响**：pre-epoch 时间戳（测试时钟、合成数据、1970 前 Instant）下结果静默错位一个窗口。
 - **审计置信度**：高（算术）/中（现实影响）
 - **验证与修复**：与 B-11 一并修复：window 模块对齐改 `Math.floorMod`、aggregation 模块改 `Math.floorDiv`（含 SlidingWindow.getOverlappingWindows 的 startWindow 计算）。回归用例见两个 `*ValidationTest`（断言 ts=-1 落入 [-1000,0) / [-300,700) 且所有生成窗口包含元素本身）。
 
-### B-22 InMemoryCheckpointCoordinator 非同步映射 + 浅快照 ✅已修复
+### B-22 InMemoryCheckpointCoordinator 非同步映射 + 浅快照 [已修复]
 - **位置**：`runtime/.../internal/InMemoryCheckpointCoordinator.java:24-58`；`InMemoryKeyedStateStore.java:36-42`
 - **触发**：`registerStore` 与 `triggerCheckpoint` 并发；或快照后用户算子继续改共享可变值。
 - **影响**：CME/撕裂快照；`new HashMap<>(store)` 一层浅拷贝，可变值与 live store 共享 → 事后修改污染"已完成"快照。文档自称单线程，但 API 无防护。
@@ -187,7 +187,7 @@
 - **验证与修复**：并发部分——`registerStore/triggerCheckpoint/restoreFromCheckpoint/getCheckpoint/getLatestCheckpoint/getRegisteredStores` 统一加 `synchronized`（单一监视器），`latestCheckpoint` 的 volatile 随之不再必要；`getRegisteredStores()` 从 live view 改为返回不可变**副本**，迭代不再与注册竞态。浅快照部分经核实 `InMemoryKeyedStateStore.snapshot()` 已是两层拷贝（外层 + 每个 state 的内层 map），仅用户 value 对象按引用共享——内存引擎无序列化的固有限制，值替换不会污染已完成快照（现有 `testRestoreFromCheckpointWithMultipleStores` 与新快照隔离测试共同钉住该语义），无需改动。
 - **回归测试**：`InMemoryCheckpointCoordinatorConcurrencyTest`——旧代码复现：①1600 store 并发注册 + 1800 次并发 trigger → 8 个 store 静默丢失（1592≠1600）；②读线程迭代 live view → `ConcurrentModificationException`；③另一轮复现 reader 20s 观察不到注册完成的可见性缺陷。修复代码上 3/3 通过，另含快照与后续状态变更隔离的语义测试。
 
-### B-23 RedisKTable.join/leftJoin 错误处理自身 NPE：掩盖原始异常 ✅已修复
+### B-23 RedisKTable.join/leftJoin 错误处理自身 NPE：掩盖原始异常 [已修复]
 - **位置**：`table/.../impl/RedisKTable.java:273-276,317-320`
 - **触发**：join 函数抛错且对端是 InMemoryKTable（`otherTable` 为 null）。
 - **影响**：catch 内 `otherTable.tableName` NPE，调用方收到裸 NPE，真实根因丢失。
@@ -201,21 +201,21 @@
 - **影响**：`tableName + ":op:" + millis` 全量拷贝、无 TTL 无清理 → 长任务 Redis 内存无界增长、key 爆炸。
 - **审计置信度**：高
 
-### B-25 订阅 check-then-act 竞态：重复 RTopic 监听器、回调翻倍、订阅泄漏 ✅已修复
+### B-25 订阅 check-then-act 竞态：重复 RTopic 监听器、回调翻倍、订阅泄漏 [已修复]
 - **位置**：`registry/.../RedisServiceConsumer.java:244-257`；`config/.../RedisConfigService.java:204-223`
 - **触发**：两线程并发 `subscribe(同服务)` / `addListener(同 dataId)`。
 - **影响**：双活监听器 → 每条消息回调两次；`unsubscribe` 只清理 map 内那个 RTopic，另一个的 Redis 订阅与 handler 永久泄漏。
 - **审计置信度**：高
 - **验证与修复**：两处订阅守卫从 `containsKey`+`put` 改为 `ConcurrentHashMap.compute`（per-key 原子的 create-or-reuse），并发订阅只会注册一个 RTopic 监听器，清理路径不变。回归测试 `ConcurrentSubscribeRaceTest`（registry，12 线程栅栏并发 subscribe，断言 addListener/removeAllListeners 恰一次；旧代码复现失败）与 `ConfigServiceConcurrentAddListenerRaceTest`（config 同型，旧代码复现失败）。
 
-### B-26 HealthCheckManager 注册 check-then-act 竞态：泄漏运行中的 checker 线程 ✅已修复
+### B-26 HealthCheckManager 注册 check-then-act 竞态：泄漏运行中的 checker 线程 [已修复]
 - **位置**：`registry/.../health/HealthCheckManager.java:57-90`
 - **触发**：并发 discover 同一实例。
 - **影响**：双开 checker，被覆盖者线程永续运行、重复探测；反注册只停其一。
 - **审计置信度**：高
 - **验证与修复**：`registerServiceInstance` 的权威守卫改为 `putIfAbsent`（原 containsKey 仅作快速路径）——落败方不再 put+start，避免被覆盖的 checker 线程永续探测。回归测试 `HealthCheckManagerRegistrationRaceTest`（16 线程栅栏并发注册，断言恰 1 个 checker、恰 1 次初始探测、unregister 后归零；旧代码复现失败）。
 
-### B-27 版本生成器跨线程可生成重复版本串 ✅已修复
+### B-27 版本生成器跨线程可生成重复版本串 [已修复]
 - **位置**：`config/.../impl/RedisConfigService.java:366-378`
 - **触发**：同毫秒并发 `generateVersion()`，与 `SEQ.set(0)` 交错。
 - **影响**：两个不同发布携带相同 version；按 version 去重/排序的消费者丢事件或乱序。
@@ -223,42 +223,42 @@
 - **验证与修复**：根因比原描述多两层：①else 分支迟到的 `SEQ.set(0)` 落在两个 if 分支调用之间 → 二者拿到相同序号；②LAST_TS/SEQ 是 **static**（跨实例共享），实例级锁无法防护多实例；③时钟滞后（`now < last`，跨核 currentTimeMillis 偏移的真实形态）走 else 返回过去毫秒的 `-0` → 与历史版本重复。修复：`generateVersion()` 改为 `static synchronized`（类监视器覆盖所有实例），版本基于高水位发放——`now > last` 才开新毫秒序列，否则继续最新毫秒的序号（滞后时钟不重置）。9999 封顶回绕为既有行为未变（1ms 万次发布的理论边界，非本次并发缺陷）。
 - **回归测试**：`ConfigVersionGeneratorUniquenessTest`——旧代码复现：①16 线程×4000 次并发生成 → **2354 个重复版本串**；②反射注入 LAST_TS 高水位超前 50s（模拟时钟滞后）→ 同毫秒两次调用返回同一串 `ts-0`（确定性复现）；③顺序调用不受影响（正确通过，证伪"污染式"通过）。修复代码上 3/3 通过。测试自行恢复静态状态，不污染同 JVM 其他用例。
 
-### B-28 historySize=0 语义反转：无界保留历史（LTRIM 0 -1）✅已修复
+### B-28 historySize=0 语义反转：无界保留历史（LTRIM 0 -1） [已修复]
 - **位置**：`config/.../ConfigServiceConfig.java:29-31`；`RedisConfigService.java:85,413-414`
 - **触发**：`setHistorySize(0)`。
 - **影响**：`LTRIM hist 0 maxhist-1` = `LTRIM 0 -1` 全保留，与"不留历史"意图相反；每发布一条历史无界增长。
 - **审计置信度**：高
 - **验证与修复**：修复：发布/删除两条 Lua 脚本的历史写入条件改为 `oldc and maxhist>0`（historySize=0 完全跳过历史记录而非 LTRIM 到 keep-all）；Java 回退路径 `saveConfigHistory` 对 `maxHistorySize<=0` 直接返回。回归：`ConfigHistorySizeZeroFallbackTest`（mock RList，historySize=0 断言从不 add/trim——旧代码实测 NeverWantedButInvoked；historySize=1 仍正常 trim(0,0)）+ `ConfigHistorySizeZeroIntegrationTest`（真实 Redis：historySize=0 发布两次+删除后历史键恒为 0——旧代码实测 expected <0> but was <1>；historySize=1 发布 3 次恰保留 1 条）。
 
-### B-29 Provider 清理在空集 check-then-act 移除服务索引：孤儿心跳 ZSet 且永不再清理 ✅已修复
+### B-29 Provider 清理在空集 check-then-act 移除服务索引：孤儿心跳 ZSet 且永不再清理 [已修复]
 - **位置**：`registry/.../impl/RedisServiceProvider.java:536-542`
 - **触发**：清理批次清空某服务 ZSet 后、`SREM` 前，新实例恰好注册。
 - **影响**：服务被移出索引 → `cleanupExpiredInstances` 不再遍历它；无 TTL 的心跳 ZSet 永久孤儿；getAllServices 与实例列表不一致。
 - **审计置信度**：高
 - **验证与修复**：修复：`cleanupExpiredInstancesForService` 的空集判断与 SREM 合并为单条原子 Lua（`ZCARD==0 则 SREM 服务索引`，经 RScript 直发），竞态窗口不复存在；同时把该原子步骤从 `if (!result.isEmpty())` 内移到每服务必经处——原位置只有"本批次恰好清掉了实例"才校验索引，早已为空的残留（前次清理被中断、或 B-29 竞态遗留）永不被修复。回归：`ProviderServiceIndexAtomicCleanupTest`（mock RScript：断言 eval 携带 ZCARD/SREM 原子脚本及 heartbeatKey+servicesIndexKey——旧代码零交互即失败）+ `ProviderServiceIndexCleanupIntegrationTest`（@Tag("integration") 真实 Redis：空 ZSet 服务被移出索引、有活跃心跳的服务保留且心跳不被触碰；旧代码因残留位置缺陷实测 expected false but was true 失败）。
 
-### B-30 RedisNamingService 构造子 Provider/Consumer 时静默丢弃健康检查等配置 ✅已修复
+### B-30 RedisNamingService 构造子 Provider/Consumer 时静默丢弃健康检查等配置 [已修复]
 - **位置**：`registry/.../impl/RedisNamingService.java:43-53`
 - **触发**：`namingServiceConfig.setEnableHealthCheck(true)` 等设置后经 namingService 创建。
 - **影响**：healthCheck* 与 admin 开关被忽略（只拷贝 keyPrefix 两项）；`getConfig()` 仍返回用户配置 → 错配不可见。
 - **审计置信度**：高
 - **验证与修复**：修复：构造子创建角色配置时将 `enableHealthCheck`/`healthCheckInterval`/`healthCheckTimeUnit`/`healthCheckTimeout`/`enableAdminService` 五项全部拷贝到 `ServiceConsumerConfig`（Provider 侧无可对应的 Naming 级字段，keyPrefix 两项照旧）。回归：`RedisNamingServiceConfigPropagationTest` 3 用例（自定义五项反射断言到达 consumer 配置——旧代码实测 enableHealthCheck 断言失败；默认值传播；keyPrefix 双角色照常传播）。
 
-### B-31 healthCheckTimeout 零/负值：构造抛 IAE 或 connect 无限阻塞 ✅已修复
+### B-31 healthCheckTimeout 零/负值：构造抛 IAE 或 connect 无限阻塞 [已修复]
 - **位置**：`registry/.../RedisServiceConsumer.java:74-77`；`HttpHealthChecker.java:30-37,69`；`TcpHealthChecker.java:33-35`
 - **触发**：`setHealthCheckTimeout(0)` 无校验。
 - **影响**：`connectTimeout(Duration.ofMillis(0))` IAE → 构造失败；或 `socket.connect(addr, 0)` = 无限超时 → 该实例健康检查线程永久冻结。
 - **审计置信度**：高
 - **验证与修复**：修复：非正超时统一回退 5000ms 默认值——`ServiceConsumerConfig`/`NamingServiceConfig` 的 setter 夹紧（前者补显式 setter 覆盖 Lombok 生成）；`HttpHealthChecker`（connect+read 双超时）、`TcpHealthChecker`、`WebSocketHealthChecker` 构造器各自夹紧（直连构造同样安全）。回归：`HealthCheckerTimeoutNormalizationTest`（0/负→5000，正值保留，三个 checker 反射断言——旧代码全数失败）+ `ConsumerZeroHealthCheckTimeoutStartTest`（healthCheckTimeout=0 时 consumer 可构造并 start——旧代码 HttpClient IAE 构造即炸；两配置类 setter 夹紧断言）。
 
-### B-32 CircuitBreaker 窗口未满即计算失败率：首个失败即开路 ✅已修复
+### B-32 CircuitBreaker 窗口未满即计算失败率：首个失败即开路 [已修复]
 - **位置**：`registry/.../client/CircuitBreaker.java:62-78`
 - **触发**：默认 `new CircuitBreaker(20, 0.5, ...)`：首调用失败 → 1/1=1.0 ≥ 0.5 → 立即 toOpen。
 - **影响**：瞬时错误即隔离实例整个 openDuration。
 - **审计置信度**：高
 - **验证与修复**：`slideWindow` 对未满窗口返回 0（无裁决），失败率只在窗口填满（`calls >= windowSize`）时评估一次并复位——即 resilience4j `minimumNumberOfCalls` 语义；threshold=0 的"最敏感"配置行为不变。回归测试 `singleFailureDoesNotOpenBreakerOnUnfilledWindow`；原断言"首失败即 OPEN"的两个用例（registry 包 `testStateTransitions`、client 包 `testGetState`）改为填满窗口后断言。
 
-### B-33 注册时未记录 metadata hash：开启元数据检测后首次心跳必发虚假 UPDATED 事件 ✅已修复
+### B-33 注册时未记录 metadata hash：开启元数据检测后首次心跳必发虚假 UPDATED 事件 [已修复]
 - **位置**：`registry/.../RedisServiceProvider.java:161-165`；`heartbeat/HeartbeatStateManager.java:185-196`
 - **触发**：`enableMetadataChangeDetection=true` 注册。
 - **影响**：`markMetadataUpdateCompleted` 用 `get` 而条目尚未 `computeIfAbsent` 创建 → no-op；首次心跳 0≠hash 误判 METADATA_UPDATE → 全体订阅者无谓 re-discover。
@@ -275,11 +275,9 @@
 - **验证与修复**：三个 in-memory 限流器（滑窗/令牌桶/漏桶）的 per-key map 增加写路径惰性清扫：状态变为"语义等价于不存在"（滑窗 deque 全过期 / 令牌桶按已流逝时间回满 / 漏桶按已流逝时间漏空）即从 map 摘除——淘汰对限流判定完全透明，不改变任何 allow/deny 结果。清扫按规模阈值（默认 256，包私有构造器可调）+ 最小间隔（max(1s, 半过期周期)）CAS 门控，稳态调用零额外开销、无后台线程、无生命周期负担；活跃 key 永不被淘汰。新增 `trackedKeyCount()` 供监控。坑位记录：门控时间戳哨兵不能用 `Long.MIN_VALUE`（`now-哨兵` 溢出为负使清扫永不触发，测试立即暴露，改 0）。
 - **回归测试**：`InMemoryRateLimiterKeyEvictionTest`（公共构造器 + 反射读私有 map 字段，字段名新旧一致，可直接对旧代码编译）——旧代码 3/3 泄漏断言按预期失败（"expected 1 but was 301"：300 个过期 key + 1 个新 key 全部滞留），新代码 6/6 绿（3 个淘汰 + 3 个活跃 key 不误删）；既有行为测试全绿证明淘汰零语义漂移；`sweepThreshold` 负数校验入 `InMemoryRateLimiterCtorValidationTest`。
 
-### B-35 DeadLetterQueue maxSize 未校验 + clear 与 add 竞态 ✅已修复
-- **位置**：`reliability/.../DeadLetterQueue.java`
+### B-35 DeadLetterQueue maxSize 未校验 + clear 与 add 竞态 ⏳
+- **位置**：`reliability/.../DeadLetterQueue.java:34-37,47-69,130-134`
 - **影响**：`maxSize<=0` → add 恒 false 全静默丢弃；`clear()` 两步非原子，计数可漂移，容量永久缩水。
-- **验证与修复**：分两步落地——`2db0433` 已修 add() 的 CAS 防超调（计数与容量判定原子化）；本轮补齐剩余两项：(1) 构造器校验 `maxSize<=0` 抛 IAE（非正上限=所有失败静默丢弃，违背 DLQ 存在目的）；(2) `clear()` 从 `queue.clear()+set(0)` 改为逐元素 drain + 逐次递减——批量清零会抹掉落在两步之间的并发 add 的递增，计数永久少计、队列可超 maxSize；drain 版每次移除恰配一次递减，任意并发交错下 `size()==getAll().size()<=maxSize` 恒成立。
-- **回归测试**：`DeadLetterQueueClearRaceTest`（只用公共 API，可对旧代码编译）——旧代码 2/2 失败：双加者+单清者压测 400ms 后 "expected 2 but was 1"（计数漂移坐实）、`new DeadLetterQueue(0)` 未抛 IAE；新代码全绿，且压测断言保证不变式在任何交错下成立。既有 `DeadLetterQueueTest`/覆盖率测试全绿。
 
 ### B-36 外连接立即发 unmatched，对端稍后到达又发 match：同元素双发 ⏳
 - **位置**：`join/.../StreamJoiner.java:62-65,100-103`
@@ -293,7 +291,7 @@
 - **位置**：`state/.../redis/RedisListState.java:42-48`
 - **影响**：clear 后 add 中途连接断 → 旧状态已毁新状态未写全，静默丢失。
 
-### B-39 CountTrigger 接受 maxCount<=0：每元素即触发 ✅已修复
+### B-39 CountTrigger 接受 maxCount<=0：每元素即触发 [已修复]
 - **位置**：`window/.../triggers/CountTrigger.java:15-31`
 - **影响**：静默错配，无校验报错。
 - **验证与修复**：构造器加正数校验抛 IAE（与 B-11 同批）；`CountTriggerTest.testWithZeroCount` 原断言"maxCount=0 每元素触发"的旧缺陷行为，改为断言抛 IAE。
@@ -354,14 +352,14 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **影响**：静默丢消息——DLQ 条目永远不会被重读（`neverDelivered()` 只读从未投递的），全类无 `listPending`/`claim`（主消费者 `RedisMessageConsumer.processPendingMessages` 有，此处没有），条目永久 pending。
 - **审计置信度**：高（本条与 MQ-04、MQ-01 涉及 DLQ 消费循环重构，待专项处理）
 
-### MQ-02 DlqConsumerAdapter 的 RETRY 重放两次 XADD：业务主题收到重复消息 ✅已修复
+### MQ-02 DlqConsumerAdapter 的 RETRY 重放两次 XADD：业务主题收到重复消息 [已修复]
 - **位置**：`mq/.../impl/DlqConsumerAdapter.java:80-97`（toResult 的 RETRY 分支自己 XADD @94）与 `:26-46`（replay lambda XADD @38）；`RedisDeadLetterConsumer.java:144-172`（case RETRY 调 `replayHandler.publish`）
 - **触发**：被 `DlqConsumerAdapter` 包装的 handler 对 DLQ 条目返回 `RETRY`。
 - **影响**：业务消费者收到并处理两次（重复副作用/重复计数）。
 - **审计置信度**：高
 - **验证与修复**：删除 `DlqConsumerAdapter.toResult` RETRY 分支自身的 XADD，重放统一由 delegate 的 replayHandler 单次发布（adapter 构造时始终注入非 null replay）。`DlqConsumerAdapterTest` 两个断言旧双重写入的用例改为断言 `toResult` 不再触碰流（`verifyNoInteractions`）。
 
-### MQ-03 LeaseManager 获取租约非原子（SET+EXPIRE）、释放非原子（GET+DELETE）：永久卡死与所有权窃取 ✅已修复
+### MQ-03 LeaseManager 获取租约非原子（SET+EXPIRE）、释放非原子（GET+DELETE）：永久卡死与所有权窃取 [已修复]
 - **位置**：`mq/.../lease/LeaseManager.java:19-37`（`setIfAbsent` 后 `expire`）、`:64-74`（`releaseIfOwner` GET 后 DELETE）
 - **触发**：(a) `setIfAbsent(ownerId)` 与 `expire` 之间崩溃/断连 → key 无 TTL 永存；(b) release 中 worker A 读到 cur=="A" 后 key 过期、B `tryAcquire` 成功写入 B，随后 A 的 `delete()` 删掉 B 的新租约。
 - **影响**：(a) 该 topic/group/partition 永远无法再获租约，消费永久停摆（需人工 DEL）；(b) 两个消费者同时认为自己持有分区 → 并发重复消费。
@@ -375,7 +373,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **影响**：B 组数据丢失：条目在 B 读到之前被 XDEL；B 重启后消息已消失。
 - **审计置信度**：高
 
-### MQ-05 DLQ 重放路径硬编码 `stream:topic` 前缀，忽略配置前缀：重放消息石沉大海且 DLQ 条目被 ack ✅已修复
+### MQ-05 DLQ 重放路径硬编码 `stream:topic` 前缀，忽略配置前缀：重放消息石沉大海且 DLQ 条目被 ack [已修复]
 - **位置**：`mq/.../dlq/RedisDeadLetterService.java:155`；`mq/.../dlq/RedisDeadLetterConsumer.java:153`
 - **触发**：`MqOptions.streamKeyPrefix != "stream:topic"` 时走 RETRY fallback 或 `RedisDeadLetterService.replay` 无 ReplayHandler 的路径。
 - **影响**：消费路径丢数据：`ok=true`（写到了错误的 key）→ `stream.ack` 删掉 DLQ 条目，而重放消息写进了无人消费的流。
@@ -391,7 +389,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **影响**：条目留在 PEL；每个 `pendingScanIntervalSec` 都被 claim → parse 抛 → log → 继续，无退避、无 DLQ、无最大投递截断；日志洪水 + 永久卡死条目。
 - **审计置信度**：高
 
-### MQ-07 指数退避移位溢出变负数：重试风暴零延迟轰炸 Redis ✅已修复
+### MQ-07 指数退避移位溢出变负数：重试风暴零延迟轰炸 Redis [已修复]
 - **位置**：`mq/.../retry/ExponentialBackoffRetryPolicy.java:25`（`baseMs * (1L << (attempt-1))`）；消费点 `RedisMessageConsumer.java:654-656,670`
 - **触发**：`maxRetries >= ~54`（生产者可设，`Message.maxRetries` 从流数据解析）。attempt 54+ 时乘积超 Long.MAX；attempt 64 时 `1L<<63` 为负。
 - **影响**：`delayMs` 为负 → `Math.min(neg, max)` 为负 → 立即重入队：每次失败零退避地 read/XADD/XACK 循环轰炸 Redis。
@@ -405,7 +403,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **影响**：`Semaphore.release()` 无配对 acquire → 可用许可超过配置最大值，背压上限被静默永久削弱（stop/start 循环的实例上会累积）。
 - **审计置信度**：高
 
-### MQ-09 `claimIdleMs(0)` 被接受：pending 扫描器立刻偷走正在处理的消息 ✅已修复
+### MQ-09 `claimIdleMs(0)` 被接受：pending 扫描器立刻偷走正在处理的消息 [已修复]
 - **位置**：`mq/.../config/MqOptions.java:89`（钳到 `>=0` 而非 `>=1`）；使用点 `RedisMessageConsumer.java:360-363`
 - **触发**：`MqOptions.builder().claimIdleMs(0)`（负值也会被钳成 0）。任何 pending 超过 0ms 的条目——即组内任何正在处理的消息——被 claim 并发重处理。
 - **影响**：保证重复/并行处理在途消息 + ACK 风暴（首个 handler 的 ACK 与重处理者的重入队竞争），慢 handler 场景等效 at-most-once。
@@ -413,7 +411,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **审计置信度**：高（机制确定，需非默认配置）
 - **验证与修复**：builder 改为 `Math.max(1, v)`；`MqOptionsTest` 原"0 被允许"用例（断言的就是缺陷行为）改为断言钳到 1。
 
-### MQ-10 JdbcBrokerPersistence 手写 JSON 不转义控制字符：headers 列损坏 ✅已修复
+### MQ-10 JdbcBrokerPersistence 手写 JSON 不转义控制字符：headers 列损坏 [已修复]
 - **位置**：`mq/.../broker/jdbc/JdbcBrokerPersistence.java:60-82`
 - **触发**：header key/value 含 `\n`、`\t`、`\r` 等（异常详情 header 常含换行）。
 - **影响**：写出的 headers JSON 非法（RFC 8259 禁止裸换行）；消费方解析失败或静默丢 headers。
@@ -462,7 +460,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 ### 严重（Critical）
 
-### CDC-C1 PostgreSQL 解析器对真实 test_decoding 流静默丢弃所有变更事件（格式不匹配）✅已修复
+### CDC-C1 PostgreSQL 解析器对真实 test_decoding 流静默丢弃所有变更事件（格式不匹配） [已修复]
 - **位置**：`cdc/.../impl/PostgreSQLLogicalReplicationCDCConnector.java:245-254`
 - **触发**：任何真实 PostgreSQL `test_decoding` 流。test_decoding 每个变更输出为**单行** `table public.users: INSERT: id[integer]:1 ...`；循环先匹配 table 模式就 `continue`，同行的 INSERT/UPDATE/DELETE 匹配器永远看不到。
 - **影响**：完全静默丢数据：连接器"启动成功"、健康状态 HEALTHY、零事件产出。单元测试只过了是因为喂的是合成格式（table 行与 INSERT 行分开两行，`PostgreSQLLogicalReplicationCDCConnectorParsingTest.java:32-37`），掩盖了 bug。
@@ -471,14 +469,14 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 ### 高（High）
 
-### CDC-H1 MySQL 连接器重启丢弃已保存水位并清空未交付队列（3b262e7 只修了轮询连接器）✅已修复
+### CDC-H1 MySQL 连接器重启丢弃已保存水位并清空未交付队列（3b262e7 只修了轮询连接器） [已修复]
 - **位置**：`cdc/.../impl/MySQLBinlogCDCConnector.java:52-56,69-72,94`
 - **触发**：同一连接器实例 `stop()` 后 `start()`（或任何重跑 `doStart` 的重连路径）。
 - **影响**：`doStart` 从**配置**重读 binlog 文件名/位置，覆盖 `handleRotateEvent`/`updateCurrentPosition` 推进的实时水位。未配置文件名时（常见）从服务器当前位重启 → 停机窗口内事件全部丢失；配置了固定位 → 全量重放 → 重复。且 `doStop` 调 `eventQueue.clear()`（:94），已捕获未交付事件被丢——正是 3b262e7 为轮询连接器修掉的同类问题。
 - **审计置信度**：高
 - **验证与修复**：`doStart` 只在字段为 null（首次启动）时才从配置读文件名、只在位置为 0 时才从配置读位置，重启保留实时水位；`doStop` 不再清空 eventQueue（注释说明语义）。跨进程重启仍无持久化（与轮询连接器相同的既有边界，见审计备注）。
 
-### CDC-H2 PostgreSQL 连接器 doStop 清空未交付队列；内存恢复跳过丢失事件 ✅已修复
+### CDC-H2 PostgreSQL 连接器 doStop 清空未交付队列；内存恢复跳过丢失事件 [已修复]
 - **位置**：`cdc/.../impl/PostgreSQLLogicalReplicationCDCConnector.java:103,205-207`
 - **触发**：事件已解析进 `eventQueue` 但消费方未拉取时 stop/start。
 - **影响**：重启后 `startReplicationStream()` 从 `lastReceivedLSN`（最后**收到**而非最后**交付**的 LSN）恢复，被清空的未交付事件不再重发 → 永久丢失。3b262e7 的"重启保留水位与未交付队列"只在 `DatabasePollingCDCConnector` 实现。
@@ -491,14 +489,14 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **影响**：`mysql-binlog-connector-java` 0.29.2 不自动重连；断连不可检测。`poll()` 持续返回空列表、health 保持 HEALTHY。PG 侧 LSN 反馈停止 → 服务端 WAL 在 slot 中无限堆积。
 - **审计置信度**：高
 
-### CDC-H4 轮询连接器 commit() 在第一个冒号处截断时间戳水位 ✅已修复
+### CDC-H4 轮询连接器 commit() 在第一个冒号处截断时间戳水位 [已修复]
 - **位置**：`cdc/.../impl/DatabasePollingCDCConnector.java:124-134`（doCommit）、`136-147`（doResetToPosition），对照 `:342`、`:320`
 - **触发**：按文档 API 流程 `connector.commit(event.getPosition())`，且轮询列是 TIMESTAMP/DATETIME（**默认列**就是 `updated_at`）。位置格式为 `table + ":" + Timestamp.toString()` → `"orders:2024-01-01 10:15:30.0"`。
 - **影响**：`position.split(":")` 取 `parts[1]` 存下 `"2024-01-01 10"`。下次轮询 `WHERE updated_at > '2024-01-01 10'` → 要么每次报错（连接器卡死，错误被 pollTablesForChanges 吞掉）要么比较点提前 → 大量重复。
 - **审计置信度**：高
 - **验证与修复**：`doCommit`/`doResetToPosition` 改为 `split(":", 2)`（保留首个冒号后的完整时间戳），同时保留"空表名/空值视为畸形忽略"语义（既有 `commitAndResetSkipMalformedPositions` 用例覆盖）。
 
-### CDC-H5 CDCManager.getCurrentPositionsAll() 在任一连接器尚无位置时抛 NPE ✅已修复
+### CDC-H5 CDCManager.getCurrentPositionsAll() 在任一连接器尚无位置时抛 NPE [已修复]
 - **位置**：`cdc/.../CDCManager.java:200-206`
 - **触发**：`start()` 后首个 binlog/复制事件或首轮轮询扫描之前调用。
 - **影响**：确定性 NPE：`Collectors.toMap` 用 `Map.merge`，拒绝 null value。标准监控调用即崩。
@@ -526,18 +524,18 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **位置**：`AbstractCDCConnector.java:57-88`（doStop 先于 scheduler 关闭块抛出则调度器泄漏）；`DatabasePollingCDCConnector.java:87-91,230`
 - **审计置信度**：高
 
-### CDC-M5 MySQL 事件位置差一 → commit 后重启重复投递 ⏳
+### CDC-M5 MySQL 事件位置差一 [commit 后重启重复投递 ⏳]
 - **位置**：`MySQLBinlogCDCConnector.java:231,265,298` vs `:182`
 - **影响**：事件 E 的行带的是 E **前一个**事件的位置；从该位置恢复会重放 E → 重复写入。首个事件 position 为 null。
 - **审计置信度**：高
 
-### CDC-M6 CDCManager 重启永久破坏健康监控（复用已终止的调度器）✅已修复
+### CDC-M6 CDCManager 重启永久破坏健康监控（复用已终止的调度器） [已修复]
 - **位置**：`CDCManager.java:21,100,125-135,237-245`
 - **影响**：stop() 关闭单一 scheduler 字段后再次 start() → `RejectedExecutionException`（藏在 thenRun 回调里）→ 健康监控死亡。
 - **审计置信度**：高
 - **验证与修复**：scheduler 改为 volatile 字段，startHealthMonitoring 惰性重建，stop() 关闭后置 null。
 
-### CDC-M7 PG parseColumnData 按空白切分值 → 行数据静默损坏 ✅已修复
+### CDC-M7 PG parseColumnData 按空白切分值 [行数据静默损坏 ✅已修复]
 - **位置**：`PostgreSQLLogicalReplicationCDCConnector.java:332-363`（:340 `data.split("\\s+")`）
 - **触发**：任何含空格的文本值 `name[text]:'John Doe'`。
 - **影响**：`"John Doe"` 变 `"John"`，`Doe'` 丢弃；字面量 `'null'` 与 SQL NULL 不可区分（:349）；朴素去引号毁掉转义引号。
@@ -568,7 +566,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 ### 高（High）
 
-### RT-H1 checkpoint 恢复失效：Map<Integer,String> 的 key 经 JSON 往返变 String，每次恢复都从 0-0 重放 ✅已修复
+### RT-H1 checkpoint 恢复失效：Map<Integer,String> 的 key 经 JSON 往返变 String，每次恢复都从 0-0 重放 [已修复]
 - **位置**：`runtime/.../redis/internal/RedisRuntimeCheckpointManager.java:273-293`（快照）、`419-420`（恢复）；序列化在 `checkpoint/.../redis/RedisCheckpointStorage.java:37-41`（默认 Jackson codec）
 - **触发**：任何带 `restoreFromLatestCheckpoint=true` 的重启。
 - **影响**：offset 快照能存进去，但内层 map 读回来是 `Map<String,String>`；未检 unchecked 赋值掩盖了这一点，`get(Integer)` 永远 null → `startId` 恒为 `"0-0"` → 每次恢复整流从头重放；`sinkDeduplicationEnabled=false` 时重复副作用。offset checkpoint 功能静默失效。
@@ -581,7 +579,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **影响**：`listCheckpoints` 对整个 keyspace SCAN 后逐 key GET 再排序。checkpoint 延迟（即消费暂停时长）与 DB 总键数成正比而非 checkpoint 数；共享/生产 Redis 上每个 tick 都卡住全部管道消费；`deferAckUntilCheckpoint=true` 时直接拉长未 ack 窗口，放大 claimIdleMs 重投递竞态。
 - **审计置信度**：高
 
-### RT-H3 窗口/定时器状态在 emit 前被清除：sink 发送失败即永久丢失该窗口已累加数据 📝设计缺陷
+### RT-H3 窗口/定时器状态在 emit 前被清除：sink 发送失败即永久丢失该窗口已累加数据 [设计缺陷]
 - **位置**：`runtime/.../redis/internal/RedisStreamBuilder.java`（reduce 516-539、aggregate 575-595、sum 713-738、count 758-777、apply 654-672）
 - **触发**：窗口 fire（due zset 先移除）后 `sink.invoke` 抛异常（Redis 抖动、sink 异常、checkpoint 中止）。
 - **影响**：消息进 RETRY 重投递，但窗口状态已在 `finally` 里删掉 → 重投递的元素单独重新累计，窗口随后以残缺数据 fire——静默错误结果。apply 更糟：状态清除发生在缓冲结果 emit 之前。

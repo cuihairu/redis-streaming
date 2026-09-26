@@ -417,19 +417,19 @@ Registered service change listener: onDependencyServiceChange for service: order
 
 ## 关键要点总结
 
-### ✅ 依赖添加原则
+### 依赖添加原则
 
 1. **只在应用启动模块添加** `spring-boot-starter`
 2. **公共模块不需要添加**（除非定义抽象接口）
 3. **每个微服务独立配置**
 
-### ✅ 配置原则
+### 配置原则
 
 1. 每个服务有独立的 `application.yml`
 2. 都连接到同一个 Redis 实例
 3. 服务名必须唯一（通过 `spring.application.name` 或手动指定）
 
-### ✅ 最佳实践
+### 最佳实践
 
 1. **服务注册**：在 `@PostConstruct` 中注册
 2. **服务发现**：通过依赖注入 `NamingService`

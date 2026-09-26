@@ -14,14 +14,14 @@
 - 手动触发（workflow_dispatch）
 
 **执行内容：**
-- ✅ 检出代码
-- ✅ 设置 Java 17（使用 actions/setup-java@v4，Temurin 发行版）
-- ✅ 启用 Gradle 缓存
-- ✅ 验证 Java 环境
-- ✅ 启动 Redis 服务（使用 Docker）
-- ✅ 运行单元测试和集成测试
-- ✅ 清理 Docker 资源
-- ✅ 发布到 Maven Central（在触发条件满足时）
+- [检出代码]
+- [设置 Java 17（使用 actions/setup-java@v4，Temurin 发行版）]
+- [启用 Gradle 缓存]
+- [验证 Java 环境]
+- [启动 Redis 服务（使用 Docker）]
+- [运行单元测试和集成测试]
+- [清理 Docker 资源]
+- [发布到 Maven Central（在触发条件满足时）]
 
 **并发控制：**
 - `concurrency: { group: ci-${{ github.ref }}, cancel-in-progress: true }`
@@ -57,11 +57,11 @@ https://github.com/[用户名]/redis-streaming/actions
 ## GitHub-Hosted Runner 优势
 
 ### 官方提供的环境
-- ✅ **无需维护** - GitHub 负责维护和更新
-- ✅ **开箱即用** - 预装了常用工具和软件
-- ✅ **高性能** - 使用云端高性能计算资源
-- ✅ **可靠性** - 高可用性保证
-- ✅ **安全** - GitHub 管理的安全环境
+- [**无需维护** - GitHub 负责维护和更新]
+- [**开箱即用** - 预装了常用工具和软件]
+- [**高性能** - 使用云端高性能计算资源]
+- [**可靠性** - 高可用性保证]
+- [**安全** - GitHub 管理的安全环境]
 
 ### 环境规格
 - **操作系统**: Ubuntu Latest（当前为 Ubuntu 22.04）
@@ -102,9 +102,9 @@ https://github.com/[用户名]/redis-streaming/actions
 ```
 
 **优势：**
-- ✅ 版本一致性 - 保证每次运行使用相同版本
-- ✅ 缓存支持 - 自动缓存 Java 和 Gradle
-- ✅ 多版本支持 - 可以轻松切换 Java 版本
+- [版本一致性 - 保证每次运行使用相同版本]
+- [缓存支持 - 自动缓存 Java 和 Gradle]
+- [多版本支持 - 可以轻松切换 Java 版本]
 
 ### Docker 服务使用
 
@@ -116,9 +116,9 @@ https://github.com/[用户名]/redis-streaming/actions
 ```
 
 **优势：**
-- ✅ 环境隔离 - 测试环境完全独立
-- ✅ 版本控制 - 可以指定 Redis 版本
-- ✅ 易于清理 - 测试后自动清理
+- [环境隔离 - 测试环境完全独立]
+- [版本控制 - 可以指定 Redis 版本]
+- [易于清理 - 测试后自动清理]
 
 ---
 
@@ -160,9 +160,9 @@ GitHub runner 有超时限制，确保测试在合理时间内完成。
 建议在 GitHub 仓库设置中配置：
 
 **main 分支：**
-- ✅ 要求 "CI" 工作流通过
-- ✅ 要求至少 1 个审核通过
-- ✅ 要求分支为最新
+- [要求 "CI" 工作流通过]
+- [要求至少 1 个审核通过]
+- [要求分支为最新]
 
 ### 2. 监控建议
 
@@ -178,9 +178,9 @@ GitHub runner 有超时限制，确保测试在合理时间内完成。
 
 ### 4. 安全考虑
 
-- ✅ 使用 GitHub secrets 管理敏感信息
-- ✅ 最小权限原则
-- ✅ 定期更新 Actions 版本
+- [使用 GitHub secrets 管理敏感信息]
+- [最小权限原则]
+- [定期更新 Actions 版本]
 
 ---
 

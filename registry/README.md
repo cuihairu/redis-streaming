@@ -5,9 +5,9 @@
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/cuihairu/redis-streaming)
 [![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/cuihairu/redis-streaming)
 
-## 🚀 核心特性
+## 核心特性
 
-### ✅ 已实现功能
+### 已实现功能
 
 - **服务注册与注销** - 基于 Redis Hash 的服务实例管理
 - **心跳机制** - Redis Sorted Set + Lua 脚本优化的高效心跳
@@ -18,7 +18,7 @@
 - **临时/永久实例** - 支持临时实例（自动过期）和永久实例管理
 - **负载均衡支持** - 基于权重、CPU、延迟等 Metadata 的智能路由
 
-## 📦 快速开始
+## 快速开始
 
 ### 1. 添加依赖
 
@@ -93,7 +93,7 @@ filters.put("region", "us-east-1");
 List<ServiceInstance> filtered = namingService.getInstancesByMetadata("order-service", filters);
 ```
 
-#### 4.3 Metadata 过滤（比较运算符）🆕
+#### 4.3 Metadata 过滤（比较运算符）
 
 ```java
 // 高级过滤：使用比较运算符
@@ -180,7 +180,7 @@ ServiceInstance picked = selector.select(
 ```
 ```
 
-## ☎️ 客户端调用封装（熔断 + 重试 + 指标上报）
+## 客户端调用封装（熔断 + 重试 + 指标上报）
 
 ```java
 import io.github.cuihairu.redis.streaming.registry.client.*;
@@ -216,7 +216,7 @@ Map<String, Map<String, Long>> stats = invoker.getMetricsSnapshot();
 // keys: attempts, successes, failures, retries, cbOpenSkips
 ```
 
-## 🛠️ 生产建议配置
+## 生产建议配置
 
 - 目标与阈值
   - ScoredLoadBalancer 建议设置 `targetLatencyMs`（如 50~100ms）
@@ -247,7 +247,7 @@ namingService.subscribe("order-service", (serviceName, action, instance, allInst
 });
 ```
 
-## 🎯 Metadata 比较运算符
+## Metadata 比较运算符
 
 ### 支持的运算符
 
@@ -264,7 +264,7 @@ namingService.subscribe("order-service", (serviceName, action, instance, allInst
 
 框架会智能识别 metadata 值的类型并选择合适的比较方式：
 
-#### 1. 数值比较（推荐）✅
+#### 1. 数值比较（推荐）
 
 当 metadata 值可以转换为数字时，使用数值比较：
 
@@ -283,7 +283,7 @@ filters.put("temperature:>", "0");
 // 内部处理：tonumber("10") > tonumber("0")  → 10 > 0 = true ✅
 ```
 
-#### 2. 字符串比较（字典序）⚠️
+#### 2. 字符串比较（字典序）
 
 当无法转换为数字时，使用字典序比较：
 
@@ -354,7 +354,7 @@ List<ServiceInstance> performantInstances =
     namingService.getHealthyInstancesByMetadata("compute-service", filters);
 ```
 
-## 📖 完整文档
+## 完整文档
 
 更多详细信息请参考：
 
@@ -362,7 +362,7 @@ List<ServiceInstance> performantInstances =
 - **[集成指南](../INTEGRATION_GUIDE.md)** - Spring Boot 集成和使用示例
 - **[API 文档](../docs/API.md)** - 完整的 API 参考
 
-## 🏗️ 架构设计
+## 架构设计
 
 ### 三级存储结构
 
@@ -383,7 +383,7 @@ List<ServiceInstance> performantInstances =
 - **Metadata 过滤** - 服务端过滤，减少网络传输
 - **SHA-1 缓存** - Redisson 自动脚本缓存，提升性能
 
-## 🧪 测试
+## 测试
 
 ```bash
 # 运行单元测试
@@ -399,7 +399,7 @@ docker-compose up -d
 - 集成测试：14 个比较运算符测试用例
 - 覆盖率：85%+
 
-## 📝 注意事项
+## 注意事项
 
 ### 运算符相关
 
@@ -412,9 +412,9 @@ docker-compose up -d
 
 5. **数值优先** - 框架优先尝试数值比较，失败则使用字符串比较
 6. **字典序陷阱** - 字符串大小比较使用字典序，可能不符合预期
-   - ✅ 安全：数值型 metadata（weight, cpu, age 等）
-   - ⚠️ 谨慎：字符串大小比较（zone:> 等）
-   - ❌ 避免：版本号比较（请使用精确匹配或版本标签）
+   - [安全：数值型 metadata（weight, cpu, age 等）]
+   - [谨慎：字符串大小比较（zone:> 等）]
+   - [避免：版本号比较（请使用精确匹配或版本标签）]
 
 ### 性能相关
 
@@ -423,7 +423,7 @@ docker-compose up -d
 9. **客户端缓存** - 对于不常变化的查询，建议客户端缓存结果
 10. **Fallback 策略** - 过滤无结果时，提供降级方案（放宽条件或使用全量）
 
-## 🔗 相关链接
+## 相关链接
 
 - [主项目文档](../README.md)
 - [Metadata 过滤指南](METADATA_FILTERING_GUIDE.md)

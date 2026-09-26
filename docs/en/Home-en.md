@@ -6,16 +6,16 @@
 
 Welcome to Redis-Streaming Wiki!
 
-## 📖 About
+## About
 
 Redis-Streaming is a lightweight stream processing framework based on Redis, providing:
-- 🔄 **Message Queue (MQ)** - Reliable message queue based on Redis Streams
-- 📡 **Service Registry & Discovery** - Distributed service registration with health checks
-- 💾 **State Management** - Multiple state storage types
+- [**Message Queue (MQ)** - Reliable message queue based on Redis Streams]
+- [**Service Registry & Discovery** - Distributed service registration with health checks]
+- [**State Management** - Multiple state storage types]
 - ⏰ **Stream Processing** - Window aggregation, stream joins, CEP
-- 🛡️ **Reliability** - Retry, deduplication, dead letter queue
+- [**Reliability** - Retry, deduplication, dead letter queue]
 
-## 🚀 Quick Navigation
+## Quick Navigation
 
 ### Getting Started
 - [[Quick Start|Quick-Start-en]] - 5-minute guide
@@ -48,14 +48,14 @@ Redis-Streaming is a lightweight stream processing framework based on Redis, pro
 - [[Performance Tuning|Performance-en]] - Performance optimization
 - [[Troubleshooting|Troubleshooting-en]] - Common issues and solutions
 
-## 🔗 Links
+## Links
 
 - [GitHub Repository](https://github.com/cuihairu/redis-streaming)
 - [Maven Central](https://search.maven.org/search?q=g:io.github.cuihairu.redis-streaming)
 - [Issue Tracker](https://github.com/cuihairu/redis-streaming/issues)
 - [Contributing](https://github.com/cuihairu/redis-streaming/blob/main/CONTRIBUTING.md)
 
-## 📊 Features
+## Features
 
 | Feature | Description | Status |
 |---------|-------------|--------|
@@ -66,7 +66,7 @@ Redis-Streaming is a lightweight stream processing framework based on Redis, pro
 | CDC Integration | MySQL/PostgreSQL | ✅ Done |
 | Spring Boot | Auto-configuration | ✅ Done |
 
-## 📝 Version Info
+## Version Info
 
 - **Current Version**: v0.1.0
 - **Last Updated**: 2025-10-13

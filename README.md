@@ -8,11 +8,11 @@
 [![codecov](https://codecov.io/gh/cuihairu/redis-streaming/branch/main/graph/badge.svg)](https://codecov.io/gh/cuihairu/redis-streaming)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-## 🚀 核心特性
+## 核心特性
 
 文档站（GitHub Pages）：https://cuihairu.github.io/redis-streaming/
 
-### ✅ 已实现功能
+### 已实现功能
 - **📡 消息队列 (MQ)** - 基于 Redis Streams 的完整消息队列，支持消费者组、死信队列
 - **🔍 服务注册发现 (Registry)** - 完整的服务注册与发现，支持多协议健康检查 (HTTP/TCP/WebSocket)，**支持 metadata 比较运算符过滤**
 - **⚙️ 配置中心 (Config)** - 基于 Redis 的分布式配置管理，支持配置版本化、变更通知、历史记录
@@ -32,7 +32,7 @@
 - **🎯 CEP** - 完整的复杂事件处理，支持 Kleene closure、高级模式操作
 - **🌊 流处理运行时 (Runtime)** - Redis-backed runtime（Redis Streams，单进程并行/水位线/窗口/checkpoint）+ in-memory runtime（tests/examples）
 
-## 📦 模块架构
+## 模块架构
 
 ### **Tier 1: 核心抽象层**
 
@@ -381,7 +381,7 @@ Spring Boot 自动配置和集成。
 
 **关键类**: `ServiceRegistryExample.java`, `CustomPrefixExample.java`, `MessageQueueExample.java`, `RateLimitExample.java`, `StreamAggregationExample.java`, `ComprehensiveStreamingExample.java`
 
-## 🎯 快速开始
+## 快速开始
 
 ### 1. 环境要求
 
@@ -593,7 +593,7 @@ connector.start().join();
 List<ChangeEvent> events = connector.poll();
 ```
 
-## 📊 技术栈
+## 技术栈
 
 ### 核心依赖
 - **Redisson 4.7.0** - Redis 客户端，用于分布式操作
@@ -609,9 +609,9 @@ List<ChangeEvent> events = connector.poll();
 - **Gradle 7.0+** - 构建工具
 - **Java 17** - 编译目标版本
 
-## 🗺️ 路线图
+## 路线图
 
-### 📊 模块完成情况总览
+### 模块完成情况总览
 
 **已完成**: 20/20 模块（100.0%）✅
 **部分完成**: 0/20 模块（0.0%）🚧
@@ -619,7 +619,7 @@ List<ChangeEvent> events = connector.poll();
 
 ---
 
-### ✅ 已完成模块（生产可用）
+### 已完成模块（生产可用）
 
 #### Tier 1: 核心抽象层
 - [x] **core** - 核心 API 定义
@@ -681,7 +681,7 @@ List<ChangeEvent> events = connector.poll();
 
 ---
 
-### 🎯 下一步优先级
+### 下一步优先级
 
 #### 高优先级（可选增强）
 1. **Runtime（下一阶段）** - 多实例协调/HA/控制面（leader election + fencing token、作业接管、动态伸缩等）
@@ -693,7 +693,7 @@ List<ChangeEvent> events = connector.poll();
    - HBase Sink
    - IoT Device Source
 
-## 📚 文档
+## 文档
 
 ### 快速开始
 - [快速入门教程](QUICK_START.md) - 5分钟上手指南
@@ -713,7 +713,7 @@ List<ChangeEvent> events = connector.poll();
 - [开发文档](CLAUDE.md) - 开发者指南
 - [文档中心](docs/README.md) - 文档站点与索引（VuePress）
 
-## 🤝 贡献
+## 贡献
 
 欢迎贡献代码、报告问题或提出建议！
 
@@ -723,11 +723,11 @@ List<ChangeEvent> events = connector.poll();
 4. 推送到分支 (`git push origin feature/AmazingFeature`)
 5. 开启 Pull Request
 
-## 📄 许可证
+## 许可证
 
 本项目采用 Apache License 2.0 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
 
-## 📞 联系
+## 联系
 
 - 项目地址: https://github.com/cuihairu/redis-streaming
 - 问题反馈: https://github.com/cuihairu/redis-streaming/issues
@@ -738,26 +738,26 @@ List<ChangeEvent> events = connector.poll();
 **最后更新**: 2026-01-01
 **完成度**: 20/20 模块完成（100.0%）
 
-### 📝 版本说明
+### 版本说明
 
 **0.2.0** - Runtime 企业级能力完成（单进程）+ 文档站上线
-- ✅ Redis runtime：并行度/背压、watermark/window、端到端 checkpoint（含 sink 协调与恢复）
-- ✅ Redis-only 原子提交 sink（Lua：写 sink + XACK + commit frontier），并提供 Exactly-once 路线说明（幂等/2PC/outbox）
-- ✅ 文档迁移至 `docs/`，VuePress + GitHub Pages（Actions）自动构建发布
+- [Redis runtime：并行度/背压、watermark/window、端到端 checkpoint（含 sink 协调与恢复）]
+- [Redis-only 原子提交 sink（Lua：写 sink + XACK + commit frontier），并提供 Exactly-once 路线说明（幂等/2PC/outbox）]
+- [文档迁移至 `docs/`，VuePress + GitHub Pages（Actions）自动构建发布]
 
 **0.1.1** - 修复与质量增强
-- ✅ Registry/MQ/可靠性等模块若干稳定性修复
-- ✅ 文档与 CI 发布流程完善
+- [Registry/MQ/可靠性等模块若干稳定性修复]
+- [文档与 CI 发布流程完善]
 
 **0.1.0** - 初始版本
-- ✅ 核心 API 抽象：完整的流处理 API 定义（DataStream、KeyedStream、WindowedStream）
-- ✅ 基础设施完成：MQ、Registry（含 Metadata 比较运算符）、Config、State、Checkpoint、Watermark、Window
-- ✅ **服务注册发现增强**：支持 Metadata 比较运算符过滤（`>`, `>=`, `<`, `<=`, `!=`, `==`），智能负载均衡
-- ✅ **配置中心完成**：配置版本化、变更通知、历史记录、监听器支持
-- ✅ 功能模块完成：Aggregation、Table (含 Redis 持久化)、Join、CDC
-- ✅ 可靠性模块：Reliability（含 Bloom Filter 去重）
-- ✅ 连接器完成：Kafka/Redis Sink、Kafka/HTTP/Redis Source
-- ✅ CEP 完成：复杂事件处理（含 Kleene closure、高级模式操作）
-- ✅ 监控集成：Prometheus Exporter、指标收集器
-- ✅ Spring Boot 自动配置（含 @ServiceChangeListener 注解支持）
-- ✅ Runtime 模块：Redis runtime + in-memory runtime（见 `runtime/` 与 `docs/`）
+- [核心 API 抽象：完整的流处理 API 定义（DataStream、KeyedStream、WindowedStream）]
+- [基础设施完成：MQ、Registry（含 Metadata 比较运算符）、Config、State、Checkpoint、Watermark、Window]
+- [**服务注册发现增强**：支持 Metadata 比较运算符过滤（`>`, `>=`, `<`, `<=`, `!=`, `==`），智能负载均衡]
+- [**配置中心完成**：配置版本化、变更通知、历史记录、监听器支持]
+- [功能模块完成：Aggregation、Table (含 Redis 持久化)、Join、CDC]
+- [可靠性模块：Reliability（含 Bloom Filter 去重）]
+- [连接器完成：Kafka/Redis Sink、Kafka/HTTP/Redis Source]
+- [CEP 完成：复杂事件处理（含 Kleene closure、高级模式操作）]
+- [监控集成：Prometheus Exporter、指标收集器]
+- [Spring Boot 自动配置（含 @ServiceChangeListener 注解支持）]
+- [Runtime 模块：Redis runtime + in-memory runtime（见 `runtime/` 与 `docs/`）]

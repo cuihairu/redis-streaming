@@ -1,6 +1,6 @@
 # 本地集成使用指南
 
-## ✅ 已发布到本地 Maven 仓库
+## 已发布到本地 Maven 仓库
 
 所有模块已成功发布到本地 Maven 仓库 (`~/.m2/repository`)：
 
@@ -13,7 +13,7 @@ io.github.cuihairu.redis-streaming:
   ... (其他模块)
 ```
 
-## 📦 在其他项目中使用
+## 在其他项目中使用
 
 ### 1. Spring Boot 项目集成（推荐）
 
@@ -239,7 +239,7 @@ public class ServiceConsumerExample {
 }
 ```
 
-### 4. Metadata 过滤查询（支持比较运算符）🆕
+### 4. Metadata 过滤查询（支持比较运算符）
 
 ```java
 import io.github.cuihairu.redis.streaming.registry.*;
@@ -404,10 +404,10 @@ public class ConfigCenterExample {
 ```
 
 **配置中心特性：**
-- ✅ 配置版本化：自动保存历史版本
-- ✅ 变更通知：实时推送配置变更
-- ✅ 历史记录：查询配置的历史版本
-- ✅ 热加载：监听器自动触发配置更新
+- [配置版本化：自动保存历史版本]
+- [变更通知：实时推送配置变更]
+- [历史记录：查询配置的历史版本]
+- [热加载：监听器自动触发配置更新]
 
 **详细文档：** 参考 [配置中心文档](config/README.md)
 
@@ -446,7 +446,7 @@ public class TraditionalListenerExample {
 }
 ```
 
-## 🎯 @ServiceChangeListener 注解特性
+## @ServiceChangeListener 注解特性
 
 ### 支持的方法签名
 
@@ -490,7 +490,7 @@ void method5(List<ServiceInstance> allInstances)
 @ServiceChangeListener  // services 为空表示监听所有
 ```
 
-## 📝 完整示例项目
+## 完整示例项目
 
 创建一个新的 Spring Boot 项目：
 
@@ -573,7 +573,7 @@ EOF
 ./gradlew bootRun
 ```
 
-## 🚀 启动测试
+## 启动测试
 
 1. **启动 Redis**
 ```bash
@@ -594,7 +594,7 @@ Initializing ServiceChangeListenerProcessor for @ServiceChangeListener annotatio
 Registered service change listener: onServiceChange on bean: DemoApplication for service: test-service, actions: all
 ```
 
-## 🔧 常见问题
+## 常见问题
 
 ### Q: 找不到依赖？
 A: 确保 `repositories` 中包含 `mavenLocal()`
@@ -605,7 +605,7 @@ A: 检查是否添加了 `@EnableRedisStreaming` 注解
 ### Q: Redis 连接失败？
 A: 检查 Redis 是否启动，地址配置是否正确
 
-## 📚 更多文档
+## 更多文档
 
 - [Spring Boot Starter 使用指南](docs/spring-boot-starter-guide.md)
 - [服务注册发现文档](registry/README.md)

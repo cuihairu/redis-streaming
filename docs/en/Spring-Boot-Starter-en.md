@@ -1,4 +1,4 @@
-> ⚠️ Translation may lag behind the Chinese page `docs/Spring-Boot-Starter.md` (autoconfig split, `redis-streaming.` prefix, optional-dependency guards). Refer to the Chinese page as authoritative.
+> [Translation may lag behind the Chinese page `docs/Spring-Boot-Starter.md` (autoconfig split, `redis-streaming.` prefix, optional-dependency guards). Refer to the Chinese page as authoritative.]
 
 # Spring Boot Starter Guide
 
@@ -80,7 +80,7 @@ Then scrape `/actuator/prometheus` (Prometheus/Grafana) for `mq_*`, `retention_*
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Add Dependency
 
@@ -182,7 +182,7 @@ redis-streaming:
 - Metrics: Micrometer counters/timers (tags: `topic`, `partition`) and aggregate gauges
 - Health: HealthIndicator (topic count); can be extended for lease/mover backlog
 
-## 📋 Feature Modules
+## Feature Modules
 
 ### Service Registration & Discovery
 
@@ -337,7 +337,7 @@ public class DatabaseConfigListener {
 }
 ```
 
-## 🔧 Configuration Details
+## Configuration Details
 
 ### Redis Configuration
 
@@ -393,7 +393,7 @@ streaming:
       suffix: "_dlq"              # DLQ Topic suffix
 ```
 
-## 🎯 Use Cases
+## Use Cases
 
 ### Microservice Registration & Discovery
 
@@ -458,7 +458,7 @@ public class InventoryService {
 }
 ```
 
-## ⚠️ Notes
+## Notes
 
 1. **Redis Connection**: Ensure Redis service is available, recommend configuring connection pool
 2. **Network Environment**: Auto-detected IP may be incorrect, recommend explicit configuration
@@ -466,7 +466,7 @@ public class InventoryService {
 4. **Thread Safety**: All components are thread-safe
 5. **Performance**: Don't set heartbeat interval too short, recommend 30+ seconds
 
-## 🚧 FAQ
+## FAQ
 
 **Q: How to disable auto-registration?**
 ```yaml
