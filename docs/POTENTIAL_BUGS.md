@@ -289,9 +289,10 @@
 - **影响**：`TumblingWindow`(1min) 与 (1hour) 同 key 使用时 key 无 size 维度：同刻窗口起点（整点）下两类窗口落同一 Redis key，互相 prune 对方数据、且小时窗口读区间会计入分钟窗口写入的值（读污染，1 变 2）。注：起点不相同时 prune 互删不发生，可确证缺陷为读污染。
 - **验证与修复**：`getWindowKey` 追加窗口 size 维度，key 格式改为 `prefix:window:key:startMillis:WindowSimpleName:sizeMillis`。新增 `WindowAggregatorKeyIsolationTest`（mock 验证两类窗口 captor 抓到不同 key，旧代码两 key 完全相同）与 `WindowAggregatorKeyIsolationIntegrationTest`（真实 Redis：小时窗口 COUNT 旧代码 2、新代码 1），同步更新 `WindowAggregatorTest` 13 处 key 期望。
 
-### B-38 RedisListState.update 先清后写非原子：中途失败状态全丢 ⏳
-- **位置**：`state/.../redis/RedisListState.java:42-48`
-- **影响**：clear 后 add 中途连接断 → 旧状态已毁新状态未写全，静默丢失。
+### B-38 RedisListState.update 先清后写非原子：中途失败状态全丢 ✅已修复
+- **位置**：`state/.../redis/RedisListState.java:47-60`
+- **影响**：clear 后 add 中途连接断 → 旧状态已毁新状态未写全，静默丢失；并发读者还能观察到清空瞬间。
+- **验证与修复**：`update` 改为单次 `REDIS_WRITE_ATOMIC` 批（MULTI/EXEC：delete + addAll 原子生效），空更新仅 delete。改写原钉死缺陷行为的 `RedisListStateTest.updateClearsThenAddsAllElements` 为 `updateReplacesAtomicallyViaWriteAtomicBatch`（旧代码 `createBatch` 零交互）+ `emptyUpdateStillDeletesAtomically`，新增 `RedisListStateUpdateIntegrationTest`（真实 Redis：整体替换/空更新清空）。
 
 ### B-39 CountTrigger 接受 maxCount<=0：每元素即触发 [已修复]
 - **位置**：`window/.../triggers/CountTrigger.java:15-31`
