@@ -22,8 +22,14 @@ public class ExponentialBackoffRetryPolicy implements RetryPolicy {
 
     @Override
     public long nextBackoffMs(int attempt) {
-        long v = baseMs * (1L << Math.max(0, attempt - 1));
-        return Math.min(v, maxBackoffMs);
+        // Saturate instead of overflowing: 1L << 63 turns negative and baseMs * factor wraps,
+        // which used to yield negative delays and a zero-delay retry storm for large attempts.
+        int shift = Math.min(62, Math.max(0, attempt - 1));
+        long factor = 1L << shift;
+        if (baseMs > maxBackoffMs / factor) {
+            return maxBackoffMs;
+        }
+        return Math.min(baseMs * factor, maxBackoffMs);
     }
 }
 

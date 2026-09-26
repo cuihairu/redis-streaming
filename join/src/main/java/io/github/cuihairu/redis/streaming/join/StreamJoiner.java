@@ -36,7 +36,7 @@ public class StreamJoiner<L, R, K, O> {
      * @param element The element to process
      * @return List of joined output elements
      */
-    public List<O> processLeft(L element) throws Exception {
+    public synchronized List<O> processLeft(L element) throws Exception {
         K key = config.getLeftKeySelector().apply(element);
         long timestamp = extractTimestamp(element, config.getLeftTimestampExtractor());
 
@@ -45,13 +45,16 @@ public class StreamJoiner<L, R, K, O> {
                 .add(new TimestampedElement<>(element, timestamp));
         enforceMaxStateSize();
 
-        // Find matching right elements
+        // Find matching right elements. The window predicate is always anchored on the LEFT
+        // timestamp (same as in processRight) so that a pair matches regardless of which
+        // element is buffered first; anchoring on the arriving element made asymmetric
+        // windows (afterOnly/beforeOnly) order-dependent.
         List<O> results = new ArrayList<>();
         List<TimestampedElement<R>> rightElements = rightBuffer.get(key);
 
         if (rightElements != null) {
             for (TimestampedElement<R> rightElem : rightElements) {
-                if (config.getJoinWindow().contains(rightElem.timestamp, timestamp)) {
+                if (config.getJoinWindow().contains(timestamp, rightElem.timestamp)) {
                     O joined = joinFunction.join(element, rightElem.element);
                     results.add(joined);
                 }
@@ -74,7 +77,7 @@ public class StreamJoiner<L, R, K, O> {
      * @param element The element to process
      * @return List of joined output elements
      */
-    public List<O> processRight(R element) throws Exception {
+    public synchronized List<O> processRight(R element) throws Exception {
         K key = config.getRightKeySelector().apply(element);
         long timestamp = extractTimestamp(element, config.getRightTimestampExtractor());
 
@@ -212,21 +215,21 @@ public class StreamJoiner<L, R, K, O> {
     /**
      * Get the current size of left buffer
      */
-    public int getLeftBufferSize() {
+    public synchronized int getLeftBufferSize() {
         return leftBuffer.values().stream().mapToInt(List::size).sum();
     }
 
     /**
      * Get the current size of right buffer
      */
-    public int getRightBufferSize() {
+    public synchronized int getRightBufferSize() {
         return rightBuffer.values().stream().mapToInt(List::size).sum();
     }
 
     /**
      * Clear all buffered state
      */
-    public void clear() {
+    public synchronized void clear() {
         leftBuffer.clear();
         rightBuffer.clear();
     }

@@ -133,8 +133,8 @@ class RedisKTableJoinGroupCoverageTest {
 
         KTable<String, Integer> aggregated = source
                 .groupBy((KTable.KeyValue<String, Integer> kv) -> kv.getKey().startsWith("u") ? "users" : "other")
-                .aggregate(() -> 0, (k, v) -> v, (k, v) -> -v);
-        assertEquals(30, ((RedisKTable<String, Integer>) aggregated).get("users"), "adder applied per entry, last wins in this snapshot semantics");
+                .aggregate(() -> 0, (k, v, agg) -> v + agg, (k, v, agg) -> agg - v);
+        assertEquals(60, ((RedisKTable<String, Integer>) aggregated).get("users"), "adder must fold every entry into the running aggregate");
 
         KTable<String, Long> counted = source.groupBy((KTable.KeyValue<String, Integer> kv) -> "g").count();
         assertEquals(3L, ((RedisKTable<String, Long>) counted).get("g"));
@@ -151,7 +151,7 @@ class RedisKTableJoinGroupCoverageTest {
         source.put("k1", 1);
         KTable<String, Integer> aggregated = source
                 .<String>groupBy((KTable.KeyValue<String, Integer> kv) -> null)
-                .aggregate(() -> 0, (k, v) -> v, (k, v) -> v);
+                .aggregate(() -> 0, (k, v, agg) -> v, (k, v, agg) -> v);
         assertTrue(((RedisKTable<String, Integer>) aggregated).getState().isEmpty());
     }
 }

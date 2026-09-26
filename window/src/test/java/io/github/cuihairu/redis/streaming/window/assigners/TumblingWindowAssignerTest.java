@@ -80,10 +80,11 @@ class TumblingWindowAssignerTest {
 
         assertTrue(windows.hasNext());
         TimeWindow w = (TimeWindow) windows.next();
-        // Java's % operator returns negative for negative dividends
-        // -500 % 1000 = -500, so start = -500 - (-500) = 0
-        assertEquals(0L, w.getStart());
-        assertEquals(1000L, w.getEnd());
+        // B-21 regression: % used to leave negative dividends (-500 % 1000 = -500), which
+        // "aligned" ts=-500 to window [0,1000) — a window that does not contain it.
+        // floorMod aligns into the window BEFORE the element: [-1000, 0).
+        assertEquals(-1000L, w.getStart());
+        assertEquals(0L, w.getEnd());
     }
 
     @Test

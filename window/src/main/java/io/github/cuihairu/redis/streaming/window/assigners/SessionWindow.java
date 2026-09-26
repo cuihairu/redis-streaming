@@ -40,6 +40,13 @@ public class SessionWindow<T> implements WindowAssigner<T> {
         return new EventTimeTrigger<>();
     }
 
+    @Override
+    public boolean supportsWindowMerging() {
+        // Every element seeds its own [ts, ts+gap) window; overlapping windows of the same key
+        // must be coalesced into the union window (session semantics).
+        return true;
+    }
+
     public long getSessionGap() {
         return sessionGap;
     }

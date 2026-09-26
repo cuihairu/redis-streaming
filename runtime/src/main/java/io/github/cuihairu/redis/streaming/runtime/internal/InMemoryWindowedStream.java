@@ -18,6 +18,30 @@ import java.util.Objects;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
+/**
+ * In-memory windowed stream whose firing is driven by the assigner's
+ * {@link WindowAssigner#getDefaultTrigger()} trigger.
+ *
+ * <p>Each (key, window) bucket owns a dedicated trigger instance obtained from
+ * {@link WindowAssigner#getDefaultTrigger()} (see its contract: fresh instance per call).
+ * Element ingestion consults {@link WindowAssigner.Trigger#onElement}:</p>
+ * <ul>
+ *   <li>{@code FIRE} — emit the current partial result, keep the contents accumulating;</li>
+ *   <li>{@code FIRE_AND_PURGE} — emit the current partial result and clear the contents;</li>
+ *   <li>{@code PURGE} — clear the contents without emitting;</li>
+ *   <li>{@code CONTINUE} — keep accumulating.</li>
+ * </ul>
+ *
+ * <p>When the bounded input is exhausted the effective watermark is {@code +inf}: every remaining
+ * non-empty bucket gets a final {@link WindowAssigner.Trigger#onEventTime} callback (with the
+ * window end) followed by a flush, so no accumulated data is silently dropped.
+ * {@link WindowAssigner.Trigger#onProcessingTime} is never invoked — the batch in-memory engine
+ * has no processing-time timers.</p>
+ *
+ * <p>For assigners with {@link WindowAssigner#supportsWindowMerging()} (session windows), a newly
+ * assigned window is first coalesced with every same-key bucket it intersects: the union window
+ * takes over all accumulated elements, so a whole session fires as one result.</p>
+ */
 final class InMemoryWindowedStream<K, T> implements WindowedStream<K, T> {
 
     private final Supplier<Iterator<KeyedRecord<K, T>>> keyedIteratorSupplier;
@@ -148,195 +172,178 @@ final class InMemoryWindowedStream<K, T> implements WindowedStream<K, T> {
         });
     }
 
-    private List<InMemoryRecord<T>> reduceAll(ReduceFunction<T> reducer) {
-        Map<WindowKey<K>, Acc<T>> acc = new LinkedHashMap<>();
+    /**
+     * Computes the emission(s) of one bucket fire from its accumulated elements.
+     * Implementations wrap user-function failures in the runtime's legacy
+     * error messages before rethrowing.
+     */
+    @FunctionalInterface
+    private interface FireComputer<K, T, R> {
+        List<R> compute(K key, WindowAssigner.Window window, List<T> elements);
+    }
+
+    private <R> List<InMemoryRecord<R>> drive(FireComputer<K, T, R> computer) {
+        Map<WindowKey<K>, Bucket<T>> buckets = new LinkedHashMap<>();
+        List<InMemoryRecord<R>> out = new ArrayList<>();
         Iterator<KeyedRecord<K, T>> in = keyedIteratorSupplier.get();
         while (in.hasNext()) {
             KeyedRecord<K, T> record = in.next();
             for (WindowAssigner.Window window : windowAssigner.assignWindows(record.value(), record.timestamp())) {
-                WindowKey<K> key = WindowKey.of(record.key(), window);
-                Acc<T> a = acc.get(key);
-                if (a == null) {
-                    acc.put(key, new Acc<>(record.value(), record.timestamp()));
-                    continue;
+                WindowKey<K> wk = WindowKey.of(record.key(), window);
+                if (windowAssigner.supportsWindowMerging()) {
+                    wk = mergeIntersectingBuckets(record.key(), wk, buckets);
+                    window = wk.window();
                 }
+                Bucket<T> bucket = buckets.computeIfAbsent(wk, k -> new Bucket<>(windowAssigner.getDefaultTrigger()));
+                bucket.elements.add(record.value());
+                bucket.lastTimestamp = record.timestamp();
+                WindowAssigner.TriggerResult result =
+                        bucket.trigger.onElement(record.value(), record.timestamp(), window);
+                if (result == WindowAssigner.TriggerResult.FIRE) {
+                    emit(wk, bucket, computer, out);
+                } else if (result == WindowAssigner.TriggerResult.FIRE_AND_PURGE) {
+                    emit(wk, bucket, computer, out);
+                    bucket.elements.clear();
+                } else if (result == WindowAssigner.TriggerResult.PURGE) {
+                    bucket.elements.clear();
+                }
+                // CONTINUE: keep accumulating
+            }
+        }
+        // Bounded input ended: the effective watermark is +inf. Give every remaining bucket a
+        // final onEventTime callback at the window end, then flush what is left.
+        for (Map.Entry<WindowKey<K>, Bucket<T>> entry : buckets.entrySet()) {
+            Bucket<T> bucket = entry.getValue();
+            WindowAssigner.Window window = entry.getKey().window();
+            bucket.trigger.onEventTime(window.getEnd(), window);
+            emit(entry.getKey(), bucket, computer, out);
+            bucket.elements.clear();
+        }
+        return out;
+    }
+
+    private <R> void emit(WindowKey<K> wk, Bucket<T> bucket, FireComputer<K, T, R> computer,
+                          List<InMemoryRecord<R>> out) {
+        if (bucket.elements.isEmpty()) {
+            return;
+        }
+        for (R r : computer.compute(wk.key, wk.window(), bucket.elements)) {
+            out.add(new InMemoryRecord<>(r, bucket.lastTimestamp));
+        }
+    }
+
+    /**
+     * Coalesces every bucket of {@code key} whose {@code [start, end)} window intersects
+     * {@code seed} (including the seed bucket itself, when present) into one bucket keyed by the
+     * union window, and returns that key. Windows are half-open, so a window ending exactly where
+     * another begins (an inactivity gap of exactly the session gap) does not merge.
+     *
+     * <p>Pre-existing buckets of a key are pairwise non-intersecting (this method upholds that
+     * invariant), which is why a single scan suffices: a bucket skipped as non-intersecting now
+     * can never intersect the final union, because that would mean it intersected one of the
+     * absorbed stored buckets.
+     *
+     * <p>The merged bucket keeps the first absorbed bucket's trigger instance; the trigger state
+     * of the remaining absorbed buckets is dropped (the trigger API has no merge callback — see
+     * {@link WindowAssigner#supportsWindowMerging()}).
+     */
+    private WindowKey<K> mergeIntersectingBuckets(K key, WindowKey<K> seed,
+                                                  Map<WindowKey<K>, Bucket<T>> buckets) {
+        long start = seed.start;
+        long end = seed.end;
+        List<Bucket<T>> absorbed = new ArrayList<>();
+        for (Iterator<Map.Entry<WindowKey<K>, Bucket<T>>> it = buckets.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<WindowKey<K>, Bucket<T>> entry = it.next();
+            WindowKey<K> candidate = entry.getKey();
+            if (!Objects.equals(candidate.key, key)
+                    || candidate.end <= start || candidate.start >= end) {
+                continue;
+            }
+            start = Math.min(start, candidate.start);
+            end = Math.max(end, candidate.end);
+            absorbed.add(entry.getValue());
+            it.remove();
+        }
+        if (absorbed.isEmpty()) {
+            return seed;
+        }
+        WindowKey<K> mergedKey = new WindowKey<>(key, start, end);
+        Bucket<T> merged = new Bucket<>(absorbed.get(0).trigger);
+        for (Bucket<T> bucket : absorbed) {
+            merged.elements.addAll(bucket.elements);
+            merged.lastTimestamp = Math.max(merged.lastTimestamp, bucket.lastTimestamp);
+        }
+        buckets.put(mergedKey, merged);
+        return mergedKey;
+    }
+
+    private List<InMemoryRecord<T>> reduceAll(ReduceFunction<T> reducer) {
+        return drive((key, window, elements) -> {
+            T acc = elements.get(0);
+            for (int i = 1; i < elements.size(); i++) {
                 try {
-                    a.value = reducer.reduce(a.value, record.value());
-                    a.lastTimestamp = record.timestamp();
+                    acc = reducer.reduce(acc, elements.get(i));
                 } catch (Exception e) {
                     throw new RuntimeException("Window reduce function failed", e);
                 }
             }
-        }
-        List<InMemoryRecord<T>> out = new ArrayList<>(acc.size());
-        for (Acc<T> v : acc.values()) {
-            out.add(new InMemoryRecord<>(v.value, v.lastTimestamp));
-        }
-        return out;
+            return List.of(acc);
+        });
     }
 
     private <R> List<InMemoryRecord<R>> aggregateAll(AggregateFunction<T, R> fn) {
-        Map<WindowKey<K>, AggregateAcc<T>> acc = new LinkedHashMap<>();
-        Iterator<KeyedRecord<K, T>> in = keyedIteratorSupplier.get();
-        while (in.hasNext()) {
-            KeyedRecord<K, T> record = in.next();
-            for (WindowAssigner.Window window : windowAssigner.assignWindows(record.value(), record.timestamp())) {
-                WindowKey<K> key = WindowKey.of(record.key(), window);
-                AggregateAcc<T> a = acc.get(key);
-                if (a == null) {
-                    a = new AggregateAcc<>(fn.createAccumulator(), record.timestamp());
-                    acc.put(key, a);
-                }
-                a.accumulator = fn.add(record.value(), a.accumulator);
-                a.lastTimestamp = record.timestamp();
+        return drive((key, window, elements) -> {
+            AggregateFunction.Accumulator<T> acc = fn.createAccumulator();
+            for (T element : elements) {
+                acc = fn.add(element, acc);
             }
-        }
-        List<InMemoryRecord<R>> out = new ArrayList<>(acc.size());
-        for (AggregateAcc<T> a : acc.values()) {
-            out.add(new InMemoryRecord<>(fn.getResult(a.accumulator), a.lastTimestamp));
-        }
-        return out;
+            return List.of(fn.getResult(acc));
+        });
     }
 
     private <R> List<InMemoryRecord<R>> applyAll(WindowFunction<K, T, R> fn) {
-        Map<WindowKey<K>, WindowValues<T>> values = new LinkedHashMap<>();
-        Iterator<KeyedRecord<K, T>> in = keyedIteratorSupplier.get();
-        while (in.hasNext()) {
-            KeyedRecord<K, T> record = in.next();
-            for (WindowAssigner.Window window : windowAssigner.assignWindows(record.value(), record.timestamp())) {
-                WindowKey<K> key = WindowKey.of(record.key(), window);
-                WindowValues<T> w = values.get(key);
-                if (w == null) {
-                    w = new WindowValues<>(new ArrayList<>(), record.timestamp());
-                    values.put(key, w);
-                }
-                w.elements.add(record.value());
-                w.lastTimestamp = record.timestamp();
-            }
-        }
-
-        List<InMemoryRecord<R>> out = new ArrayList<>();
-        for (Map.Entry<WindowKey<K>, WindowValues<T>> entry : values.entrySet()) {
-            WindowKey<K> key = entry.getKey();
-            WindowValues<T> w = entry.getValue();
+        return drive((key, window, elements) -> {
             ArrayDeque<R> buffer = new ArrayDeque<>();
             WindowFunction.Collector<R> collector = buffer::addLast;
             try {
-                fn.apply(key.key, key.window(), w.elements, collector);
+                fn.apply(key, window, elements, collector);
             } catch (Exception e) {
                 throw new RuntimeException("Window function failed", e);
             }
-            while (!buffer.isEmpty()) {
-                out.add(new InMemoryRecord<>(buffer.removeFirst(), w.lastTimestamp));
-            }
-        }
-        return out;
+            return new ArrayList<>(buffer);
+        });
     }
 
     private List<InMemoryRecord<Long>> countAll() {
-        Map<WindowKey<K>, LongAcc> acc = new LinkedHashMap<>();
-        Iterator<KeyedRecord<K, T>> in = keyedIteratorSupplier.get();
-        while (in.hasNext()) {
-            KeyedRecord<K, T> record = in.next();
-            for (WindowAssigner.Window window : windowAssigner.assignWindows(record.value(), record.timestamp())) {
-                WindowKey<K> key = WindowKey.of(record.key(), window);
-                LongAcc a = acc.get(key);
-                if (a == null) {
-                    a = new LongAcc(0L, record.timestamp());
-                    acc.put(key, a);
-                }
-                a.value++;
-                a.lastTimestamp = record.timestamp();
-            }
-        }
-        List<InMemoryRecord<Long>> out = new ArrayList<>(acc.size());
-        for (LongAcc a : acc.values()) {
-            out.add(new InMemoryRecord<>(a.value, a.lastTimestamp));
-        }
-        return out;
+        return drive((key, window, elements) -> List.of((long) elements.size()));
     }
 
     private List<InMemoryRecord<T>> sumAll(Function<T, ? extends Number> fieldSelector) {
-        Map<WindowKey<K>, NumberAcc> acc = new LinkedHashMap<>();
-        Iterator<KeyedRecord<K, T>> in = keyedIteratorSupplier.get();
-        while (in.hasNext()) {
-            KeyedRecord<K, T> record = in.next();
-            T value = record.value();
-            if (!(value instanceof Number)) {
+        return drive((key, window, elements) -> {
+            T sample = elements.get(0);
+            if (!(sample instanceof Number numberSample)) {
                 throw new UnsupportedOperationException(
                         "In-memory runtime window sum() only supports Number elements, but got: " +
-                                (value == null ? "null" : value.getClass().getName()));
+                                (sample == null ? "null" : sample.getClass().getName()));
             }
-            for (WindowAssigner.Window window : windowAssigner.assignWindows(value, record.timestamp())) {
-                WindowKey<K> key = WindowKey.of(record.key(), window);
-                NumberAcc a = acc.get(key);
-                if (a == null) {
-                    a = new NumberAcc(0L, record.timestamp(), (Number) value);
-                    acc.put(key, a);
-                }
-                a.value = NumberAggregationUtils.add(a.value, fieldSelector.apply(value));
-                a.lastTimestamp = record.timestamp();
+            Number total = 0L;
+            for (T element : elements) {
+                total = NumberAggregationUtils.add(total, fieldSelector.apply(element));
             }
-        }
-        List<InMemoryRecord<T>> out = new ArrayList<>(acc.size());
-        for (NumberAcc a : acc.values()) {
             @SuppressWarnings("unchecked")
-            T v = (T) NumberAggregationUtils.castToSameType(a.value, a.sample);
-            out.add(new InMemoryRecord<>(v, a.lastTimestamp));
-        }
-        return out;
+            T value = (T) NumberAggregationUtils.castToSameType(total, numberSample);
+            return List.of(value);
+        });
     }
 
-
-    private static final class Acc<T> {
-        private T value;
+    /** Per-(key, window) bucket: the bucket's own trigger instance plus its raw contents. */
+    private static final class Bucket<T> {
+        private final WindowAssigner.Trigger<T> trigger;
+        private final List<T> elements = new ArrayList<>();
         private long lastTimestamp;
 
-        private Acc(T value, long lastTimestamp) {
-            this.value = value;
-            this.lastTimestamp = lastTimestamp;
-        }
-    }
-
-    private static final class AggregateAcc<T> {
-        private AggregateFunction.Accumulator<T> accumulator;
-        private long lastTimestamp;
-
-        private AggregateAcc(AggregateFunction.Accumulator<T> accumulator, long lastTimestamp) {
-            this.accumulator = accumulator;
-            this.lastTimestamp = lastTimestamp;
-        }
-    }
-
-    private static final class WindowValues<T> {
-        private final List<T> elements;
-        private long lastTimestamp;
-
-        private WindowValues(List<T> elements, long lastTimestamp) {
-            this.elements = elements;
-            this.lastTimestamp = lastTimestamp;
-        }
-    }
-
-    private static final class LongAcc {
-        private long value;
-        private long lastTimestamp;
-
-        private LongAcc(long value, long lastTimestamp) {
-            this.value = value;
-            this.lastTimestamp = lastTimestamp;
-        }
-    }
-
-    private static final class NumberAcc {
-        private Number value;
-        private long lastTimestamp;
-        private final Number sample;
-
-        private NumberAcc(Number value, long lastTimestamp, Number sample) {
-            this.value = value;
-            this.lastTimestamp = lastTimestamp;
-            this.sample = sample;
+        private Bucket(WindowAssigner.Trigger<T> trigger) {
+            this.trigger = trigger;
         }
     }
 
@@ -385,4 +392,3 @@ final class InMemoryWindowedStream<K, T> implements WindowedStream<K, T> {
         }
     }
 }
-

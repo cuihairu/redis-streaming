@@ -236,15 +236,9 @@ class CountTriggerTest {
 
     @Test
     void testWithZeroCount() {
-        // Given
-        CountTrigger<String> trigger = CountTrigger.of(0);
-        TimeWindow window = new TimeWindow(0, 5000);
-
-        // When
-        WindowAssigner.TriggerResult result = trigger.onElement("test", 1000, window);
-
-        // Then - with maxCount=0, first element (currentCount=1) >= 0, so it fires
-        assertEquals(WindowAssigner.TriggerResult.FIRE, result);
+        // B-39 regression: maxCount=0 used to be accepted and fired the window on every
+        // single element (currentCount=1 >= 0); it is a configuration error and now throws.
+        assertThrows(IllegalArgumentException.class, () -> CountTrigger.of(0));
     }
 
     @Test

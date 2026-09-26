@@ -66,18 +66,20 @@ class InMemoryKGroupedTableTest {
         // Aggregate by concatenating keys
         KTable<String, String> aggregated = grouped.aggregate(
                 () -> "",  // initializer
-                (key, value) -> key + ":" + value,  // adder (simplified)
-                (key, value) -> key  // subtractor (not properly used here)
+                (key, value, agg) -> agg + key + ":" + value,  // adder folds into the aggregate
+                (key, value, agg) -> key  // subtractor (not used for batch tables)
         );
 
         assertTrue(aggregated instanceof InMemoryKTable);
         InMemoryKTable<String, String> result = (InMemoryKTable<String, String>) aggregated;
 
         assertEquals(3, result.size());
-        // The aggregation should have produced some result for each group
-        assertNotNull(result.get("a"));
-        assertNotNull(result.get("b"));
-        assertNotNull(result.get("c"));
+        // Every record of the group must be folded in, not just the last one.
+        assertTrue(result.get("a").contains("a:1"));
+        assertTrue(result.get("a").contains("a:2"));
+        assertTrue(result.get("b").contains("b:3"));
+        assertTrue(result.get("b").contains("b:4"));
+        assertTrue(result.get("c").contains("c:5"));
     }
 
     @Test
@@ -156,16 +158,16 @@ class InMemoryKGroupedTableTest {
         // Aggregate to sum values (most common use case)
         KTable<String, Integer> aggregated = grouped.aggregate(
                 () -> 0,
-                (key, value) -> value,  // For simple aggregation, just return the value
-                (key, value) -> value
+                (key, value, agg) -> value + agg,
+                (key, value, agg) -> agg - value
         );
 
         InMemoryKTable<String, Integer> result = (InMemoryKTable<String, Integer>) aggregated;
 
         assertEquals(3, result.size());
-        assertNotNull(result.get("a"));
-        assertNotNull(result.get("b"));
-        assertNotNull(result.get("c"));
+        assertEquals(3, result.get("a")); // 1 + 2
+        assertEquals(7, result.get("b")); // 3 + 4
+        assertEquals(5, result.get("c")); // 5
     }
 
     @Test
@@ -236,20 +238,20 @@ class InMemoryKGroupedTableTest {
                 kv.getKey().substring(0, 1)
         );
 
-        // Aggregate to sum values
+        // Aggregate to sum values: the adder must fold every value into the running aggregate
+        // (regression for B-03: the old 2-arg adder silently returned only the last value).
         KTable<String, Integer> sum = grouped.aggregate(
                 () -> 0,
-                (key, value) -> value,  // Note: aggregate's adder doesn't accumulate in this impl
-                (key, value) -> value
+                (key, value, agg) -> value + agg,
+                (key, value, agg) -> agg - value
         );
 
         InMemoryKTable<String, Integer> result = (InMemoryKTable<String, Integer>) sum;
 
-        // The current implementation returns the last value for each group
         assertEquals(3, result.size());
-        assertNotNull(result.get("a"));
-        assertNotNull(result.get("b"));
-        assertNotNull(result.get("c"));
+        assertEquals(3, result.get("a")); // 1 + 2
+        assertEquals(7, result.get("b")); // 3 + 4
+        assertEquals(5, result.get("c")); // 5
     }
 
     @Test
@@ -314,8 +316,8 @@ class InMemoryKGroupedTableTest {
 
         KTable<String, Integer> aggregated1 = grouped.aggregate(
                 () -> 0,
-                (key, value) -> value,
-                (key, value) -> value
+                (key, value, agg) -> value + agg,
+                (key, value, agg) -> agg - value
         );
 
         KTable<String, Long> counts = grouped.count();
@@ -342,5 +344,29 @@ class InMemoryKGroupedTableTest {
             totalCount += result.get(key);
         }
         assertEquals(5L, totalCount); // 5 original entries
+    }
+
+    @Test
+    void nullGroupKeyRowsAreSkippedLikeRedisImplementation() {
+        // Regression for B-17: a null group key used to NPE in count/aggregate/reduce while the
+        // Redis implementation silently skipped the row; the two implementations must agree.
+        InMemoryKTable<String, Integer> mixed = new InMemoryKTable<>();
+        mixed.put("apple", 1);
+        mixed.put("banana", 3);
+
+        var grouped = mixed.groupBy(kv -> "apple".equals(kv.getKey()) ? null : "b");
+
+        InMemoryKTable<String, Long> counts = (InMemoryKTable<String, Long>) grouped.count();
+        assertEquals(1, counts.size());
+        assertEquals(1L, counts.get("b"));
+
+        InMemoryKTable<String, Integer> summed = (InMemoryKTable<String, Integer>) grouped.aggregate(
+                () -> 0, (key, value, agg) -> value + agg, (key, value, agg) -> agg - value);
+        assertEquals(1, summed.size());
+        assertEquals(3, summed.get("b"));
+
+        InMemoryKTable<String, Integer> reduced = (InMemoryKTable<String, Integer>) grouped.reduce(Integer::sum, (a, b) -> a);
+        assertEquals(1, reduced.size());
+        assertEquals(3, reduced.get("b"));
     }
 }

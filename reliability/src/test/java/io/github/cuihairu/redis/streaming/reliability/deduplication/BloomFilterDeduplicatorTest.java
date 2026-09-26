@@ -83,6 +83,32 @@ class BloomFilterDeduplicatorTest {
     }
 
     @Test
+    void clearReinitializesFilterForSubsequentOperations() {
+        // Regression for B-12: clear() used to only delete() the Redis key, destroying the
+        // filter's sizing parameters — every later add/contains then threw
+        // "Bloom filter is not initialized". clear() must re-run tryInit with the original
+        // sizing so the deduplicator stays usable.
+        RedissonClient redisson = mock(RedissonClient.class);
+        @SuppressWarnings("unchecked")
+        RBloomFilter<String> bf = mock(RBloomFilter.class);
+        when(redisson.<String>getBloomFilter("bf")).thenReturn(bf);
+        when(bf.isExists()).thenReturn(true);
+        when(bf.add(anyString())).thenReturn(true);
+        when(bf.contains(anyString())).thenReturn(false);
+
+        BloomFilterDeduplicator<String> dedup = new BloomFilterDeduplicator<String>(redisson, "bf", 100, 0.03, (String v) -> v);
+
+        dedup.clear();
+        verify(bf).delete();
+        verify(bf).tryInit(100, 0.03);
+
+        // The deduplicator remains fully usable after clear()
+        assertFalse(dedup.isDuplicate("x"));
+        dedup.markAsSeen("x");
+        assertEquals(1L, dedup.getUniqueCount());
+    }
+
+    @Test
     void invalidParametersAreRejected() {
         RedissonClient redisson = mock(RedissonClient.class);
         assertThrows(IllegalArgumentException.class, () -> new BloomFilterDeduplicator<String>(redisson, "bf", 0, (String v) -> v));

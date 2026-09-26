@@ -150,14 +150,16 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                                         } else {
                                             String topic = entry.getOriginalTopic();
                                             int pid = entry.getPartitionId();
-                                            RStream<String, Object> p = redissonClient.getStream("stream:topic:" + topic + ":p:" + pid, org.redisson.client.codec.StringCodec.INSTANCE);
+                                            RStream<String, Object> p = redissonClient.getStream(
+                                                    io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, pid),
+                                                    org.redisson.client.codec.StringCodec.INSTANCE);
                                             Map<String, Object> d = DeadLetterCodec.buildPartitionEntryFromDlq(data, topic, pid);
                                             p.add(StreamAddArgs.entries(d));
                                             ok = true;
                                             try {
                                                 boolean visible = p.isExists() && p.size() > 0;
                                                 if (!visible) { Thread.sleep(50); p.add(StreamAddArgs.entries(d)); }
-                                                try { log.info("DLQ group RETRY replay ok={}, origKey=stream:topic:{}:p:{}, visible={} size={}", ok, topic, pid, (p.isExists() && p.size()>0), p.size()); } catch (Exception ignore) {}
+                                                try { log.info("DLQ group RETRY replay ok={}, origKey={}, visible={} size={}", ok, io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, pid), (p.isExists() && p.size()>0), p.size()); } catch (Exception ignore) {}
                                             } catch (Exception ignore) {}
                                         }
                                     } catch (Exception ex) {

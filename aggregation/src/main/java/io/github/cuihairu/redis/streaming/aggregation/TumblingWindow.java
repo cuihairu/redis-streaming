@@ -1,6 +1,5 @@
 package io.github.cuihairu.redis.streaming.aggregation;
 
-import lombok.AllArgsConstructor;
 import lombok.Data;
 
 import java.time.Duration;
@@ -10,10 +9,18 @@ import java.time.Instant;
  * Tumbling time window implementation
  */
 @Data
-@AllArgsConstructor
 public class TumblingWindow implements TimeWindow {
 
     private final Duration size;
+
+    // Explicit constructor replacing @AllArgsConstructor so the B-11 size guard cannot be
+    // bypassed by constructing the record-style class directly.
+    public TumblingWindow(Duration size) {
+        if (size == null || size.isZero() || size.isNegative()) {
+            throw new IllegalArgumentException("TumblingWindow size must be a positive duration, got " + size);
+        }
+        this.size = size;
+    }
 
     @Override
     public Duration getSlide() {
@@ -24,7 +31,8 @@ public class TumblingWindow implements TimeWindow {
     public Instant getWindowStart(Instant timestamp) {
         long epochMilli = timestamp.toEpochMilli();
         long windowSizeMs = size.toMillis();
-        long windowStart = (epochMilli / windowSizeMs) * windowSizeMs;
+        // floorDiv (not /) keeps pre-epoch timestamps aligned into the window before them (B-21).
+        long windowStart = Math.floorDiv(epochMilli, windowSizeMs) * windowSizeMs;
         return Instant.ofEpochMilli(windowStart);
     }
 

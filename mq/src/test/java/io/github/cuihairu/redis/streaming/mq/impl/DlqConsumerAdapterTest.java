@@ -430,9 +430,10 @@ class DlqConsumerAdapterTest {
 
         assertNotNull(result);
         assertEquals("RETRY", result.toString());
-        // Verify Redis stream was called for retry
-        verify(mockRedissonClient).getStream(anyString(), eq(StringCodec.INSTANCE));
-        verify(mockStream).add(any());
+        // Regression for MQ-02: toResult must NOT write the replay itself. The delegate's replay
+        // handler publishes exactly once; the adapter's own XADD used to deliver a second copy.
+        verify(mockRedissonClient, never()).getStream(anyString(), eq(StringCodec.INSTANCE));
+        verifyNoInteractions(mockStream);
     }
 
     @Test
@@ -643,7 +644,8 @@ class DlqConsumerAdapterTest {
 
         assertNotNull(result);
         assertEquals("RETRY", result.toString());
-        verify(mockStream).add(any());
+        // Regression for MQ-02: no direct replay write from toResult, regardless of payload type.
+        verify(mockStream, never()).add(any());
     }
 
     @Test

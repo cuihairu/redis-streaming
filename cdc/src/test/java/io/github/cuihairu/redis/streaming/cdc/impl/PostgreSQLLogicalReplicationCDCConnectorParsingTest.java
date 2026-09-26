@@ -74,6 +74,71 @@ class PostgreSQLLogicalReplicationCDCConnectorParsingTest {
         assertTrue(connector.poll().isEmpty(), "filtered table should not emit events");
     }
 
+    @Test
+    void parseLogicalMessageHandlesRealSingleLineTestDecodingFormat() {
+        // Regression for CDC-C1: test_decoding emits each change as ONE line with the table
+        // prefix and the operation together. The old parser matched the table prefix and
+        // skipped the rest of the line, silently dropping every event of a real stream.
+        CDCConfiguration config = CDCConfigurationBuilder.forPostgreSQLLogicalReplication("pg")
+                .postgresqlHostname("localhost")
+                .postgresqlPort(5432)
+                .postgresqlDatabase("db")
+                .username("u")
+                .password("p")
+                .build();
+
+        PostgreSQLLogicalReplicationCDCConnector connector = new PostgreSQLLogicalReplicationCDCConnector(config);
+        connector.running.set(true);
+        setField(connector, "replicationStream", null);
+        setField(connector, "tableFilter", null);
+
+        invokeParse(connector, String.join("\n",
+                "table public.users: INSERT: id[integer]:1 name[text]:'ann'",
+                "table public.users: UPDATE: id[integer]:1 name[text]:'bob' old-key: name[text]:'ann'",
+                "table public.orders: DELETE: id[integer]:9"
+        ));
+
+        List<ChangeEvent> events = connector.poll();
+        assertEquals(3, events.size());
+        assertEquals(ChangeEvent.EventType.INSERT, events.get(0).getEventType());
+        assertEquals(ChangeEvent.EventType.UPDATE, events.get(1).getEventType());
+        assertEquals(ChangeEvent.EventType.DELETE, events.get(2).getEventType());
+        assertEquals("public", events.get(0).getDatabase());
+        assertEquals("users", events.get(0).getTable());
+        assertEquals("orders", events.get(2).getTable());
+        assertEquals("ann", events.get(0).getAfterData().get("name"));
+        assertEquals("bob", events.get(1).getAfterData().get("name"));
+        assertEquals("ann", events.get(1).getBeforeData().get("name"));
+    }
+
+    @Test
+    void quotedValuesKeepTheirSpacesAndEscapedQuotes() {
+        // Regression for CDC-M7: the old whitespace split turned "name[text]:'John Doe'" into
+        // name="John" and silently dropped the "Doe'" remainder.
+        CDCConfiguration config = CDCConfigurationBuilder.forPostgreSQLLogicalReplication("pg")
+                .postgresqlHostname("localhost")
+                .postgresqlPort(5432)
+                .postgresqlDatabase("db")
+                .username("u")
+                .password("p")
+                .build();
+
+        PostgreSQLLogicalReplicationCDCConnector connector = new PostgreSQLLogicalReplicationCDCConnector(config);
+        connector.running.set(true);
+        setField(connector, "replicationStream", null);
+        setField(connector, "tableFilter", null);
+
+        invokeParse(connector,
+                "table public.users: INSERT: id[integer]:7 name[text]:'John Doe' city[text]:'O''Hare' note[text]:plain");
+
+        List<ChangeEvent> events = connector.poll();
+        assertEquals(1, events.size());
+        assertEquals("John Doe", events.get(0).getAfterData().get("name"));
+        assertEquals("O'Hare", events.get(0).getAfterData().get("city"));
+        assertEquals("plain", events.get(0).getAfterData().get("note"));
+        assertEquals(7, events.get(0).getAfterData().get("id"));
+    }
+
     private static void invokeParse(PostgreSQLLogicalReplicationCDCConnector connector, String message) {
         try {
             Method m = PostgreSQLLogicalReplicationCDCConnector.class.getDeclaredMethod("parseLogicalMessage", String.class);

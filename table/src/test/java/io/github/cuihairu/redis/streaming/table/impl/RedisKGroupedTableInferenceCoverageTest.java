@@ -2,6 +2,7 @@ package io.github.cuihairu.redis.streaming.table.impl;
 
 import io.github.cuihairu.redis.streaming.table.KGroupedTable;
 import io.github.cuihairu.redis.streaming.table.KTable;
+import io.github.cuihairu.redis.streaming.table.TableAggregator;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RMap;
 import org.redisson.api.RedissonClient;
@@ -41,7 +42,7 @@ class RedisKGroupedTableInferenceCoverageTest {
         AtomicInteger initializerCalls = new AtomicInteger();
         KGroupedTable<String, String> grouped = source.groupBy(kv -> kv.getKey());
 
-        BiFunction<String, String, String> nullAdder = (k, v) -> null;
+        TableAggregator<String, String, String> nullAdder = (k, v, agg) -> null;
         RedisKTable<String, String> result = (RedisKTable<String, String>) grouped.aggregate(
                 () -> {
                     initializerCalls.incrementAndGet();
@@ -61,7 +62,7 @@ class RedisKGroupedTableInferenceCoverageTest {
         RedisKTable<String, String> source = sourceTable(redisson, Map.of("\"k1\"", "null"));
 
         KGroupedTable<String, String> grouped = source.groupBy(kv -> kv.getKey());
-        BiFunction<String, String, String> adder = (k, v) -> v;
+        TableAggregator<String, String, String> adder = (k, v, agg) -> v;
 
         RedisKTable<String, String> result = (RedisKTable<String, String>) grouped.aggregate(() -> "seed", adder, adder);
 

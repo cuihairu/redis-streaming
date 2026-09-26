@@ -16,15 +16,15 @@ public interface KGroupedTable<K, V> extends Serializable {
      * Aggregate the grouped table
      *
      * @param initializer Function to create the initial aggregate value
-     * @param adder Function to add a value to the aggregate
-     * @param subtractor Function to subtract a value from the aggregate
+     * @param adder Function to fold a value into the aggregate (receives the running aggregate)
+     * @param subtractor Function to remove a value from the aggregate (receives the running aggregate)
      * @param <VR> The type of the aggregate result
      * @return A KTable with aggregated values
      */
     <VR> KTable<K, VR> aggregate(
             java.util.function.Supplier<VR> initializer,
-            BiFunction<K, V, VR> adder,
-            BiFunction<K, V, VR> subtractor
+            TableAggregator<K, V, VR> adder,
+            TableAggregator<K, V, VR> subtractor
     );
 
     /**

@@ -17,6 +17,11 @@ public class TumblingWindow<T> implements WindowAssigner<T> {
     private final long size;
 
     private TumblingWindow(long size) {
+        // B-11: a ZERO/negative size used to surface later as ArithmeticException (%0),
+        // silently-inverted windows (end <= start) or elements vanishing from every window.
+        if (size <= 0) {
+            throw new IllegalArgumentException("TumblingWindow size must be positive, got " + size + "ms");
+        }
         this.size = size;
     }
 
@@ -30,7 +35,8 @@ public class TumblingWindow<T> implements WindowAssigner<T> {
 
     @Override
     public Iterable<Window> assignWindows(T element, long timestamp) {
-        long start = timestamp - (timestamp % size);
+        // floorMod (not %) keeps pre-epoch timestamps aligned into the window before them (B-21).
+        long start = timestamp - Math.floorMod(timestamp, size);
         return Collections.singletonList(new TimeWindow(start, start + size));
     }
 

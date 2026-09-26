@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -97,5 +98,33 @@ class JdbcBrokerPersistenceJsonEscapingTest {
 
         assertEquals("42", persistence.append("t", 0, m));
         verify(preparedStatement).setString(eq(5), anyString());
+    }
+
+    @Test
+    void appendEscapesControlCharactersInHeaders() throws Exception {
+        // Regression for MQ-10: raw newlines/tabs/control chars inside a JSON string are illegal
+        // (RFC 8259) and corrupted the stored headers column.
+        Message m = new Message();
+        m.setTopic("t");
+        m.setTimestamp(Instant.now());
+        Map<String, String> headers = new HashMap<>();
+        headers.put("error", "boom\nsecond\tline\r\n");
+        headers.put("ctrl", "a\u0001b");
+        m.setHeaders(headers);
+
+        assertEquals("42", persistence.append("t", 0, m));
+
+        org.mockito.ArgumentCaptor<String> captor = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(preparedStatement).setString(eq(5), captor.capture());
+        String json = captor.getValue();
+        // No raw control character may remain inside the JSON text.
+        for (int i = 0; i < json.length(); i++) {
+            assertTrue(json.charAt(i) >= 0x20, "raw control char at " + i + " in: " + json);
+        }
+        // And the written JSON must parse back to the original values.
+        java.util.Map<String, String> parsed = new com.fasterxml.jackson.databind.ObjectMapper()
+                .readValue(json, new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, String>>() {});
+        assertEquals("boom\nsecond\tline\r\n", parsed.get("error"));
+        assertEquals("a\u0001b", parsed.get("ctrl"));
     }
 }

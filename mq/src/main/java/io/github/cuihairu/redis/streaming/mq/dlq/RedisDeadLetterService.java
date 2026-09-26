@@ -152,7 +152,7 @@ public class RedisDeadLetterService implements DeadLetterService {
                 MqMetrics.get().recordDlqReplay(originalTopic, pid, ok, dur);
                 return ok;
             } else {
-                String streamKey = ("stream:topic" + ":" + originalTopic + ":p:" + pid);
+                String streamKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(originalTopic, pid);
                 RStream<String, Object> orig = redissonClient.getStream(streamKey);
                 Map<String, Object> replay = DeadLetterCodec.buildPartitionEntryFromDlq(data, originalTopic, pid);
 

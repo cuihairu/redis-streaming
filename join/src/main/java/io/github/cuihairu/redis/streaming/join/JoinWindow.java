@@ -65,7 +65,12 @@ public class JoinWindow implements Serializable {
     }
 
     /**
-     * Check if a timestamp falls within the join window relative to a reference timestamp
+     * Check if a timestamp falls within the join window relative to a reference timestamp.
+     *
+     * <p>When used for stream joins, the reference must always be the <em>left</em> element's
+     * timestamp and the candidate the <em>right</em> element's timestamp: a pair matches iff
+     * {@code rightTs - leftTs} lies in {@code [-before, +after]}. Both sides of the join must
+     * evaluate this same predicate so that matching is independent of arrival order.
      *
      * @param referenceTimestamp The reference timestamp
      * @param candidateTimestamp The candidate timestamp to check

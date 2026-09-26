@@ -665,7 +665,7 @@ public final class RedisStreamExecutionEnvironment {
                     if (total <= 0) {
                         break;
                     }
-                    if (drainTimeout != null && drainTimeout.toMillis() > 0 && System.currentTimeMillis() > deadline) {
+                    if (System.currentTimeMillis() > deadline) {
                         log.warn("Checkpoint drain timeout (jobName={}, inFlight={})", config.getJobName(), total);
                         break;
                     }

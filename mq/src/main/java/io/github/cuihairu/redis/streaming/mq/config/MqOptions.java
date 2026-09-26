@@ -86,7 +86,7 @@ public class MqOptions {
         public Builder rebalanceIntervalSec(int v){ o.rebalanceIntervalSec = Math.max(1, v); return this; }
         public Builder renewIntervalSec(int v){ o.renewIntervalSec = Math.max(1, v); return this; }
         public Builder pendingScanIntervalSec(int v){ o.pendingScanIntervalSec = Math.max(1, v); return this; }
-        public Builder claimIdleMs(long v){ o.claimIdleMs = Math.max(0, v); return this; }
+        public Builder claimIdleMs(long v){ o.claimIdleMs = Math.max(1, v); return this; }
         public Builder claimBatchSize(int v){ o.claimBatchSize = Math.max(1, v); return this; }
         public Builder maxInFlight(int v){ o.maxInFlight = Math.max(0, v); return this; }
         public Builder maxLeasedPartitionsPerConsumer(int v){ o.maxLeasedPartitionsPerConsumer = Math.max(0, v); return this; }

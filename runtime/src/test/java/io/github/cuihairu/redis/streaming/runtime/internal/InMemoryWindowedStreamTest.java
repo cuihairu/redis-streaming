@@ -34,10 +34,12 @@ class InMemoryWindowedStreamTest {
 
         @Override
         public Trigger<T> getDefaultTrigger() {
+            // Batch semantics: never fire early, let the end-of-input flush emit once per window.
+            // (Trigger-driven early firing is covered by InMemoryWindowedStreamTriggerTest.)
             return new Trigger<>() {
                 @Override
                 public TriggerResult onElement(T element, long timestamp, Window window) {
-                    return TriggerResult.FIRE;
+                    return TriggerResult.CONTINUE;
                 }
 
                 @Override

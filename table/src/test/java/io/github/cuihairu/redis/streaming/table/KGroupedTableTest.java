@@ -28,7 +28,7 @@ class KGroupedTableTest {
     void testAggregateMethodExists() throws NoSuchMethodException {
         // Given & When & Then
         assertNotNull(KGroupedTable.class.getMethod("aggregate",
-                Supplier.class, BiFunction.class, BiFunction.class));
+                Supplier.class, TableAggregator.class, TableAggregator.class));
     }
 
     @Test
@@ -51,8 +51,8 @@ class KGroupedTableTest {
             @Override
             public <VR> KTable<String, VR> aggregate(
                     Supplier<VR> initializer,
-                    BiFunction<String, Integer, VR> adder,
-                    BiFunction<String, Integer, VR> subtractor) {
+                    TableAggregator<String, Integer, VR> adder,
+                    TableAggregator<String, Integer, VR> subtractor) {
                 // Return a simple table implementation
                 return new KTable<String, VR>() {
                     @Override
@@ -140,7 +140,7 @@ class KGroupedTableTest {
         };
 
         // When & Then - verify methods can be called
-        assertDoesNotThrow(() -> groupedTable.aggregate(() -> 0, (k, v) -> v, (k, v) -> v));
+        assertDoesNotThrow(() -> groupedTable.aggregate(() -> 0, (k, v, agg) -> v, (k, v, agg) -> v));
         assertDoesNotThrow(() -> groupedTable.count());
         assertDoesNotThrow(() -> groupedTable.reduce((a, b) -> a + b, (a, b) -> a));
     }
@@ -152,8 +152,8 @@ class KGroupedTableTest {
             @Override
             public <VR> KTable<String, VR> aggregate(
                     Supplier<VR> initializer,
-                    BiFunction<String, Integer, VR> adder,
-                    BiFunction<String, Integer, VR> subtractor) {
+                    TableAggregator<String, Integer, VR> adder,
+                    TableAggregator<String, Integer, VR> subtractor) {
                 // Simulate sum aggregation
                 return null; // Just verify the method signature
             }
@@ -172,8 +172,8 @@ class KGroupedTableTest {
         // When & Then - should support sum aggregation
         assertDoesNotThrow(() -> groupedTable.aggregate(
                 () -> 0,
-                (key, value) -> value,
-                (key, value) -> value
+                (key, value, agg) -> value,
+                (key, value, agg) -> value
         ));
     }
 
@@ -184,8 +184,8 @@ class KGroupedTableTest {
             @Override
             public <VR> KTable<String, VR> aggregate(
                     Supplier<VR> initializer,
-                    BiFunction<String, Integer, VR> adder,
-                    BiFunction<String, Integer, VR> subtractor) {
+                    TableAggregator<String, Integer, VR> adder,
+                    TableAggregator<String, Integer, VR> subtractor) {
                 return null;
             }
 
@@ -203,8 +203,8 @@ class KGroupedTableTest {
         // When & Then - should support max aggregation
         assertDoesNotThrow(() -> groupedTable.aggregate(
                 () -> Integer.MIN_VALUE,
-                (key, value) -> value,
-                (key, value) -> value
+                (key, value, agg) -> value,
+                (key, value, agg) -> value
         ));
     }
 
@@ -215,8 +215,8 @@ class KGroupedTableTest {
             @Override
             public <VR> KTable<String, VR> aggregate(
                     Supplier<VR> initializer,
-                    BiFunction<String, Integer, VR> adder,
-                    BiFunction<String, Integer, VR> subtractor) {
+                    TableAggregator<String, Integer, VR> adder,
+                    TableAggregator<String, Integer, VR> subtractor) {
                 return null;
             }
 
@@ -234,8 +234,8 @@ class KGroupedTableTest {
         // When & Then - should support min aggregation
         assertDoesNotThrow(() -> groupedTable.aggregate(
                 () -> Integer.MAX_VALUE,
-                (key, value) -> value,
-                (key, value) -> value
+                (key, value, agg) -> value,
+                (key, value, agg) -> value
         ));
     }
 
@@ -246,8 +246,8 @@ class KGroupedTableTest {
             @Override
             public <VR> KTable<String, VR> aggregate(
                     Supplier<VR> initializer,
-                    BiFunction<String, String, VR> adder,
-                    BiFunction<String, String, VR> subtractor) {
+                    TableAggregator<String, String, VR> adder,
+                    TableAggregator<String, String, VR> subtractor) {
                 return null;
             }
 
@@ -273,8 +273,8 @@ class KGroupedTableTest {
             @Override
             public <VR> KTable<String, VR> aggregate(
                     Supplier<VR> initializer,
-                    BiFunction<String, Integer, VR> adder,
-                    BiFunction<String, Integer, VR> subtractor) {
+                    TableAggregator<String, Integer, VR> adder,
+                    TableAggregator<String, Integer, VR> subtractor) {
                 return null;
             }
 
@@ -303,8 +303,8 @@ class KGroupedTableTest {
             @Override
             public <VR> KTable<String, VR> aggregate(
                     Supplier<VR> initializer,
-                    BiFunction<String, Integer, VR> adder,
-                    BiFunction<String, Integer, VR> subtractor) {
+                    TableAggregator<String, Integer, VR> adder,
+                    TableAggregator<String, Integer, VR> subtractor) {
                 return null;
             }
 
@@ -333,8 +333,8 @@ class KGroupedTableTest {
             @Override
             public <VR> KTable<String, VR> aggregate(
                     Supplier<VR> initializer,
-                    BiFunction<String, Integer, VR> adder,
-                    BiFunction<String, Integer, VR> subtractor) {
+                    TableAggregator<String, Integer, VR> adder,
+                    TableAggregator<String, Integer, VR> subtractor) {
                 return null;
             }
 
@@ -353,8 +353,8 @@ class KGroupedTableTest {
             @Override
             public <VR> KTable<String, VR> aggregate(
                     Supplier<VR> initializer,
-                    BiFunction<String, String, VR> adder,
-                    BiFunction<String, String, VR> subtractor) {
+                    TableAggregator<String, String, VR> adder,
+                    TableAggregator<String, String, VR> subtractor) {
                 return null;
             }
 
@@ -381,8 +381,8 @@ class KGroupedTableTest {
             @Override
             public <VR> KTable<String, VR> aggregate(
                     Supplier<VR> initializer,
-                    BiFunction<String, Integer, VR> adder,
-                    BiFunction<String, Integer, VR> subtractor) {
+                    TableAggregator<String, Integer, VR> adder,
+                    TableAggregator<String, Integer, VR> subtractor) {
                 return null;
             }
 
@@ -410,13 +410,13 @@ class KGroupedTableTest {
 
         assertDoesNotThrow(() -> groupedTable.aggregate(
                 AverageAccumulator::new,
-                (key, value) -> {
+                (key, value, agg) -> {
                     AverageAccumulator acc = new AverageAccumulator();
                     acc.sum += value;
                     acc.count++;
                     return acc;
                 },
-                (key, value) -> {
+                (key, value, agg) -> {
                     AverageAccumulator acc = new AverageAccumulator();
                     acc.sum -= value;
                     acc.count--;
@@ -432,8 +432,8 @@ class KGroupedTableTest {
             @Override
             public <VR> KTable<Integer, VR> aggregate(
                     Supplier<VR> initializer,
-                    BiFunction<Integer, String, VR> adder,
-                    BiFunction<Integer, String, VR> subtractor) {
+                    TableAggregator<Integer, String, VR> adder,
+                    TableAggregator<Integer, String, VR> subtractor) {
                 return null;
             }
 
@@ -452,8 +452,8 @@ class KGroupedTableTest {
             @Override
             public <VR> KTable<Long, VR> aggregate(
                     Supplier<VR> initializer,
-                    BiFunction<Long, Double, VR> adder,
-                    BiFunction<Long, Double, VR> subtractor) {
+                    TableAggregator<Long, Double, VR> adder,
+                    TableAggregator<Long, Double, VR> subtractor) {
                 return null;
             }
 
@@ -480,8 +480,8 @@ class KGroupedTableTest {
             @Override
             public <VR> KTable<String, VR> aggregate(
                     Supplier<VR> initializer,
-                    BiFunction<String, Integer, VR> adder,
-                    BiFunction<String, Integer, VR> subtractor) {
+                    TableAggregator<String, Integer, VR> adder,
+                    TableAggregator<String, Integer, VR> subtractor) {
                 return null;
             }
 
@@ -498,7 +498,7 @@ class KGroupedTableTest {
 
         // When & Then - verify methods can be called and return KTable
         assertDoesNotThrow(() -> {
-            var aggregateResult = groupedTable.aggregate(() -> 0, (k, v) -> v, (k, v) -> v);
+            var aggregateResult = groupedTable.aggregate(() -> 0, (k, v, agg) -> v, (k, v, agg) -> v);
             var countResult = groupedTable.count();
             var reduceResult = groupedTable.reduce((a, b) -> a + b, (a, b) -> a);
             // All should return KTable (or null for this stub implementation)

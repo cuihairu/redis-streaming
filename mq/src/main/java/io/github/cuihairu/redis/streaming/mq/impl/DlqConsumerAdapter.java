@@ -47,6 +47,9 @@ public class DlqConsumerAdapter implements MessageConsumer {
         this.delegate = new RedisDeadLetterConsumer(client, consumerName,
                 options != null ? options.getDefaultDlqGroup() : "dlq-group",
                 replay);
+        io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.configure(
+                options != null ? options.getKeyPrefix() : null,
+                options != null ? options.getStreamKeyPrefix() : "stream:topic");
         io.github.cuihairu.redis.streaming.mq.dlq.DlqKeys.configure(
                 options != null ? options.getStreamKeyPrefix() : "stream:topic");
     }
@@ -77,24 +80,10 @@ public class DlqConsumerAdapter implements MessageConsumer {
         switch (r) {
             case SUCCESS:
                 return DeadLetterConsumer.HandleResult.SUCCESS;
-            case RETRY: {
-                try {
-                    int pid = e.getPartitionId();
-                    String topic = e.getOriginalTopic();
-                    String key = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, pid);
-                    org.redisson.api.RStream<String, Object> p = client.getStream(key, org.redisson.client.codec.StringCodec.INSTANCE);
-                    java.util.Map<String,Object> d = new java.util.HashMap<>();
-                    d.put("payload", (e.getPayload() instanceof String) ? e.getPayload() : toJson(e.getPayload()));
-                    d.put("timestamp", java.time.Instant.now().toString());
-                    d.put("retryCount", 0);
-                    d.put("maxRetries", Math.max(1, e.getMaxRetries()));
-                    d.put("topic", topic);
-                    d.put("partitionId", pid);
-                    if (e.getHeaders() != null && !e.getHeaders().isEmpty()) d.put("headers", toJson(e.getHeaders()));
-                    p.add(org.redisson.api.stream.StreamAddArgs.entries(d));
-                } catch (Exception ignore) {}
+            case RETRY:
+                // The delegate's replay handler publishes the message exactly once; doing our own
+                // XADD here as well used to deliver a second copy to the business topic (MQ-02).
                 return DeadLetterConsumer.HandleResult.RETRY;
-            }
             case FAIL:
             case DEAD_LETTER:
                 return DeadLetterConsumer.HandleResult.FAIL;

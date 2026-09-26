@@ -13,6 +13,11 @@ public class CountTrigger<T> implements WindowAssigner.Trigger<T> {
     private long currentCount = 0;
 
     public CountTrigger(long maxCount) {
+        // B-39: maxCount <= 0 made every element satisfy currentCount >= maxCount, firing the
+        // window on each single element with no validation error pointing at the bad config.
+        if (maxCount <= 0) {
+            throw new IllegalArgumentException("CountTrigger maxCount must be positive, got " + maxCount);
+        }
         this.maxCount = maxCount;
     }
 

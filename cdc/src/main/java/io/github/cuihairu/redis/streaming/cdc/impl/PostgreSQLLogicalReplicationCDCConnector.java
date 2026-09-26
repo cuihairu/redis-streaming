@@ -100,7 +100,9 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
             connection.close();
         }
 
-        eventQueue.clear();
+        // eventQueue is intentionally NOT cleared: on restart the stream resumes at
+        // lastReceivedLSN, which is already past those queued events — clearing the queue here
+        // used to permanently drop every captured-but-undelivered event (CDC-H2).
     }
 
     @Override
@@ -250,7 +252,11 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
             if (tableMatcher.find()) {
                 currentDatabase = tableMatcher.group(1);
                 currentTable = tableMatcher.group(2);
-                continue;
+                // Real test_decoding emits the table prefix and the operation on ONE line
+                // ("table public.users: INSERT: id[integer]:1 ..."); only the synthetic
+                // multi-line format separates them. Falling through (instead of `continue`)
+                // lets the operation matchers see the remainder of the same line — the old
+                // unconditional skip dropped every event of a real replication stream (CDC-C1).
             }
 
             if (currentTable == null || currentDatabase == null) {
@@ -336,30 +342,104 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
             return result;
         }
 
-        // Simple parsing for test_decoding format: col1[type]:value col2[type]:value
-        String[] columns = data.split("\\s+");
-        for (String column : columns) {
+        // Simple parsing for the test_decoding format: col1[type]:value col2[type]:value.
+        // Values may be single-quoted, and a quoted value may contain the very spaces that
+        // separate columns — the old naive whitespace split corrupted such rows
+        // ("name[text]:'John Doe'" yielded "John" and dropped "Doe'", CDC-M7).
+        int i = 0;
+        int n = data.length();
+        while (i < n) {
+            while (i < n && Character.isWhitespace(data.charAt(i))) {
+                i++;
+            }
+            if (i >= n) {
+                break;
+            }
+            int start = i;
+            boolean inQuote = false;
+            while (i < n) {
+                char c = data.charAt(i);
+                if (inQuote) {
+                    if (c == '\'') {
+                        inQuote = false;
+                    }
+                    i++;
+                } else if (c == '\'') {
+                    inQuote = true;
+                    i++;
+                } else if (Character.isWhitespace(c)) {
+                    break;
+                } else {
+                    i++;
+                }
+            }
+            String column = data.substring(start, i);
             if (column.contains(":")) {
                 String[] parts = column.split(":", 2);
                 if (parts.length == 2) {
-                    String columnName = parts[0].replaceAll("\\[.*?\\]", ""); // Remove type info
+                    String header = parts[0];
+                    String type = null;
+                    int lt = header.indexOf('[');
+                    int gt = header.lastIndexOf(']');
+                    if (lt >= 0 && gt > lt) {
+                        type = header.substring(lt + 1, gt).trim().toLowerCase(Locale.ROOT);
+                    }
+                    String columnName = header.replaceAll("\\[.*?\\]", ""); // Remove type info
                     String value = parts[1];
 
                     // Handle null values
                     if ("null".equals(value)) {
                         result.put(columnName, null);
                     } else {
-                        // Remove quotes if present
-                        if (value.startsWith("'") && value.endsWith("'")) {
-                            value = value.substring(1, value.length() - 1);
+                        // Remove quotes if present; '' inside a quoted value is an escaped quote
+                        if (value.startsWith("'") && value.endsWith("'") && value.length() >= 2) {
+                            value = value.substring(1, value.length() - 1).replace("''", "'");
                         }
-                        result.put(columnName, value);
+                        result.put(columnName, coerceByPgType(type, value));
                     }
                 }
             }
         }
 
         return result;
+    }
+
+    /**
+     * Convert a test_decoding payload value according to its declared PostgreSQL type.
+     * Unparseable or unsupported types fall back to the raw String so a weird value
+     * never breaks CDC ingestion.
+     */
+    private static Object coerceByPgType(String type, String value) {
+        if (type == null) {
+            return value;
+        }
+        try {
+            switch (type) {
+                case "integer":
+                case "int":
+                case "int4":
+                case "smallint":
+                case "int2":
+                    return Integer.valueOf(value);
+                case "bigint":
+                case "int8":
+                    return Long.valueOf(value);
+                case "numeric":
+                case "decimal":
+                case "real":
+                case "double precision":
+                case "float4":
+                case "float8":
+                    return Double.valueOf(value);
+                case "boolean":
+                case "bool":
+                    return Boolean.valueOf(value);
+                default:
+                    return value;
+            }
+        } catch (NumberFormatException e) {
+            return value;
+        }
     }
 
     private void setEventMetadata(ChangeEvent changeEvent) {

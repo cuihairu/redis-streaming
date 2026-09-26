@@ -2,6 +2,7 @@ package io.github.cuihairu.redis.streaming.table.impl;
 
 import io.github.cuihairu.redis.streaming.table.KGroupedTable;
 import io.github.cuihairu.redis.streaming.table.KTable;
+import io.github.cuihairu.redis.streaming.table.TableAggregator;
 import org.redisson.api.RedissonClient;
 
 import java.util.HashMap;
@@ -30,8 +31,8 @@ public final class RedisKGroupedTable<KS, K, V> implements KGroupedTable<K, V> {
 
     @Override
     public <VR> KTable<K, VR> aggregate(Supplier<VR> initializer,
-                                       BiFunction<K, V, VR> adder,
-                                       BiFunction<K, V, VR> subtractor) {
+                                       TableAggregator<K, V, VR> adder,
+                                       TableAggregator<K, V, VR> subtractor) {
         Objects.requireNonNull(initializer, "initializer");
         Objects.requireNonNull(adder, "adder");
 
@@ -51,8 +52,8 @@ public final class RedisKGroupedTable<KS, K, V> implements KGroupedTable<K, V> {
                 inferredKeyClass = c;
             }
 
-            aggregates.computeIfAbsent(key, ignored -> initializer.get());
-            VR aggregate = adder.apply(key, entry.getValue());
+            VR current = aggregates.containsKey(key) ? aggregates.get(key) : initializer.get();
+            VR aggregate = adder.apply(key, entry.getValue(), current);
             aggregates.put(key, aggregate);
             if (inferredValueClass == null && aggregate != null) {
                 @SuppressWarnings("unchecked")

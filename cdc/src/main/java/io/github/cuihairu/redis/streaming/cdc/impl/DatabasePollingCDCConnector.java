@@ -123,8 +123,10 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
     @Override
     protected void doCommit(String position) throws Exception {
         if (position != null && position.contains(":")) {
-            String[] parts = position.split(":");
-            if (parts.length >= 2) {
+            // split with limit 2: the watermark value itself contains colons (timestamps like
+            // "2024-01-01 10:15:30.0"); the old unlimited split kept only "2024-01-01 10" (CDC-H4).
+            String[] parts = position.split(":", 2);
+            if (parts.length == 2 && !parts[0].isEmpty() && !parts[1].isEmpty()) {
                 String table = parts[0];
                 String value = parts[1];
                 lastPolledValues.put(table, value);
@@ -136,8 +138,9 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
     @Override
     protected void doResetToPosition(String position) throws Exception {
         if (position != null && position.contains(":")) {
-            String[] parts = position.split(":");
-            if (parts.length >= 2) {
+            // Same limit-2 split as doCommit — see CDC-H4.
+            String[] parts = position.split(":", 2);
+            if (parts.length == 2 && !parts[0].isEmpty() && !parts[1].isEmpty()) {
                 String table = parts[0];
                 String value = parts[1];
                 lastPolledValues.put(table, value);

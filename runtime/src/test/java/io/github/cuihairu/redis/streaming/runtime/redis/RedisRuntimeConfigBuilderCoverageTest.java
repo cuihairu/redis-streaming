@@ -55,6 +55,13 @@ class RedisRuntimeConfigBuilderCoverageTest {
         assertEquals(Duration.ZERO, nulled.getWindowAllowedLateness());
         assertEquals(Duration.ZERO, nulled.getCheckpointInterval());
         assertEquals(Duration.ofSeconds(30), nulled.getCheckpointDrainTimeout());
+
+        // Regression for RT-M1: a ZERO (or negative) drain timeout used to disable the drain
+        // deadline, deadlocking the checkpoint loop with all consumers paused.
+        assertEquals(Duration.ofSeconds(30), RedisRuntimeConfig.builder()
+                .checkpointDrainTimeout(Duration.ZERO).build().getCheckpointDrainTimeout());
+        assertEquals(Duration.ofSeconds(30), RedisRuntimeConfig.builder()
+                .checkpointDrainTimeout(Duration.ofSeconds(-5)).build().getCheckpointDrainTimeout());
         assertNotNull(nulled.getMqOptions());
         assertEquals(RedisRuntimeConfig.StateSchemaMismatchPolicy.FAIL, nulled.getStateSchemaMismatchPolicy());
         assertEquals(MessageHandleResult.RETRY, nulled.getProcessingErrorResult());

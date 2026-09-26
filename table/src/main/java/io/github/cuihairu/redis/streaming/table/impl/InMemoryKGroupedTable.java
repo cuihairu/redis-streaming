@@ -2,6 +2,7 @@ package io.github.cuihairu.redis.streaming.table.impl;
 
 import io.github.cuihairu.redis.streaming.table.KGroupedTable;
 import io.github.cuihairu.redis.streaming.table.KTable;
+import io.github.cuihairu.redis.streaming.table.TableAggregator;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -33,21 +34,21 @@ public class InMemoryKGroupedTable<K, V> implements KGroupedTable<K, V> {
     @Override
     public <VR> KTable<K, VR> aggregate(
             java.util.function.Supplier<VR> initializer,
-            BiFunction<K, V, VR> adder,
-            BiFunction<K, V, VR> subtractor) {
+            TableAggregator<K, V, VR> adder,
+            TableAggregator<K, V, VR> subtractor) {
 
         Map<K, VR> aggregates = new ConcurrentHashMap<>();
 
         sourceTable.getState().forEach((key, value) -> {
             KTable.KeyValue<Object, V> kv = KTable.KeyValue.of(key, value);
             K newKey = keySelector.apply(kv);
+            if (newKey == null) {
+                // Match the Redis implementation: rows selecting a null group key are skipped.
+                return;
+            }
 
-            aggregates.compute(newKey, (k, current) -> {
-                if (current == null) {
-                    current = initializer.get();
-                }
-                return adder.apply(k, value);
-            });
+            aggregates.compute(newKey, (k, current) ->
+                    adder.apply(k, value, current == null ? initializer.get() : current));
         });
 
         return new InMemoryKTable<>(aggregates);
@@ -60,6 +61,9 @@ public class InMemoryKGroupedTable<K, V> implements KGroupedTable<K, V> {
         sourceTable.getState().forEach((key, value) -> {
             KTable.KeyValue<Object, V> kv = KTable.KeyValue.of(key, value);
             K newKey = keySelector.apply(kv);
+            if (newKey == null) {
+                return;
+            }
             counts.merge(newKey, 1L, Long::sum);
         });
 
@@ -73,6 +77,9 @@ public class InMemoryKGroupedTable<K, V> implements KGroupedTable<K, V> {
         sourceTable.getState().forEach((key, value) -> {
             KTable.KeyValue<Object, V> kv = KTable.KeyValue.of(key, value);
             K newKey = keySelector.apply(kv);
+            if (newKey == null) {
+                return;
+            }
 
             reduced.compute(newKey, (k, current) -> {
                 if (current == null) {

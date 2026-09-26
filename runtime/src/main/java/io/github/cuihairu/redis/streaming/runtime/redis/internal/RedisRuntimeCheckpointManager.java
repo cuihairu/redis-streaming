@@ -287,7 +287,12 @@ public final class RedisRuntimeCheckpointManager {
                     Object v = frontier.get(p.consumerGroup());
                     committed = v == null ? null : String.valueOf(v);
                 } catch (Exception ex) {
-                    log.debug("Checkpoint state operation failed", ex);
+                    // RT-M5: a transient Redis error here records no offset, and restore then
+                    // rewinds this partition to 0-0 (full reprocess) — that deserves a warning,
+                    // not a debug line that hides the rewind.
+                    log.warn("Failed to read commit frontier for topic={}, group={}, partition={}; "
+                            + "restore will rewind this partition to 0-0",
+                            p.topic(), p.consumerGroup(), pid, ex);
                 }
                 perPartition.put(pid, committed);
             }
@@ -416,18 +421,37 @@ public final class RedisRuntimeCheckpointManager {
             }
             int pc = Math.max(1, partitionRegistry.getPartitionCount(p.topic()));
             for (int pid = 0; pid < pc; pid++) {
-                String id = perPartition.get(pid);
+                String id = offsetForPartition(perPartition, pid);
                 String startId = (id == null || id.isBlank()) ? "0-0" : id;
                 String streamKey = StreamKeys.partitionStream(p.topic(), pid);
                 try {
                     script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.STRING,
                             java.util.Collections.singletonList(streamKey), p.consumerGroup(), startId);
                 } catch (Exception e) {
-                    log.debug("Failed to restore group offset: topic={}, group={}, partition={}, id={}",
+                    log.warn("Failed to restore group offset: topic={}, group={}, partition={}, id={}",
                             p.topic(), p.consumerGroup(), pid, startId, e);
                 }
             }
         }
+    }
+
+    /**
+     * Looks up a partition's committed offset tolerating the JSON round-trip through
+     * {@code RedisCheckpointStorage}: the snapshot is built with {@code Integer} keys, but the
+     * default Jackson codec stringifies them on write, so the deserialized map is keyed by
+     * {@code String}. The plain {@code get(pid)} lookup used to miss every entry, silently
+     * rewinding every restored consumer group to {@code 0-0} (RT-H1).
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static String offsetForPartition(Map<Integer, String> perPartition, int pid) {
+        String id = perPartition.get(pid);
+        if (id == null) {
+            Object v = ((Map) perPartition).get(String.valueOf(pid));
+            if (v != null) {
+                id = String.valueOf(v);
+            }
+        }
+        return id;
     }
 
     private void restoreState(Checkpoint checkpoint) {

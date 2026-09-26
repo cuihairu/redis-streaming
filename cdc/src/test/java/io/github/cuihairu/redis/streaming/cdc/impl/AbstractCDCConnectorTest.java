@@ -36,6 +36,23 @@ class AbstractCDCConnectorTest {
         connector.setEventListener(mockListener);
     }
 
+    /**
+     * Connector without background scheduled polling (interval 0). Tests that drive {@code poll()}
+     * manually must use this variant: the shared {@code connector} polls every 100ms on a
+     * scheduler thread, which races the manual call for batches and error counters.
+     */
+    private TestCDCConnector pullConnector() {
+        CDCConfiguration pullConfig = CDCConfigurationBuilder.forDatabasePolling("test-connector")
+                .jdbcUrl("jdbc:h2:mem:test")
+                .username("sa")
+                .password("")
+                .pollingIntervalMs(0)
+                .build();
+        TestCDCConnector pull = new TestCDCConnector(pullConfig);
+        pull.setEventListener(mockListener);
+        return pull;
+    }
+
     @Test
     void testStart() throws Exception {
         // When
@@ -65,22 +82,23 @@ class AbstractCDCConnectorTest {
     @Test
     void testPollWhenRunning() throws Exception {
         // Given
+        TestCDCConnector pull = pullConnector();
         ChangeEvent event = new ChangeEvent(
                 ChangeEvent.EventType.INSERT,
                 "test-db",
                 "test-table",
                 Map.of("id", 1, "name", "test")
         );
-        connector.addEventToReturn(event);
-        connector.start().get(5, TimeUnit.SECONDS);
+        pull.addEventToReturn(event);
+        pull.start().get(5, TimeUnit.SECONDS);
 
         // When
-        List<ChangeEvent> events = connector.poll();
+        List<ChangeEvent> events = pull.poll();
 
         // Then
         assertThat(events).hasSize(1);
         assertThat(events.get(0)).isEqualTo(event);
-        assertThat(connector.getMetrics().getTotalEventsCaptured()).isEqualTo(1);
+        assertThat(pull.getMetrics().getTotalEventsCaptured()).isEqualTo(1);
         verify(mockListener).onEventsCapture("test-connector", 1);
     }
 
@@ -214,16 +232,17 @@ class AbstractCDCConnectorTest {
                 Map.of("id", 3),
                 null
         );
-        connector.addEventToReturn(insertEvent, updateEvent, deleteEvent);
-        connector.start().get(5, TimeUnit.SECONDS);
+        TestCDCConnector pull = pullConnector();
+        pull.addEventToReturn(insertEvent, updateEvent, deleteEvent);
+        pull.start().get(5, TimeUnit.SECONDS);
 
         // When
-        connector.poll();
-        connector.poll();
-        connector.poll();
+        pull.poll();
+        pull.poll();
+        pull.poll();
 
         // Then
-        CDCMetrics metrics = connector.getMetrics();
+        CDCMetrics metrics = pull.getMetrics();
         assertThat(metrics.getInsertEvents()).isEqualTo(1);
         assertThat(metrics.getUpdateEvents()).isEqualTo(1);
         assertThat(metrics.getDeleteEvents()).isEqualTo(1);
@@ -233,16 +252,17 @@ class AbstractCDCConnectorTest {
     @Test
     void testPollWithError() throws Exception {
         // Given
-        connector.start().get(5, TimeUnit.SECONDS);
-        connector.setShouldThrowOnPoll(true);
+        TestCDCConnector pull = pullConnector();
+        pull.start().get(5, TimeUnit.SECONDS);
+        pull.setShouldThrowOnPoll(true);
 
         // When
-        List<ChangeEvent> events = connector.poll();
+        List<ChangeEvent> events = pull.poll();
 
         // Then
         assertThat(events).isEmpty();
-        assertThat(connector.getMetrics().getErrorsCount()).isEqualTo(1);
-        assertThat(connector.getHealthStatus().getStatus()).isEqualTo(CDCHealthStatus.Status.DEGRADED);
+        assertThat(pull.getMetrics().getErrorsCount()).isEqualTo(1);
+        assertThat(pull.getHealthStatus().getStatus()).isEqualTo(CDCHealthStatus.Status.DEGRADED);
         verify(mockListener).onConnectorError(eq("test-connector"), any(Exception.class));
     }
 
@@ -322,10 +342,11 @@ class AbstractCDCConnectorTest {
     @Test
     void testEventListenerNotificationException() throws Exception {
         // Given
+        TestCDCConnector pull = pullConnector();
         CDCEventListener failingListener = mock(CDCEventListener.class);
         doThrow(new RuntimeException("Listener error"))
                 .when(failingListener).onEventsCapture(any(), anyInt());
-        connector.setEventListener(failingListener);
+        pull.setEventListener(failingListener);
 
         ChangeEvent event = new ChangeEvent(
                 ChangeEvent.EventType.INSERT,
@@ -333,15 +354,15 @@ class AbstractCDCConnectorTest {
                 "test-table",
                 Map.of("id", 1)
         );
-        connector.addEventToReturn(event);
-        connector.start().get(5, TimeUnit.SECONDS);
+        pull.addEventToReturn(event);
+        pull.start().get(5, TimeUnit.SECONDS);
 
         // When - should not throw exception
-        List<ChangeEvent> events = connector.poll();
+        List<ChangeEvent> events = pull.poll();
 
         // Then
         assertThat(events).hasSize(1);
-        assertThat(connector.getMetrics().getTotalEventsCaptured()).isEqualTo(1);
+        assertThat(pull.getMetrics().getTotalEventsCaptured()).isEqualTo(1);
     }
 
     @Test

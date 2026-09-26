@@ -563,25 +563,26 @@ class MqOptionsTest {
     }
 
     @Test
-    void testBuilderWithClaimIdleMsZeroAllowed() {
-        // Given & When - branch: Math.max(0, v) allows 0
+    void testBuilderWithClaimIdleMsZeroClampedToOne() {
+        // Regression for MQ-09: claimIdleMs(0) used to be accepted, which made the pending
+        // scanner steal messages that were still being handled (idle > 0ms is instantly true).
         MqOptions options = MqOptions.builder()
             .claimIdleMs(0)
             .build();
 
         // Then
-        assertEquals(0, options.getClaimIdleMs());
+        assertEquals(1, options.getClaimIdleMs());
     }
 
     @Test
-    void testBuilderWithClaimIdleMsNegativeClampedToZero() {
+    void testBuilderWithClaimIdleMsNegativeClampedToOne() {
         // Given & When
         MqOptions options = MqOptions.builder()
             .claimIdleMs(-1000)
             .build();
 
         // Then
-        assertEquals(0, options.getClaimIdleMs());
+        assertEquals(1, options.getClaimIdleMs());
     }
 
     @Test

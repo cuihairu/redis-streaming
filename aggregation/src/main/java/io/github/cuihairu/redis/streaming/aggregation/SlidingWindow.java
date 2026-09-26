@@ -1,6 +1,5 @@
 package io.github.cuihairu.redis.streaming.aggregation;
 
-import lombok.AllArgsConstructor;
 import lombok.Data;
 
 import java.time.Duration;
@@ -12,17 +11,30 @@ import java.util.List;
  * Sliding time window implementation
  */
 @Data
-@AllArgsConstructor
 public class SlidingWindow implements TimeWindow {
 
     private final Duration size;
     private final Duration slide;
 
+    // Explicit constructor replacing @AllArgsConstructor so the B-11 guards cannot be
+    // bypassed by constructing the class directly.
+    public SlidingWindow(Duration size, Duration slide) {
+        if (size == null || size.isZero() || size.isNegative()) {
+            throw new IllegalArgumentException("SlidingWindow size must be a positive duration, got " + size);
+        }
+        if (slide == null || slide.isZero() || slide.isNegative()) {
+            throw new IllegalArgumentException("SlidingWindow slide must be a positive duration, got " + slide);
+        }
+        this.size = size;
+        this.slide = slide;
+    }
+
     @Override
     public Instant getWindowStart(Instant timestamp) {
         long epochMilli = timestamp.toEpochMilli();
         long slideMs = slide.toMillis();
-        long windowStart = (epochMilli / slideMs) * slideMs;
+        // floorDiv (not /) keeps pre-epoch timestamps aligned into the window before them (B-21).
+        long windowStart = Math.floorDiv(epochMilli, slideMs) * slideMs;
         return Instant.ofEpochMilli(windowStart);
     }
 
@@ -45,7 +57,7 @@ public class SlidingWindow implements TimeWindow {
 
         // Find the earliest window that could contain this timestamp
         long earliestStart = timestampMs - sizeMs + 1;
-        long startWindow = (earliestStart / slideMs) * slideMs;
+        long startWindow = Math.floorDiv(earliestStart, slideMs) * slideMs;
 
         // Generate all windows that contain this timestamp
         for (long windowStart = startWindow; windowStart <= timestampMs; windowStart += slideMs) {
@@ -66,10 +78,13 @@ public class SlidingWindow implements TimeWindow {
      * @return sliding window instance
      */
     public static SlidingWindow of(Duration size, Duration slide) {
+        // Construct first so null/zero/negative arguments fail the constructor guards with a
+        // clear IAE instead of an NPE from the compareTo below.
+        SlidingWindow window = new SlidingWindow(size, slide);
         if (slide.compareTo(size) > 0) {
             throw new IllegalArgumentException("Slide duration cannot be larger than window size");
         }
-        return new SlidingWindow(size, slide);
+        return window;
     }
 
     /**

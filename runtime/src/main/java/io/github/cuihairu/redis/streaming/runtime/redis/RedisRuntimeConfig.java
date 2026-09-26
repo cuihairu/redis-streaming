@@ -568,7 +568,13 @@ public final class RedisRuntimeConfig {
         }
 
         public Builder checkpointDrainTimeout(Duration timeout) {
-            this.checkpointDrainTimeout = timeout == null ? Duration.ofSeconds(30) : timeout;
+            // RT-M1: a ZERO/negative timeout used to disable the drain deadline entirely, turning
+            // the checkpoint drain loop into an infinite loop with all consumers paused. Only a
+            // strictly positive duration is meaningful; anything else falls back to the default.
+            this.checkpointDrainTimeout =
+                    (timeout == null || timeout.isZero() || timeout.isNegative())
+                            ? Duration.ofSeconds(30)
+                            : timeout;
             return this;
         }
 

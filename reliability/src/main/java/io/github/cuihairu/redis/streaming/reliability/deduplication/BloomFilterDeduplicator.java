@@ -23,6 +23,8 @@ public class BloomFilterDeduplicator<T> implements Deduplicator<T> {
 
     private final RBloomFilter<String> bloomFilter;
     private final Function<T, String> keyExtractor;
+    private final long expectedInsertions;
+    private final double falseProbability;
     private long seenCount = 0;
 
     /**
@@ -69,6 +71,8 @@ public class BloomFilterDeduplicator<T> implements Deduplicator<T> {
 
         this.bloomFilter = redissonClient.getBloomFilter(name);
         this.keyExtractor = keyExtractor;
+        this.expectedInsertions = expectedInsertions;
+        this.falseProbability = falseProbability;
 
         // Initialize if not already initialized
         if (!bloomFilter.isExists()) {
@@ -116,7 +120,12 @@ public class BloomFilterDeduplicator<T> implements Deduplicator<T> {
 
     @Override
     public void clear() {
+        // Deleting the Redis key also destroys the filter's sizing parameters; without
+        // re-initialization every subsequent add/contains threw "Bloom filter is not
+        // initialized!" (B-12). tryInit is a no-op when the key already exists, so this is
+        // safe under racing clears.
         bloomFilter.delete();
+        bloomFilter.tryInit(expectedInsertions, falseProbability);
         seenCount = 0;
     }
 

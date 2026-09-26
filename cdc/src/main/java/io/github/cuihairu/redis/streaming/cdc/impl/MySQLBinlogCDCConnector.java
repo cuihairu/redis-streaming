@@ -48,10 +48,15 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
         String password = configuration.getPassword();
         long serverId = Long.parseLong(String.valueOf(configuration.getProperty(SERVER_ID_PROPERTY, "1")));
 
-        // Initialize binlog position
-        this.binlogFilename = (String) configuration.getProperty(BINLOG_FILENAME_PROPERTY);
+        // Initialize binlog position. On a restart of the same connector instance the live
+        // watermark advanced by handleRotateEvent/updateCurrentPosition is preserved —
+        // re-reading the configuration here used to rewind to the configured (or server-current)
+        // position, losing or duplicating everything consumed since (CDC-H1).
+        if (this.binlogFilename == null) {
+            this.binlogFilename = (String) configuration.getProperty(BINLOG_FILENAME_PROPERTY);
+        }
         String binlogPosStr = (String) configuration.getProperty(BINLOG_POSITION_PROPERTY);
-        if (binlogPosStr != null) {
+        if (binlogPosStr != null && this.binlogPosition.get() == 0L) {
             this.binlogPosition.set(Long.parseLong(binlogPosStr));
         }
 
@@ -91,7 +96,9 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
             } catch (Exception ignore) {}
             columnNameResolver = null;
         }
-        eventQueue.clear();
+        // eventQueue is intentionally NOT cleared: events captured but not yet delivered must
+        // survive a stop/start cycle, mirroring the polling connector's restart semantics
+        // (CDC-H1; clearing them silently dropped whatever the consumer had not drained yet).
         tableMapEvents.clear();
         tableColumnsById.clear();
     }

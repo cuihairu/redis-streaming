@@ -18,7 +18,10 @@ import java.util.stream.Collectors;
 public class CDCManager {
 
     private final Map<String, CDCConnector> connectors = new ConcurrentHashMap<>();
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(4);
+    // Recreated on every start(): stop() terminates the previous instance, and scheduling on a
+    // terminated service throws RejectedExecutionException, which used to kill health
+    // monitoring permanently for restarted managers (CDC-M6).
+    private volatile ScheduledExecutorService scheduler;
     private volatile boolean running = false;
 
     /**
@@ -28,10 +31,11 @@ public class CDCManager {
      */
     public void addConnector(CDCConnector connector) {
         String name = connector.getName();
-        if (connectors.containsKey(name)) {
+        // putIfAbsent instead of the containsKey/put check-then-act pair, which could silently
+        // replace a same-named connector when racing another adder (CDC-L4).
+        if (connectors.putIfAbsent(name, connector) != null) {
             throw new IllegalArgumentException("Connector with name already exists: " + name);
         }
-        connectors.put(name, connector);
         log.info("Added CDC connector: {}", name);
     }
 
@@ -122,14 +126,18 @@ public class CDCManager {
 
         return CompletableFuture.allOf(stopFutures.toArray(new CompletableFuture[0]))
                 .thenRun(() -> {
-                    scheduler.shutdown();
-                    try {
-                        if (!scheduler.awaitTermination(10, TimeUnit.SECONDS)) {
-                            scheduler.shutdownNow();
+                    ScheduledExecutorService current = scheduler;
+                    if (current != null) {
+                        current.shutdown();
+                        try {
+                            if (!current.awaitTermination(10, TimeUnit.SECONDS)) {
+                                current.shutdownNow();
+                            }
+                        } catch (InterruptedException e) {
+                            current.shutdownNow();
+                            Thread.currentThread().interrupt();
                         }
-                    } catch (InterruptedException e) {
-                        scheduler.shutdownNow();
-                        Thread.currentThread().interrupt();
+                        scheduler = null;
                     }
                     log.info("CDC manager stopped");
                 });
@@ -195,14 +203,20 @@ public class CDCManager {
     /**
      * Get current positions for all connectors
      *
-     * @return map of connector name to current position
+     * @return map of connector name to current position; connectors that have not advanced to a
+     *         position yet (no event seen so far) are omitted
      */
     public Map<String, String> getCurrentPositionsAll() {
-        return connectors.entrySet().stream()
-                .collect(Collectors.toMap(
-                        Map.Entry::getKey,
-                        entry -> entry.getValue().getCurrentPosition()
-                ));
+        // Regression for CDC-H5: Collectors.toMap rejects null values, so a single position-less
+        // connector used to make this standard monitoring call throw a NullPointerException.
+        Map<String, String> positions = new ConcurrentHashMap<>();
+        connectors.forEach((name, connector) -> {
+            String position = connector.getCurrentPosition();
+            if (position != null) {
+                positions.put(name, position);
+            }
+        });
+        return positions;
     }
 
     /**
@@ -235,6 +249,9 @@ public class CDCManager {
     }
 
     private void startHealthMonitoring() {
+        if (scheduler == null) {
+            scheduler = Executors.newScheduledThreadPool(4);
+        }
         scheduler.scheduleWithFixedDelay(() -> {
             try {
                 monitorConnectorHealth();
