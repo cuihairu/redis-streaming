@@ -127,6 +127,7 @@
 - **影响**：遍历匹配循环 vs `add`/`cleanup().removeIf` → CME 或静默漏配/重复配；`cleanup()` 每元素 O(总缓冲) 扫描。
 - **审计置信度**：高
 - **验证与修复**：与 B-02 一并处理：`processLeft/processRight/clear/getLeftBufferSize/getRightBufferSize` 全部加 `synchronized`（粗粒度锁），消除遍历 vs 修改竞态与 `workers` 类 check-then-act 问题。该类定位为测试/简单场景引擎，吞吐损失可接受。每元素 O(n) 的 cleanup 扫描保留（标记为后续优化项，非正确性问题）。
+- **回归测试**：`StreamJoinerConcurrencyTest`（补于后续批次）——旧代码复现：定点剥离 5 处 `synchronized` 后 4/4 失败，全部 `ConcurrentModificationException`（16 线程同 key 写入、40+40 左右流并发全交叉配对、读线程并发取缓冲 size、`clear()` 与处理并发）；修复代码上 4/4 通过，并断言精确配对数 `left×right` 与缓冲无损。
 
 ### B-17 InMemoryKGroupedTable 对 null 分组 key NPE（Redis 版容忍，行为不一致）✅已修复
 - **位置**：`table/.../impl/InMemoryKGroupedTable.java:41-84`
