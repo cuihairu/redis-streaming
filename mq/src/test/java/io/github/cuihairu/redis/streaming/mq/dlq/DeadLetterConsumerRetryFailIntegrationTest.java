@@ -69,8 +69,9 @@ class DeadLetterConsumerRetryFailIntegrationTest {
             long pending = 99;
             while (pending > 0 && System.currentTimeMillis() < deadline) {
                 Thread.sleep(300);
-                pending = dlq.listPending("g-rf", org.redisson.api.stream.StreamMessageId.MIN,
-                        org.redisson.api.stream.StreamMessageId.MAX, 100).size();
+                pending = dlq.listPending(org.redisson.api.stream.StreamPendingRangeArgs
+                        .groupName("g-rf").startId(org.redisson.api.stream.StreamMessageId.MIN)
+                        .endId(org.redisson.api.stream.StreamMessageId.MAX).count(100)).size();
             }
             assertEquals(0L, pending, "records should be acked after retry/fail handling");
         } finally {

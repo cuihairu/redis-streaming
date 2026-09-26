@@ -120,7 +120,9 @@ class DlqAckOrderingIntegrationTest {
                     "DLQ write must have failed");
 
             var pending = client.getStream(StreamKeys.partitionStream(topic, 0), StringCodec.INSTANCE)
-                    .listPending("g", StreamMessageId.MIN, StreamMessageId.MAX, 10);
+                    .listPending(org.redisson.api.stream.StreamPendingRangeArgs
+                    .groupName("g").startId(StreamMessageId.MIN)
+                    .endId(StreamMessageId.MAX).count(10));
             assertEquals(1, pending.size(),
                     "message must stay un-acked in the PEL when the DLQ write fails");
         } finally {

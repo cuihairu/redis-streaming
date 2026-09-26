@@ -114,8 +114,9 @@ class ConsumerBrokerPathIntegrationTest {
                     "broker-produced message should be handled, handled=" + handled);
             // the missing-payload entry must be routed through handleMissingPayload and
             // acked (not left as poison pending); its handler must never run
-            assertTrue(waitUntil(() -> stream(0).listPending("g", StreamMessageId.MIN,
-                    StreamMessageId.MAX, 100).isEmpty(), 15_000),
+            assertTrue(waitUntil(() -> stream(0).listPending(org.redisson.api.stream.StreamPendingRangeArgs
+                    .groupName("g").startId(StreamMessageId.MIN)
+                    .endId(StreamMessageId.MAX).count(100)).isEmpty(), 15_000),
                     "missing payload entry should be acked out of the PEL");
             assertFalse(handled.stream().anyMatch(p -> p.isEmpty()));
         } finally {

@@ -138,6 +138,7 @@ class MetricsCollectionManagerCoverageTest {
     }
 
     @Test
+    @SuppressWarnings("deprecation")
     void changeThresholdDeprecatedStringConstructor() {
         ChangeThreshold t = new ChangeThreshold(5.0, "absolute");
         assertTrue(t.isSignificant(1, 10));

@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Unit tests for MetricKeys
  */
+@SuppressWarnings("deprecation") // legacy key constants are the subject under test
 class MetricKeysTest {
 
     @Test

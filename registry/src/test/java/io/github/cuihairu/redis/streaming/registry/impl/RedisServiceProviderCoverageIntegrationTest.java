@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.redisson.Redisson;
 import org.redisson.api.RScoredSortedSet;
 import org.redisson.api.RedissonClient;
+import org.redisson.api.options.KeysScanOptions;
 import org.redisson.client.codec.StringCodec;
 import org.redisson.config.Config;
 
@@ -102,7 +103,7 @@ class RedisServiceProviderCoverageIntegrationTest {
     void tearDown() {
         try {
             for (String svc : services) {
-                for (String key : redis.getKeys().getKeysByPattern("*" + svc + "*")) {
+                for (String key : redis.getKeys().getKeys(KeysScanOptions.defaults().pattern("*" + svc + "*"))) {
                     redis.getKeys().delete(key);
                 }
                 redis.getSet(new io.github.cuihairu.redis.streaming.registry.BaseRedisConfig()

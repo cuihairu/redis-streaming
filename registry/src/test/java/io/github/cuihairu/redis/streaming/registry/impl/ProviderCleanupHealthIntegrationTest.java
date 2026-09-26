@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.redisson.Redisson;
 import org.redisson.api.RScoredSortedSet;
 import org.redisson.api.RedissonClient;
+import org.redisson.api.options.KeysScanOptions;
 import org.redisson.config.Config;
 
 import java.lang.reflect.Method;
@@ -58,7 +59,7 @@ class ProviderCleanupHealthIntegrationTest {
             // expire the heartbeat score manually (yesterday), then trigger the provider's private cleanup
             RScoredSortedSet<String> heartbeats = null;
             // find the heartbeat ZSET for this service by key type
-            for (String key : redis.getKeys().getKeysByPattern("*" + svc + "*")) {
+            for (String key : redis.getKeys().getKeys(KeysScanOptions.defaults().pattern("*" + svc + "*"))) {
                 if (key.contains("heartbeat") && redis.getKeys().getType(key) == org.redisson.api.RType.ZSET) {
                     heartbeats = redis.getScoredSortedSet(key, org.redisson.client.codec.StringCodec.INSTANCE);
                     break;

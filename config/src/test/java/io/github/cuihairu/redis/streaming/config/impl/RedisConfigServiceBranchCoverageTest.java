@@ -237,7 +237,8 @@ class RedisConfigServiceBranchCoverageTest {
     @Test
     void trimHistoryBySizeAndAgeReturnScriptResults() {
         when(script.eval(any(RScript.Mode.class), anyString(), any(RScript.ReturnType.class), anyList(), any()))
-                .thenReturn(3L, null);
+                .thenReturn(3L)
+                .thenReturn(null);
         RedisConfigService service = startedService();
         assertEquals(3, service.trimHistoryBySize("d1", "g1", 5));
         assertEquals(0, service.trimHistoryBySize("d1", "g1", 5), "null script result maps to 0");

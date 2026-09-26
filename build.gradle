@@ -72,10 +72,13 @@ subprojects {
         }
     }
 
-    // Tests should not fail compilation due to deprecation warnings (allow @Deprecated usage in tests)
+    // Tests should not fail compilation due to deprecation warnings (allow @Deprecated usage in tests).
+    // Unchecked lint is disabled for tests: Mockito stubbing generics produce hundreds of
+    // [unchecked] notes that carry no actionable signal there. Deprecation lint stays on so
+    // obsolete API usage in tests keeps surfacing.
     tasks.withType(JavaCompile).configureEach { t ->
         if (t.name.toLowerCase().contains('test')) {
-            t.options.compilerArgs = t.options.compilerArgs.findAll { it != '-Werror' }
+            t.options.compilerArgs = t.options.compilerArgs.findAll { it != '-Werror' && it != '-Xlint:unchecked' }
         }
     }
 

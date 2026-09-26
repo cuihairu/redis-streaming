@@ -11,6 +11,7 @@ import org.redisson.Redisson;
 import org.redisson.api.RMap;
 import org.redisson.api.RType;
 import org.redisson.api.RedissonClient;
+import org.redisson.api.options.KeysScanOptions;
 import org.redisson.client.codec.StringCodec;
 import org.redisson.config.Config;
 
@@ -64,7 +65,7 @@ class RedisKeyedStreamOperatorsIntegrationTest {
     }
 
     private static RMap<String, String> findStateMap(RedissonClient redis, String prefix, String field) {
-        for (String key : redis.getKeys().getKeysByPattern(prefix + "*")) {
+        for (String key : redis.getKeys().getKeys(KeysScanOptions.defaults().pattern(prefix + "*"))) {
             if (redis.getKeys().getType(key) == RType.MAP) {
                 RMap<String, String> map = redis.getMap(key, StringCodec.INSTANCE);
                 if (map.containsKey(field)) {

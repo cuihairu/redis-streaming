@@ -137,7 +137,9 @@ class ConsumerWorkerFlowIntegrationTest {
         assertTrue(waitUntil(() -> dlq.getDeadLetterQueueSize(topic) > 0, 10_000), "DEAD_LETTER should reach DLQ");
 
         // defer-ack entry must remain pending (not acked)
-        assertEquals(1, stream(0).listPending("g", StreamMessageId.MIN, StreamMessageId.MAX, 100).size());
+        assertEquals(1, stream(0).listPending(org.redisson.api.stream.StreamPendingRangeArgs
+                .groupName("g").startId(StreamMessageId.MIN)
+                .endId(StreamMessageId.MAX).count(100)).size());
 
         consumer.unsubscribe(topic);
         consumer.stop();
@@ -213,8 +215,9 @@ class ConsumerWorkerFlowIntegrationTest {
                 String.valueOf(d.get("payload")).contains("give-up")), "give-up should be in DLQ: " + msgs);
 
         // missing-payload entry is acked (not left as poison pending) and never handled
-        assertTrue(waitUntil(() -> stream(0).listPending("g", StreamMessageId.MIN,
-                StreamMessageId.MAX, 100).isEmpty(), 15_000),
+        assertTrue(waitUntil(() -> stream(0).listPending(org.redisson.api.stream.StreamPendingRangeArgs
+                .groupName("g").startId(StreamMessageId.MIN)
+                .endId(StreamMessageId.MAX).count(100)).isEmpty(), 15_000),
                 "missing payload entry must be acked out of the PEL");
         assertEquals(1, handled.get(), "only give-up should reach the handler");
     }

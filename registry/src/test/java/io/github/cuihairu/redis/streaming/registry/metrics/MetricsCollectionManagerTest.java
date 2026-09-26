@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class MetricsCollectionManagerTest {
 
     @Test
+    @SuppressWarnings("deprecation")
     void collectMetricsUsesCacheAndStillExportsDottedAndLegacyKeys() {
         AtomicInteger calls = new AtomicInteger(0);
         MetricCollector cpuCollector = new MetricCollector() {

@@ -29,6 +29,7 @@ class AllCollectorsSmokeTest {
     }
 
     @Test
+    @SuppressWarnings("deprecation")
     void configAndThresholdHelpers() {
         MetricsConfig cfg = new MetricsConfig();
         cfg.setEnabledMetrics(java.util.Set.of("cpu"));

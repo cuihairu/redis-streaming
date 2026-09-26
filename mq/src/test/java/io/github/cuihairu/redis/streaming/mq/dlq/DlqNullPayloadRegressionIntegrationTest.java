@@ -84,8 +84,9 @@ class DlqNullPayloadRegressionIntegrationTest {
         // RedisDeadLetterService.re-enqueues with the default codec (not StringCodec)
         org.redisson.api.RStream<String, Object> source =
                 client.getStream(StreamKeys.partitionStream(topic, 0));
-        var entries = source.range(org.redisson.api.stream.StreamMessageId.MIN,
-                org.redisson.api.stream.StreamMessageId.MAX);
+        var entries = source.range(org.redisson.api.stream.StreamRangeArgs
+                .startId(org.redisson.api.stream.StreamMessageId.MIN)
+                .endId(org.redisson.api.stream.StreamMessageId.MAX));
         assertEquals(1, entries.size(), "source stream should hold the re-enqueued entry");
         @SuppressWarnings("unchecked")
         Map<String, Object> data = entries.values().iterator().next();
@@ -105,8 +106,9 @@ class DlqNullPayloadRegressionIntegrationTest {
 
         org.redisson.api.RStream<String, Object> stream =
                 client.getStream(StreamKeys.partitionStream(topic, 0), StringCodec.INSTANCE);
-        var entries = stream.range(org.redisson.api.stream.StreamMessageId.MIN,
-                org.redisson.api.stream.StreamMessageId.MAX);
+        var entries = stream.range(org.redisson.api.stream.StreamRangeArgs
+                .startId(org.redisson.api.stream.StreamMessageId.MIN)
+                .endId(org.redisson.api.stream.StreamMessageId.MAX));
         assertEquals(1, entries.size());
         @SuppressWarnings("unchecked")
         Map<String, Object> data = entries.values().iterator().next();

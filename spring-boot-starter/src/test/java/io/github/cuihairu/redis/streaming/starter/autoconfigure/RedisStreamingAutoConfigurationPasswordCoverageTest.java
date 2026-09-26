@@ -36,6 +36,7 @@ class RedisStreamingAutoConfigurationPasswordCoverageTest {
     }
 
     @Test
+    @SuppressWarnings("deprecation")
     void configuredPasswordIsForwardedToRedisson() {
         RedisStreamingProperties props = new RedisStreamingProperties();
         props.getRedis().setAddress("redis://127.0.0.1:6379");
@@ -46,6 +47,7 @@ class RedisStreamingAutoConfigurationPasswordCoverageTest {
     }
 
     @Test
+    @SuppressWarnings("deprecation")
     void blankPasswordLeavesRedissonUnauthenticated() {
         RedisStreamingProperties props = new RedisStreamingProperties();
         props.getRedis().setPassword("   ");

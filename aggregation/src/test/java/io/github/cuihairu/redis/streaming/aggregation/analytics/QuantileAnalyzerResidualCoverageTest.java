@@ -71,7 +71,8 @@ class QuantileAnalyzerResidualCoverageTest {
         RSet<String> metricsIndex = mock(RSet.class);
         when(valueIndex.size()).thenReturn(2);
         when(valueIndex.entryRange(anyInt(), anyInt()))
-                .thenReturn(List.<ScoredEntry<String>>of(), null);
+                .thenReturn(List.<ScoredEntry<String>>of())
+                .thenReturn(null);
 
         QuantileAnalyzer analyzer = new QuantileAnalyzer(redisson(timeIndex, valueIndex, metricsIndex),
                 "p", Duration.ofMinutes(5));

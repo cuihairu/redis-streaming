@@ -30,6 +30,7 @@ class MessageQueueFactorySprintCoverageTest {
         brokerFactory = mock(BrokerFactory.class);
         Broker broker = mock(Broker.class);
         when(brokerFactory.create(any(), any())).thenReturn(broker);
+        @SuppressWarnings("unchecked")
         org.redisson.api.RStream<String, Object> dlq = mock(org.redisson.api.RStream.class);
         try {
             when(client.getStream(org.mockito.ArgumentMatchers.anyString())).thenAnswer(inv -> {

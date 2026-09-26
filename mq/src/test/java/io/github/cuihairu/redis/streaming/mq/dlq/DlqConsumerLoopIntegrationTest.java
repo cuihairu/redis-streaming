@@ -119,8 +119,9 @@ class DlqConsumerLoopIntegrationTest {
                     "retry entry should be republished to partition stream");
 
             // success/retry/fail acked; the errored one remains pending
-            assertTrue(waitUntil(() -> dlqStream().listPending("g-" + uid, StreamMessageId.MIN,
-                    StreamMessageId.MAX, 100).size() <= 1, 15_000));
+            assertTrue(waitUntil(() -> dlqStream().listPending(org.redisson.api.stream.StreamPendingRangeArgs
+                    .groupName("g-" + uid).startId(StreamMessageId.MIN)
+                    .endId(StreamMessageId.MAX).count(100)).size() <= 1, 15_000));
         } finally {
             consumer.close();
             assertTrue(consumer.isClosed());
