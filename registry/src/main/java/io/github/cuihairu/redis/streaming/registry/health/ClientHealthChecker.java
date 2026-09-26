@@ -127,17 +127,21 @@ public class ClientHealthChecker {
             if (isHealthy != lastHealthStatus) {
                 logger.info("Health status changed for service instance {}: {} -> {}",
                            serviceInstance.getInstanceId(), lastHealthStatus, isHealthy);
-                healthReporter.accept(isHealthy);
+                // update the state BEFORE notifying: an observer unblocked by the
+                // reporter (getLastHealthStatus from the callback or right after) must
+                // never see the pre-transition value — the notify-first ordering was a
+                // flaky window under load
                 lastHealthStatus = isHealthy;
+                healthReporter.accept(isHealthy);
             }
         } catch (Throwable e) {
             // Throwable, not Exception: an uncaught Error would silently kill the
             // fixed-delay schedule (no further checks, no log)
             logger.error("Error during health check for service instance: " + serviceInstance.getInstanceId(), e);
-            // If the check fails, consider the service unhealthy
+            // If the check fails, consider the service unhealthy (state first, then notify)
             if (lastHealthStatus) {
-                healthReporter.accept(false);
                 lastHealthStatus = false;
+                healthReporter.accept(false);
             }
         }
     }
