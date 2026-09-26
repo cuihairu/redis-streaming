@@ -200,14 +200,15 @@ public class HeartbeatStateManager {
     public void markMetadataUpdateCompleted(String serviceName, String instanceId,
                                             Map<String, Object> metadata) {
         String stateKey = buildStateKey(serviceName, instanceId);
-        InstanceState state = instanceStates.get(stateKey);
-        if (state != null) {
-            state.lastMetadataUpdateTime = System.currentTimeMillis();
-            state.lastHeartbeatTime = state.lastMetadataUpdateTime;  // Update also counts as heartbeat
-            state.metadataHash = calculateHash(metadata);
-            state.pendingHeartbeat = false;
-            state.lastMetadataSnapshot = metadata != null ? new HashMap<>(metadata) : new HashMap<>();
-        }
+        // computeIfAbsent, not get (B-33): registration marks the metadata hash before
+        // any decision has run, so the entry does not exist yet — a plain get no-opped
+        // and the first heartbeat misread the default hash 0 as a metadata change.
+        InstanceState state = instanceStates.computeIfAbsent(stateKey, k -> new InstanceState());
+        state.lastMetadataUpdateTime = System.currentTimeMillis();
+        state.lastHeartbeatTime = state.lastMetadataUpdateTime;  // Update also counts as heartbeat
+        state.metadataHash = calculateHash(metadata);
+        state.pendingHeartbeat = false;
+        state.lastMetadataSnapshot = metadata != null ? new HashMap<>(metadata) : new HashMap<>();
     }
 
     /**

@@ -140,10 +140,16 @@ class HeartbeatStateManagerCoverageTest {
     @Test
     void stateInfoAndRemovalHelpers() {
         HeartbeatStateManager mgr = new HeartbeatStateManager(new HeartbeatConfig());
-        // marking an unknown instance is a no-op (no state entry yet)
+        // metrics/heartbeat marking on an unknown instance is a no-op (no state entry yet)
         mgr.markMetricsUpdateCompleted("ghost", "g1", Map.of("k", 1));
-        mgr.markMetadataUpdateCompleted("ghost", "g1", Map.of("k", 1));
         mgr.markHeartbeatOnlyCompleted("ghost", "g1");
+        assertNull(mgr.getInstanceStateInfo("ghost", "g1"));
+        // metadata marking seeds the entry: registration records the baseline hash before
+        // any decision ran (B-33 — a no-op here made the first heartbeat report a bogus
+        // METADATA_UPDATE)
+        mgr.markMetadataUpdateCompleted("ghost", "g1", Map.of("k", 1));
+        assertNotNull(mgr.getInstanceStateInfo("ghost", "g1"));
+        mgr.removeInstanceState("ghost", "g1");
         assertNull(mgr.getInstanceStateInfo("ghost", "g1"));
         assertNull(mgr.getInstanceStateInfo("s", "i"));
         mgr.shouldUpdateMetrics("s", "i", Map.of("k", 1));

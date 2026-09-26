@@ -232,11 +232,12 @@
 - **审计置信度**：高
 - **验证与修复**：`slideWindow` 对未满窗口返回 0（无裁决），失败率只在窗口填满（`calls >= windowSize`）时评估一次并复位——即 resilience4j `minimumNumberOfCalls` 语义；threshold=0 的"最敏感"配置行为不变。回归测试 `singleFailureDoesNotOpenBreakerOnUnfilledWindow`；原断言"首失败即 OPEN"的两个用例（registry 包 `testStateTransitions`、client 包 `testGetState`）改为填满窗口后断言。
 
-### B-33 注册时未记录 metadata hash：开启元数据检测后首次心跳必发虚假 UPDATED 事件 ⏳
+### B-33 注册时未记录 metadata hash：开启元数据检测后首次心跳必发虚假 UPDATED 事件 ✅已修复
 - **位置**：`registry/.../RedisServiceProvider.java:161-165`；`heartbeat/HeartbeatStateManager.java:185-196`
 - **触发**：`enableMetadataChangeDetection=true` 注册。
 - **影响**：`markMetadataUpdateCompleted` 用 `get` 而条目尚未 `computeIfAbsent` 创建 → no-op；首次心跳 0≠hash 误判 METADATA_UPDATE → 全体订阅者无谓 re-discover。
 - **审计置信度**：高
+- **验证与修复**：修复：`markMetadataUpdateCompleted` 的 `instanceStates.get` 改为 `computeIfAbsent`——注册发生在任何决策之前，条目必然不存在，get 是静默 no-op，注册时的基线 hash 从未落盘；metrics/heartbeat-only 两个 mark 保持 `get` 不变（它们只会在决策创建条目后被调用，未知实例标记仍应 no-op）。回归：`HeartbeatStateManagerMetadataRegistrationTest`（注册后首次心跳元数据未变断言 NO_UPDATE——旧代码实测 METADATA_UPDATE；元数据真变仍检出 METADATA_UPDATE，interval 置 0 隔离限流窗口）；既有 `HeartbeatStateManagerCoverageTest.stateInfoAndRemovalHelpers` 原断言"未知实例 metadata 标记为 no-op"属固化缺陷，已按新语义改为断言条目被创建且可 remove。
 
 ---
 
