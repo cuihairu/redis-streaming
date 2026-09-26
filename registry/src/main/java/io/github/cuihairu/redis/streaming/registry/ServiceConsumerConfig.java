@@ -52,6 +52,17 @@ public class ServiceConsumerConfig extends BaseRedisConfig {
     private int healthCheckTimeout = 5000;
 
     /**
+     * Set the health check timeout in milliseconds.
+     * Non-positive values fall back to the 5000ms default: 0/negative would otherwise
+     * make HttpHealthChecker construction throw (HttpClient rejects non-positive
+     * connectTimeout) or freeze the TCP/WebSocket probes forever
+     * (socket.connect(addr, 0) means "no timeout") — B-31.
+     */
+    public void setHealthCheckTimeout(int healthCheckTimeout) {
+        this.healthCheckTimeout = healthCheckTimeout > 0 ? healthCheckTimeout : 5000;
+    }
+
+    /**
      * Heartbeat timeout in seconds (default 90 seconds)
      * -- GETTER --
      *  Get the heartbeat timeout in seconds

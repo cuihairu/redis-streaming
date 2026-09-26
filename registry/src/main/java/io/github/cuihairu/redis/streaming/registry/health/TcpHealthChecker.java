@@ -12,7 +12,9 @@ import java.net.Socket;
  * Dedicated health checker for TCP protocol
  */
 public class TcpHealthChecker implements HealthChecker {
-    
+
+    private static final int DEFAULT_TIMEOUT_MS = 5000;
+
     private final int connectTimeoutMs;
     
     public TcpHealthChecker() {
@@ -20,7 +22,8 @@ public class TcpHealthChecker implements HealthChecker {
     }
     
     public TcpHealthChecker(int connectTimeoutMs) {
-        this.connectTimeoutMs = connectTimeoutMs;
+        // 0 would make socket.connect(addr, 0) wait forever (B-31); negative is invalid too
+        this.connectTimeoutMs = connectTimeoutMs > 0 ? connectTimeoutMs : DEFAULT_TIMEOUT_MS;
     }
     
     @Override

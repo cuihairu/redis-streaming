@@ -216,11 +216,12 @@
 - **影响**：healthCheck* 与 admin 开关被忽略（只拷贝 keyPrefix 两项）；`getConfig()` 仍返回用户配置 → 错配不可见。
 - **审计置信度**：高
 
-### B-31 healthCheckTimeout 零/负值：构造抛 IAE 或 connect 无限阻塞 ⏳
+### B-31 healthCheckTimeout 零/负值：构造抛 IAE 或 connect 无限阻塞 ✅已修复
 - **位置**：`registry/.../RedisServiceConsumer.java:74-77`；`HttpHealthChecker.java:30-37,69`；`TcpHealthChecker.java:33-35`
 - **触发**：`setHealthCheckTimeout(0)` 无校验。
 - **影响**：`connectTimeout(Duration.ofMillis(0))` IAE → 构造失败；或 `socket.connect(addr, 0)` = 无限超时 → 该实例健康检查线程永久冻结。
 - **审计置信度**：高
+- **验证与修复**：修复：非正超时统一回退 5000ms 默认值——`ServiceConsumerConfig`/`NamingServiceConfig` 的 setter 夹紧（前者补显式 setter 覆盖 Lombok 生成）；`HttpHealthChecker`（connect+read 双超时）、`TcpHealthChecker`、`WebSocketHealthChecker` 构造器各自夹紧（直连构造同样安全）。回归：`HealthCheckerTimeoutNormalizationTest`（0/负→5000，正值保留，三个 checker 反射断言——旧代码全数失败）+ `ConsumerZeroHealthCheckTimeoutStartTest`（healthCheckTimeout=0 时 consumer 可构造并 start——旧代码 HttpClient IAE 构造即炸；两配置类 setter 夹紧断言）。
 
 ### B-32 CircuitBreaker 窗口未满即计算失败率：首个失败即开路 ✅已修复
 - **位置**：`registry/.../client/CircuitBreaker.java:62-78`

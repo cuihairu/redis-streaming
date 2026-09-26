@@ -12,15 +12,18 @@ import java.net.Socket;
  * Dedicated health checker for WebSocket protocol
  */
 public class WebSocketHealthChecker implements HealthChecker {
-    
+
+    private static final int DEFAULT_TIMEOUT_MS = 5000;
+
     private final int connectTimeoutMs;
-    
+
     public WebSocketHealthChecker() {
-        this(5000); // Default 5 second timeout
+        this(DEFAULT_TIMEOUT_MS); // Default 5 second timeout
     }
-    
+
     public WebSocketHealthChecker(int connectTimeoutMs) {
-        this.connectTimeoutMs = connectTimeoutMs;
+        // 0 would make socket.connect(addr, 0) wait forever (B-31); negative is invalid too
+        this.connectTimeoutMs = connectTimeoutMs > 0 ? connectTimeoutMs : DEFAULT_TIMEOUT_MS;
     }
     
     @Override

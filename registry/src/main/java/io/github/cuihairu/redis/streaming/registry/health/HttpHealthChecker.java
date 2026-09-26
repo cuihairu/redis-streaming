@@ -17,7 +17,9 @@ import java.time.Duration;
  * Dedicated health checker for HTTP/HTTPS protocols
  */
 public class HttpHealthChecker implements HealthChecker {
-    
+
+    private static final int DEFAULT_TIMEOUT_MS = 5000;
+
     private final HttpClient httpClient;
     private final int connectTimeoutMs;
     private final int readTimeoutMs;
@@ -28,11 +30,14 @@ public class HttpHealthChecker implements HealthChecker {
     }
     
     public HttpHealthChecker(int connectTimeoutMs, int readTimeoutMs, String healthEndpoint) {
-        this.connectTimeoutMs = connectTimeoutMs;
-        this.readTimeoutMs = readTimeoutMs;
+        // HttpClient.connectTimeout rejects non-positive durations with IAE at
+        // construction, and HttpRequest.timeout(0) would fail every check at runtime
+        // (B-31) — normalize both to the 5s default.
+        this.connectTimeoutMs = connectTimeoutMs > 0 ? connectTimeoutMs : DEFAULT_TIMEOUT_MS;
+        this.readTimeoutMs = readTimeoutMs > 0 ? readTimeoutMs : DEFAULT_TIMEOUT_MS;
         this.healthEndpoint = healthEndpoint;
         this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofMillis(connectTimeoutMs))
+                .connectTimeout(Duration.ofMillis(this.connectTimeoutMs))
                 .build();
     }
     

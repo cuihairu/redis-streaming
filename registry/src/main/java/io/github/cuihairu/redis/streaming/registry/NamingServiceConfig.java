@@ -123,8 +123,13 @@ public class NamingServiceConfig extends BaseRedisConfig {
      *
      * @param healthCheckTimeout the health check timeout
      */
+    /**
+     * Set the health check timeout in milliseconds.
+     * Non-positive values fall back to the 5000ms default (B-31: 0/negative would
+     * construct invalid or infinitely-blocking health checkers).
+     */
     public void setHealthCheckTimeout(int healthCheckTimeout) {
-        this.healthCheckTimeout = healthCheckTimeout;
+        this.healthCheckTimeout = healthCheckTimeout > 0 ? healthCheckTimeout : 5000;
     }
 
     // ==================== Admin management feature configuration ====================
