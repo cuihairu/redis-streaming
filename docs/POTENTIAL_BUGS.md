@@ -206,11 +206,12 @@
 - **审计置信度**：高
 - **验证与修复**：修复：发布/删除两条 Lua 脚本的历史写入条件改为 `oldc and maxhist>0`（historySize=0 完全跳过历史记录而非 LTRIM 到 keep-all）；Java 回退路径 `saveConfigHistory` 对 `maxHistorySize<=0` 直接返回。回归：`ConfigHistorySizeZeroFallbackTest`（mock RList，historySize=0 断言从不 add/trim——旧代码实测 NeverWantedButInvoked；historySize=1 仍正常 trim(0,0)）+ `ConfigHistorySizeZeroIntegrationTest`（真实 Redis：historySize=0 发布两次+删除后历史键恒为 0——旧代码实测 expected <0> but was <1>；historySize=1 发布 3 次恰保留 1 条）。
 
-### B-29 Provider 清理在空集 check-then-act 移除服务索引：孤儿心跳 ZSet 且永不再清理 ⏳
+### B-29 Provider 清理在空集 check-then-act 移除服务索引：孤儿心跳 ZSet 且永不再清理 ✅已修复
 - **位置**：`registry/.../impl/RedisServiceProvider.java:536-542`
 - **触发**：清理批次清空某服务 ZSet 后、`SREM` 前，新实例恰好注册。
 - **影响**：服务被移出索引 → `cleanupExpiredInstances` 不再遍历它；无 TTL 的心跳 ZSet 永久孤儿；getAllServices 与实例列表不一致。
 - **审计置信度**：高
+- **验证与修复**：修复：`cleanupExpiredInstancesForService` 的空集判断与 SREM 合并为单条原子 Lua（`ZCARD==0 则 SREM 服务索引`，经 RScript 直发），竞态窗口不复存在；同时把该原子步骤从 `if (!result.isEmpty())` 内移到每服务必经处——原位置只有"本批次恰好清掉了实例"才校验索引，早已为空的残留（前次清理被中断、或 B-29 竞态遗留）永不被修复。回归：`ProviderServiceIndexAtomicCleanupTest`（mock RScript：断言 eval 携带 ZCARD/SREM 原子脚本及 heartbeatKey+servicesIndexKey——旧代码零交互即失败）+ `ProviderServiceIndexCleanupIntegrationTest`（@Tag("integration") 真实 Redis：空 ZSet 服务被移出索引、有活跃心跳的服务保留且心跳不被触碰；旧代码因残留位置缺陷实测 expected false but was true 失败）。
 
 ### B-30 RedisNamingService 构造子 Provider/Consumer 时静默丢弃健康检查等配置 ⏳
 - **位置**：`registry/.../impl/RedisNamingService.java:43-53`

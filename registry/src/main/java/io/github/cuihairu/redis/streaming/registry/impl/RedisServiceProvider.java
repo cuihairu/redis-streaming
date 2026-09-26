@@ -46,6 +46,10 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
 
     private static final Logger logger = LoggerFactory.getLogger(RedisServiceProvider.class);
 
+    /** Drop the service index entry iff its heartbeat ZSet is empty, atomically (B-29). */
+    private static final String CLEANUP_SERVICE_INDEX_SCRIPT =
+            "if redis.call('ZCARD', KEYS[1]) == 0 then return redis.call('SREM', KEYS[2], ARGV[1]) end; return 0;";
+
     private final RedissonClient redissonClient;
     private final ServiceProviderConfig config;
     private final HeartbeatConfig heartbeatConfig;
@@ -536,17 +540,21 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
                     }
                 }
 
-                // If heartbeat set is empty, remove from service index (avoid residual)
-                try {
-                    RScoredSortedSet<String> set = redissonClient.getScoredSortedSet(heartbeatKey);
-                    if (set.size() == 0) {
-                        RSet<String> servicesSet = redissonClient.getSet(registryKeys.getServicesIndexKey(), org.redisson.client.codec.StringCodec.INSTANCE);
-                        servicesSet.remove(serviceName);
-                    }
-                } catch (Exception ignore) {}
-
                 logger.info("Cleaned up {} expired instances for service: {}", cleaned, serviceName);
             }
+
+            // If heartbeat set is empty, remove from service index (avoid residual).
+            // The emptiness check and the SREM must be one atomic step (B-29): an
+            // instance registering between check and SREM got its non-empty heartbeat
+            // ZSet orphaned — the cleanup sweep never revisited the service again.
+            // Runs for every indexed service, not only when this sweep expired
+            // something, so pre-existing empty-set residuals are repaired too.
+            try {
+                RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
+                script.eval(RScript.Mode.READ_WRITE, CLEANUP_SERVICE_INDEX_SCRIPT, RScript.ReturnType.LONG,
+                        java.util.Arrays.asList(heartbeatKey, registryKeys.getServicesIndexKey()),
+                        serviceName);
+            } catch (Exception ignore) {}
 
         } catch (Exception e) {
             logger.error("Failed to cleanup expired instances for service: {}", serviceName, e);
