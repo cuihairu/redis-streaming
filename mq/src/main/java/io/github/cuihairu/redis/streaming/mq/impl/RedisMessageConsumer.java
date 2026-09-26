@@ -374,8 +374,9 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                                     }
                                     throw ex;
                                 }
+                                boolean permitAcquired = false;
                                 try {
-                                    acquireInFlightPermit();
+                                    permitAcquired = acquireInFlightPermit();
                                     inFlight.incrementAndGet();
                                     MessageHandleResult result = worker.handler.handle(message);
                                     dispatchResult(message.getTopic(), pk.group, claimedId.toString(), pk.partitionId, message, result, data, stream);
@@ -384,7 +385,9 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                                     requeueOrDeadLetter(stream, pk.group, claimedId.toString(), pk.partitionId, message, data);
                                 } finally {
                                     inFlight.decrementAndGet();
-                                    releaseInFlightPermit();
+                                    if (permitAcquired) {
+                                        releaseInFlightPermit();
+                                    }
                                 }
                             }
                         } catch (Exception e) {
@@ -502,7 +505,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         }
         message.getHeaders().put(io.github.cuihairu.redis.streaming.mq.MqHeaders.PARTITION_ID, Integer.toString(pidInt));
         long start = System.nanoTime();
-        acquireInFlightPermit();
+        boolean permitAcquired = acquireInFlightPermit();
         long nowInFlight = inFlight.incrementAndGet();
         try {
             MqMetrics.get().setInFlight(consumerName, nowInFlight, options.getMaxInFlight());
@@ -524,7 +527,9 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 MqMetrics.get().setInFlight(consumerName, after, options.getMaxInFlight());
             } catch (Throwable ignore) {
             }
-            releaseInFlightPermit();
+            if (permitAcquired) {
+                releaseInFlightPermit();
+            }
         }
     }
 
@@ -833,9 +838,14 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         }
     }
 
-    private void acquireInFlightPermit() {
+    /**
+     * @return whether a permit was actually acquired — {@code false} when the consumer
+     * stopped/closed while waiting (MQ-08: the caller must not release then, or the
+     * unpaired release permanently inflates the permits beyond maxInFlight)
+     */
+    private boolean acquireInFlightPermit() {
         if (inFlightLimiter == null) {
-            return;
+            return true;
         }
         long startNs = System.nanoTime();
         boolean interrupted = false;
@@ -849,7 +859,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                     } catch (Throwable ignore) {
                     }
                 }
-                return;
+                return true;
             } catch (InterruptedException e) {
                 interrupted = true;
             }
@@ -857,6 +867,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         if (interrupted) {
             Thread.currentThread().interrupt();
         }
+        return false;
     }
 
     private void releaseInFlightPermit() {

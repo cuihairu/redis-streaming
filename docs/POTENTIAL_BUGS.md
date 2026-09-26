@@ -408,11 +408,12 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **审计置信度**：高（算术确定性成立）
 - **验证与修复**：`nextBackoffMs` 改为饱和计算：shift 钳到 ≤62，乘法前先判 `baseMs > maxBackoffMs / factor` 则直接返回 maxBackoffMs（永不溢出、永不为负）。`ExponentialBackoffRetryPolicyTest` 新增 5 用例（正常增长、封顶、attempt 1..200 全程非负且不超上限、大 base 饱和、base=0 立即重试）。
 
-### MQ-08 in-flight 信号量幽灵释放：背压上限被永久抬高 ⏳
+### MQ-08 in-flight 信号量幽灵释放：背压上限被永久抬高 ✅
 - **位置**：`mq/.../impl/RedisMessageConsumer.java:836-860`（acquire 循环在 running/closed 翻转时未获取即返回）、`:862-870`（release 无条件调用）、调用点 `:505/527`、`:378/387`
 - **触发**：worker 阻塞在 `inFlightLimiter.acquire()` 时调用 `stop()/close()`：循环条件变假、方法未获取即返回；`finally` 仍 `releaseInFlightPermit()`。
 - **影响**：`Semaphore.release()` 无配对 acquire → 可用许可超过配置最大值，背压上限被静默永久削弱（stop/start 循环的实例上会累积）。
-- **审计置信度**：高
+- **修复**：`acquireInFlightPermit()` 改返回 boolean（未获取即返回 false；limiter 关闭视为已获取），两处调用点（processIncomingRecord 与 pending 扫描器）的 `finally` 仅在确实获取到许可时才 release。stop 中断路径语义不变（恢复中断标志、不阻塞关停）。
+- **测试**：RedisMessageConsumerInFlightBackpressureTest——端到端驱动真实 processIncomingRecord 调用点：maxInFlight=1 下第一条消息阻塞 handler 占满许可、第二条阻塞在 acquire，翻转 running+中断后断言可用许可仍等于 maxInFlight（旧代码：expected 1 but was 2）；第二项钉死 acquire 必须如实报告未获取（旧代码返回 void，expected false but was null）。
 
 ### MQ-09 `claimIdleMs(0)` 被接受：pending 扫描器立刻偷走正在处理的消息 [已修复]
 - **位置**：`mq/.../config/MqOptions.java:89`（钳到 `>=0` 而非 `>=1`）；使用点 `RedisMessageConsumer.java:360-363`
