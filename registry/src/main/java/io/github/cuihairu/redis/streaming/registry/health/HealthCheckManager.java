@@ -57,6 +57,7 @@ public class HealthCheckManager {
     public void registerServiceInstance(ServiceInstance serviceInstance) {
         String uniqueId = serviceInstance.getUniqueId();
 
+        // Fast path only; the authoritative guard is the putIfAbsent below (B-26).
         if (healthCheckers.containsKey(uniqueId)) {
             logger.warn("Health checker already registered for instance: {}", uniqueId);
             return;
@@ -83,7 +84,15 @@ public class HealthCheckManager {
             timeUnit
         );
 
-        healthCheckers.put(uniqueId, clientHealthChecker);
+        // B-26: the authoritative guard must be putIfAbsent — two threads discovering the
+        // same instance concurrently both passed the containsKey fast-path above, and both
+        // put+started a checker; the overwritten duplicate kept probing forever because
+        // unregister only stops the entry left in the map.
+        ClientHealthChecker incumbent = healthCheckers.putIfAbsent(uniqueId, clientHealthChecker);
+        if (incumbent != null) {
+            logger.warn("Health checker already registered for instance: {}", uniqueId);
+            return;
+        }
         clientHealthChecker.start();
         logger.info("Registered health checker for service instance: {} with protocol: {}",
                    uniqueId, protocol.getName());
