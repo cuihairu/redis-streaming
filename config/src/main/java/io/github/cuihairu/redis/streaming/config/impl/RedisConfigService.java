@@ -365,20 +365,28 @@ public class RedisConfigService implements ConfigService, ConfigManager {
     }
     
     /**
-     * Generate configuration version number
+     * Generate configuration version number.
+     *
+     * <p>The state is static (shared by every RedisConfigService instance in the JVM), so
+     * the whole decision is guarded by the class monitor; previously the unsynchronized
+     * "same millisecond?" check raced with the else branch's {@code SEQ.set(0)} and a
+     * caller whose clock lagged the high-water mark could re-issue an older millisecond's
+     * "-0", producing duplicate version strings (B-27). Versions are issued against the
+     * high-water mark: a lagging clock simply continues the newest millisecond's sequence
+     * instead of resetting it.</p>
      */
     private static final java.util.concurrent.atomic.AtomicLong LAST_TS = new java.util.concurrent.atomic.AtomicLong(0);
     private static final java.util.concurrent.atomic.AtomicInteger SEQ = new java.util.concurrent.atomic.AtomicInteger(0);
-    private String generateVersion() {
+    private static synchronized String generateVersion() {
         long now = System.currentTimeMillis();
         long last = LAST_TS.getAndUpdate(prev -> Math.max(prev, now));
-        if (now == last) {
-            int s = SEQ.updateAndGet(v -> (v >= 9999 ? 0 : v + 1));
-            return now + "-" + s;
-        } else {
+        if (now > last) {
             SEQ.set(0);
             return now + "-0";
         }
+        // now <= last: continue the sequence of the newest issued millisecond
+        int s = SEQ.updateAndGet(v -> (v >= 9999 ? 0 : v + 1));
+        return last + "-" + s;
     }
     
     /**

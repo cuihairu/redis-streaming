@@ -199,11 +199,13 @@
 - **审计置信度**：高
 - **验证与修复**：`registerServiceInstance` 的权威守卫改为 `putIfAbsent`（原 containsKey 仅作快速路径）——落败方不再 put+start，避免被覆盖的 checker 线程永续探测。回归测试 `HealthCheckManagerRegistrationRaceTest`（16 线程栅栏并发注册，断言恰 1 个 checker、恰 1 次初始探测、unregister 后归零；旧代码复现失败）。
 
-### B-27 版本生成器跨线程可生成重复版本串 ⏳
+### B-27 版本生成器跨线程可生成重复版本串 ✅已修复
 - **位置**：`config/.../impl/RedisConfigService.java:366-378`
 - **触发**：同毫秒并发 `generateVersion()`，与 `SEQ.set(0)` 交错。
 - **影响**：两个不同发布携带相同 version；按 version 去重/排序的消费者丢事件或乱序。
 - **审计置信度**：中
+- **验证与修复**：根因比原描述多两层：①else 分支迟到的 `SEQ.set(0)` 落在两个 if 分支调用之间 → 二者拿到相同序号；②LAST_TS/SEQ 是 **static**（跨实例共享），实例级锁无法防护多实例；③时钟滞后（`now < last`，跨核 currentTimeMillis 偏移的真实形态）走 else 返回过去毫秒的 `-0` → 与历史版本重复。修复：`generateVersion()` 改为 `static synchronized`（类监视器覆盖所有实例），版本基于高水位发放——`now > last` 才开新毫秒序列，否则继续最新毫秒的序号（滞后时钟不重置）。9999 封顶回绕为既有行为未变（1ms 万次发布的理论边界，非本次并发缺陷）。
+- **回归测试**：`ConfigVersionGeneratorUniquenessTest`——旧代码复现：①16 线程×4000 次并发生成 → **2354 个重复版本串**；②反射注入 LAST_TS 高水位超前 50s（模拟时钟滞后）→ 同毫秒两次调用返回同一串 `ts-0`（确定性复现）；③顺序调用不受影响（正确通过，证伪"污染式"通过）。修复代码上 3/3 通过。测试自行恢复静态状态，不污染同 JVM 其他用例。
 
 ### B-28 historySize=0 语义反转：无界保留历史（LTRIM 0 -1）✅已修复
 - **位置**：`config/.../ConfigServiceConfig.java:29-31`；`RedisConfigService.java:85,413-414`
