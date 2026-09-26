@@ -73,12 +73,19 @@ public class ClientInvokerIntegrationTest {
                     null
             );
 
-            Exception ex = assertThrows(Exception.class, () -> invoker.invoke(
-                    "svc-inv-f", Map.of(), Map.of(), Map.of(), si -> { throw new RuntimeException("boom"); }
+            // B-32: the breaker judges only once its 20-call window fills. Each invoke makes
+            // 3 attempts, so 7 failing invokes fill the window with failures and trip it.
+            for (int i = 0; i < 7; i++) {
+                assertThrows(Exception.class, () -> invoker.invoke(
+                        "svc-inv-f", Map.of(), Map.of(), Map.of(), si -> { throw new RuntimeException("boom"); }
+                ));
+            }
+            // window full with rate 1.0 >= 0.5 -> CB open, further invokes are skipped
+            Exception open = assertThrows(Exception.class, () -> invoker.invoke(
+                    "svc-inv-f", Map.of(), Map.of(), Map.of(), si -> "ok"
             ));
-            assertTrue(ex.getMessage().contains("boom") || ex.getMessage().contains("Circuit breaker"));
+            assertTrue(open.getMessage().contains("Circuit breaker"));
             var snap = invoker.getMetricsSnapshot();
-            // one attempt, then CB opens and subsequent attempts are skipped
             assertTrue(snap.get("total").get("attempts") >= 1);
             assertTrue(snap.get("total").getOrDefault("cbOpenSkips", 0L) >= 1);
 

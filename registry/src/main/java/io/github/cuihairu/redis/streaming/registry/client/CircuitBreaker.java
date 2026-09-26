@@ -50,7 +50,9 @@ public class CircuitBreaker {
             toClosed();
             return;
         }
-        slideWindow(false);
+        // The verdict belongs to the WINDOW, not the last call: a window that fills on a
+        // success (e.g. 3 failures then 2 successes out of 5) must still be judged.
+        checkThreshold(slideWindow(false));
     }
 
     public synchronized void onFailure() {
@@ -59,7 +61,11 @@ public class CircuitBreaker {
             toOpen();
             return;
         }
-        if (slideWindow(true) >= failureThreshold) {
+        checkThreshold(slideWindow(true));
+    }
+
+    private void checkThreshold(double rate) {
+        if (rate >= failureThreshold) {
             toOpen();
         }
     }
@@ -74,7 +80,9 @@ public class CircuitBreaker {
             failures.set(0);
             return rate;
         }
-        return failures.get() / (double) Math.max(1, c);
+        // B-32: an unfilled window has no verdict. The old partial-window rate made the very
+        // first failure (1/1 = 1.0) trip any threshold <= 1.0 and open the breaker instantly.
+        return 0.0;
     }
 
     private void toOpen() {

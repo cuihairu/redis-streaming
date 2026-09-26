@@ -136,6 +136,7 @@ class PostgreSQLLogicalReplicationCDCConnectorParsingTest {
         assertEquals("John Doe", events.get(0).getAfterData().get("name"));
         assertEquals("O'Hare", events.get(0).getAfterData().get("city"));
         assertEquals("plain", events.get(0).getAfterData().get("note"));
+        // numeric PG types are coerced by parseColumnData (integer → Integer)
         assertEquals(7, events.get(0).getAfterData().get("id"));
     }
 

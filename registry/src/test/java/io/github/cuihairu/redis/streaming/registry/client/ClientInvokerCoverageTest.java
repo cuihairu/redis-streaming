@@ -86,11 +86,14 @@ class ClientInvokerCoverageTest {
         LoadBalancer lb = (svc, candidates, ctx) -> candidates.get(0);
         ClientInvoker invoker = new ClientInvoker(naming, lb, new RetryPolicy(1, 0, 1.0, 0, 0), null);
 
-        // a single failure trips the breaker (window rate 1.0 >= 0.5)
-        assertThrows(Exception.class,
-                () -> invoker.invoke("invoke-cov", Map.of(), Map.of(), Map.of(), i -> {
-                    throw new IllegalStateException("downstream");
-                }));
+        // Fill the breaker window (20 calls): the 20th call's verdict is 20/20 = 1.0 >= 0.5,
+        // which opens the breaker. A single failure must NOT trip it any more (B-32).
+        for (int i = 0; i < 20; i++) {
+            assertThrows(Exception.class,
+                    () -> invoker.invoke("invoke-cov", Map.of(), Map.of(), Map.of(), j -> {
+                        throw new IllegalStateException("downstream");
+                    }));
+        }
 
         // breaker now open -> cbOpenSkips path
         Exception open = assertThrows(Exception.class,

@@ -62,6 +62,24 @@ class CircuitBreakerTest {
     }
 
     @Test
+    void singleFailureDoesNotOpenBreakerOnUnfilledWindow() {
+        // Regression for B-32: the old partial-window rate (failures/max(1, calls)) made the
+        // very first failure 1/1 = 1.0, tripping any threshold <= 1.0 and isolating the
+        // instance for a full openDuration on a transient blip.
+        CircuitBreaker cb = new CircuitBreaker(20, 0.5, Duration.ofMillis(500), 2);
+
+        cb.onFailure();
+        assertEquals(CircuitBreaker.State.CLOSED, cb.getState());
+        assertTrue(cb.allow());
+
+        // Threshold is only evaluated once the window fills: 10/20 = 50% -> OPEN
+        for (int i = 0; i < 19; i++) {
+            cb.onFailure();
+        }
+        assertEquals(CircuitBreaker.State.OPEN, cb.getState());
+    }
+
+    @Test
     void testOnSuccessWhenClosed() {
         breaker.onSuccess();
 

@@ -19,7 +19,17 @@ public class CircuitBreakerTest {
         cb.onSuccess();
         assertEquals(CircuitBreaker.State.CLOSED, cb.getState());
 
-        // Fail once -> ratio 1/1 >= 0.5, should OPEN immediately per implementation
+        // B-32 regression: a single failure on an unfilled window (1/1) must NOT open the
+        // breaker; the rate is only judged once windowSize samples have been recorded.
+        assertTrue(cb.allow());
+        cb.onFailure();
+        assertEquals(CircuitBreaker.State.CLOSED, cb.getState());
+        assertTrue(cb.allow(), "still CLOSED after an isolated failure");
+
+        // Fill the window: B32 isolated failure (c=1) + 3 more failures land the 4th call on
+        // the window boundary with 3/4 = 75% >= 50% -> OPEN
+        assertTrue(cb.allow());
+        cb.onFailure();
         assertTrue(cb.allow());
         cb.onFailure();
         assertEquals(CircuitBreaker.State.OPEN, cb.getState());
@@ -130,7 +140,13 @@ public class CircuitBreakerTest {
 
         assertEquals(CircuitBreaker.State.CLOSED, cb.getState());
 
-        // Trigger OPEN
+        // Fewer than windowSize failures leave the breaker CLOSED (B-32)
+        for (int i = 0; i < 5; i++) {
+            cb.onFailure();
+        }
+        assertEquals(CircuitBreaker.State.CLOSED, cb.getState());
+
+        // Trigger OPEN once the window fills (10/10 failures)
         for (int i = 0; i < 5; i++) {
             cb.onFailure();
         }
@@ -158,10 +174,15 @@ public class CircuitBreakerTest {
     void testMultipleConsecutiveFailuresOpenCircuit() {
         CircuitBreaker cb = new CircuitBreaker(5, 0.5, Duration.ofMillis(5000), 1);
 
-        // Need 3 failures out of 5 to reach 60% > 50%
+        // 3 failures out of a 5-call window (60% > 50%) trip the breaker once the window
+        // fills; an unfilled window has no verdict (B-32), so 3 alone keep it CLOSED.
         for (int i = 0; i < 3; i++) {
             cb.onFailure();
         }
+        assertEquals(CircuitBreaker.State.CLOSED, cb.getState());
+
+        cb.onSuccess();
+        cb.onSuccess();
 
         assertEquals(CircuitBreaker.State.OPEN, cb.getState());
         assertFalse(cb.allow());

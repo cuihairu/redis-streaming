@@ -81,17 +81,19 @@
 - **影响**：序列数 2^N（每事件克隆全部活动序列再新增）→ ~30 个事件即 OOM；仅靠时间窗清理，快速流撑不到过期。
 - **审计置信度**：高
 
-### B-11 窗口 assigner 接受 0/负大小：除零、死循环或静默丢数据 ⏳
+### B-11 窗口 assigner 接受 0/负大小：除零、死循环或静默丢数据 ✅已修复
 - **位置**：`window/.../assigners/TumblingWindow.java:32-35`、`SlidingWindow.java:35-47`；`aggregation/.../TumblingWindow.java:24-29`、`SlidingWindow.java:22-27,46-59`
 - **触发**：`TumblingWindow.ofMillis(0)` → `%0` ArithmeticException；`SlidingWindow.ofMillis(10000, -1)` → slide 循环死循环/OOM；负 size → `end<start`、`contains()` 恒假 → 元素静默消失。
 - **影响**：构造或首元素崩溃、挂死或静默丢数据，无指向错误配置的校验报错。
 - **审计置信度**：高
+- **验证与修复**：四个类的构造路径统一加正数校验（window 模块两个私有构造器 + aggregation 模块把 `@AllArgsConstructor` 换成显式校验构造器，杜绝绕过工厂直构）；`SlidingWindow.of` 先构造后比较 slide<=size，null 参数不再 NPE；B-39 的 `CountTrigger` 同步加校验。回归测试 `WindowAssignerValidationTest`（window）与 `WindowValidationTest`（aggregation）。原有断言旧错误行为的用例（`TumblingWindowAssignerTest.testAssignWindowsNegativeTimestamps`、`CountTriggerTest.testWithZeroCount`）改为断言新语义。
 
-### B-12 BloomFilterDeduplicator.clear() 删除过滤器后所有后续操作失败 ⏳
+### B-12 BloomFilterDeduplicator.clear() 删除过滤器后所有后续操作失败 ✅已修复
 - **位置**：`reliability/.../deduplication/BloomFilterDeduplicator.java:118-121` vs `73-77`
 - **触发**：`clear()` 后调用 `markAsSeen`/`isDuplicate`。
 - **影响**：`clear()` 只 `delete()` 不重建（构造器有 `tryInit`）；对已删除过滤器操作抛错（"Bloom filter is not initialized"），重置后每个元素都异常。
 - **审计置信度**：高
+- **验证与修复**：`clear()` 在 `delete()` 后用保存的原始参数（新增 `expectedInsertions`/`falseProbability` 字段）重新 `tryInit`；`tryInit` 对已存在的 key 是 no-op，并发 clear 安全。回归测试 `clearReinitializesFilterForSubsequentOperations` 断言 delete 后 tryInit(原始参数) 且后续 markAsSeen/isDuplicate 正常。
 
 ---
 
@@ -147,11 +149,12 @@
 - **影响**：`completeMatches` 只增不删（清理仅作用于部分匹配），`getCompleteMatches()` 每次全量拷贝 → 长跑 OOM。
 - **审计置信度**：高
 
-### B-21 负时间戳窗口对齐用 `%` 而非 floorMod：窗口错位甚至不包含元素自身 ⏳
+### B-21 负时间戳窗口对齐用 `%` 而非 floorMod：窗口错位甚至不包含元素自身 ✅已修复
 - **位置**：`window/.../TumblingWindow.java:33`、`SlidingWindow.java:38`；`aggregation/.../TumblingWindow.java:27`
 - **触发**：`assignWindows(elem, -1)`，size=1000：`-1%1000=-1` → start=0 → 窗口 [0,1000) 不含 ts=-1；正确对齐是 [-1000,0)。
 - **影响**：pre-epoch 时间戳（测试时钟、合成数据、1970 前 Instant）下结果静默错位一个窗口。
 - **审计置信度**：高（算术）/中（现实影响）
+- **验证与修复**：与 B-11 一并修复：window 模块对齐改 `Math.floorMod`、aggregation 模块改 `Math.floorDiv`（含 SlidingWindow.getOverlappingWindows 的 startWindow 计算）。回归用例见两个 `*ValidationTest`（断言 ts=-1 落入 [-1000,0) / [-300,700) 且所有生成窗口包含元素本身）。
 
 ### B-22 InMemoryCheckpointCoordinator 非同步映射 + 浅快照 ⏳
 - **位置**：`runtime/.../internal/InMemoryCheckpointCoordinator.java:24-58`；`InMemoryKeyedStateStore.java:36-42`
@@ -213,11 +216,12 @@
 - **影响**：`connectTimeout(Duration.ofMillis(0))` IAE → 构造失败；或 `socket.connect(addr, 0)` = 无限超时 → 该实例健康检查线程永久冻结。
 - **审计置信度**：高
 
-### B-32 CircuitBreaker 窗口未满即计算失败率：首个失败即开路 ⏳
+### B-32 CircuitBreaker 窗口未满即计算失败率：首个失败即开路 ✅已修复
 - **位置**：`registry/.../client/CircuitBreaker.java:62-78`
 - **触发**：默认 `new CircuitBreaker(20, 0.5, ...)`：首调用失败 → 1/1=1.0 ≥ 0.5 → 立即 toOpen。
 - **影响**：瞬时错误即隔离实例整个 openDuration。
 - **审计置信度**：高
+- **验证与修复**：`slideWindow` 对未满窗口返回 0（无裁决），失败率只在窗口填满（`calls >= windowSize`）时评估一次并复位——即 resilience4j `minimumNumberOfCalls` 语义；threshold=0 的"最敏感"配置行为不变。回归测试 `singleFailureDoesNotOpenBreakerOnUnfilledWindow`；原断言"首失败即 OPEN"的两个用例（registry 包 `testStateTransitions`、client 包 `testGetState`）改为填满窗口后断言。
 
 ### B-33 注册时未记录 metadata hash：开启元数据检测后首次心跳必发虚假 UPDATED 事件 ⏳
 - **位置**：`registry/.../RedisServiceProvider.java:161-165`；`heartbeat/HeartbeatStateManager.java:185-196`
@@ -249,9 +253,10 @@
 - **位置**：`state/.../redis/RedisListState.java:42-48`
 - **影响**：clear 后 add 中途连接断 → 旧状态已毁新状态未写全，静默丢失。
 
-### B-39 CountTrigger 接受 maxCount<=0：每元素即触发 ⏳
+### B-39 CountTrigger 接受 maxCount<=0：每元素即触发 ✅已修复
 - **位置**：`window/.../triggers/CountTrigger.java:15-31`
 - **影响**：静默错配，无校验报错。
+- **验证与修复**：构造器加正数校验抛 IAE（与 B-11 同批）；`CountTriggerTest.testWithZeroCount` 原断言"maxCount=0 每元素触发"的旧缺陷行为，改为断言抛 IAE。
 
 ### B-40 TopKAnalyzer 边界裁剪对同分条目非确定 ⏳
 - **位置**：`aggregation/.../TopKAnalyzer.java:59-64`
@@ -291,9 +296,9 @@
 
 ---
 
-## 待补充
+## 审计覆盖说明
 
-mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计（首轮因 API 限流失败，重试中），结果追加在下方。
+mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结果见下方各节。
 
 ---
 
@@ -492,11 +497,12 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计（首轮因 AP
 - **审计置信度**：高
 - **验证与修复**：scheduler 改为 volatile 字段，startHealthMonitoring 惰性重建，stop() 关闭后置 null。
 
-### CDC-M7 PG parseColumnData 按空白切分值 → 行数据静默损坏 ⏳
+### CDC-M7 PG parseColumnData 按空白切分值 → 行数据静默损坏 ✅已修复
 - **位置**：`PostgreSQLLogicalReplicationCDCConnector.java:332-363`（:340 `data.split("\\s+")`）
 - **触发**：任何含空格的文本值 `name[text]:'John Doe'`。
 - **影响**：`"John Doe"` 变 `"John"`，`Doe'` 丢弃；字面量 `'null'` 与 SQL NULL 不可区分（:349）；朴素去引号毁掉转义引号。
 - **审计置信度**：高
+- **验证与修复**：`parseColumnData` 重写为引号感知的逐字符 tokenizer（`inQuote` 状态机，引号内空白不切分），去引号时 `''→'`；新增 `coerceByPgType` 按 PG 类型把 integer/bigint/numeric/bool 等解析为对应 Java 类型，解析失败回退原始字符串。回归测试 `quotedValuesKeepTheirSpacesAndEscapedQuotes`：`name[text]:'John Doe'`→"John Doe"、`city[text]:'O''Hare'`→"O'Hare"、`note[text]:plain`、"id[integer]:7"→Integer 7。
 
 ### 低（Low）
 
@@ -571,6 +577,32 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计（首轮因 AP
 
 ---
 
-## 验证与修复记录
+## 验证与修复记录（本轮收尾）
 
-（逐条验证后在此更新状态与测试位置）
+本轮系统性审计共产出 **103 项**发现：B-01..B-45（core/window/join/table/aggregation/reliability/cep/registry/config/checkpoint）、MQ-01..15、CDC-C1/H1-H5/M1-M7/L1-L9、RT-H1-H3/M1-M7/L1-L11。
+
+### 已修复并带回归测试（25 项 + 1 项缓解）
+
+| 模块 | 修复项 |
+|---|---|
+| core/window/aggregation/runtime | B-01（会话窗口合并）、B-11（窗口尺寸校验）、B-21（floorMod 对齐）、B-39（CountTrigger 校验）、RT-M1（drain 超时死锁） |
+| join | B-02（非对称窗口顺序依赖）、B-16（并发 CME） |
+| table | B-03（aggregate 丢累加值）、B-17（null 分组 key） |
+| reliability | B-12（clear 后过滤器失效） |
+| registry | B-32（首失败即熔断，顺带修复"窗口在成功调用上填满时不裁决"） |
+| mq | MQ-02（DLQ RETRY 双写）、MQ-03（租约非原子）、MQ-05（重放前缀硬编码）、MQ-07（退避溢出）、MQ-09（claimIdleMs=0）、MQ-10（JSON 控制字符） |
+| cdc | CDC-C1（真实流格式全丢）、CDC-H1/H2（重启丢水位/队列）、CDC-H4（commit 冒号截断）、CDC-H5（NPE）、CDC-M6（调度器复用）、CDC-M7（值解析按空白切分） |
+| runtime redis | RT-H1（checkpoint 恢复失效）、RT-M5（快照错误被吞，缓解：WARN + 明示回退语义） |
+
+另：稳定了一个先前就存在的 flaky 测试（`AbstractCDCConnectorTest` 后台调度器与手动 poll 竞态，改为 interval=0 的拉模式连接器）。
+
+### 记为后续任务（未修复，原因见各条目）
+
+- **重构级**（需专项设计，非局部修复）：MQ-01/MQ-04（DLQ pending 回收与删除策略语义）、CDC-H3（断线重连框架）、RT-H2（checkpoint 全库 SCAN）、B-18/B-20（TopK/完成匹配的有界化）、B-24（KTable 物化清理）、B-13/B-14/B-15/B-22（checkpoint 序列化/完整性/扫描设计）。
+- **设计决策类**：RT-H3（fire-and-purge 原子性，需两阶段提交）、B-06/B-07（配置通知重同步/去重，涉及 API 契约）、B-09（元素级 TTL 需换数据结构）。
+- **风险可控/影响良性**：MQ-11（frontier 回退方向安全）、RT-M3/M6/M7（文档化语义）、B-36（文档已声明测试用途）等。
+- 其余 ⏳ 条目为审计发现但本轮未逐条复现验证（范围限制），均已给出触发条件、位置与修复方向，可直接作为下轮输入。
+
+### race 检测说明
+
+Java 生态无 `go test -race` 的直接等价物。等效手段：全量测试套件（含 `@Tag("integration")` 的真实 Redis 集成测试）+ 本轮对并发敏感路径的定向并发测试（join 并发、会话窗口合并、租约原子性、熔断窗口），以及审计中对内存可见性/原子性的逐点分析（B-16/B-19/B-25/B-26/CDC-M2/MQ-08 等条目）。
