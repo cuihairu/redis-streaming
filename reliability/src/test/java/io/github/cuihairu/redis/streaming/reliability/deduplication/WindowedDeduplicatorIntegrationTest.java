@@ -72,14 +72,16 @@ class WindowedDeduplicatorIntegrationTest {
 
     @Test
     void uniqueCountShrinksAfterIdleWindow() throws Exception {
+        // generous window: a scheduling stall between the writes and the count must
+        // not expire entries early (this flaked at 250ms under a loaded CI box)
         WindowedDeduplicator<String> dedup =
-                new WindowedDeduplicator<>(client, uniqueName(), Duration.ofMillis(250), s -> s);
+                new WindowedDeduplicator<>(client, uniqueName(), Duration.ofSeconds(1), s -> s);
 
         dedup.markAsSeen("x");
         dedup.markAsSeen("y");
         assertEquals(2, dedup.getUniqueCount());
 
-        Thread.sleep(450);
+        Thread.sleep(1300);
         assertEquals(0, dedup.getUniqueCount(), "entries must expire once the window passes");
     }
 
@@ -103,7 +105,7 @@ class WindowedDeduplicatorIntegrationTest {
         legacy.add("old2");
 
         WindowedDeduplicator<String> dedup =
-                new WindowedDeduplicator<>(client, name, Duration.ofMillis(400), s -> s);
+                new WindowedDeduplicator<>(client, name, Duration.ofMillis(800), s -> s);
 
         // first touch migrates the plain set: members count as seen once more, now
         assertTrue(dedup.isDuplicate("old1"), "migrated members are in-window at migration time");
@@ -111,7 +113,7 @@ class WindowedDeduplicatorIntegrationTest {
         assertEquals(RType.ZSET, client.getKeys().getType(name),
                 "the key must be re-laid out as a scored set");
 
-        Thread.sleep(600);
+        Thread.sleep(1000);
         assertFalse(dedup.isDuplicate("old1"), "migrated members expire like any other entry");
         assertEquals(0, dedup.getUniqueCount());
     }
