@@ -394,11 +394,13 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 ### 中（Medium）
 
-### MQ-06 毒消息在 pending 扫描器中无限循环：非 payload 缺失的解析错误被重抛，永远不进 DLQ ⏳
+### MQ-06 毒消息在 pending 扫描器中无限循环：非 payload 缺失的解析错误被重抛，永远不进 DLQ [已修复]
 - **位置**：`mq/.../impl/StreamEntryCodec.java:107`（`Instant.parse`）；`RedisMessageConsumer.java:484-491`（非 payload-missing 重抛）、`360-392`（扫描器 claim，catch @390 只 log）
 - **触发**：任何 `timestamp` 字段非 ISO-8601 的流条目（外部生产者/手工修复/损坏写入）。`isPayloadMissing` 只匹配 "Payload not found"/"Failed to load payload"。
 - **影响**：条目留在 PEL；每个 `pendingScanIntervalSec` 都被 claim → parse 抛 → log → 继续，无退避、无 DLQ、无最大投递截断；日志洪水 + 永久卡死条目。
 - **审计置信度**：高
+- **验证与修复**：`RedisMessageConsumer` 的两条解析路径（`processPendingMessages` 与 `processIncomingRecord`）统一把所有 `RuntimeException` 视为 poison —— 复用 `handleMissingPayload` 构造最小错误消息（含解析异常类型/消息头）、经 `DeadLetterService.send` 入 DLQ 再 ACK 原条目。旧代码仅捕获 payload-missing，其余重抛 → 外层 `requeueOrDeadLetter` 收到 null message → NPE 被吞 → 条目留在 PEL 无限 re-claim。
+- **回归测试**：`Mq06PoisonPendingIntegrationTest`（@Tag("integration")，真实 Redis：手工写入非法 timestamp 条目，经 ghost consumer 放入 PEL，本消费者启动后 pending scanner claim → 解析失败 → DLQ 计数=1、handler 零调用、二次扫描无重复；旧代码复现：DLQ 计数递增、handler 从未被调用但日志无限报错）。
 
 ### MQ-07 指数退避移位溢出变负数：重试风暴零延迟轰炸 Redis [已修复]
 - **位置**：`mq/.../retry/ExponentialBackoffRetryPolicy.java:25`（`baseMs * (1L << (attempt-1))`）；消费点 `RedisMessageConsumer.java:654-656,670`
