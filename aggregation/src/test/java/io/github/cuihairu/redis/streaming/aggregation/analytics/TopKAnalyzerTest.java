@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -66,11 +67,16 @@ class TopKAnalyzerTest {
 
         when(current.addScore("home", 2.0)).thenReturn(7.0);
         when(current.size()).thenReturn(9); // k*2 = 8, triggers trim
+        // lowest entry in the bucket: rank order resolves to it, trim evicts it by name
+        when(current.entryRange(0, 0)).thenReturn(List.of(entry("low", 1.0)));
+        when(current.entryRange(eq(1.0), eq(true), eq(1.0), eq(true)))
+                .thenReturn(List.of(entry("low", 1.0)));
 
         double score = analyzer.recordItem("pages", "home", 2.0);
         assertEquals(7.0, score);
 
-        verify(current).removeRangeByRank(0, 1);
+        verify(current).remove("low");
+        verify(current, never()).removeRangeByRank(anyInt(), anyInt());
         verify(current).expire(any(Instant.class));
     }
 
@@ -141,6 +147,7 @@ class TopKAnalyzerTest {
         double score = analyzer.recordItem("pages", "home", 2.0);
         assertEquals(5.0, score);
 
+        verify(current, never()).remove(anyString());
         verify(current, never()).removeRangeByRank(anyInt(), anyInt());
     }
 

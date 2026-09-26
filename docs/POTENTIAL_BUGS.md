@@ -299,9 +299,10 @@
 - **影响**：静默错配，无校验报错。
 - **验证与修复**：构造器加正数校验抛 IAE（与 B-11 同批）；`CountTriggerTest.testWithZeroCount` 原断言"maxCount=0 每元素触发"的旧缺陷行为，改为断言抛 IAE。
 
-### B-40 TopKAnalyzer 边界裁剪对同分条目非确定 ⏳
-- **位置**：`aggregation/.../TopKAnalyzer.java:59-64`
-- **影响**：`removeRangeByRank` 同分按字典序裁剪，边界成员随机性。
+### B-40 TopKAnalyzer 边界裁剪对同分条目非确定 ✅已修复
+- **位置**：`aggregation/.../TopKAnalyzer.java`（recordItem 裁剪 + getTopK/rankedWindowItems 排序）
+- **影响**：裁剪侧 `removeRangeByRank` 同分按字典序**升序**逐出——恰好逐出查询同分中应排最前的条目；查询侧同分顺序 = HashMap 迭代序（未规定，随实现漂移）。裁剪与查询的排名策略互相矛盾。
+- **验证与修复**：统一排名策略为 `(score desc, item asc)`；裁剪改为按同一排名的尾部 `(score asc, item desc)` 逐名逐出（读 rank 前缀 + 补齐跨界同分组的 `entryRange` 再排序），测试实测本 JDK 上 HashMap 同 bin 先插 q 后插 a 迭代序仍为 a 在前，佐证旧查询侧顺序不可依赖。新增 `TopKAnalyzerTieOrderTest`（裁剪逐出 b 而非 a；旧代码 `remove("m")` 未被调用）+ 改写 `recordItemAddsScoreAndOptionallyTrims`。
 
 ### B-41 PVCounter 混用事件时间与墙钟保留：迟到事件即到即删、未来事件永生 ⏳
 - **位置**：`aggregation/.../analytics/PVCounter.java:74-83`

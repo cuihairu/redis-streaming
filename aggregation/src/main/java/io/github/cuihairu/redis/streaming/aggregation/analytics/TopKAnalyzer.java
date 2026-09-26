@@ -35,12 +35,29 @@ import java.util.stream.Collectors;
  * the bottom entries beyond {@code 2k} are trimmed on write (the same memory bound as
  * before, scoped to a single bucket). Sorted-set keys written by the pre-windowing
  * layout ({@code <prefix>:topk:<category>}) are ignored and left untouched.
+ *
+ * <p>Tie policy (B-40): items with equal totals are ranked by name ascending — in
+ * {@code getTopK}, in {@code getRank}, and at the trim boundary. Trimming evicts the
+ * tail of exactly that order (score ascending, name descending), so a tied item is
+ * evicted precisely when the queries would rank it lower; previously the trim cut by
+ * Redis's lexicographically-ascending rank order, evicting the tied item queries rank
+ * first, while query-side tie order was the map's iteration order.
  */
 @Slf4j
 public class TopKAnalyzer {
 
     /** How many buckets cover one window; the bucket length is windowSize divided by this. */
     static final int BUCKETS_PER_WINDOW = 10;
+
+    /** Query ranking: score descending, ties broken by item name ascending (B-40). */
+    private static final Comparator<Map.Entry<String, Double>> RANK_ORDER =
+            Map.Entry.<String, Double>comparingByValue(Comparator.reverseOrder())
+                    .thenComparing(Map.Entry.comparingByKey());
+
+    /** Eviction order for rank trimming: the tail of {@link #RANK_ORDER}. */
+    private static final Comparator<ScoredEntry<String>> EVICTION_ORDER =
+            Comparator.comparing(ScoredEntry<String>::getScore)
+                    .thenComparing(ScoredEntry::getValue, Comparator.reverseOrder());
 
     private final RedissonClient redissonClient;
     private final String keyPrefix;
@@ -104,8 +121,7 @@ public class TopKAnalyzer {
         // Optionally trim to keep only top items (to manage memory)
         long currentSize = bucket.size();
         if (currentSize > k * 2) { // Keep more than k for better accuracy
-            // Remove items with lowest scores
-            bucket.removeRangeByRank(0, (int) (currentSize - k * 2));
+            evictLowestRanked(bucket, (int) (currentSize - k * 2));
         }
 
         // The bucket can contribute to queries only while it overlaps the trailing
@@ -127,7 +143,7 @@ public class TopKAnalyzer {
     public List<TopKItem> getTopK(String category) {
         long now = clock.getAsLong();
         return windowTotals(category).entrySet().stream()
-                .sorted(Map.Entry.<String, Double>comparingByValue(Comparator.reverseOrder()))
+                .sorted(RANK_ORDER)
                 .limit(k)
                 .map(e -> new TopKItem(e.getKey(), e.getValue(), Instant.ofEpochMilli(now)))
                 .collect(Collectors.toList());
@@ -242,9 +258,35 @@ public class TopKAnalyzer {
     /** All windowed items, highest score first; ties broken by item name for determinism. */
     private List<String> rankedWindowItems(String category) {
         return windowTotals(category).entrySet().stream()
-                .sorted(Map.Entry.<String, Double>comparingByValue(Comparator.reverseOrder()))
+                .sorted(RANK_ORDER)
                 .map(Map.Entry::getKey)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Evict {@code count} entries as the tail of the query ranking (score ascending,
+     * item name descending). Redis rank order breaks ties lexicographically ascending,
+     * which would evict the tied item the queries rank first (B-40), so the boundary
+     * tie group is re-resolved by name instead of by rank.
+     */
+    private void evictLowestRanked(RScoredSortedSet<String> bucket, int count) {
+        List<ScoredEntry<String>> candidates = new ArrayList<>();
+        List<ScoredEntry<String>> lowest = new ArrayList<>(bucket.entryRange(0, count - 1));
+        if (!lowest.isEmpty()) {
+            // the rank range can cut through a tie group; pull in the whole group so
+            // the boundary is resolved by item name, not by Redis's lex-asc rank order
+            double boundaryScore = lowest.get(lowest.size() - 1).getScore();
+            for (ScoredEntry<String> e : lowest) {
+                if (e.getScore() < boundaryScore) {
+                    candidates.add(e);
+                }
+            }
+            candidates.addAll(bucket.entryRange(boundaryScore, true, boundaryScore, true));
+        }
+        candidates.sort(EVICTION_ORDER);
+        for (int i = 0; i < count && i < candidates.size(); i++) {
+            bucket.remove(candidates.get(i).getValue());
+        }
     }
 
     private RScoredSortedSet<String> bucketSet(String category, long bucketIndex) {
