@@ -275,9 +275,11 @@
 - **验证与修复**：三个 in-memory 限流器（滑窗/令牌桶/漏桶）的 per-key map 增加写路径惰性清扫：状态变为"语义等价于不存在"（滑窗 deque 全过期 / 令牌桶按已流逝时间回满 / 漏桶按已流逝时间漏空）即从 map 摘除——淘汰对限流判定完全透明，不改变任何 allow/deny 结果。清扫按规模阈值（默认 256，包私有构造器可调）+ 最小间隔（max(1s, 半过期周期)）CAS 门控，稳态调用零额外开销、无后台线程、无生命周期负担；活跃 key 永不被淘汰。新增 `trackedKeyCount()` 供监控。坑位记录：门控时间戳哨兵不能用 `Long.MIN_VALUE`（`now-哨兵` 溢出为负使清扫永不触发，测试立即暴露，改 0）。
 - **回归测试**：`InMemoryRateLimiterKeyEvictionTest`（公共构造器 + 反射读私有 map 字段，字段名新旧一致，可直接对旧代码编译）——旧代码 3/3 泄漏断言按预期失败（"expected 1 but was 301"：300 个过期 key + 1 个新 key 全部滞留），新代码 6/6 绿（3 个淘汰 + 3 个活跃 key 不误删）；既有行为测试全绿证明淘汰零语义漂移；`sweepThreshold` 负数校验入 `InMemoryRateLimiterCtorValidationTest`。
 
-### B-35 DeadLetterQueue maxSize 未校验 + clear 与 add 竞态 ⏳
-- **位置**：`reliability/.../DeadLetterQueue.java:34-37,47-69,130-134`
+### B-35 DeadLetterQueue maxSize 未校验 + clear 与 add 竞态 ✅已修复
+- **位置**：`reliability/.../DeadLetterQueue.java`
 - **影响**：`maxSize<=0` → add 恒 false 全静默丢弃；`clear()` 两步非原子，计数可漂移，容量永久缩水。
+- **验证与修复**：分两步落地——`2db0433` 已修 add() 的 CAS 防超调（计数与容量判定原子化）；本轮补齐剩余两项：(1) 构造器校验 `maxSize<=0` 抛 IAE（非正上限=所有失败静默丢弃，违背 DLQ 存在目的）；(2) `clear()` 从 `queue.clear()+set(0)` 改为逐元素 drain + 逐次递减——批量清零会抹掉落在两步之间的并发 add 的递增，计数永久少计、队列可超 maxSize；drain 版每次移除恰配一次递减，任意并发交错下 `size()==getAll().size()<=maxSize` 恒成立。
+- **回归测试**：`DeadLetterQueueClearRaceTest`（只用公共 API，可对旧代码编译）——旧代码 2/2 失败：双加者+单清者压测 400ms 后 "expected 2 but was 1"（计数漂移坐实）、`new DeadLetterQueue(0)` 未抛 IAE；新代码全绿，且压测断言保证不变式在任何交错下成立。既有 `DeadLetterQueueTest`/覆盖率测试全绿。
 
 ### B-36 外连接立即发 unmatched，对端稍后到达又发 match：同元素双发 ⏳
 - **位置**：`join/.../StreamJoiner.java:62-65,100-103`
