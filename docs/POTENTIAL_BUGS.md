@@ -176,11 +176,12 @@
 - **影响**：`tableName + ":op:" + millis` 全量拷贝、无 TTL 无清理 → 长任务 Redis 内存无界增长、key 爆炸。
 - **审计置信度**：高
 
-### B-25 订阅 check-then-act 竞态：重复 RTopic 监听器、回调翻倍、订阅泄漏 ⏳
+### B-25 订阅 check-then-act 竞态：重复 RTopic 监听器、回调翻倍、订阅泄漏 ✅已修复
 - **位置**：`registry/.../RedisServiceConsumer.java:244-257`；`config/.../RedisConfigService.java:204-223`
 - **触发**：两线程并发 `subscribe(同服务)` / `addListener(同 dataId)`。
 - **影响**：双活监听器 → 每条消息回调两次；`unsubscribe` 只清理 map 内那个 RTopic，另一个的 Redis 订阅与 handler 永久泄漏。
 - **审计置信度**：高
+- **验证与修复**：两处订阅守卫从 `containsKey`+`put` 改为 `ConcurrentHashMap.compute`（per-key 原子的 create-or-reuse），并发订阅只会注册一个 RTopic 监听器，清理路径不变。回归测试 `ConcurrentSubscribeRaceTest`（registry，12 线程栅栏并发 subscribe，断言 addListener/removeAllListeners 恰一次；旧代码复现失败）与 `ConfigServiceConcurrentAddListenerRaceTest`（config 同型，旧代码复现失败）。
 
 ### B-26 HealthCheckManager 注册 check-then-act 竞态：泄漏运行中的 checker 线程 ✅已修复
 - **位置**：`registry/.../health/HealthCheckManager.java:57-90`
@@ -584,7 +585,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 本轮系统性审计共产出 **103 项**发现（另：B-04 后补验证修复）：B-01..B-45（core/window/join/table/aggregation/reliability/cep/registry/config/checkpoint）、MQ-01..15、CDC-C1/H1-H5/M1-M7/L1-L9、RT-H1-H3/M1-M7/L1-L11。
 
-### 已修复并带回归测试（28 项 + 1 项缓解）
+### 已修复并带回归测试（29 项 + 1 项缓解）
 
 | 模块 | 修复项 |
 |---|---|
@@ -592,7 +593,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 | join | B-02（非对称窗口顺序依赖）、B-16（并发 CME） |
 | table | B-03（aggregate 丢累加值）、B-17（null 分组 key） |
 | reliability | B-12（clear 后过滤器失效） |
-| registry | B-32（首失败即熔断，顺带修复"窗口在成功调用上填满时不裁决"）、B-04（健康上报 key 错配：事件/缓存/反注册/查询四路全失效）、B-05（metrics 采集为空不再跳过心跳）、B-26（健康 checker 注册竞态：putIfAbsent，杜绝双开泄漏线程） |
+| registry | B-32（首失败即熔断，顺带修复"窗口在成功调用上填满时不裁决"）、B-04（健康上报 key 错配：事件/缓存/反注册/查询四路全失效）、B-05（metrics 采集为空不再跳过心跳）、B-26（健康 checker 注册竞态：putIfAbsent，杜绝双开泄漏线程）、B-25（订阅竞态：compute 原子 create-or-reuse，杜绝双监听器与订阅泄漏） |
 | mq | MQ-02（DLQ RETRY 双写）、MQ-03（租约非原子）、MQ-05（重放前缀硬编码）、MQ-07（退避溢出）、MQ-09（claimIdleMs=0）、MQ-10（JSON 控制字符） |
 | cdc | CDC-C1（真实流格式全丢）、CDC-H1/H2（重启丢水位/队列）、CDC-H4（commit 冒号截断）、CDC-H5（NPE）、CDC-M6（调度器复用）、CDC-M7（值解析按空白切分） |
 | runtime redis | RT-H1（checkpoint 恢复失效）、RT-M5（快照错误被吞，缓解：WARN + 明示回退语义） |

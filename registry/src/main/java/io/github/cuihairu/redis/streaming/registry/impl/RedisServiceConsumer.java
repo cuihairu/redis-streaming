@@ -261,18 +261,22 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
         // Add listener
         listeners.computeIfAbsent(serviceName, k -> ConcurrentHashMap.newKeySet()).add(listener);
 
-        // If this is the first listener, create Redis subscription
-        if (!subscriptions.containsKey(serviceName)) {
+        // If this is the first listener, create Redis subscription. The guard must be atomic
+        // (B-25): with containsKey+put two concurrent subscribers each registered an RTopic
+        // listener — every event fired twice and unsubscribe left one Redis subscription
+        // leaking forever. compute per key makes create-or-reuse a single atomic step.
+        subscriptions.compute(serviceName, (svc, existingTopic) -> {
+            if (existingTopic != null) {
+                return existingTopic;
+            }
             RTopic topic = redissonClient.getTopic(
-                config.getServiceChangeChannelKey(serviceName), new org.redisson.codec.JsonJacksonCodec());
-
+                config.getServiceChangeChannelKey(svc), new org.redisson.codec.JsonJacksonCodec());
             topic.addListener(io.github.cuihairu.redis.streaming.registry.event.ServiceChangeEvent.class, (channel, message) -> {
-                handleServiceChangeEvent(serviceName, message);
+                handleServiceChangeEvent(svc, message);
             });
-
-            subscriptions.put(serviceName, topic);
-            logger.info("Subscribed to service changes for: {}", serviceName);
-        }
+            logger.info("Subscribed to service changes for: {}", svc);
+            return topic;
+        });
 
         // Immediately notify current service instance list
         try {

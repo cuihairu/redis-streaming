@@ -203,24 +203,28 @@ public class RedisConfigService implements ConfigService, ConfigManager {
         // Add listener
         listeners.computeIfAbsent(listenerKey, k -> ConcurrentHashMap.newKeySet()).add(listener);
         
-        // If this is the first listener, create Redis subscription
-        if (!subscriptions.containsKey(listenerKey)) {
+        // If this is the first listener, create Redis subscription. The guard must be atomic
+        // (B-25): with containsKey+put two concurrent addListener calls each registered an
+        // RTopic listener — every change event fired twice and removeListener left one Redis
+        // subscription leaking forever. compute per key makes it a single atomic step.
+        subscriptions.compute(listenerKey, (key, existingTopic) -> {
+            if (existingTopic != null) {
+                return existingTopic;
+            }
             RTopic topic = redissonClient.getTopic(
                 config.getConfigChangeChannelKey(group, dataId), new JsonJacksonCodec());
-
             topic.addListener(ConfigChangeEvent.class, (channel, message) -> {
                 handleConfigChangeEvent(dataId, group, message);
             });
-            
-            subscriptions.put(listenerKey, topic);
-            
+
             // Add to subscribers list
             RSet<String> subscribersSet = redissonClient.getSet(
                 config.getConfigSubscribersKey(group, dataId));
             subscribersSet.add(clientId);
-            
+
             logger.info("Added config listener for: {}:{}", group, dataId);
-        }
+            return topic;
+        });
         
         // Immediately notify with current configuration
         try {
