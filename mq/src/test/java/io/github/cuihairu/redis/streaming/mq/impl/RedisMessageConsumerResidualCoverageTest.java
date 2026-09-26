@@ -6,6 +6,8 @@ import io.github.cuihairu.redis.streaming.mq.MessageHandler;
 import io.github.cuihairu.redis.streaming.mq.MqHeaders;
 import io.github.cuihairu.redis.streaming.mq.broker.Broker;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
+import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterRecord;
+import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterService;
 import io.github.cuihairu.redis.streaming.mq.lease.LeaseManager;
 import io.github.cuihairu.redis.streaming.mq.metrics.MqMetrics;
 import io.github.cuihairu.redis.streaming.mq.metrics.MqMetricsCollector;
@@ -52,6 +54,8 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.any;
 
 /**
  * Residual (round-2) coverage for RedisMessageConsumer defensive/error branches that are
@@ -69,6 +73,7 @@ class RedisMessageConsumerResidualCoverageTest {
     private RScoredSortedSet<String> retryBucket;
     private RScript script;
     private RLock lock;
+    private io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterService deadLetterService;
     private LeaseManager lease;
     private TopicPartitionRegistry partitionRegistry;
     private RedisMessageConsumer consumer;
@@ -96,7 +101,6 @@ class RedisMessageConsumerResidualCoverageTest {
         when(client.getBucket(anyString(), any(Codec.class))).thenReturn((RBucket) bucket);
         when(client.getScript(any(Codec.class))).thenReturn(script);
         when(client.getLock(anyString())).thenReturn(lock);
-        when(dlqStream.add(any())).thenReturn(new StreamMessageId(9, 0));
         when(dataStream.add(any())).thenReturn(new StreamMessageId(9, 1));
         // throttle default reads so any worker thread cannot busy-spin on mocked reads
         when(dataStream.readGroup(anyString(), anyString(), any(org.redisson.api.stream.StreamReadGroupArgs.class)))
@@ -109,6 +113,9 @@ class RedisMessageConsumerResidualCoverageTest {
         consumer = new RedisMessageConsumer(client, "unit-residual", partitionRegistry,
                 MqOptions.builder().retryBaseBackoffMs(0).retryMaxBackoffMs(0)
                         .claimIdleMs(0).claimBatchSize(10).build());
+        deadLetterService = mock(DeadLetterService.class);
+        when(deadLetterService.send(any())).thenReturn(new StreamMessageId(9, 0));
+        setField(consumer, "deadLetterService", deadLetterService);
         lease = mock(LeaseManager.class);
         setField(consumer, "leaseManager", lease);
     }
@@ -427,7 +434,7 @@ class RedisMessageConsumerResidualCoverageTest {
         MessageHandler handler = mock(MessageHandler.class);
         assertDoesNotThrow(() -> invoke(consumer, "processIncomingRecord", PROCESS_INCOMING,
                 "t", "g", 0, "5-0", data, null, handler, true));
-        verify(dlqStream).add(any());
+        verify(deadLetterService).send(any());
         verify(dataStream).ack(eq("g"), eq(new StreamMessageId(5, 0)));
 
         when(bucket.isExists()).thenReturn(true);
@@ -494,7 +501,8 @@ class RedisMessageConsumerResidualCoverageTest {
         data.put("maxRetries", "also-bad");
         data.put("headers", "{\"a\":\"b\"}");
         assertDoesNotThrow(() -> invoke(consumer, "handleMissingPayload", HANDLE_MISSING_4, "t", "g", 0, "5-0", data));
-        verify(dlqStream).add(any());
+        // DLQ is now handled via DeadLetterService.send() instead of direct stream.add()
+        verify(deadLetterService).send(any());
     }
 
     @Test
@@ -540,7 +548,7 @@ class RedisMessageConsumerResidualCoverageTest {
         Map<String, Object> data = new HashMap<>();
         data.put("headers", "{not-valid-json");
         assertDoesNotThrow(() -> invoke(consumer, "handleMissingPayload", HANDLE_MISSING_4, "t", "g", 0, "5-0", data));
-        verify(dlqStream).add(any());
+        verify(deadLetterService).send(any());
     }
 
     @Test

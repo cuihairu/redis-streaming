@@ -282,10 +282,12 @@ public final class RedisRuntimeCheckpointManager {
                 }
                 String committed = null;
                 try {
-                    @SuppressWarnings("rawtypes")
-                    RMap frontier = redissonClient.getMap(StreamKeys.commitFrontier(p.topic(), pid));
-                    Object v = frontier.get(p.consumerGroup());
-                    committed = v == null ? null : String.valueOf(v);
+                    // MQ-11: the frontier hash is plain text "ms-seq" written by the mq
+                    // consumer's Lua script (StringCodec), regardless of the client codec
+                    RMap<String, String> frontier = redissonClient.getMap(
+                            StreamKeys.commitFrontier(p.topic(), pid), StringCodec.INSTANCE);
+                    String v = frontier.get(p.consumerGroup());
+                    committed = v;
                 } catch (Exception ex) {
                     // RT-M5: a transient Redis error here records no offset, and restore then
                     // rewinds this partition to 0-0 (full reprocess) — that deserves a warning,

@@ -56,6 +56,39 @@ public final class RedisStreamExecutionEnvironment {
     private static final Logger log = LoggerFactory.getLogger(RedisStreamExecutionEnvironment.class);
     private static final Pattern ID_PATTERN = Pattern.compile("[A-Za-z0-9_.-]+");
 
+    /**
+     * MQ-11: atomic frontier compare-and-set — HSET only when the acked stream id is
+     * newer than the stored one. Values are plain text "ms-seq"; quotes are stripped
+     * before matching so values written by a quoting codec stay comparable. A new id
+     * that is not a stream id is never written; a stored value that is not a stream id
+     * is overwritten (self-healing, e.g. hashes left behind by a previous binary codec).
+     * Returns 1 when the frontier advanced.
+     */
+    private static final String COMMIT_FRONTIER_CAS_LUA = String.join("\n",
+            "local prev = redis.call('HGET', KEYS[1], ARGV[1])",
+            "local nv = string.gsub(ARGV[2], '\"', '')",
+            "local nm, ns = string.match(nv, '^(%d+)-(%d+)$')",
+            "if nm == nil then return 0 end",
+            "if prev == false then",
+            "  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])",
+            "  return 1",
+            "end",
+            "local pv = string.gsub(prev, '\"', '')",
+            "local pm, ps = string.match(pv, '^(%d+)-(%d+)$')",
+            "if pm == nil then",
+            "  -- fallback to lexicographic compare for unparsable values",
+            "  if nv > prev then",
+            "    redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])",
+            "    return 1",
+            "  end",
+            "  return 0",
+            "end",
+            "if tonumber(nm) > tonumber(pm) or (tonumber(nm) == tonumber(pm) and tonumber(ns) > tonumber(ps)) then",
+            "  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])",
+            "  return 1",
+            "end",
+            "return 0");
+
     private final RedissonClient redissonClient;
     private final RedisRuntimeConfig config;
     private final MessageQueueFactory mqFactory;
@@ -873,12 +906,16 @@ public final class RedisStreamExecutionEnvironment {
                     }
                     if (maxId != null) {
                         try {
-                            @SuppressWarnings("unchecked")
-                            RMap<String, String> frontier = redissonClient.getMap(StreamKeys.commitFrontier(topic, pid));
-                            String prev = frontier.get(group);
-                            if (prev == null || compareStreamId(maxId, prev) > 0) {
-                                frontier.put(group, maxId);
-                            }
+                            // MQ-11: the frontier is a max() reduced across concurrent ack
+                            // workers, so the compare-and-set runs inside Redis as one
+                            // atomic Lua script over plain text "ms-seq" values — the old
+                            // Java read-then-put could read a stale prev and land a
+                            // smaller id last, regressing the frontier
+                            RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
+                            script.eval(RScript.Mode.READ_WRITE, COMMIT_FRONTIER_CAS_LUA,
+                                    RScript.ReturnType.LONG,
+                                    java.util.Collections.singletonList(StreamKeys.commitFrontier(topic, pid)),
+                                    group, maxId);
                         } catch (Exception ignore) {
                         }
                     }
@@ -933,10 +970,11 @@ public final class RedisStreamExecutionEnvironment {
                 String frontierKey = StreamKeys.commitFrontier(topic, pid);
                 String committedId = null;
                 try {
-                    @SuppressWarnings("rawtypes")
-                    RMap frontier = redissonClient.getMap(frontierKey);
-                    Object v = frontier.get(consumerGroup);
-                    committedId = v == null ? null : String.valueOf(v);
+                    // MQ-11: the frontier hash is plain text "ms-seq" written by the ack
+                    // path's Lua CAS (StringCodec), regardless of the client codec
+                    RMap<String, String> frontier = redissonClient.getMap(frontierKey,
+                            org.redisson.client.codec.StringCodec.INSTANCE);
+                    committedId = frontier.get(consumerGroup);
                 } catch (Exception ignore) {
                 }
                 String startId = (committedId == null || committedId.isBlank()) ? "0-0" : committedId;

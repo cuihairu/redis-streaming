@@ -35,7 +35,10 @@ public class CommitFrontierUpdateIntegrationTest {
             assertTrue(ok, "messages handled");
 
             String frontierKey = StreamKeys.commitFrontier(topic, 0);
-            org.redisson.api.RMap<String,String> fmap = client.getMap(frontierKey);
+            // MQ-11: the frontier hash is plain text "ms-seq" (StringCodec), written by
+            // the consumer's Lua script independently of the client's own codec
+            org.redisson.api.RMap<String,String> fmap = client.getMap(frontierKey,
+                    org.redisson.client.codec.StringCodec.INSTANCE);
             Map<String,String> fm = fmap.readAllMap();
             assertTrue(fm.containsKey("g1"));
             String id = fm.get("g1");

@@ -261,7 +261,7 @@ class RedisRuntimeIntegrationTest {
             // Wait commit frontier present (partition 0 in tests)
             String frontierKey = StreamKeys.commitFrontier(topic, 0);
             @SuppressWarnings("rawtypes")
-            RMap frontier = client.getMap(frontierKey);
+            RMap frontier = client.getMap(frontierKey, org.redisson.client.codec.StringCodec.INSTANCE);
             long deadline = System.currentTimeMillis() + 5000L;
             String committed;
             while (true) {
@@ -357,7 +357,7 @@ class RedisRuntimeIntegrationTest {
                 // Wait commit frontier to catch up (partition 0 in tests)
                 String frontierKey = StreamKeys.commitFrontier(topic, 0);
                 @SuppressWarnings("rawtypes")
-                RMap frontier = client.getMap(frontierKey);
+                RMap frontier = client.getMap(frontierKey, org.redisson.client.codec.StringCodec.INSTANCE);
                 long deadline = System.currentTimeMillis() + 10_000L;
                 while (true) {
                     Object v = frontier.get(group);

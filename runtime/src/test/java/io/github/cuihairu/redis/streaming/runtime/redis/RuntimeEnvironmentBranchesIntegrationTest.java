@@ -11,6 +11,7 @@ import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
 import org.redisson.api.stream.StreamAddArgs;
 import org.redisson.api.stream.StreamMessageId;
+import org.redisson.client.codec.StringCodec;
 import org.redisson.config.Config;
 
 import java.time.Duration;
@@ -92,7 +93,8 @@ class RuntimeEnvironmentBranchesIntegrationTest {
             // record a commit-frontier for (topic, g, p0) at `second`, then destroy the group:
             // the job must recreate the group at the frontier and only see NEWER entries.
             org.redisson.api.RMap<String, String> frontier = redis.getMap(
-                    io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.commitFrontier(topic, 0));
+                    io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.commitFrontier(topic, 0),
+                    StringCodec.INSTANCE);
             frontier.put("g", second.toString());
             stream.removeGroup("g");
 

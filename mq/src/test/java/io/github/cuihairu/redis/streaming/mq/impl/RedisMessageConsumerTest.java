@@ -404,17 +404,6 @@ class RedisMessageConsumerTest {
     }
 
     @Test
-    void testCompareStreamId() throws Exception {
-        RedisMessageConsumer consumer = createConsumer(null);
-        java.lang.reflect.Method method = RedisMessageConsumer.class.getDeclaredMethod("compareStreamId", String.class, String.class);
-        method.setAccessible(true);
-
-        int result = (int) method.invoke(consumer, "1234567890-0", "1234567890-1");
-
-        assertTrue(result < 0); // First ID is smaller
-    }
-
-    @Test
     void testObjectToJson() throws Exception {
         RedisMessageConsumer consumer = createConsumer(null);
         java.lang.reflect.Method method = RedisMessageConsumer.class.getDeclaredMethod("objectToJson", Object.class);

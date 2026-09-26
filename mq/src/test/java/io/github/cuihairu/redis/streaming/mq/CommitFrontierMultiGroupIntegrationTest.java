@@ -40,9 +40,12 @@ public class CommitFrontierMultiGroupIntegrationTest {
             assertTrue(h2.await(3, TimeUnit.SECONDS));
 
             String frontierKey = StreamKeys.commitFrontier(topic, 0);
+            // MQ-11: the frontier hash is plain text "ms-seq" (StringCodec), written by
+            // the consumer's Lua script independently of the client's own codec.
             // Frontier update is best-effort after ACK; wait briefly for both group entries to appear
             boolean both = waitUntil(() -> {
-                Map<String,String> m = client.<String,String>getMap(frontierKey).readAllMap();
+                Map<String,String> m = client.<String,String>getMap(frontierKey,
+                        org.redisson.client.codec.StringCodec.INSTANCE).readAllMap();
                 return m != null && m.containsKey("g1") && m.containsKey("g2") && m.get("g1") != null && m.get("g2") != null;
             }, 3000);
             assertTrue(both, "frontier map should contain both g1 and g2");

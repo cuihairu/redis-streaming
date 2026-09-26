@@ -368,11 +368,11 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                                 try {
                                     message = StreamEntryCodec.parsePartitionEntry(pk.topic, claimedId.toString(), data, payloadLifecycleManager);
                                 } catch (RuntimeException ex) {
-                                    if (isPayloadMissing(ex)) {
-                                        handleMissingPayload(pk.topic, pk.group, pk.partitionId, claimedId.toString(), data, stream);
-                                        continue;
-                                    }
-                                    throw ex;
+                                    // Any parse failure (including malformed timestamp, corrupt payload, etc.)
+                                    // is treated as poison — send to DLQ and ACK original to avoid infinite
+                                    // re-claim loops (MQ-06). Payload-missing already handled by the same path.
+                                    handleMissingPayload(pk.topic, pk.group, pk.partitionId, claimedId.toString(), data, stream);
+                                    continue;
                                 }
                                 boolean permitAcquired = false;
                                 try {
@@ -806,20 +806,54 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
             }
         }
 
-        // Update commit frontier (best-effort): keep max acknowledged id per group/partition
+        // Update commit frontier (best-effort): keep max acknowledged id per group/partition.
+        // MQ-11: the frontier is a max() reduced across concurrent ack workers, so the
+        // compare-and-set runs inside Redis as one atomic Lua script — the old Java
+        // read-then-put let two workers read the same prev and land the smaller id last,
+        // regressing the frontier.
         try {
             String frontierKey = StreamKeys.commitFrontier(topic, partitionId);
-            // Use client's default codec to be readable by generic tooling/metrics/tests
-            org.redisson.api.RMap<String, String> map = redissonClient.getMap(frontierKey);
-            String prev = map.get(consumerGroup);
-            if (prev == null || compareStreamId(messageId, prev) > 0) {
-                map.put(consumerGroup, messageId);
-            }
+            // The frontier hash is plain text ("ms-seq" under the group field, StringCodec):
+            // a binary client codec would store ids the Lua comparison can never parse
+            org.redisson.api.RScript script =
+                    redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
+            script.eval(org.redisson.api.RScript.Mode.READ_WRITE, COMMIT_FRONTIER_LUA,
+                    org.redisson.api.RScript.ReturnType.LONG,
+                    java.util.Collections.singletonList(frontierKey), consumerGroup, messageId);
         } catch (Exception e) {
             log.debug("Failed to update commit frontier for topic={} group={} partition={}",
                     topic, consumerGroup, partitionId, e);
         }
     }
+
+    /**
+     * MQ-11: atomic frontier compare-and-set — HSET only when the acked stream id is
+     * newer than the stored one. Values are plain text "ms-seq"; quotes are stripped
+     * before matching so values written by a quoting codec stay comparable. A new id
+     * that is not a stream id is never written; a stored value that is not a stream id
+     * is overwritten (self-healing, e.g. hashes left by a previous binary codec).
+     * Returns 1 when the frontier advanced.
+     */
+    private static final String COMMIT_FRONTIER_LUA = String.join("\n",
+            "local prev = redis.call('HGET', KEYS[1], ARGV[1])",
+            "local nv = string.gsub(ARGV[2], '\"', '')",
+            "local nm, ns = string.match(nv, '^(%d+)-(%d+)$')",
+            "if nm == nil then return 0 end",
+            "if prev == false then",
+            "  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])",
+            "  return 1",
+            "end",
+            "local pv = string.gsub(prev, '\"', '')",
+            "local pm, ps = string.match(pv, '^(%d+)-(%d+)$')",
+            "if pm == nil then",
+            "  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])",
+            "  return 1",
+            "end",
+            "if tonumber(nm) > tonumber(pm) or (tonumber(nm) == tonumber(pm) and tonumber(ns) > tonumber(ps)) then",
+            "  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])",
+            "  return 1",
+            "end",
+            "return 0");
 
     private StreamMessageId parseStreamId(String id) {
         try {
@@ -878,18 +912,6 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
             inFlightLimiter.release();
         } catch (Exception ignore) {
         }
-    }
-
-    // Compare Redis Stream ID strings like "ms-seq" lexicographically by numeric parts
-    private int compareStreamId(String a, String b) {
-        try {
-            String[] pa = a.split("-", 2); String[] pb = b.split("-", 2);
-            long am = Long.parseLong(pa[0]); long bm = Long.parseLong(pb[0]);
-            if (am != bm) return am < bm ? -1 : 1;
-            long as = pa.length>1?Long.parseLong(pa[1]):0L; long bs = pb.length>1?Long.parseLong(pb[1]):0L;
-            if (as != bs) return as < bs ? -1 : 1;
-            return 0;
-        } catch (Exception e) { return a.compareTo(b); }
     }
 
     private <T> T jsonToObject(String json, Class<T> type) {

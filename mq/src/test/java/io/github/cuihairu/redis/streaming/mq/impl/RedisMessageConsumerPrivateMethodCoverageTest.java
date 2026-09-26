@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
 
 /**
- * Covers pure helper methods of {@link RedisMessageConsumer} (parseStreamId, compareStreamId,
+ * Covers pure helper methods of {@link RedisMessageConsumer} (parseStreamId,
  * isPayloadMissing, PartitionKey value semantics, in-flight permits) via reflection without Redis.
  */
 class RedisMessageConsumerPrivateMethodCoverageTest {
@@ -69,23 +69,6 @@ class RedisMessageConsumerPrivateMethodCoverageTest {
         assertEquals(StreamMessageId.MIN, invokePrivate(consumer, "parseStreamId", sig, "not-a-number"));
         assertEquals(StreamMessageId.MIN, invokePrivate(consumer, "parseStreamId", sig, "1-2-3"));
         assertEquals(StreamMessageId.MIN, invokePrivate(consumer, "parseStreamId", sig, ""));
-    }
-
-    // ===== compareStreamId =====
-
-    @Test
-    void compareStreamIdCoversAllBranches() throws Exception {
-        Class<?>[] sig = {String.class, String.class};
-        assertEquals(-1, invokePrivate(consumer, "compareStreamId", sig, "1-0", "2-0"));
-        assertEquals(1, invokePrivate(consumer, "compareStreamId", sig, "2-0", "1-0"));
-        assertEquals(-1, invokePrivate(consumer, "compareStreamId", sig, "5-1", "5-2"));
-        assertEquals(1, invokePrivate(consumer, "compareStreamId", sig, "5-2", "5-1"));
-        assertEquals(0, invokePrivate(consumer, "compareStreamId", sig, "5-2", "5-2"));
-        assertEquals(1, invokePrivate(consumer, "compareStreamId", sig, "5-2", "5"));
-        assertEquals(-1, invokePrivate(consumer, "compareStreamId", sig, "5", "5-2"));
-        assertEquals(0, invokePrivate(consumer, "compareStreamId", sig, "7", "7"));
-        // exception fallback: lexicographic compare
-        assertEquals("a".compareTo("b"), invokePrivate(consumer, "compareStreamId", sig, "a", "b"));
     }
 
     // ===== isPayloadMissing =====

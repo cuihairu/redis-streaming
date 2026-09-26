@@ -11,6 +11,7 @@ import org.redisson.Redisson;
 import org.redisson.api.RMap;
 import org.redisson.api.RedissonClient;
 import org.redisson.api.stream.StreamMessageId;
+import org.redisson.client.codec.StringCodec;
 import org.redisson.config.Config;
 
 import java.util.List;
@@ -54,7 +55,7 @@ class RuntimeDeferAckAckAllIntegrationTest {
                 Checkpoint cp = job.triggerCheckpointNow();
                 assertNotNull(cp, "checkpoint must succeed so deferred acks run");
 
-                RMap<String, String> frontier = redis.getMap(StreamKeys.commitFrontier(topic, 0));
+                RMap<String, String> frontier = redis.getMap(StreamKeys.commitFrontier(topic, 0), StringCodec.INSTANCE);
                 long deadline = System.currentTimeMillis() + 5_000;
                 while (frontier.get("g") == null && System.currentTimeMillis() < deadline) {
                     Thread.sleep(50);
@@ -94,7 +95,7 @@ class RuntimeDeferAckAckAllIntegrationTest {
                 Checkpoint cp = job.triggerCheckpointNow();
                 assertNotNull(cp, "checkpoint must succeed so the deferred set is cleared");
 
-                RMap<String, String> frontier = redis.getMap(StreamKeys.commitFrontier(topic, 0));
+                RMap<String, String> frontier = redis.getMap(StreamKeys.commitFrontier(topic, 0), StringCodec.INSTANCE);
                 assertNull(frontier.get("g"), "clear() path must not ack nor advance the frontier");
                 producer.close();
             }
@@ -112,7 +113,7 @@ class RuntimeDeferAckAckAllIntegrationTest {
             // Frontier seeds exceed real stream ids; keep group bootstrap at its default so the
             // messages still flow and only the ackAll comparison observes the seeded frontier.
             RedisRuntimeConfig cfg = baseNoFrontierRestore(runId);
-            RMap<String, String> frontier = redis.getMap(StreamKeys.commitFrontier(topic, 0));
+            RMap<String, String> frontier = redis.getMap(StreamKeys.commitFrontier(topic, 0), StringCodec.INSTANCE);
             frontier.put("g", "9999999999999-9");
 
             List<String> out = new CopyOnWriteArrayList<>();
@@ -142,7 +143,7 @@ class RuntimeDeferAckAckAllIntegrationTest {
         RedissonClient redis = client();
         try {
             RedisRuntimeConfig cfg = baseNoFrontierRestore(runId);
-            RMap<String, String> frontier = redis.getMap(StreamKeys.commitFrontier(topic, 0));
+            RMap<String, String> frontier = redis.getMap(StreamKeys.commitFrontier(topic, 0), StringCodec.INSTANCE);
             frontier.put("g", "zzz-garbage");
 
             List<String> out = new CopyOnWriteArrayList<>();
@@ -191,7 +192,7 @@ class RuntimeDeferAckAckAllIntegrationTest {
                 awaitSize(out, 3);
 
                 // periodic checkpoints must eventually ack deferred messages and write the frontier
-                RMap<String, String> frontier = redis.getMap(StreamKeys.commitFrontier(topic, 0));
+                RMap<String, String> frontier = redis.getMap(StreamKeys.commitFrontier(topic, 0), StringCodec.INSTANCE);
                 long deadline = System.currentTimeMillis() + 15_000;
                 while (frontier.get("g") == null && System.currentTimeMillis() < deadline) {
                     Thread.sleep(100);

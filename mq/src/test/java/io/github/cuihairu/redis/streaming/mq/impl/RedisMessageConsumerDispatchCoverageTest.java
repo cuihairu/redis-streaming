@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RBucket;
 import org.redisson.api.RMap;
+import org.redisson.api.RScript;
 import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
 import org.redisson.api.stream.StreamMessageId;
@@ -23,6 +24,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -39,6 +41,7 @@ class RedisMessageConsumerDispatchCoverageTest {
     private RStream<String, Object> dataStream;
     private RMap<String, String> frontier;
     private RBucket<String> bucket;
+    private RScript frontierScript;
     private RedisMessageConsumer consumer;
 
     @BeforeEach
@@ -48,6 +51,7 @@ class RedisMessageConsumerDispatchCoverageTest {
         dataStream = mock(RStream.class);
         frontier = mock(RMap.class);
         bucket = mock(RBucket.class);
+        frontierScript = mock(RScript.class);
 
         when(client.getStream(anyString())).thenReturn((RStream) dlqStream);
         when(client.getStream(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn((RStream) dataStream);
@@ -57,6 +61,8 @@ class RedisMessageConsumerDispatchCoverageTest {
         when(client.getScoredSortedSet(anyString(), any(org.redisson.client.codec.Codec.class)))
                 .thenReturn((org.redisson.api.RScoredSortedSet) mock(org.redisson.api.RScoredSortedSet.class));
         when(client.getBucket(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn((RBucket) bucket);
+        // MQ-11: the frontier compare-and-set runs as one Lua script (StringCodec)
+        when(client.getScript(any(org.redisson.client.codec.Codec.class))).thenReturn(frontierScript);
         when(dlqStream.add(any())).thenReturn(new StreamMessageId(9, 0));
         when(dataStream.add(any())).thenReturn(new StreamMessageId(9, 1));
 
@@ -112,7 +118,16 @@ class RedisMessageConsumerDispatchCoverageTest {
 
         verify(dlqStream).add(any());
         verify(dataStream).ack(eq("g"), eq(new StreamMessageId(5, 0)));
-        verify(frontier).put(eq("g"), eq("5-0"));
+        verifyFrontierEval("g", "5-0");
+    }
+
+    /** MQ-11: the frontier update must go through the atomic Lua compare-and-set. */
+    private void verifyFrontierEval(String group, String messageId) {
+        verify(frontierScript).eval(eq(RScript.Mode.READ_WRITE), anyString(),
+                eq(RScript.ReturnType.LONG),
+                eq(java.util.Collections.singletonList(
+                        io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.commitFrontier("t", 0))),
+                eq(group), eq(messageId));
     }
 
     @Test
@@ -291,14 +306,19 @@ class RedisMessageConsumerDispatchCoverageTest {
     }
 
     @Test
-    void ackViaBackendUpdatesFrontierOnlyForNewerIds() throws Exception {
+    void ackViaBackendHandsTheFrontierUpdateToTheAtomicScript() throws Exception {
         Map<String, Object> data = new HashMap<>();
-        when(frontier.get("g")).thenReturn("4-0");
+        // MQ-11: the Java side no longer reads/decides — the newer-id comparison happens
+        // atomically inside Redis, so every ack hands its id to the script unchanged
         invoke(consumer, "ackViaBackend", ACK, "t", "g", 0, dataStream, "5-0", data);
-        verify(frontier).put("g", "5-0");
+        verify(frontierScript).eval(eq(RScript.Mode.READ_WRITE), anyString(),
+                eq(RScript.ReturnType.LONG), anyList(), eq("g"), eq("5-0"));
 
-        when(frontier.get("g")).thenReturn("9-0");
-        invoke(consumer, "ackViaBackend", ACK, "t", "g", 0, dataStream, "5-0", data);
-        verify(frontier, times(1)).put(eq("g"), eq("5-0"));
+        // an older id is still handed over — the script decides, and the real-Redis
+        // regression pins that the frontier never regresses
+        reset(frontierScript);
+        invoke(consumer, "ackViaBackend", ACK, "t", "g", 0, dataStream, "4-9", data);
+        verify(frontierScript).eval(eq(RScript.Mode.READ_WRITE), anyString(),
+                eq(RScript.ReturnType.LONG), anyList(), eq("g"), eq("4-9"));
     }
 }

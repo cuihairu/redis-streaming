@@ -35,20 +35,6 @@ class RedisStreamIdHelpersTest {
     }
 
     @Test
-    void compareStreamIdCoversAllBranches() throws Exception {
-        assertEquals(0, compareStreamId(null, null));
-        assertEquals(-1, compareStreamId(null, "1-0"));
-        assertEquals(1, compareStreamId("1-0", null));
-        assertTrue(compareStreamId("5-1", "5-2") < 0);
-        assertTrue(compareStreamId("5-2", "5-1") > 0);
-        assertEquals(0, compareStreamId("5-1", "5-1"));
-        assertTrue(compareStreamId("5", "5-1") < 0);
-        assertTrue(compareStreamId("6-1", "5-9") > 0);
-        assertTrue(compareStreamId("5-1", "5") > 0);
-        assertEquals("zz".compareTo("yy"), compareStreamId("zz", "yy"));
-    }
-
-    @Test
     void truncateCoversAllBranches() throws Exception {
         Method truncate = Class.forName(ENV).getDeclaredMethod("truncate", String.class, int.class);
         truncate.setAccessible(true);
@@ -158,12 +144,6 @@ class RedisStreamIdHelpersTest {
         Method m = Class.forName(ENV).getDeclaredMethod("parseStreamId", String.class);
         m.setAccessible(true);
         return (StreamMessageId) m.invoke(null, id);
-    }
-
-    private static int compareStreamId(String a, String b) throws Exception {
-        Method m = Class.forName(ENV).getDeclaredMethod("compareStreamId", String.class, String.class);
-        m.setAccessible(true);
-        return (int) m.invoke(null, a, b);
     }
 
     private static Object newDeferredAcks() throws Exception {
