@@ -139,11 +139,12 @@
 - **影响**：`windowSize` 字段从不读取；分数只增不减、只按 rank 裁剪（保留 2k）不按时间；跌出 top-2k 的条目分数永久丢失 → 窗口语义完全错误。
 - **审计置信度**：高
 
-### B-19 BloomFilterDeduplicator.checkAndMark 非原子 contains→add：并发同 key 双双通过 ⏳
+### B-19 BloomFilterDeduplicator.checkAndMark 非原子 contains→add：并发同 key 双双通过 ✅已修复
 - **位置**：`reliability/.../deduplication/BloomFilterDeduplicator.java:100-115`
 - **触发**：两线程并发 `checkAndMark(同id)`。
 - **影响**：双双返回 false（"新元素"）→ 处理两次；接口文档自称"原子"。`seenCount` 非 volatile 多线程丢失更新。`SetDeduplicator` 用单 `add()` 是对的。
 - **审计置信度**：高
+- **验证与修复**：修复：checkAndMark 的 contains→add 临界区与 clear() 收敛到同一 `stateLock` 监视器（进程内原子），`seenCount` 改 `AtomicLong`；类 javadoc 明确作用域——Redisson RBloomFilter 无服务端 check-and-add，跨进程首次并发 sighting 仍可能双双通过（需要跨进程精确去重请用 SetDeduplicator 的单 SADD）。回归：`BloomFilterDeduplicatorCheckAndMarkRaceTest`——mock 模拟真实布隆成员语义 + contains 内延时，24 线程 barrier 并发 checkAndMark 同一元素断言恰 1 个"新"（旧代码实测 2 个通过即失败）；另附 8×250 个不同元素并发 markAsSeen 断言计数无丢失。旧代码复现：expected <1> but was <2>。
 
 ### B-20 PatternSequenceMatcher 完整匹配永不清理：无界增长 ⏳
 - **位置**：`cep/.../PatternSequenceMatcher.java:23,62,84,187-189`

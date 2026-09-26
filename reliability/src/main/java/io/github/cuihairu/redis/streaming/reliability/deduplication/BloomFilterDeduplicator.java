@@ -4,6 +4,7 @@ import org.redisson.api.RBloomFilter;
 import org.redisson.api.RedissonClient;
 
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 
 /**
@@ -17,6 +18,12 @@ import java.util.function.Function;
  *   <li>No false negatives: Will never miss an actual duplicate</li>
  * </ul>
  *
+ * <p>Thread safety: {@link #checkAndMark(Object)} is atomic among threads sharing this
+ * instance (B-19). Redisson's {@link RBloomFilter} exposes no server-side
+ * check-and-add, so callers running in <b>different processes</b> against the same
+ * filter can still both see a fresh element — use {@link SetDeduplicator} (single
+ * atomic SADD) when cross-process exactly-once matters.
+ *
  * @param <T> the type of elements to deduplicate
  */
 public class BloomFilterDeduplicator<T> implements Deduplicator<T> {
@@ -25,7 +32,9 @@ public class BloomFilterDeduplicator<T> implements Deduplicator<T> {
     private final Function<T, String> keyExtractor;
     private final long expectedInsertions;
     private final double falseProbability;
-    private long seenCount = 0;
+    /** guards the contains→add pair of checkAndMark against interleaving (B-19) */
+    private final Object stateLock = new Object();
+    private final AtomicLong seenCount = new AtomicLong();
 
     /**
      * Create a Bloom Filter deduplicator with default settings.
@@ -96,7 +105,7 @@ public class BloomFilterDeduplicator<T> implements Deduplicator<T> {
         }
         String key = keyExtractor.apply(element);
         if (bloomFilter.add(key)) {
-            seenCount++;
+            seenCount.incrementAndGet();
         }
     }
 
@@ -107,15 +116,17 @@ public class BloomFilterDeduplicator<T> implements Deduplicator<T> {
         }
         String key = keyExtractor.apply(element);
 
-        // Check if already exists
-        boolean exists = bloomFilter.contains(key);
-        if (!exists) {
-            // Add if doesn't exist
-            if (bloomFilter.add(key)) {
-                seenCount++;
+        // contains→add must not interleave: two threads passing the contains check
+        // before either adds would both report the element as fresh (B-19).
+        synchronized (stateLock) {
+            boolean exists = bloomFilter.contains(key);
+            if (!exists) {
+                if (bloomFilter.add(key)) {
+                    seenCount.incrementAndGet();
+                }
             }
+            return exists;
         }
-        return exists;
     }
 
     @Override
@@ -124,14 +135,16 @@ public class BloomFilterDeduplicator<T> implements Deduplicator<T> {
         // re-initialization every subsequent add/contains threw "Bloom filter is not
         // initialized!" (B-12). tryInit is a no-op when the key already exists, so this is
         // safe under racing clears.
-        bloomFilter.delete();
-        bloomFilter.tryInit(expectedInsertions, falseProbability);
-        seenCount = 0;
+        synchronized (stateLock) {
+            bloomFilter.delete();
+            bloomFilter.tryInit(expectedInsertions, falseProbability);
+            seenCount.set(0);
+        }
     }
 
     @Override
     public long getUniqueCount() {
-        return seenCount;
+        return seenCount.get();
     }
 
     /**
