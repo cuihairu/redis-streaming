@@ -86,21 +86,42 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
 
         this.dataSource = createDataSource(jdbcUrl, driverClass, username, password);
 
-        initializeSnapshotOrBaseline();
+        try {
+            initializeSnapshotOrBaseline();
 
-        startScheduledPolling();
+            startScheduledPolling();
+        } catch (Exception e) {
+            // CDC-M4: baseline/polling initialization failed after the pool was created —
+            // close it here, or a failed start leaks the Hikari housekeeping threads.
+            try {
+                closeDataSource();
+            } catch (RuntimeException closeError) {
+                e.addSuppressed(closeError);
+            }
+            throw e;
+        }
 
         log.info("Database polling CDC connector started for tables: {}", tables);
     }
 
     @Override
     protected void doStop() throws Exception {
-        if (dataSource instanceof HikariDataSource) {
-            ((HikariDataSource) dataSource).close();
-        }
+        closeDataSource();
         // Keep eventQueue and lastPolledValues across stop/start: undelivered events survive a
         // graceful restart and the polling position is not re-baselined at MAX (which silently
         // skipped everything scanned-but-not-delivered plus everything inserted while stopped).
+    }
+
+    /**
+     * Close the Hikari pool created by {@link #createDataSource} (CDC-M4).
+     *
+     * <p>Shared by {@code doStop()} and {@code doStart()}'s failure path so a start that dies
+     * after {@code createDataSource()} never leaks the pool. No-op when no pool was created.
+     */
+    private void closeDataSource() {
+        if (dataSource instanceof HikariDataSource) {
+            ((HikariDataSource) dataSource).close();
+        }
     }
 
     @Override

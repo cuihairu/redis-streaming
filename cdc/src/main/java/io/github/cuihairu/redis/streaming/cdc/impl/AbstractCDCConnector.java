@@ -46,6 +46,9 @@ public abstract class AbstractCDCConnector implements CDCConnector {
                 }
             } catch (Exception e) {
                 running.set(false);
+                // CDC-M4: doStart() may have created the scheduler before failing — a failed
+                // start must not leave it ticking against a stopped connector.
+                shutdownScheduler();
                 updateHealthStatus(CDCHealthStatus.unhealthy("Failed to start: " + e.getMessage()));
                 notifyEvent(listener -> listener.onConnectorError(getName(), e));
                 throw new RuntimeException("Failed to start connector: " + getName(), e);
@@ -60,18 +63,12 @@ public abstract class AbstractCDCConnector implements CDCConnector {
                 if (running.compareAndSet(true, false)) {
                     log.info("Stopping CDC connector: {}", getName());
 
-                    doStop();
-
-                    if (scheduler != null) {
-                        scheduler.shutdown();
-                        try {
-                            if (!scheduler.awaitTermination(10, TimeUnit.SECONDS)) {
-                                scheduler.shutdownNow();
-                            }
-                        } catch (InterruptedException e) {
-                            scheduler.shutdownNow();
-                            Thread.currentThread().interrupt();
-                        }
+                    try {
+                        doStop();
+                    } finally {
+                        // CDC-M4: a throwing doStop() must not skip the scheduler shutdown —
+                        // the leaked non-daemon pool thread would keep the JVM alive.
+                        shutdownScheduler();
                     }
 
                     updateHealthStatus(CDCHealthStatus.unknown("Connector stopped"));
@@ -85,6 +82,32 @@ public abstract class AbstractCDCConnector implements CDCConnector {
                 throw new RuntimeException("Failed to stop connector: " + getName(), e);
             }
         });
+    }
+
+    /**
+     * Shut down the background polling scheduler.
+     *
+     * <p>Invoked from {@code stop()}'s {@code finally} block and from {@code start()}'s
+     * failure path so that no failure path can leak the scheduler's non-daemon pool
+     * thread (CDC-M4). Never throws: cleanup must not mask the original failure.
+     */
+    private void shutdownScheduler() {
+        ScheduledExecutorService schedulerToStop = scheduler;
+        if (schedulerToStop == null) {
+            return;
+        }
+        try {
+            schedulerToStop.shutdown();
+            if (!schedulerToStop.awaitTermination(10, TimeUnit.SECONDS)) {
+                schedulerToStop.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            schedulerToStop.shutdownNow();
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException e) {
+            // cleanup must not mask the original start/stop failure it accompanies
+            log.warn("Error shutting down the polling scheduler for connector {}", getName(), e);
+        }
     }
 
     @Override

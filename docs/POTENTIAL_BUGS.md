@@ -528,9 +528,10 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **影响**：`poll()` 已排空批次后 listener 变 null → 事件静默丢弃（窄窗口）。
 - **审计置信度**：高（路径确定），低（概率）
 
-### CDC-M4 失败路径泄漏调度器（非守护线程，阻止 JVM 退出）与 Hikari 池 ⏳
-- **位置**：`AbstractCDCConnector.java:57-88`（doStop 先于 scheduler 关闭块抛出则调度器泄漏）；`DatabasePollingCDCConnector.java:87-91,230`
-- **审计置信度**：高
+### CDC-M4 失败路径泄漏调度器（非守护线程，阻止 JVM 退出）与 Hikari 池 ✅已修复
+- **位置**：`AbstractCDCConnector.java:57-88`（doStop 先于 scheduler 关闭块抛出则调度器泄漏）；`DatabasePollingCDCConnector.java:87-91`
+- **影响**：`stop()` 中 `doStop()` 抛出 → 跳过 `scheduler.shutdown()`，非守护线程泄漏、JVM 无法退出；`start()` 中 `doStart()` 在 `startScheduledPolling()` 之后失败 → 调度器对着 `running=false` 的连接器永转；轮询连接器建池后基线查询失败 → Hikari 池与其连接永不关闭。
+- **验证与修复**：`stop()` 的调度器关闭移入 `finally`（原异常照常上抛、健康状态如实变 unhealthy）；`start()` 失败路径补调度器关闭；`DatabasePollingCDCConnector.doStart()` 对建池后的步骤加 try/catch，失败即关闭池（关闭异常 `addSuppressed` 不掩盖原异常）。回归测试 `CDCFailurePathLeakTest`（三个失败路径各一条断言，只用新旧共有 API 可对旧代码编译；旧代码 3/3 按预期失败：`isShutdown()`/`isClosed()` 均为 false；新代码 3/3 绿，且 start/stop 失败仍如实传给调用方）。
 
 ### CDC-M5 MySQL 事件位置差一 [commit 后重启重复投递 ⏳]
 - **位置**：`MySQLBinlogCDCConnector.java:231,265,298` vs `:182`
