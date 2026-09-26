@@ -103,11 +103,17 @@
 
 ## 中（Medium）
 
-### B-13 Checkpoint 快照无类型无版本：恢复侧 LinkedHashMap/ClassCastException ⏳
+### B-13 Checkpoint 快照无类型无版本：恢复侧 LinkedHashMap/ClassCastException ✅已修复
 - **位置**：`checkpoint/.../DefaultCheckpoint.java:65-93`；`RedisCheckpointStorage.java:37-48`；`RedisCheckpointCoordinator.java:184-188`
 - **触发**：快照放入 POJO → JSON 系 codec 存取 → `getState` 反序列化为 `LinkedHashMap`。
 - **影响**：未检查强转 `(T) stateMap.get(key)`，调用点首次使用才 CCE；无 schema/version 字段，状态类变更静默破坏旧 checkpoint；`restoreFromCheckpoint` 只打日志不恢复任何后端（呈现成功实为 no-op）。
 - **审计置信度**：高（设计类）
+- **验证与修复**：
+  - 旧代码复现（集成，真实 Redis）：POJO 与 `HashMap<Integer,String>` 经默认 bucket codec 往返后类型保真（POJO 仍是 POJO、Integer 键仍是 Integer）——审计主张的"默认 codec 下必然退化为 LinkedHashMap/CCE"**不成立**，降级为非默认 codec/自定义 storage 实现下的潜在风险；真实缺陷是 `restoreFromCheckpoint`：仅遍历快照打 debug 日志后打印 "Successfully restored"（RedisCheckpointCoordinator.java:185-194），无任何外部可观察效果——假成功由代码路径直接成立。
+  - 修复一（调用点类型检查）：`Checkpoint.StateSnapshot` 新增 `getState(String, Class<T>)` 默认方法（严格校验，类型不符当场抛 `IllegalStateException`，报文含 key/实际类型/期望类型）；`StateSnapshotImpl` 覆写为 Jackson `convertValue` 兜底，把解码后的字段图（如遗留 codec 产生的 `Map`）就地转成目标 POJO。
+  - 修复二（快照版本）：`Checkpoint` 新增 `getSnapshotVersion()` 默认 0（= 遗留无版本标记）；`DefaultCheckpoint` 新增 `CURRENT_SNAPSHOT_VERSION=1` 与 `snapshotVersion` 字段——字段初始化值保持 0，使版本化之前持久化的旧 JSON 反序列化后如实报告 legacy，构造器对新实例盖 1；往返经真实 Redis 验证（写 1 读 1，旧 payload 读 0）。
+  - 修复三（恢复诚实化 + 能力）：`RedisCheckpointCoordinator.restoreFromCheckpoint(long, BiConsumer<String,Object>)` 新增重载——校验存在且 completed（B-14 语义）后把每个 `(key, value)` 交给调用方 sink，返回移交条数，不存在/未完成返回 -1 且零移交；接口方法改为走同一实现，日志如实说明协调器不持有后端、状态落库由调用方完成，不再输出 "Successfully restored" 假成功。
+- **回归测试**：`DefaultCheckpointTest`（新实例版本=1、typed read 同型/转换/透 null/不可能转换报错、无标记实现读作 legacy 0）；`CheckpointSnapshotRoundTripIntegrationTest`（@Tag("integration")，真实 Redis：POJO+Integer 键 Map 往返保真、快照版本往返=1、sink 恢复移交 2 条且内容正确、未知/未完成 checkpoint 拒绝且零移交、遗留解码形状经 typed read 转回 POJO）。既有 `CheckpointIntegrationTest` 未改一字全绿（接口新增默认方法向后兼容）。
 
 ### B-14 未完成的 checkpoint 被持久化、被当作 latest 返回、可被恢复 ✅已修复
 - **位置**：`checkpoint/.../redis/RedisCheckpointCoordinator.java:74-91,168-195`；`RedisCheckpointStorage.java:50-54,91-107`
@@ -622,7 +628,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 ### 记为后续任务（未修复，原因见各条目）
 
-- **重构级**（需专项设计，非局部修复）：MQ-01/MQ-04（DLQ pending 回收与删除策略语义）、CDC-H3（断线重连框架）、RT-H2（checkpoint 全库 SCAN）、B-20（完成匹配的有界化）、B-24（KTable 物化清理）、B-13/B-14/B-15/B-22（checkpoint 序列化/完整性/扫描设计）。
+- **重构级**（需专项设计，非局部修复）：MQ-01/MQ-04（DLQ pending 回收与删除策略语义）、CDC-H3（断线重连框架）、RT-H2（checkpoint 全库 SCAN）、B-20（完成匹配的有界化）、B-24（KTable 物化清理）。
 - **设计决策类**：RT-H3（fire-and-purge 原子性，需两阶段提交）、B-06/B-07（配置通知重同步/去重，涉及 API 契约）、B-09（元素级 TTL 需换数据结构）。
 - **风险可控/影响良性**：MQ-11（frontier 回退方向安全）、RT-M3/M6/M7（文档化语义）、B-36（文档已声明测试用途）等。
 - 其余 ⏳ 条目为审计发现但本轮未逐条复现验证（范围限制），均已给出触发条件、位置与修复方向，可直接作为下轮输入。

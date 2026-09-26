@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Map;
+import java.util.function.BiConsumer;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -166,12 +167,32 @@ public class RedisCheckpointCoordinator implements CheckpointCoordinator {
 
     @Override
     public void restoreFromCheckpoint(long checkpointId) {
+        // B-13: the coordinator owns no state backends, so this method can only validate
+        // the checkpoint and expose its snapshot; it must not claim a success it did not
+        // perform. Applications that need the entries pushed somewhere use
+        // {@link #restoreFromCheckpoint(long, BiConsumer)}.
+        restoreFromCheckpoint(checkpointId, (key, value) -> {
+            log.debug("Restored state: {} = {}", key, value);
+        });
+    }
+
+    /**
+     * Restore from a checkpoint by handing every snapshot entry to {@code stateSink} (B-13).
+     * The coordinator has no backends of its own; the sink is where the caller applies the
+     * state (e.g. writing entries back into their state stores).
+     *
+     * @param checkpointId the checkpoint ID to restore from
+     * @param stateSink receives every {@code (key, value)} pair of the snapshot
+     * @return the number of entries handed to the sink, or -1 when the checkpoint does not
+     *         exist or is not completed (nothing is transferred)
+     */
+    public int restoreFromCheckpoint(long checkpointId, BiConsumer<String, Object> stateSink) {
         try {
             Checkpoint checkpoint = storage.loadCheckpoint(checkpointId);
 
             if (checkpoint == null) {
                 log.error("Cannot restore from checkpoint {}: not found", checkpointId);
-                return;
+                return -1;
             }
 
             if (!checkpoint.isCompleted()) {
@@ -179,22 +200,23 @@ public class RedisCheckpointCoordinator implements CheckpointCoordinator {
                 // snapshot may be missing arbitrary state, so restoring from it would
                 // silently resume from a torn state. Refuse instead of warning-and-going.
                 log.error("Refusing to restore from incomplete checkpoint {}", checkpointId);
-                return;
+                return -1;
             }
 
-            log.info("Restoring from checkpoint {}", checkpointId);
-
-            // Restore state from snapshot
             Checkpoint.StateSnapshot snapshot = checkpoint.getStateSnapshot();
+            int count = 0;
             for (String key : snapshot.getKeys()) {
-                Object value = snapshot.getState(key);
-                log.debug("Restored state: {} = {}", key, value);
+                stateSink.accept(key, snapshot.getState(key));
+                count++;
             }
 
-            log.info("Successfully restored from checkpoint {}", checkpointId);
+            log.info("Restored checkpoint {}: snapshot version {}, {} state entries handed to the caller",
+                    checkpointId, checkpoint.getSnapshotVersion(), count);
+            return count;
 
         } catch (Exception e) {
             log.error("Failed to restore from checkpoint {}", checkpointId, e);
+            return -1;
         }
     }
 
