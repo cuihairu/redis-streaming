@@ -148,11 +148,12 @@
 - **审计置信度**：高
 - **验证与修复**：修复：checkAndMark 的 contains→add 临界区与 clear() 收敛到同一 `stateLock` 监视器（进程内原子），`seenCount` 改 `AtomicLong`；类 javadoc 明确作用域——Redisson RBloomFilter 无服务端 check-and-add，跨进程首次并发 sighting 仍可能双双通过（需要跨进程精确去重请用 SetDeduplicator 的单 SADD）。回归：`BloomFilterDeduplicatorCheckAndMarkRaceTest`——mock 模拟真实布隆成员语义 + contains 内延时，24 线程 barrier 并发 checkAndMark 同一元素断言恰 1 个"新"（旧代码实测 2 个通过即失败）；另附 8×250 个不同元素并发 markAsSeen 断言计数无丢失。旧代码复现：expected <1> but was <2>。
 
-### B-20 PatternSequenceMatcher 完整匹配永不清理：无界增长 ⏳
+### B-20 PatternSequenceMatcher 完整匹配永不清理：无界增长 ✅已修复
 - **位置**：`cep/.../PatternSequenceMatcher.java:23,62,84,187-189`
 - **触发**：高频匹配模式长时间运行。
 - **影响**：`completeMatches` 只增不删（清理仅作用于部分匹配），`getCompleteMatches()` 每次全量拷贝 → 长跑 OOM。
 - **审计置信度**：高
+- **验证与修复**：修复：新增 `maxRetainedMatches` 保留上限（默认 1000，新双参构造器指定；负数 IAE、0 表示不留历史但 process() 照常逐条交付匹配），process() 末尾 `trimCompleteMatches()` 淘汰最旧者。消费主通道仍是 process() 返回值，保留历史仅供查询。回归：`PatternSequenceMatcherRetentionTest` 5 用例（默认上限有界、显式上限保留最新 3 条按事件标记断言、上限 0 不留历史仍逐条交付、负数 IAE、单参构造器默认行为）；旧代码复现用仅含单参构造器调用的临时测试（aria：1005 条全保留，"old code grew to 1005"），修复后删除。
 
 ### B-21 负时间戳窗口对齐用 `%` 而非 floorMod：窗口错位甚至不包含元素自身 ✅已修复
 - **位置**：`window/.../TumblingWindow.java:33`、`SlidingWindow.java:38`；`aggregation/.../TumblingWindow.java:27`

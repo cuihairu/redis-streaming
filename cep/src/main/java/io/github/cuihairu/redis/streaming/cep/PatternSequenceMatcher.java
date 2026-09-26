@@ -12,20 +12,44 @@ import java.util.*;
  * - Temporal constraints (within)
  * - Multiple concurrent pattern matches
  *
+ * <p>Retention: only the most recent {@link #PatternSequenceMatcher(PatternSequence, int)
+ * maxRetainedMatches} complete matches are kept (default 1000). {@link #process(Object, long)}
+ * delivers every match to the caller as it happens, so the retained history is for
+ * inspection only; keeping all of them made long-running matchers grow without bound
+ * (B-20).
+ *
  * @param <T> The type of events
  */
 @Slf4j
 public class PatternSequenceMatcher<T> {
 
+    /** Number of complete matches kept when no explicit cap is configured. */
+    public static final int DEFAULT_MAX_RETAINED_MATCHES = 1000;
+
     private final PatternSequence<T> patternSequence;
     private final List<PartialMatch<T>> partialMatches;
     private final List<CompleteMatch<T>> completeMatches;
+    private final int maxRetainedMatches;
 
     public PatternSequenceMatcher(PatternSequence<T> patternSequence) {
+        this(patternSequence, DEFAULT_MAX_RETAINED_MATCHES);
+    }
+
+    /**
+     * @param maxRetainedMatches how many complete matches to keep for
+     *                           {@link #getCompleteMatches()}; 0 disables history
+     *                           retention entirely (process() still delivers matches)
+     * @throws IllegalArgumentException if {@code maxRetainedMatches} is negative
+     */
+    public PatternSequenceMatcher(PatternSequence<T> patternSequence, int maxRetainedMatches) {
         patternSequence.validate();
+        if (maxRetainedMatches < 0) {
+            throw new IllegalArgumentException("maxRetainedMatches cannot be negative");
+        }
         this.patternSequence = patternSequence;
         this.partialMatches = new ArrayList<>();
         this.completeMatches = new ArrayList<>();
+        this.maxRetainedMatches = maxRetainedMatches;
     }
 
     /**
@@ -88,10 +112,22 @@ public class PatternSequenceMatcher<T> {
             }
         }
 
+        trimCompleteMatches();
+
         log.debug("Processed event, {} new matches, {} partial matches, {} total matches",
             newMatches.size(), partialMatches.size(), completeMatches.size());
 
         return newMatches;
+    }
+
+    /**
+     * Keep only the newest {@code maxRetainedMatches} complete matches; the oldest are
+     * dropped first. Callers receive every match from process() regardless of retention.
+     */
+    private void trimCompleteMatches() {
+        while (completeMatches.size() > maxRetainedMatches) {
+            completeMatches.remove(0);
+        }
     }
 
     /**
@@ -182,7 +218,9 @@ public class PatternSequenceMatcher<T> {
     }
 
     /**
-     * Get all complete matches found so far
+     * Get the most recent complete matches, oldest first, at most
+     * {@code maxRetainedMatches} of them (B-20: the history is bounded so long-running
+     * matchers cannot grow without bound).
      */
     public List<CompleteMatch<T>> getCompleteMatches() {
         return new ArrayList<>(completeMatches);
