@@ -15,6 +15,12 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>This implementation is single-process and snapshots registered keyed-state stores
  * synchronously when {@link #triggerCheckpoint()} is called.</p>
+ *
+ * <p>The entry points are guarded by a single monitor so that store registration,
+ * checkpoint triggering, restore and the accessors stay mutually consistent even when
+ * callers do not share an external lock (B-22): iterating {@code storesById} while a
+ * store registers used to throw ConcurrentModificationException, and concurrent
+ * registration could silently drop stores.</p>
  */
 public final class InMemoryCheckpointCoordinator implements CheckpointCoordinator {
 
@@ -24,9 +30,9 @@ public final class InMemoryCheckpointCoordinator implements CheckpointCoordinato
     private final Map<String, InMemoryKeyedStateStore<?>> storesById = new LinkedHashMap<>();
     private final Map<Long, Checkpoint> checkpointsById = new HashMap<>();
     private final Map<String, Object> latestRestoredStateByStoreId = new HashMap<>();
-    private volatile Checkpoint latestCheckpoint;
+    private Checkpoint latestCheckpoint;
 
-    public String registerStore(InMemoryKeyedStateStore<?> store) {
+    public synchronized String registerStore(InMemoryKeyedStateStore<?> store) {
         if (store == null) {
             throw new NullPointerException("store");
         }
@@ -41,7 +47,7 @@ public final class InMemoryCheckpointCoordinator implements CheckpointCoordinato
     }
 
     @Override
-    public long triggerCheckpoint() {
+    public synchronized long triggerCheckpoint() {
         long checkpointId = nextCheckpointId.getAndIncrement();
         DefaultCheckpoint checkpoint = new DefaultCheckpoint(checkpointId, System.currentTimeMillis());
 
@@ -68,7 +74,7 @@ public final class InMemoryCheckpointCoordinator implements CheckpointCoordinato
     }
 
     @Override
-    public void restoreFromCheckpoint(long checkpointId) {
+    public synchronized void restoreFromCheckpoint(long checkpointId) {
         Checkpoint checkpoint = getCheckpoint(checkpointId);
         if (checkpoint == null) {
             throw new IllegalArgumentException("Checkpoint not found: " + checkpointId);
@@ -90,17 +96,21 @@ public final class InMemoryCheckpointCoordinator implements CheckpointCoordinato
     }
 
     @Override
-    public Checkpoint getLatestCheckpoint() {
+    public synchronized Checkpoint getLatestCheckpoint() {
         return latestCheckpoint;
     }
 
     @Override
-    public Checkpoint getCheckpoint(long checkpointId) {
+    public synchronized Checkpoint getCheckpoint(long checkpointId) {
         return checkpointsById.get(checkpointId);
     }
 
-    Map<String, InMemoryKeyedStateStore<?>> getRegisteredStores() {
-        return Collections.unmodifiableMap(storesById);
+    /**
+     * Returns an immutable copy of the currently registered stores; iteration is stable
+     * even while other threads register stores (B-22: a live view raced with mutation).
+     */
+    synchronized Map<String, InMemoryKeyedStateStore<?>> getRegisteredStores() {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(storesById));
     }
 }
 

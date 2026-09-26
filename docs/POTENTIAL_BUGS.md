@@ -163,11 +163,13 @@
 - **审计置信度**：高（算术）/中（现实影响）
 - **验证与修复**：与 B-11 一并修复：window 模块对齐改 `Math.floorMod`、aggregation 模块改 `Math.floorDiv`（含 SlidingWindow.getOverlappingWindows 的 startWindow 计算）。回归用例见两个 `*ValidationTest`（断言 ts=-1 落入 [-1000,0) / [-300,700) 且所有生成窗口包含元素本身）。
 
-### B-22 InMemoryCheckpointCoordinator 非同步映射 + 浅快照 ⏳
+### B-22 InMemoryCheckpointCoordinator 非同步映射 + 浅快照 ✅已修复
 - **位置**：`runtime/.../internal/InMemoryCheckpointCoordinator.java:24-58`；`InMemoryKeyedStateStore.java:36-42`
 - **触发**：`registerStore` 与 `triggerCheckpoint` 并发；或快照后用户算子继续改共享可变值。
 - **影响**：CME/撕裂快照；`new HashMap<>(store)` 一层浅拷贝，可变值与 live store 共享 → 事后修改污染"已完成"快照。文档自称单线程，但 API 无防护。
 - **审计置信度**：高（并发时）/中（总体）
+- **验证与修复**：并发部分——`registerStore/triggerCheckpoint/restoreFromCheckpoint/getCheckpoint/getLatestCheckpoint/getRegisteredStores` 统一加 `synchronized`（单一监视器），`latestCheckpoint` 的 volatile 随之不再必要；`getRegisteredStores()` 从 live view 改为返回不可变**副本**，迭代不再与注册竞态。浅快照部分经核实 `InMemoryKeyedStateStore.snapshot()` 已是两层拷贝（外层 + 每个 state 的内层 map），仅用户 value 对象按引用共享——内存引擎无序列化的固有限制，值替换不会污染已完成快照（现有 `testRestoreFromCheckpointWithMultipleStores` 与新快照隔离测试共同钉住该语义），无需改动。
+- **回归测试**：`InMemoryCheckpointCoordinatorConcurrencyTest`——旧代码复现：①1600 store 并发注册 + 1800 次并发 trigger → 8 个 store 静默丢失（1592≠1600）；②读线程迭代 live view → `ConcurrentModificationException`；③另一轮复现 reader 20s 观察不到注册完成的可见性缺陷。修复代码上 3/3 通过，另含快照与后续状态变更隔离的语义测试。
 
 ### B-23 RedisKTable.join/leftJoin 错误处理自身 NPE：掩盖原始异常 ⏳
 - **位置**：`table/.../impl/RedisKTable.java:273-276,317-320`
