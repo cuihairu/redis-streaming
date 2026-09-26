@@ -9,15 +9,23 @@ public class ConfigServiceConfig extends BaseRedisConfig {
      * Max history size to retain per config (default 10)
      */
     private int historySize = 10;
-    
+
+    /**
+     * Interval for the reconciliation poll that re-reads subscribed configs from Redis
+     * and re-delivers changes whose pub/sub notification never reached this JVM
+     * (connection blip during publish — B-06). 0 disables the poll; the default bounds
+     * the staleness of a missed notification to half a minute instead of forever.
+     */
+    private long resyncIntervalMs = 30_000;
+
     public ConfigServiceConfig() {
         super();
     }
-    
+
     public ConfigServiceConfig(String keyPrefix) {
         super(keyPrefix);
     }
-    
+
     public ConfigServiceConfig(String keyPrefix, boolean enableKeyPrefix) {
         super(keyPrefix, enableKeyPrefix);
     }
@@ -28,6 +36,14 @@ public class ConfigServiceConfig extends BaseRedisConfig {
 
     public void setHistorySize(int historySize) {
         this.historySize = Math.max(0, historySize);
+    }
+
+    public long getResyncIntervalMs() {
+        return resyncIntervalMs;
+    }
+
+    public void setResyncIntervalMs(long resyncIntervalMs) {
+        this.resyncIntervalMs = Math.max(0, resyncIntervalMs);
     }
     
     /**

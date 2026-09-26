@@ -27,6 +27,13 @@ public class RedisConfigService implements ConfigService, ConfigManager {
     // Listener management
     private final Map<String, Set<ConfigChangeListener>> listeners = new ConcurrentHashMap<>();
     private final Map<String, RTopic> subscriptions = new ConcurrentHashMap<>();
+
+    // B-06: what the in-process listeners were last told, per "group:dataId". The
+    // reconciliation poll compares this against Redis and re-delivers when the
+    // authoritative state moved without this JVM seeing the pub/sub notification.
+    // UNSET = the subscribers never observed any state (adopt silently, don't replay).
+    private final Map<String, DeliveredState> lastDelivered = new ConcurrentHashMap<>();
+    private volatile java.util.concurrent.ScheduledExecutorService resyncScheduler;
     
     // Configuration history retention count (instance-level, can be injected via configuration)
     private final int maxHistorySize;
@@ -268,6 +275,12 @@ public class RedisConfigService implements ConfigService, ConfigManager {
             if (info != null && info.getContent() != null) {
                 listener.onConfigChange(dataId, group, info.getContent(), info.getVersion());
             }
+            // B-06: the first subscriber's world view is the state just read (absent
+            // counts as a view); later subscribers do not reset it — the baseline tracks
+            // what the existing cohort was last told, and the reconciliation poll fires
+            // on deviations from that
+            lastDelivered.putIfAbsent(listenerKey,
+                    DeliveredState.of(info != null ? info.getContent() : null, info != null ? info.getVersion() : null));
         } catch (Exception e) {
             logger.warn("Failed to notify current config for: {}:{}", group, dataId, e);
         }
@@ -284,7 +297,8 @@ public class RedisConfigService implements ConfigService, ConfigManager {
             // If no listeners remain, cancel Redis subscription
             if (configListeners.isEmpty()) {
                 listeners.remove(listenerKey);
-                
+                lastDelivered.remove(listenerKey);
+
                 RTopic topic = subscriptions.remove(listenerKey);
                 if (topic != null) {
                     topic.removeAllListeners();
@@ -364,19 +378,43 @@ public class RedisConfigService implements ConfigService, ConfigManager {
         if (running) {
             return;
         }
-        
+
         running = true;
-        logger.info("RedisConfigService started");
+
+        // B-06: pub/sub is lossy across connection blips — a publish that happened while
+        // this JVM was disconnected is never seen and the listener held stale content
+        // until the next publish of the same dataId. A fixed-delay poll re-reads every
+        // subscribed config from Redis and re-delivers when the authoritative state no
+        // longer matches what the listeners were last told, bounding the staleness of a
+        // missed notification to the interval instead of forever.
+        long interval = config.getResyncIntervalMs();
+        if (interval > 0) {
+            resyncScheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "config-resync-" + clientId);
+                t.setDaemon(true);
+                return t;
+            });
+            resyncScheduler.scheduleWithFixedDelay(this::resyncSafely, interval, interval,
+                    java.util.concurrent.TimeUnit.MILLISECONDS);
+        }
+
+        logger.info("RedisConfigService started (resync interval: {} ms)", interval);
     }
-    
+
     @Override
     public void stop() {
         if (!running) {
             return;
         }
-        
+
         running = false;
-        
+
+        java.util.concurrent.ScheduledExecutorService scheduler = resyncScheduler;
+        resyncScheduler = null;
+        if (scheduler != null) {
+            scheduler.shutdownNow();
+        }
+
         // Clean up all subscriptions
         for (Map.Entry<String, RTopic> entry : subscriptions.entrySet()) {
             try {
@@ -385,10 +423,11 @@ public class RedisConfigService implements ConfigService, ConfigManager {
                 logger.warn("Failed to cleanup config subscription for: {}", entry.getKey(), e);
             }
         }
-        
+
         subscriptions.clear();
         listeners.clear();
-        
+        lastDelivered.clear();
+
         logger.info("RedisConfigService stopped");
     }
     
@@ -493,24 +532,120 @@ public class RedisConfigService implements ConfigService, ConfigManager {
         try {
             String content = message.getContent();
             String version = message.getVersion();
-            
+
             String listenerKey = group + ":" + dataId;
-            Set<ConfigChangeListener> configListeners = listeners.get(listenerKey);
-            
-            if (configListeners != null && !configListeners.isEmpty()) {
-                for (ConfigChangeListener listener : configListeners) {
-                    try {
-                        listener.onConfigChange(dataId, group, content, version);
-                    } catch (Exception e) {
-                        logger.error("Error in config change listener", e);
-                    }
-                }
-            }
-            
+            dispatchToListeners(listenerKey, dataId, group, content, version);
+
             logger.debug("Processed config change event: {}:{}, version: {}", group, dataId, version);
-            
+
         } catch (Exception e) {
             logger.error("Failed to handle config change event for {}:{}", group, dataId, e);
+        }
+    }
+
+    /**
+     * Deliver a state to the in-process listeners of one key and record it as the last
+     * delivered state (the baseline the B-06 reconciliation poll compares against).
+     *
+     * <p>Idempotent per (content, version): the reconciliation poll and an in-flight
+     * pub/sub delivery can observe the same freshly published state concurrently (poll
+     * reads Redis after the Lua write but before the event dispatch lands) — whichever
+     * path gets there first delivers, the other becomes a no-op. The gate also backs up
+     * the B-07 loopback skip with defense in depth.</p>
+     */
+    private synchronized void dispatchToListeners(String listenerKey, String dataId, String group, String content, String version) {
+        DeliveredState prev = lastDelivered.getOrDefault(listenerKey, DeliveredState.UNSET);
+        if (prev.known && java.util.Objects.equals(prev.content, content)
+                && java.util.Objects.equals(prev.version, version)) {
+            return;
+        }
+
+        Set<ConfigChangeListener> configListeners = listeners.get(listenerKey);
+
+        if (configListeners != null && !configListeners.isEmpty()) {
+            for (ConfigChangeListener listener : configListeners) {
+                try {
+                    listener.onConfigChange(dataId, group, content, version);
+                } catch (Exception e) {
+                    logger.error("Error in config change listener", e);
+                }
+            }
+        }
+
+        lastDelivered.put(listenerKey, DeliveredState.of(content, version));
+    }
+
+    /**
+     * B-06 reconciliation: re-read every config that has live listeners from Redis and
+     * re-deliver the ones whose pub/sub notification never reached this JVM. Content
+     * (not the version) is compared: content equality is the listener-visible state and
+     * always converges to the Redis truth, whereas version ordering across publisher
+     * clocks could refuse to converge. Absence in Redis counts as a state (removal).
+     */
+    void resyncSubscribedConfigs() {
+        for (Map.Entry<String, Set<ConfigChangeListener>> entry : listeners.entrySet()) {
+            if (entry.getValue().isEmpty()) {
+                continue;
+            }
+            String listenerKey = entry.getKey();
+            String[] parts = listenerKey.split(":", 2);
+            if (parts.length < 2) {
+                continue;
+            }
+            String group = parts[0];
+            String dataId = parts[1];
+            try {
+                RMap<String, String> map = redissonClient.getMap(
+                        config.getConfigKey(group, dataId), org.redisson.client.codec.StringCodec.INSTANCE);
+                Map<String, String> all = map.readAllMap();
+                String content = all.get("content");
+                String version = all.get("version");
+
+                DeliveredState prev = lastDelivered.getOrDefault(listenerKey, DeliveredState.UNSET);
+                if (!prev.known) {
+                    // the listeners never observed any state for this key — adopting the
+                    // current Redis state silently is the subscribe-time snapshot
+                    // semantics; a replay here would re-notify what addListener already did
+                    lastDelivered.put(listenerKey, DeliveredState.of(content, version));
+                    continue;
+                }
+                if (java.util.Objects.equals(prev.content, content)) {
+                    continue;
+                }
+                logger.info("Resyncing missed config change for {}:{} (listener held stale state)", group, dataId);
+                dispatchToListeners(listenerKey, dataId, group, content, version);
+            } catch (Exception e) {
+                logger.warn("Config resync poll failed for {}:{}", group, dataId, e);
+            }
+        }
+    }
+
+    private void resyncSafely() {
+        // Throwable, not Exception: an uncaught Error would kill the fixed-delay task
+        // silently and the poll would never run again (same hazard B-08 fixed)
+        try {
+            resyncSubscribedConfigs();
+        } catch (Throwable t) {
+            logger.warn("Config resync poll crashed; will retry on the next interval", t);
+        }
+    }
+
+    /** Last state the in-process listeners were told; UNSET until anything was delivered. */
+    private static final class DeliveredState {
+        static final DeliveredState UNSET = new DeliveredState(false, null, null);
+
+        final boolean known;
+        final String content;
+        final String version;
+
+        private DeliveredState(boolean known, String content, String version) {
+            this.known = known;
+            this.content = content;
+            this.version = version;
+        }
+
+        static DeliveredState of(String content, String version) {
+            return new DeliveredState(true, content, version);
         }
     }
     

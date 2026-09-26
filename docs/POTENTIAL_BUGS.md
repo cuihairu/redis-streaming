@@ -53,11 +53,13 @@
 - **审计置信度**：高
 - **验证与修复**：`HeartbeatStateManager` 新增 `shouldHeartbeatOnly(serviceName, instanceId)`（按心跳间隔判定）；`processInstanceHeartbeat` 对空采集结果改走该判定而非直接 `NO_UPDATE`——到期即产生 `HEARTBEAT_ONLY`，`executeUpdate` 的 Lua 路径照常刷新 TTL/score；心跳未到期则仍 NO_UPDATE（不产生多余写）。回归测试 `ProviderEmptyMetricsHeartbeatTest`（把决策行还原为旧短路后 2/2 复现失败）与 `HeartbeatStateManagerTest.testShouldHeartbeatOnlyDecidesByHeartbeatInterval`。
 
-### B-06 配置中心监听器纯 pub/sub 无重同步：断连期间错过的通知永久丢失 ⏳
+### B-06 配置中心监听器纯 pub/sub 无重同步：断连期间错过的通知永久丢失 [已修复]
 - **位置**：`config/.../impl/RedisConfigService.java:196-237,440-463`
 - **触发**：订阅方 Redis 连接闪断期间发生 `publishConfig`。
 - **影响**：监听器持有过期配置直至同 dataId 下次发布；无版本对账、无轮询兜底。registry 消费端事件处理同为纯响应式。
 - **审计置信度**：高（语义缺失类）
+- **验证与修复**：新增对账轮询：`ConfigServiceConfig.resyncIntervalMs`（默认 30s，0 关闭）驱动 fixed-delay 守护线程，逐 key 重读订阅配置的权威状态（content+version 一次 readAllMap），与"监听器最后被告知的状态"（DeliveredState 基线）比对，偏离即重投——错过的通知从"永久丢失"变为最多滞后一个 interval。按 content 而非 version 比对：content 是监听器可见状态且必然收敛于 Redis 真值，跨发布方时钟的 version 序可能拒绝收敛；键缺失计为删除态（null content）。基线未定（addListener 快照读失败）时静默采纳当前态、不重放（订阅即快照语义）。投递统一走 `dispatchToListeners`：按 (content, version) 幂等去重——对账轮询与在途 pub/sub 投递可能并发观察到同一新发布状态（轮询在 Lua 写后、事件分发前读到，实测复现 [v1,v2,v2]），先到者投递、后到者 no-op，顺带为 B-07 回环跳过加了第二道防线。addListener 快照基线用 putIfAbsent（后续订阅者不重置既有基线）。轮询异常捕 Throwable（防 fixed-delay 静默死亡，同 B-08 教训）仅告警下轮重试；stop() 关闭调度器并清基线。API 仅增不改。registry 消费端不在本条范围：其事件丢失由发现周期对账兜底（见 B-45 修复）。
+- **回归测试**：`ConfigResyncIntegrationTest`（@Tag("integration")，真实 Redis，interval=200ms，4 用例：直接改 Redis 哈希模拟"通知未送达"的发布在数个 interval 内被对账且恰投一次、错过的删除以 null content 对账、无丢失时轮询零噪音、interval=0 完全关闭回到纯响应式）。单元 `ConfigResyncReconciliationTest` 5 用例（mock 直调包私有 resyncSubscribedConfigs：补投/不重复投/删除为 null/未定基线静默采纳后偏离必投/Redis 异常吞掉 + 调度器随配置启停）。旧代码复现：临时集成测试在未修复 main 上以 "listener is stuck at [v1]" 失败坐实（复现测试已按惯例删除）。
 
 ### B-07 配置变更监听器每次发布收到两次通知（本地重放 + pub/sub 回环） [已修复]
 - **位置**：`config/.../impl/RedisConfigService.java:424-435`
