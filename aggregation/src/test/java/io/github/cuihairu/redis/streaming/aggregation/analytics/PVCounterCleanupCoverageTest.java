@@ -83,7 +83,9 @@ class PVCounterCleanupCoverageTest {
         @SuppressWarnings("unchecked")
         RSet<String> pages = mock(RSet.class);
         when(pages.readAll()).thenReturn(new LinkedHashSet<>(List.of("ok", "bad")));
-        when(set.size()).thenReturn(4).thenThrow(new IllegalStateException("boom"));
+        when(set.count(org.mockito.ArgumentMatchers.anyDouble(), org.mockito.ArgumentMatchers.anyBoolean(),
+                org.mockito.ArgumentMatchers.anyDouble(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(4).thenThrow(new IllegalStateException("boom"));
 
         PVCounter counter = new PVCounter(redisson(set, pages), "p", Duration.ofMinutes(10));
         try {

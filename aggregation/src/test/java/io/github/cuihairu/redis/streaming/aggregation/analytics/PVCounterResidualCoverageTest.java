@@ -54,7 +54,7 @@ class PVCounterResidualCoverageTest {
         RScoredSortedSet<String> set = mock(RScoredSortedSet.class);
         @SuppressWarnings("unchecked")
         RSet<String> pages = mock(RSet.class);
-        when(set.size()).thenReturn(3);
+        when(set.count(anyDouble(), anyBoolean(), anyDouble(), anyBoolean())).thenReturn(3);
 
         PVCounter counter = new PVCounter(redisson(set, pages), "p", Duration.ofMinutes(10));
         try {
@@ -170,7 +170,7 @@ class PVCounterResidualCoverageTest {
         @SuppressWarnings("unchecked")
         RSet<String> pages = mock(RSet.class);
         when(pages.readAll()).thenReturn(Set.of("a", "b"));
-        when(set.size()).thenReturn(4, 6);
+        when(set.count(anyDouble(), anyBoolean(), anyDouble(), anyBoolean())).thenReturn(4, 6);
 
         PVCounter counter = new PVCounter(redisson(set, pages), "p", Duration.ofMinutes(10));
         try {

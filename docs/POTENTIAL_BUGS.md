@@ -304,9 +304,10 @@
 - **影响**：裁剪侧 `removeRangeByRank` 同分按字典序**升序**逐出——恰好逐出查询同分中应排最前的条目；查询侧同分顺序 = HashMap 迭代序（未规定，随实现漂移）。裁剪与查询的排名策略互相矛盾。
 - **验证与修复**：统一排名策略为 `(score desc, item asc)`；裁剪改为按同一排名的尾部 `(score asc, item desc)` 逐名逐出（读 rank 前缀 + 补齐跨界同分组的 `entryRange` 再排序），测试实测本 JDK 上 HashMap 同 bin 先插 q 后插 a 迭代序仍为 a 在前，佐证旧查询侧顺序不可依赖。新增 `TopKAnalyzerTieOrderTest`（裁剪逐出 b 而非 a；旧代码 `remove("m")` 未被调用）+ 改写 `recordItemAddsScoreAndOptionallyTrims`。
 
-### B-41 PVCounter 混用事件时间与墙钟保留：迟到事件即到即删、未来事件永生 ⏳
-- **位置**：`aggregation/.../analytics/PVCounter.java:74-83`
-- **影响**：`add(score=ts)` 后立即 `removeRangeByScore(0, now-window)` → 旧时间戳事件静默不计数。
+### B-41 PVCounter 混用事件时间与墙钟保留：迟到事件即到即删、未来事件永生 ✅已修复
+- **位置**：`aggregation/.../analytics/PVCounter.java`（recordPageView/getPageViewCount）
+- **影响**：`add(score=ts)` 后立即按墙钟 `removeRangeByScore(0, now-window)` → 旧于窗口的事件写入即被静默删除；count 用无上界 `size()` → 未来时间戳事件长期计入（永生虚高）。
+- **验证与修复**：统一 trailing-window 语义 `[now-window, now]`：count 改为区间 `count(cutoff,true,now,true)`；早于窗口的事件直接拒收不写入（返回当前计数）；未来事件照存（score=ts）但不计数，墙钟越过其 ts+window 后由保留裁剪回收。新增 `PVCounterWindowSemanticsTest`（旧代码：未来事件 count 0→5、无上界 7→9、迟到事件仍写入）+ `PVCounterWindowIntegrationTest`（真实 Redis），更新 3 个钉死旧行为的测试文件。
 
 ### B-42 RedisClientMetricsReporter 非原子读改写共享 metrics JSON 且全吞错误 ⏳
 - **位置**：`registry/.../client/metrics/RedisClientMetricsReporter.java:59-74`

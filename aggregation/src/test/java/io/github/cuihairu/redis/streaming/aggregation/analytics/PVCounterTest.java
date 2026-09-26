@@ -14,10 +14,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -32,16 +35,17 @@ class PVCounterTest {
         RSet<String> pages = mock(RSet.class);
         when(redisson.<String>getScoredSortedSet("p:pv:home")).thenReturn(sortedSet);
         when(redisson.<String>getSet("p:pv:pages")).thenReturn(pages);
-        when(sortedSet.size()).thenReturn(3);
+        when(sortedSet.count(anyDouble(), anyBoolean(), anyDouble(), anyBoolean())).thenReturn(3);
 
+        Instant ts = Instant.now().minusMillis(1_000);
         PVCounter counter = new PVCounter(redisson, "p", Duration.ofMinutes(10));
         try {
-            long out = counter.recordPageView("home", Instant.ofEpochMilli(12345));
+            long out = counter.recordPageView("home", ts);
             assertEquals(3, out);
 
-            verify(sortedSet).add(eq(12345d), argThat(v -> v.startsWith("12345-")));
+            verify(sortedSet).add(eq((double) ts.toEpochMilli()), argThat(v -> v.startsWith(ts.toEpochMilli() + "-")));
             verify(sortedSet).removeRangeByScore(eq(0d), eq(true), anyDouble(), eq(true));
-            verify(sortedSet).size();
+            verify(sortedSet, never()).size();
         } finally {
             counter.close();
         }
@@ -123,8 +127,8 @@ class PVCounterTest {
         when(pages.readAll()).thenReturn(java.util.Set.of("home", "cart"));
         when(redisson.<String>getScoredSortedSet("p:pv:home")).thenReturn(home);
         when(redisson.<String>getScoredSortedSet("p:pv:cart")).thenReturn(cart);
-        when(home.size()).thenReturn(3);
-        when(cart.size()).thenReturn(2);
+        when(home.count(anyDouble(), anyBoolean(), anyDouble(), anyBoolean())).thenReturn(3);
+        when(cart.count(anyDouble(), anyBoolean(), anyDouble(), anyBoolean())).thenReturn(2);
 
         PVCounter counter = new PVCounter(redisson, "p", Duration.ofMinutes(10));
         try {
@@ -154,24 +158,29 @@ class PVCounterTest {
         RSet<String> pages = mock(RSet.class);
         when(redisson.<String>getScoredSortedSet("p:pv:product")).thenReturn(sortedSet);
         when(redisson.<String>getSet("p:pv:pages")).thenReturn(pages);
-        when(sortedSet.size()).thenReturn(1);
 
+        Instant now = Instant.now();
         PVCounter counter = new PVCounter(redisson, "p", Duration.ofMinutes(10));
         try {
-            counter.recordPageView("product", Instant.ofEpochMilli(1000));
-            counter.recordPageView("product", Instant.ofEpochMilli(2000));
-            counter.recordPageView("product", Instant.ofEpochMilli(3000));
+            counter.recordPageView("product", now.minusMillis(3_000));
+            counter.recordPageView("product", now.minusMillis(2_000));
+            counter.recordPageView("product", now.minusMillis(1_000));
 
-            verify(sortedSet).add(eq(1000d), argThat(v -> v.startsWith("1000-")));
-            verify(sortedSet).add(eq(2000d), argThat(v -> v.startsWith("2000-")));
-            verify(sortedSet).add(eq(3000d), argThat(v -> v.startsWith("3000-")));
+            verify(sortedSet).add(eq((double) now.minusMillis(3_000).toEpochMilli()), argThat(v -> v.startsWith(now.minusMillis(3_000).toEpochMilli() + "-")));
+            verify(sortedSet).add(eq((double) now.minusMillis(2_000).toEpochMilli()), argThat(v -> v.startsWith(now.minusMillis(2_000).toEpochMilli() + "-")));
+            verify(sortedSet).add(eq((double) now.minusMillis(1_000).toEpochMilli()), argThat(v -> v.startsWith(now.minusMillis(1_000).toEpochMilli() + "-")));
         } finally {
             counter.close();
         }
     }
 
+    /**
+     * B-41: an event dated before the window can never be counted — the old code
+     * wrote it anyway and let the immediate pruning delete it again (silent drop).
+     * It must be rejected without touching the set.
+     */
     @Test
-    void recordPageViewWithZeroTimestamp() {
+    void recordPageViewRejectsTimestampsOlderThanTheWindow() {
         RedissonClient redisson = mock(RedissonClient.class);
         @SuppressWarnings("unchecked")
         RScoredSortedSet<String> sortedSet = mock(RScoredSortedSet.class);
@@ -179,13 +188,13 @@ class PVCounterTest {
         RSet<String> pages = mock(RSet.class);
         when(redisson.<String>getScoredSortedSet("p:pv:test")).thenReturn(sortedSet);
         when(redisson.<String>getSet("p:pv:pages")).thenReturn(pages);
-        when(sortedSet.size()).thenReturn(1);
+        when(sortedSet.count(anyDouble(), anyBoolean(), anyDouble(), anyBoolean())).thenReturn(7);
 
         PVCounter counter = new PVCounter(redisson, "p", Duration.ofMinutes(10));
         try {
             long result = counter.recordPageView("test", Instant.ofEpochMilli(0));
-            assertEquals(1, result);
-            verify(sortedSet).add(eq(0d), any());
+            assertEquals(7, result);
+            verify(sortedSet, never()).add(anyDouble(), anyString());
         } finally {
             counter.close();
         }
@@ -200,12 +209,13 @@ class PVCounterTest {
         RSet<String> pages = mock(RSet.class);
         when(redisson.<String>getScoredSortedSet("p:pv:test")).thenReturn(sortedSet);
         when(redisson.<String>getSet("p:pv:pages")).thenReturn(pages);
-        when(sortedSet.size()).thenReturn(1);
+        when(sortedSet.count(anyDouble(), anyBoolean(), anyDouble(), anyBoolean())).thenReturn(0);
 
         PVCounter counter = new PVCounter(redisson, "p", Duration.ofMinutes(10));
         try {
             long result = counter.recordPageView("test", Instant.ofEpochMilli(Long.MAX_VALUE));
-            assertEquals(1, result);
+            assertEquals(0, result,
+                    "a future-dated event is stored but must not count until the window reaches it");
             verify(sortedSet).add(eq((double) Long.MAX_VALUE), any());
         } finally {
             counter.close();
@@ -318,9 +328,9 @@ class PVCounterTest {
         when(redisson.<String>getScoredSortedSet("p:pv:page1")).thenReturn(page1);
         when(redisson.<String>getScoredSortedSet("p:pv:page2")).thenReturn(page2);
         when(redisson.<String>getScoredSortedSet("p:pv:page3")).thenReturn(page3);
-        when(page1.size()).thenReturn(100);
-        when(page2.size()).thenReturn(200);
-        when(page3.size()).thenReturn(300);
+        when(page1.count(anyDouble(), anyBoolean(), anyDouble(), anyBoolean())).thenReturn(100);
+        when(page2.count(anyDouble(), anyBoolean(), anyDouble(), anyBoolean())).thenReturn(200);
+        when(page3.count(anyDouble(), anyBoolean(), anyDouble(), anyBoolean())).thenReturn(300);
 
         PVCounter counter = new PVCounter(redisson, "p", Duration.ofMinutes(10));
         try {
@@ -370,7 +380,7 @@ class PVCounterTest {
         RSet<String> pages = mock(RSet.class);
         when(redisson.<String>getScoredSortedSet("p:pv:page-with_special.chars")).thenReturn(sortedSet);
         when(redisson.<String>getSet("p:pv:pages")).thenReturn(pages);
-        when(sortedSet.size()).thenReturn(1);
+        when(sortedSet.count(anyDouble(), anyBoolean(), anyDouble(), anyBoolean())).thenReturn(1);
 
         PVCounter counter = new PVCounter(redisson, "p", Duration.ofMinutes(10));
         try {

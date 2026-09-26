@@ -14,9 +14,16 @@ import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.LongSupplier;
 
 /**
- * Page View (PV) counter using Redis Sorted Sets for time-based aggregation
+ * Page View (PV) counter using Redis Sorted Sets for time-based aggregation.
+ *
+ * <p>Trailing-window semantics (B-41): counts cover event timestamps within
+ * {@code [now - window, now]}. The previous implementation counted the whole sorted
+ * set (so a future-dated event inflated the count until wall clock finally caught up)
+ * and pruned by wall clock right after writing (so an event dated before the window
+ * was added only to be silently deleted again, never counted).
  */
 @Slf4j
 public class PVCounter {
@@ -26,11 +33,17 @@ public class PVCounter {
     private final Duration windowSize;
     private final ScheduledExecutorService cleanupExecutor;
     private final String pagesIndexKey;
+    private final LongSupplier clock;
 
     public PVCounter(RedissonClient redissonClient, String keyPrefix, Duration windowSize) {
+        this(redissonClient, keyPrefix, windowSize, System::currentTimeMillis);
+    }
+
+    PVCounter(RedissonClient redissonClient, String keyPrefix, Duration windowSize, LongSupplier clock) {
         this.redissonClient = redissonClient;
         this.keyPrefix = keyPrefix;
         this.windowSize = windowSize;
+        this.clock = clock;
         this.cleanupExecutor = Executors.newScheduledThreadPool(1);
         this.pagesIndexKey = keyPrefix + ":pv:pages";
 
@@ -57,30 +70,41 @@ public class PVCounter {
     /**
      * Record a page view for a specific page at a given time
      *
+     * <p>An event dated before {@code now - window} is rejected without writing: it
+     * can never fall inside the trailing window, and the old write-then-prune order
+     * silently dropped it after the fact (B-41). An event dated in the future is
+     * stored (its score is its timestamp) but does not count until the window
+     * reaches it.
+     *
      * @param page the page identifier
      * @param timestamp the timestamp of the page view
-     * @return the current count for this page
+     * @return the current trailing-window count for this page
      */
     public long recordPageView(String page, Instant timestamp) {
         if (page == null || page.isBlank()) {
             return 0L;
         }
-        Instant ts = timestamp != null ? timestamp : Instant.now();
+        Instant ts = timestamp != null ? timestamp : Instant.ofEpochMilli(clock.getAsLong());
+        long now = clock.getAsLong();
+        double cutoffTime = now - windowSize.toMillis();
         String key = getKeyForPage(page);
         RScoredSortedSet<String> sortedSet = redissonClient.getScoredSortedSet(key);
         getPagesIndex().add(page);
 
         // Use timestamp as score, and a unique ID as value
         double score = ts.toEpochMilli();
+        if (score < cutoffTime) {
+            log.debug("Rejected PV for page '{}' at {}: older than the {} window", page, ts, windowSize);
+            return trailingCount(sortedSet, cutoffTime, now);
+        }
         String value = ts.toEpochMilli() + "-" + System.nanoTime();
 
         sortedSet.add(score, value);
 
         // Remove old entries outside the window
-        double cutoffTime = Instant.now().minus(windowSize).toEpochMilli();
         sortedSet.removeRangeByScore(0, true, cutoffTime, true);
 
-        long count = sortedSet.size();
+        long count = trailingCount(sortedSet, cutoffTime, now);
         log.debug("Recorded PV for page '{}' at {}, current count: {}", page, ts, count);
 
         return count;
@@ -101,10 +125,13 @@ public class PVCounter {
         getPagesIndex().add(page);
 
         // Remove old entries outside the window
-        double cutoffTime = Instant.now().minus(windowSize).toEpochMilli();
+        long now = clock.getAsLong();
+        double cutoffTime = now - windowSize.toMillis();
         sortedSet.removeRangeByScore(0, true, cutoffTime, true);
 
-        return sortedSet.size();
+        // count within the trailing window only: size() would include future-dated
+        // events, which used to inflate counts until wall clock reached them (B-41)
+        return trailingCount(sortedSet, cutoffTime, now);
     }
 
     /**
@@ -179,9 +206,13 @@ public class PVCounter {
         return keyPrefix + ":pv:" + page;
     }
 
+    private static long trailingCount(RScoredSortedSet<String> sortedSet, double cutoffTime, long now) {
+        return sortedSet.count(cutoffTime, true, (double) now, true);
+    }
+
     private void cleanupExpiredData() {
         try {
-            double cutoffTime = Instant.now().minus(windowSize).toEpochMilli();
+            double cutoffTime = clock.getAsLong() - windowSize.toMillis();
             RSet<String> pages = getPagesIndex();
             for (String page : pages.readAll()) {
                 String key = getKeyForPage(page);
