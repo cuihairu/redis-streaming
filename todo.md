@@ -49,24 +49,20 @@
 
 ---
 
-### 3. io.github.cuihairu.redis.streaming.starter.autoconfigure - 27%
-**关键问题：** Spring Boot 自动配置未被测试
-**未覆盖的关键类：**
-- `RedisStreamingAutoConfiguration.MqConfiguration` - 0%
-- `RedisStreamingAutoConfiguration.RegistryConfiguration` - 0%
-- `RedisStreamingAutoConfiguration.ConfigServiceConfiguration` - 0%
-- `RedisStreamingAutoConfiguration.DiscoveryConfiguration` - 0%
-- `RedisStreamingAutoConfiguration` - 6%
+### 3. io.github.cuihairu.redis.streaming.starter.autoconfigure - ✅ 已完成（2026-09-27，实测 100%/100%）
+**说明：** 原清单中的嵌套类（MqConfiguration 等）已不存在——配置类早已重构为顶层文件（`RedisStreamingMqAutoConfiguration` / `RedisStreamingRegistryAutoConfiguration` / `RedisStreamingConfigServiceAutoConfiguration` / `RedisStreamingDiscoveryAutoConfiguration` / `RedisStreamingRateLimitAutoConfiguration`），由 `RedisStreamingAutoConfiguration` 通过 `@Import` 聚合；原 0%~6% 的类现全部 **100% 指令 / 100% 分支**。
 
-**建议添加的测试类型：**
-- [ ] **Spring Boot 集成测试**
-  - MQ 自动配置加载测试
-  - Registry 自动配置加载测试
-  - ConfigService 自动配置测试
-  - RateLimit 自动配置测试
-  - 条件注解（@ConditionalOnProperty）测试
-  - 自动配置属性绑定测试
-  - Bean 覆盖测试
+**已添加的测试（`RedisStreamingAutoConfigurationLoadingTest`，15 个用例，纯单元零 Redis 依赖）：**
+- [x] **Spring Boot 集成测试**（ApplicationContextRunner 加载测试）
+  - MQ 自动配置加载测试（默认装配 MqOptions/Admin/DLQ/Producer/ReplayHandler，用户 RedissonClient 优先）
+  - Registry 自动配置加载测试（默认 scored 策略 + ClientInvoker；strategy=wrr → WeightedRoundRobinLoadBalancer）
+  - ConfigService 自动配置测试（enabled=false → 无 configService bean；启用时用户 mock 优先）
+  - RateLimit 自动配置测试（**无 matchIfMissing，默认禁用**，显式 enabled=true 才装配；policies Map 绑定 → NamedRateLimiter 注册表，未知算法回退 sliding）
+  - 条件注解（@ConditionalOnProperty）测试（mq/registry/discovery/config 默认启用可独立关闭；ratelimit 默认禁用）
+  - 自动配置属性绑定测试（mq worker-threads/default-partition-count/key-prefix/retry-max-attempts/lease-ttl-seconds → MqOptions；broker.type=jdbc + 用户 DataSource → JdbcBrokerFactory）
+  - Bean 覆盖测试（用户 NamingService/ServiceDiscovery/ConfigService/MqOptions/RateLimiter 抑制自动 bean；NamingService 单独即可抑制 discovery 的元组条件 @ConditionalOnMissingBean({NamingService, ServiceDiscovery})）
+  - micrometer 装配（有 MeterRegistry bean → RateLimit/Mq/Reliability 采集器创建；无 → 全部缺席）
+  - 真实 redissonClient 工厂方法（Redisson.create 会**急切连接**非惰性——按可达性假设门控，本地有 Redis 才执行并 shutdown，CI 无 Redis 自动跳过）
 
 ---
 
