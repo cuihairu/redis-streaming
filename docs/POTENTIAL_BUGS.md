@@ -277,9 +277,12 @@
 - **验证与修复**：三个 in-memory 限流器（滑窗/令牌桶/漏桶）的 per-key map 增加写路径惰性清扫：状态变为"语义等价于不存在"（滑窗 deque 全过期 / 令牌桶按已流逝时间回满 / 漏桶按已流逝时间漏空）即从 map 摘除——淘汰对限流判定完全透明，不改变任何 allow/deny 结果。清扫按规模阈值（默认 256，包私有构造器可调）+ 最小间隔（max(1s, 半过期周期)）CAS 门控，稳态调用零额外开销、无后台线程、无生命周期负担；活跃 key 永不被淘汰。新增 `trackedKeyCount()` 供监控。坑位记录：门控时间戳哨兵不能用 `Long.MIN_VALUE`（`now-哨兵` 溢出为负使清扫永不触发，测试立即暴露，改 0）。
 - **回归测试**：`InMemoryRateLimiterKeyEvictionTest`（公共构造器 + 反射读私有 map 字段，字段名新旧一致，可直接对旧代码编译）——旧代码 3/3 泄漏断言按预期失败（"expected 1 but was 301"：300 个过期 key + 1 个新 key 全部滞留），新代码 6/6 绿（3 个淘汰 + 3 个活跃 key 不误删）；既有行为测试全绿证明淘汰零语义漂移；`sweepThreshold` 负数校验入 `InMemoryRateLimiterCtorValidationTest`。
 
-### B-35 DeadLetterQueue maxSize 未校验 + clear 与 add 竞态 ⏳
-- **位置**：`reliability/.../DeadLetterQueue.java:34-37,47-69,130-134`
+### B-35 DeadLetterQueue maxSize 未校验 + clear 与 add 竞态 [已修复]
+- **位置**：`reliability/.../DeadLetterQueue.java`（构造器校验；`add` CAS；`clear` 逐元素 drain）
 - **影响**：`maxSize<=0` → add 恒 false 全静默丢弃；`clear()` 两步非原子，计数可漂移，容量永久缩水。
+- **审计置信度**：高
+- **验证与修复**：分两步落地（`2db0433` 先修 add 超调，`787c056` 补齐剩余两项）：1) 构造器校验 `maxSize<=0` 抛 `IllegalArgumentException`——非正上限等于"所有失败静默丢弃"，违背 DLQ 存在目的。口径说明：maxSize 是**类型化构造参数**而非字符串属性袋，"缺失/非数值"在编译期即被排除，≤0 采用 fail-fast IAE（对齐 B-39 CountTrigger、B-34 sweepThreshold 的构造参数校验惯例），而非 M1 背压字符串配置的"回退默认+告警"口径（后者适用于 typo 不得静默解除保护的属性袋场景）；无参构造器仍以 `Integer.MAX_VALUE` 表示无界。2) `clear()` 从 `queue.clear(); sizeCounter.set(0)` 两步批量清零改为**逐元素 drain + 逐次递减**——批量清零会抹掉落在两步之间的并发 add 递增，计数永久少计、队列此后可超 maxSize；drain 版与 `poll()` 同构（每次出队恰好一次递减），任意并发交错下 `size()==getAll().size()<=maxSize` 恒成立。`add()` 侧为 fast-path 检查 + CAS 占额、offer 失败回滚递减（`DeadLetterQueueOfferFailureCoverageTest` 钉住回滚）。
+- **回归测试**：`DeadLetterQueueClearRaceTest`（只用公共 API，可对旧代码编译）——`ctorRejectsNonPositiveMaxSize`（0/-1 抛 IAE，旧代码接受并全静默丢弃；无参构造器可用）；`clearKeepsTheCounterConsistentUnderConcurrentAdds`（2 adder × 1 clearer 缠斗 400ms 后断言 `size()==getAll().size()` 且 ≤ maxSize——旧代码批量清零实测计数漂移 `expected 2 but was 1`）；`counterStaysConsistentWhenAddPollAndClearAllInterleave`（add×poll×clear 三 mutator 并发缠斗，同一不变量）。既有 `DeadLetterQueueAddCoverageTest`（满队列 add 返 false）覆盖 `maxSize<=0` 的另一症状面。
 
 ### B-36 外连接立即发 unmatched，对端稍后到达又发 match：同元素双发 ✅已缓解（语义明示化）
 - **位置**：`join/.../StreamJoiner.java`

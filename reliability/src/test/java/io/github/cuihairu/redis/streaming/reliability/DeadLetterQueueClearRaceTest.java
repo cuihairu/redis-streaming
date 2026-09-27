@@ -75,4 +75,59 @@ class DeadLetterQueueClearRaceTest {
         assertTrue(dq.getAll().size() <= dq.getMaxSize(),
                 "the queue must never hold more than maxSize elements");
     }
+
+    @Test
+    void counterStaysConsistentWhenAddPollAndClearAllInterleave() throws Exception {
+        DeadLetterQueue<Integer> dq = new DeadLetterQueue<>(64);
+
+        AtomicBoolean running = new AtomicBoolean(true);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(3);
+
+        // the queue's three mutators racing at once: add, poll and clear each remove or
+        // insert under their own lock-free path — every removal must carry exactly one
+        // counter decrement for the invariant to survive
+        pool.submit(() -> {
+            try {
+                start.await();
+                int i = 0;
+                while (running.get()) {
+                    dq.add(i++, new RuntimeException("boom"), 1);
+                }
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        pool.submit(() -> {
+            try {
+                start.await();
+                while (running.get()) {
+                    dq.poll();
+                }
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        pool.submit(() -> {
+            try {
+                start.await();
+                while (running.get()) {
+                    dq.clear();
+                }
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        start.countDown();
+        Thread.sleep(400);
+        running.set(false);
+        pool.shutdown();
+        assertTrue(pool.awaitTermination(10, TimeUnit.SECONDS));
+
+        assertEquals(dq.getAll().size(), dq.size(),
+                "counter must mirror the queued elements under three-way interleaving");
+        assertTrue(dq.getAll().size() <= dq.getMaxSize(),
+                "the queue must never hold more than maxSize elements");
+    }
 }
