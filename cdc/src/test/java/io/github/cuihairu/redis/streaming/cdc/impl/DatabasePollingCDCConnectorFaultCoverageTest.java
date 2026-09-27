@@ -17,11 +17,14 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.AbstractQueue;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -205,7 +208,8 @@ class DatabasePollingCDCConnectorFaultCoverageTest {
         PreparedStatement ps = mock(PreparedStatement.class);
         ResultSet rs = mock(ResultSet.class);
         ResultSetMetaData md = mock(ResultSetMetaData.class);
-        String query = "SELECT * FROM db.t ORDER BY updated_at";
+        // CDC-M1: fetches are bounded — the default poll.batch.limit (1000) yields LIMIT 1001
+        String query = "SELECT * FROM db.t ORDER BY updated_at LIMIT 1001";
         when(ds.getConnection()).thenReturn(conn);
         when(conn.prepareStatement(query)).thenReturn(ps);
         when(ps.executeQuery()).thenReturn(rs);
@@ -244,7 +248,8 @@ class DatabasePollingCDCConnectorFaultCoverageTest {
         PreparedStatement ps = mock(PreparedStatement.class);
         ResultSet rs = mock(ResultSet.class);
         ResultSetMetaData md = mock(ResultSetMetaData.class);
-        String query = "SELECT * FROM db.t WHERE updated_at > ? ORDER BY updated_at";
+        // CDC-M1: fetches are bounded — the default poll.batch.limit (1000) yields LIMIT 1001
+        String query = "SELECT * FROM db.t WHERE updated_at > ? ORDER BY updated_at LIMIT 1001";
         when(ds.getConnection()).thenReturn(conn);
         when(conn.prepareStatement(query)).thenReturn(ps);
         when(ps.executeQuery()).thenReturn(rs);
@@ -332,34 +337,10 @@ class DatabasePollingCDCConnectorFaultCoverageTest {
         DatabasePollingCDCConnector c = connector(cfg);
 
         // Simulates a concurrent consumer draining the shared queue between the isEmpty()
-        // check and the poll() call inside doPoll().
-        Queue<ChangeEvent> racy = new AbstractQueue<>() {
-            @Override
-            public boolean offer(ChangeEvent e) {
-                return true;
-            }
-
-            @Override
-            public ChangeEvent poll() {
-                return null;
-            }
-
-            @Override
-            public ChangeEvent peek() {
-                return null;
-            }
-
-            @Override
-            public int size() {
-                return 1;
-            }
-
-            @Override
-            public Iterator<ChangeEvent> iterator() {
-                return java.util.Collections.emptyIterator();
-            }
-        };
-        setField(c, "eventQueue", racy);
+        // check and the poll() call inside doPoll(). (CDC-M1: the connector's queue field
+        // is now the bounded BlockingQueue, so the racy queue implements it too — the
+        // blocking methods are never exercised by the drain path.)
+        setField(c, "eventQueue", new RacyQueue());
         DataSource ds = mock(DataSource.class);
         when(ds.getConnection()).thenThrow(new SQLException("db away"));
         setField(c, "dataSource", ds);
@@ -369,5 +350,32 @@ class DatabasePollingCDCConnectorFaultCoverageTest {
         c.running.set(true);
 
         assertEquals(List.of(), c.poll());
+    }
+
+    /**
+     * A queue that always reports a pending element whose poll() vanishes: the drain loop
+     * must tolerate the isEmpty()->poll() race. BlockingQueue's blocking members are never
+     * reached by doPoll() and throw UnsupportedOperationException.
+     */
+    private static final class RacyQueue extends AbstractQueue<ChangeEvent>
+            implements BlockingQueue<ChangeEvent> {
+
+        @Override public boolean offer(ChangeEvent e) { return true; }
+        @Override public ChangeEvent poll() { return null; }
+        @Override public ChangeEvent peek() { return null; }
+        @Override public int size() { return 1; }
+        @Override public Iterator<ChangeEvent> iterator() { return java.util.Collections.emptyIterator(); }
+
+        @Override public void put(ChangeEvent e) { throw new UnsupportedOperationException(); }
+        @Override public boolean offer(ChangeEvent e, long timeout, TimeUnit unit) {
+            throw new UnsupportedOperationException();
+        }
+        @Override public ChangeEvent take() { throw new UnsupportedOperationException(); }
+        @Override public ChangeEvent poll(long timeout, TimeUnit unit) {
+            throw new UnsupportedOperationException();
+        }
+        @Override public int remainingCapacity() { return Integer.MAX_VALUE; }
+        @Override public int drainTo(Collection<? super ChangeEvent> c) { return 0; }
+        @Override public int drainTo(Collection<? super ChangeEvent> c, int maxElements) { return 0; }
     }
 }

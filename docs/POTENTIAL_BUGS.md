@@ -535,10 +535,15 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 ### 中（Medium）
 
-### CDC-M1 无背压：无界队列 + 每轮无界扫描 ⏳
-- **位置**：`DatabasePollingCDCConnector.java:31,107-121,271-273`（`SELECT * ... ORDER BY` 无 LIMIT）；`MySQLBinlogCDCConnector.java:27`；`PostgreSQLLogicalReplicationCDCConnector.java:36`
+### CDC-M1 无背压：无界队列 + 每轮无界扫描 [已修复]
+- **位置**：`DatabasePollingCDCConnector.java`（`pollTableForChanges` 扫描与 `eventQueue`）；`MySQLBinlogCDCConnector.java`（`eventQueue`）；`PostgreSQLLogicalReplicationCDCConnector.java`（`eventQueue`）
 - **影响**：消费慢于生产或大表基线扫描时 OOM。
 - **审计置信度**：高
+- **验证与修复**：三个连接器统一为**有界队列 + 不丢事件的阻塞式背压**，轮询扫描改为**分批拉取**；新增共享配置解析 `BackpressureSettings`（包私有）：
+  1) `eventQueue` 由 `ConcurrentLinkedQueue` 改为 `ArrayBlockingQueue`，容量经属性 `event.queue.capacity`（默认 10000）。生产侧以 50ms 分片 `offer` 阻塞重试：轮询连接器停止/中断时返回 false 中止扫描——**emit-then-advance**，持久化水位只随实际入队的行推进，中止轮次未发的行重启后重扫；MySQL/PG 推送连接器停止时抛 `IllegalStateException`（由 `handleBinlogEvent`/WAL 读取路径捕获并上报 onConnectorError），异常发生在尾部水位推进（`updateCurrentPosition`/`lastReceivedLSN` 赋值）**之前**，水位不越过未交付事件，重启重放（at-least-once，无缺口）。
+  2) 轮询扫描改为 `LIMIT pollBatchLimit+1` 探针分批（属性 `poll.batch.limit`，默认 1000）：≤limit 行即排空；=limit+1 判为截断，且**水位平局组不跨批切割**——边界值相等的尾部行留给下一批（经 `> lastEmitted` 重读，绝不丢、绝不重），整批同值的病态数据告警后强制推进防死循环；单轮 `MAX_BATCHES_PER_ROUND=1000` 兜底（如自增列全 NULL 水位无法推进时不无限转）。基线（`initializeLastPolledValues` 用 `SELECT MAX`，本就单值）与快照/大表扫描同受每语句上限约束——**单条 SQL 永不全表**。
+  3) 两属性缺失/非数值/≤0 一律回退默认并 log.warn——typo 不得静默解除保护；`positiveInt` 对 null configuration 也回退默认，保住既有「构造器容忍 null config」契约。
+- **回归测试**：`PollingBackpressureBatchingTest`（@Tag integration，H2 内存库 + 录制代理 DataSource）：0 行/1 行/恰一批（单语句）/19 行跨 5 批逐条不重不乱、每条扫描 SQL 断言带 `LIMIT n+1` 与续扫谓词、水位平局组不切割（limit=4、值 1,2,3,9,9,9,9 → 7 行恰好各一次、水位=9）、容量 3 时扫描线程阻塞不丢事件且逐条排空后恢复（10/10 有序、水位=10）、停止时中止且水位停在最后入队行（t:3）、非法 `poll.batch.limit` 回退默认（SQL=`LIMIT 1001`）；`EventQueueBackpressureTest`（纯单测，mock binlog 事件反射编排）：默认/非法容量=10000、容量可配（ArrayBlockingQueue 断言）、队列满时生产线程阻塞不增长队列、排空后恢复且 3/3 事件有序送达、水位随交付推进到 :400、停止时水位停在未交付事件之前（:200）且队列保留、drop 以 onConnectorError 上报（响亮非静默）；`BackpressureSettingsTest`（解析回退矩阵：缺失/abc/0/-5/12.5/空白→默认，42/" 7 "/Integer 64 透传）。受影响旧行为的既有测试同步更新（旧代码按旧契约写）：三处扫描 SQL stub 补 `LIMIT 1001`、`doPollSkipsEntriesVanishedUnderConcurrentDrain` 的 racy 队列改实现 BlockingQueue（非阻塞成员行为不变）、snapshot 用例补 `running` 标志（新入队路径 running-aware）。
 
 ### CDC-M2 lastPolledValues（HashMap）跨线程数据竞争 [已修复]
 - **位置**：`DatabasePollingCDCConnector.java:32,130,143,226,318-320`；`AbstractCDCConnector.java:90-116`（poll() 无同步）
@@ -563,7 +568,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **位置**：`MySQLBinlogCDCConnector.java:231,265,298` vs `:182`（行号已随修复偏移：现派发在 `handleBinlogEvent` switch，盖章在 rows handler 内）
 - **影响**：事件 E 的行带的是 E **前一个**事件的位置；从该位置恢复会重放 E → 重复写入。首个事件 position 为 null。
 - **审计置信度**：高
-- **验证与修复**：机制核实——监听器在 switch 之后统一 `updateCurrentPosition(event)`（推进水位到本事件末尾），而三个 rows handler 在此之前就用 `getCurrentPosition()` 给 ChangeEvent 盖章，故每个事件携带的都是前一事件的水位；commit 这样的位点后 `doResetToPosition` 恰好从 E 之前重放。修复取最小改动：WRITE/UPDATE/DELETE（含 EXT_ 变体）三类在派发 handler **之前** `updateCurrentPosition(event)`，使盖章=本事件末尾=“该事件已完整处理”的恢复点；监听器尾部的统一推进对 rows 事件成为同值重写（幂等），TABLE_MAP/XID/ROTATE/default 路径一字未动（ROTATE 仍先换文件名再盖章，顺序不变）。对被过滤/无表映射而 0 事件输出的 rows 事件先推进水位无害——它本无可提交物，恢复时其 TABLE_MAP 亦无需重放（后续事务自带）。
+- **验证与修复**：机制核实——监听器在 switch 之后统一 `updateCurrentPosition(event)`（推进水位到本事件末尾），而三个 rows handler 在此之前就用 `getCurrentPosition()` 给 ChangeEvent 盖章，故每个事件携带的都是前一事件的水位；commit 这样的位点后 `doResetToPosition` 恰好从 E 之前重放。修复（后续随 CDC-M1 微调后定稿）：WRITE/UPDATE/DELETE（含 EXT_ 变体）的盖章改由 `endPositionOf(event)` 计算——读 header 的 nextPosition 得到本事件末尾，但**不**变更水位——作为参数传入 rows handler；水位仍由监听器尾部的 `updateCurrentPosition(event)` 统一推进，且仅在全部行实际入队（有界队列接受）之后才发生。与 M1 的配合由此成立：停止时入队被拒的异常使尾部推进不执行，水位永不越过未交付事件（重启重放）。对被过滤/无表映射而 0 事件输出的 rows 事件尾部推进水位无害——它本无可提交物，恢复时其 TABLE_MAP 亦无需重放（后续事务自带）。
 - **回归测试**：`MySQLBinlogPositionOffByOneTest`（纯单测，mock binlog Event/EventData，沿用既有 `MySQLBinlogCDCConnectorEventHandlingTest` 的反射编排 harness，只用修复前 API 可对旧代码编译）——旧代码 2/2 按缺陷特征失败且实际值精确等于“前一事件位置”（`expected :200 but was :100`、`expected :250 but was :150`）；新代码 2/2 绿。既有 `MySQLBinlogCDCConnectorEventHandlingTest`（含 ROTATE 后 `getCurrentPosition()==mysql-bin.000002:4` 钉）与 :cdc 全模块单测不改一字全绿。
 
 ### CDC-M6 CDCManager 重启永久破坏健康监控（复用已终止的调度器） [已修复]

@@ -10,7 +10,6 @@ import java.sql.*;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -29,7 +28,10 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
     private static final String QUERY_TIMEOUT_PROPERTY = "query.timeout.seconds";
 
     private DataSource dataSource;
-    private final Queue<ChangeEvent> eventQueue = new ConcurrentLinkedQueue<>();
+    // CDC-M1: bounded queue (capacity via "event.queue.capacity", default 10_000). Producers
+    // block while full (see enqueueWithBackpressure) so a slow consumer applies backpressure
+    // instead of growing the heap; nothing is silently dropped while the connector runs.
+    private final java.util.concurrent.BlockingQueue<ChangeEvent> eventQueue;
     // CDC-M2: written by the polling scheduler thread AND by user-thread commit()/reset()
     // (doCommit/doResetToPosition), read by the public snapshot getter. A plain HashMap
     // corrupts under concurrent resize (lost watermarks -> silent re-polling, CME/NPE in
@@ -40,12 +42,21 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
     private String timestampColumn;
     private String incrementalColumn;
     private int queryTimeoutSeconds;
+    // CDC-M1: rows per scan statement ("poll.batch.limit", default 1000); every fetch is
+    // LIMIT limit+1 so a truncated batch can never split a watermark tie group.
+    private int pollBatchLimit = BackpressureSettings.DEFAULT_POLL_BATCH_LIMIT;
+    // CDC-M1: safety bound for the batching loop so a watermark that cannot advance
+    // (e.g. an all-NULL incremental column) cannot spin a single poll() forever.
+    private static final int MAX_BATCHES_PER_ROUND = 1_000;
     private TableFilter tableFilter;
     private final AtomicBoolean snapshotPending = new AtomicBoolean(false);
     private final AtomicLong snapshotRecordCount = new AtomicLong();
 
     public DatabasePollingCDCConnector(CDCConfiguration configuration) {
         super(configuration);
+        this.eventQueue = new java.util.concurrent.ArrayBlockingQueue<>(
+                BackpressureSettings.positiveInt(configuration, BackpressureSettings.QUEUE_CAPACITY_PROPERTY,
+                        BackpressureSettings.DEFAULT_QUEUE_CAPACITY));
     }
 
     @Override
@@ -68,6 +79,10 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
         this.queryTimeoutSeconds = Integer.parseInt(
             String.valueOf(configuration.getProperty(QUERY_TIMEOUT_PROPERTY, "30"))
         );
+        // CDC-M1: configurable per-statement scan cap; invalid values fall back to the default
+        this.pollBatchLimit = BackpressureSettings.positiveInt(
+                configuration, BackpressureSettings.POLL_BATCH_LIMIT_PROPERTY,
+                BackpressureSettings.DEFAULT_POLL_BATCH_LIMIT);
 
         if (tables == null || tables.isEmpty()) {
             throw new IllegalArgumentException("At least one table must be specified for polling");
@@ -295,62 +310,138 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
     private void pollTableForChanges(Connection connection, String table) throws SQLException {
         String column = incrementalColumn != null ? incrementalColumn : timestampColumn;
         Object lastValue = lastPolledValues.get(table);
+        // CDC-M1: the persisted watermark may only advance past rows that were actually
+        // enqueued (emit-then-advance), so an aborted round resumes without losing rows.
+        Object highWater = lastValue;
+        int batches = 0;
 
-        String query;
-        if (lastValue != null) {
-            query = String.format("SELECT * FROM %s WHERE %s > ? ORDER BY %s", table, column, column);
-        } else {
-            query = String.format("SELECT * FROM %s ORDER BY %s", table, column);
-        }
-
-        try (PreparedStatement stmt = connection.prepareStatement(query)) {
-            stmt.setQueryTimeout(queryTimeoutSeconds);
-
-            if (lastValue != null) {
-                stmt.setObject(1, lastValue);
-            }
-
-            try (ResultSet rs = stmt.executeQuery()) {
-                ResultSetMetaData metaData = rs.getMetaData();
-                int columnCount = metaData.getColumnCount();
-                Object newLastValue = lastValue;
-
-                while (rs.next()) {
-                    Map<String, Object> rowData = new HashMap<>();
-
-                    for (int i = 1; i <= columnCount; i++) {
-                        String columnName = metaData.getColumnLabel(i);
-                        Object value = rs.getObject(i);
-                        rowData.put(columnName, value);
-                    }
-
-                    Object currentValue = rs.getObject(column);
-                    if (currentValue != null) {
-                        newLastValue = currentValue;
-                    }
-
-                    ChangeEvent changeEvent = new ChangeEvent(
-                            ChangeEvent.EventType.INSERT, // Polling can only detect inserts/updates, not distinguish
-                            extractDatabase(table),
-                            extractTableName(table),
-                            generateKey(rowData),
-                            null,
-                            rowData
-                    );
-
-                    setEventMetadata(changeEvent, table, currentValue);
-                    eventQueue.offer(changeEvent);
-                    if (snapshotPending.get()) {
-                        snapshotRecordCount.incrementAndGet();
+        while (running.get() && !Thread.currentThread().isInterrupted()
+                && batches++ < MAX_BATCHES_PER_ROUND) {
+            // CDC-M1: bounded fetch. The +1 probe row tells "drained" (<= limit rows) apart
+            // from "truncated" (limit+1 rows) without a second count query.
+            String query = (lastValue != null)
+                    ? String.format("SELECT * FROM %s WHERE %s > ? ORDER BY %s LIMIT %d", table, column, column, pollBatchLimit + 1)
+                    : String.format("SELECT * FROM %s ORDER BY %s LIMIT %d", table, column, pollBatchLimit + 1);
+            List<BufferedRow> rows = new ArrayList<>();
+            try (PreparedStatement stmt = connection.prepareStatement(query)) {
+                stmt.setQueryTimeout(queryTimeoutSeconds);
+                if (lastValue != null) {
+                    stmt.setObject(1, lastValue);
+                }
+                try (ResultSet rs = stmt.executeQuery()) {
+                    ResultSetMetaData metaData = rs.getMetaData();
+                    int columnCount = metaData.getColumnCount();
+                    while (rs.next()) {
+                        Map<String, Object> rowData = new HashMap<>();
+                        for (int i = 1; i <= columnCount; i++) {
+                            rowData.put(metaData.getColumnLabel(i), rs.getObject(i));
+                        }
+                        rows.add(new BufferedRow(rowData, rs.getObject(column)));
                     }
                 }
+            }
 
-                if (newLastValue != null && !Objects.equals(newLastValue, lastValue)) {
-                    lastPolledValues.put(table, newLastValue);
-                    this.currentPosition = table + ":" + newLastValue;
+            if (rows.isEmpty()) {
+                break; // drained
+            }
+            boolean truncated = rows.size() > pollBatchLimit;
+            int emitCount = truncated ? pollBatchLimit : rows.size();
+            if (truncated) {
+                // Never emit a partially-fetched watermark group: rows sharing the boundary
+                // value are left for the next fetch (which re-reads them via "> lastEmitted").
+                // A group larger than the whole batch is flushed forcibly (warned) — raise
+                // poll.batch.limit or use a monotonic column for such data.
+                Object boundary = rows.get(emitCount - 1).value;
+                if (Objects.equals(boundary, rows.get(emitCount).value)) {
+                    while (emitCount > 0 && Objects.equals(rows.get(emitCount - 1).value, boundary)) {
+                        emitCount--;
+                    }
+                    if (emitCount == 0) {
+                        log.warn("Table {} has more than {} rows sharing one watermark value ({}); "
+                                        + "flushing the first batch to keep making progress",
+                                table, pollBatchLimit, boundary);
+                        emitCount = pollBatchLimit;
+                    }
                 }
             }
+
+            boolean aborted = false;
+            for (int i = 0; i < emitCount; i++) {
+                BufferedRow row = rows.get(i);
+                if (!enqueueWithBackpressure(toChangeEvent(table, row))) {
+                    aborted = true; // connector stopping: keep only what landed
+                    break;
+                }
+                if (row.value != null) {
+                    highWater = row.value;
+                }
+                if (snapshotPending.get()) {
+                    snapshotRecordCount.incrementAndGet();
+                }
+            }
+            if (aborted) {
+                break;
+            }
+            if (!truncated) {
+                break; // fewer rows than the probe -> table fully scanned for this round
+            }
+            Object previous = lastValue;
+            lastValue = rows.get(emitCount - 1).value; // resume strictly after what was emitted
+            if (Objects.equals(lastValue, previous)) {
+                break; // no progress (e.g. all-NULL incremental column): end the round instead
+                // of spinning on the identical batch; the next poll() retries from the same point
+            }
         }
+
+        if (highWater != null && !Objects.equals(highWater, lastPolledValues.get(table))) {
+            lastPolledValues.put(table, highWater);
+            this.currentPosition = table + ":" + highWater;
+        }
+    }
+
+    /** One buffered scan row: its column data plus the watermark column's value. */
+    private static final class BufferedRow {
+        final Map<String, Object> data;
+        final Object value;
+
+        BufferedRow(Map<String, Object> data, Object value) {
+            this.data = data;
+            this.value = value;
+        }
+    }
+
+    private ChangeEvent toChangeEvent(String table, BufferedRow row) {
+        ChangeEvent changeEvent = new ChangeEvent(
+                ChangeEvent.EventType.INSERT, // Polling can only detect inserts/updates, not distinguish
+                extractDatabase(table),
+                extractTableName(table),
+                generateKey(row.data),
+                null,
+                row.data
+        );
+        setEventMetadata(changeEvent, table, row.value);
+        return changeEvent;
+    }
+
+    /**
+     * CDC-M1: enqueue with loss-free backpressure. Blocks (in 50ms slices) while the bounded
+     * queue is full, applying backpressure to the scan instead of growing the heap. Returns
+     * {@code false} only when the connector is stopping or the thread was interrupted — the
+     * un-emitted rows stay below the persisted watermark and are re-polled on the next start.
+     */
+    private boolean enqueueWithBackpressure(ChangeEvent event) {
+        while (running.get()) {
+            try {
+                if (eventQueue.offer(event, 50, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    return true;
+                }
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        log.warn("Connector {} stopped before its bounded event queue accepted a change event", getName());
+        return false;
     }
 
     private String extractDatabase(String table) {

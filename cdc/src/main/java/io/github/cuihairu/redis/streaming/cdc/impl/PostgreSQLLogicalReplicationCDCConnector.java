@@ -13,7 +13,6 @@ import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -33,7 +32,12 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
 
     private Connection connection;
     private PGReplicationStream replicationStream;
-    private final Queue<ChangeEvent> eventQueue = new ConcurrentLinkedQueue<>();
+    // CDC-M1: bounded queue ("event.queue.capacity", default 10_000). The WAL reader thread
+    // blocks while it is full (see enqueueBackpressured) so a slow consumer applies backpressure
+    // to replication instead of growing the heap; nothing is silently dropped while the
+    // connector runs (the reader throws on stop, leaving the stream behind the undelivered
+    // message so it is replayed after restart).
+    private final java.util.concurrent.BlockingQueue<ChangeEvent> eventQueue;
     private String slotName;
     private String publicationName;
     private LogSequenceNumber lastReceivedLSN;
@@ -48,6 +52,30 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
 
     public PostgreSQLLogicalReplicationCDCConnector(CDCConfiguration configuration) {
         super(configuration);
+        this.eventQueue = new java.util.concurrent.ArrayBlockingQueue<>(
+                BackpressureSettings.positiveInt(configuration, BackpressureSettings.QUEUE_CAPACITY_PROPERTY,
+                        BackpressureSettings.DEFAULT_QUEUE_CAPACITY));
+    }
+
+    /**
+     * CDC-M1: blocking, loss-free enqueue while the connector runs. On stop/interrupt the
+     * event is not silently discarded: the IllegalStateException unwinds the WAL message
+     * handler before the replication client acknowledges further data, so the stream stays
+     * behind the undelivered message and resumes it after restart (at-least-once).
+     */
+    private void enqueueBackpressured(ChangeEvent event) {
+        while (running.get()) {
+            try {
+                if (eventQueue.offer(event, 50, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    return;
+                }
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        throw new IllegalStateException(
+                "connector " + getName() + " stopping: change event not enqueued (CDC-M1 backpressure)");
     }
 
     @Override
@@ -298,7 +326,7 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
         );
 
         setEventMetadata(changeEvent);
-        eventQueue.offer(changeEvent);
+        enqueueBackpressured(changeEvent);
     }
 
     private void handleUpdateMessage(String database, String table, String data) {
@@ -316,7 +344,7 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
         );
 
         setEventMetadata(changeEvent);
-        eventQueue.offer(changeEvent);
+        enqueueBackpressured(changeEvent);
     }
 
     private void handleDeleteMessage(String database, String table, String data) {
@@ -332,7 +360,7 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
         );
 
         setEventMetadata(changeEvent);
-        eventQueue.offer(changeEvent);
+        enqueueBackpressured(changeEvent);
     }
 
     private Map<String, Object> parseColumnData(String data) {

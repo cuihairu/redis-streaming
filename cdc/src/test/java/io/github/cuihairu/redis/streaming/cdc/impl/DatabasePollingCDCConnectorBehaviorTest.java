@@ -102,7 +102,8 @@ class DatabasePollingCDCConnectorBehaviorTest {
         when(rsMax.next()).thenReturn(true, false);
         when(rsMax.getObject(1)).thenReturn(100L);
 
-        String pollQuery = "SELECT * FROM db.t WHERE updated_at > ? ORDER BY updated_at";
+        // CDC-M1: fetches are bounded — the default poll.batch.limit (1000) yields LIMIT 1001
+        String pollQuery = "SELECT * FROM db.t WHERE updated_at > ? ORDER BY updated_at LIMIT 1001";
         when(conn.prepareStatement(pollQuery)).thenReturn(ps);
         when(ps.executeQuery()).thenReturn(rs);
         when(rs.getMetaData()).thenReturn(md);
@@ -268,7 +269,8 @@ class DatabasePollingCDCConnectorBehaviorTest {
 
         when(ds.getConnection()).thenReturn(conn);
         // Snapshot path: no WHERE clause, full scan of existing rows
-        String fullScanQuery = "SELECT * FROM db.t ORDER BY updated_at";
+        // CDC-M1: even the snapshot full scan is bounded — default poll.batch.limit (1000) yields LIMIT 1001
+        String fullScanQuery = "SELECT * FROM db.t ORDER BY updated_at LIMIT 1001";
         when(conn.prepareStatement(fullScanQuery)).thenReturn(ps);
         when(ps.executeQuery()).thenReturn(rs);
         when(rs.getMetaData()).thenReturn(md);
@@ -293,6 +295,9 @@ class DatabasePollingCDCConnectorBehaviorTest {
         setField(c, "timestampColumn", "updated_at");
         setField(c, "incrementalColumn", null);
         setField(c, "queryTimeoutSeconds", 5);
+        // CDC-M1: the enqueue path is running-aware; a scan against a non-running
+        // connector would (correctly) refuse to emit any rows
+        c.running.set(true);
 
         CDCEventListener listener = mock(CDCEventListener.class);
         c.setEventListener(listener);

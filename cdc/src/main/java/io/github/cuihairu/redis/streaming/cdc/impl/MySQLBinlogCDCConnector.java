@@ -8,7 +8,6 @@ import lombok.extern.slf4j.Slf4j;
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.*;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -24,7 +23,11 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
     private static final String BINLOG_POSITION_PROPERTY = "binlog.position";
 
     private BinaryLogClient binaryLogClient;
-    private final Queue<ChangeEvent> eventQueue = new ConcurrentLinkedQueue<>();
+    // CDC-M1: bounded queue ("event.queue.capacity", default 10_000). The binlog listener
+    // thread blocks while it is full (see enqueueBackpressured) so a slow consumer applies
+    // backpressure to replication instead of growing the heap; nothing is silently dropped
+    // while the connector runs.
+    private final java.util.concurrent.BlockingQueue<ChangeEvent> eventQueue;
     private final AtomicLong binlogPosition = new AtomicLong(0);
     private String binlogFilename;
     private final Map<Long, TableMapEventData> tableMapEvents = new HashMap<>();
@@ -34,6 +37,31 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
 
     public MySQLBinlogCDCConnector(CDCConfiguration configuration) {
         super(configuration);
+        this.eventQueue = new java.util.concurrent.ArrayBlockingQueue<>(
+                BackpressureSettings.positiveInt(configuration, BackpressureSettings.QUEUE_CAPACITY_PROPERTY,
+                        BackpressureSettings.DEFAULT_QUEUE_CAPACITY));
+    }
+
+    /**
+     * CDC-M1: blocking, loss-free enqueue while the connector runs. On stop/interrupt the
+     * event is NOT dropped silently: the IllegalStateException unwinds {@code
+     * handleBinlogEvent} before its trailing position update, so the binlog watermark never
+     * advances past an event that was not delivered (restart re-reads it from the last
+     * committed position — at-least-once, no gap).
+     */
+    private void enqueueBackpressured(ChangeEvent event) {
+        while (running.get()) {
+            try {
+                if (eventQueue.offer(event, 50, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    return;
+                }
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        throw new IllegalStateException(
+                "connector " + getName() + " stopping: change event not enqueued (CDC-M1 backpressure)");
     }
 
     @Override
@@ -159,25 +187,26 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
 
                 case EXT_WRITE_ROWS:
                 case WRITE_ROWS:
-                    // CDC-M5: advance the watermark to THIS event's end before stamping rows.
-                    // The handlers read getCurrentPosition(); stamping first would hand every
-                    // ChangeEvent the PREVIOUS event's position, so commit+resume replays the
-                    // just-committed event (duplicate writes). Advancing past a filtered or
-                    // unmapped rows event is harmless: it emitted nothing to commit.
-                    updateCurrentPosition(event);
-                    handleWriteRowsEvent((WriteRowsEventData) eventData);
+                    // CDC-M5: stamp rows with THIS event's own end position (resume point at
+                    // which the event is fully processed); the old getCurrentPosition() stamp
+                    // handed every ChangeEvent the PREVIOUS event's position, so commit+resume
+                    // replayed the just-committed event.
+                    // CDC-M1: the end position is computed WITHOUT advancing the global
+                    // watermark — that only happens at the trailing updateCurrentPosition once
+                    // every row of the event has actually landed in the (bounded) queue. A
+                    // stop-time backpressure drop therefore never lets the watermark skip past
+                    // an undelivered event (restart re-reads it: at-least-once, no gap).
+                    handleWriteRowsEvent((WriteRowsEventData) eventData, endPositionOf(event));
                     break;
 
                 case EXT_UPDATE_ROWS:
                 case UPDATE_ROWS:
-                    updateCurrentPosition(event);
-                    handleUpdateRowsEvent((UpdateRowsEventData) eventData);
+                    handleUpdateRowsEvent((UpdateRowsEventData) eventData, endPositionOf(event));
                     break;
 
                 case EXT_DELETE_ROWS:
                 case DELETE_ROWS:
-                    updateCurrentPosition(event);
-                    handleDeleteRowsEvent((DeleteRowsEventData) eventData);
+                    handleDeleteRowsEvent((DeleteRowsEventData) eventData, endPositionOf(event));
                     break;
 
                 case ROTATE:
@@ -217,7 +246,7 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
         }
     }
 
-    private void handleWriteRowsEvent(WriteRowsEventData eventData) {
+    private void handleWriteRowsEvent(WriteRowsEventData eventData, String endPosition) {
         TableMapEventData tableMapEvent = tableMapEvents.get(eventData.getTableId());
         if (tableMapEvent == null) {
             return;
@@ -243,14 +272,14 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
             );
 
             changeEvent.setSource(getName());
-            changeEvent.setPosition(getCurrentPosition());
+            changeEvent.setPosition(endPosition);
             changeEvent.setTimestamp(java.time.Instant.now());
 
-            eventQueue.offer(changeEvent);
+            enqueueBackpressured(changeEvent);
         }
     }
 
-    private void handleUpdateRowsEvent(UpdateRowsEventData eventData) {
+    private void handleUpdateRowsEvent(UpdateRowsEventData eventData, String endPosition) {
         TableMapEventData tableMapEvent = tableMapEvents.get(eventData.getTableId());
         if (tableMapEvent == null) {
             return;
@@ -277,14 +306,14 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
             );
 
             changeEvent.setSource(getName());
-            changeEvent.setPosition(getCurrentPosition());
+            changeEvent.setPosition(endPosition);
             changeEvent.setTimestamp(java.time.Instant.now());
 
-            eventQueue.offer(changeEvent);
+            enqueueBackpressured(changeEvent);
         }
     }
 
-    private void handleDeleteRowsEvent(DeleteRowsEventData eventData) {
+    private void handleDeleteRowsEvent(DeleteRowsEventData eventData, String endPosition) {
         TableMapEventData tableMapEvent = tableMapEvents.get(eventData.getTableId());
         if (tableMapEvent == null) {
             return;
@@ -310,10 +339,10 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
             );
 
             changeEvent.setSource(getName());
-            changeEvent.setPosition(getCurrentPosition());
+            changeEvent.setPosition(endPosition);
             changeEvent.setTimestamp(java.time.Instant.now());
 
-            eventQueue.offer(changeEvent);
+            enqueueBackpressured(changeEvent);
         }
     }
 
@@ -321,6 +350,23 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
         this.binlogFilename = eventData.getBinlogFilename();
         this.binlogPosition.set(eventData.getBinlogPosition());
         log.debug("Binlog rotated to: {}:{}", binlogFilename, binlogPosition.get());
+    }
+
+    /**
+     * The watermark string this event will advance to — computed WITHOUT mutating the
+     * watermark itself (CDC-M5 stamp + CDC-M1 stop-safe delivery).
+     */
+    private String endPositionOf(Event event) {
+        EventHeader header = event.getHeader();
+        long pos = binlogPosition.get();
+        if (header instanceof EventHeaderV4) {
+            long next = ((EventHeaderV4) header).getNextPosition();
+            if (next > 0) {
+                pos = next;
+            }
+        }
+        String fn = (binlogFilename != null) ? binlogFilename : "";
+        return fn + ":" + pos;
     }
 
     private void updateCurrentPosition(Event event) {
