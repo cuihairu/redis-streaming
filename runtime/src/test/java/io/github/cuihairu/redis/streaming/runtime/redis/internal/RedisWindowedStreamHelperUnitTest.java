@@ -160,7 +160,9 @@ class RedisWindowedStreamHelperUnitTest {
     void fireDueWindowsRespectsWatermarkBoundsAndMaxFires() throws Exception {
         WindowedStream<Object, Object> w = windowed(cfg(b -> b.windowMaxFiresPerRecord(2)));
         Method fireDueWindows = findFireDueWindows(w);
-        Class<?> handlerType = fireDueWindows.getParameterTypes()[2];
+        // (due, watermark, partitionId, stateName, bucketTriggers, handler) — the trigger map
+        // and handler are the last two params since the WindowAssigner.Trigger wiring (todo B3)
+        Class<?> handlerType = fireDueWindows.getParameterTypes()[fireDueWindows.getParameterCount() - 1];
         List<String> fired = new ArrayList<>();
         Object handler = Proxy.newProxyInstance(
                 handlerType.getClassLoader(),
@@ -171,23 +173,27 @@ class RedisWindowedStreamHelperUnitTest {
                     }
                     return null;
                 });
+        // per-invocation fresh trigger map; the stock EventTimeTrigger consults CONTINUE on
+        // element and FIRE_AND_PURGE at close, so every due entry below reaches the handler
+        java.util.function.Function<RScoredSortedSet<String>, Object[]> call = due -> new Object[]{due, 50L, 0, "s",
+                new java.util.HashMap<String, io.github.cuihairu.redis.streaming.api.stream.WindowAssigner.Trigger<Object>>(),
+                handler};
 
         // empty due-set
-        RScoredSortedSet<String> empty = mockSet();
-        invoke(w, fireDueWindows, empty, 50L, handler);
+        invoke(w, fireDueWindows, call.apply(mockSet()));
         assertEquals(List.of(), fired);
 
         // score beyond watermark -> untouched
         RScoredSortedSet<String> future = mockSet();
         when(future.firstEntry()).thenReturn(new ScoredEntry<>(100.0, "m"));
-        invoke(w, fireDueWindows, future, 50L, handler);
+        invoke(w, fireDueWindows, call.apply(future));
         assertEquals(List.of(), fired);
 
         // happy path: fires parsed window, then due-set empties
         RScoredSortedSet<String> due = mockSet();
         when(due.firstEntry()).thenReturn(new ScoredEntry<>(10.0, "m"), (ScoredEntry<String>) null);
         when(due.pollFirstEntry()).thenReturn(new ScoredEntry<>(10.0, "s:k" + D + "0" + D + "10"));
-        invoke(w, fireDueWindows, due, 50L, handler);
+        invoke(w, fireDueWindows, call.apply(due));
         assertEquals(List.of("s:k" + D + "0" + D + "10|0|10"), fired);
 
         // pollFirstEntry null -> stop without firing
@@ -195,14 +201,14 @@ class RedisWindowedStreamHelperUnitTest {
         RScoredSortedSet<String> vanishing = mockSet();
         when(vanishing.firstEntry()).thenReturn(new ScoredEntry<>(10.0, "m"));
         when(vanishing.pollFirstEntry()).thenReturn((ScoredEntry<String>) null);
-        invoke(w, fireDueWindows, vanishing, 50L, handler);
+        invoke(w, fireDueWindows, call.apply(vanishing));
         assertEquals(List.of(), fired);
 
         // pollFirstEntry with null value -> stop
         RScoredSortedSet<String> nullValued = mockSet();
         when(nullValued.firstEntry()).thenReturn(new ScoredEntry<>(10.0, (String) null));
         when(nullValued.pollFirstEntry()).thenReturn(new ScoredEntry<>(10.0, (String) null));
-        invoke(w, fireDueWindows, nullValued, 50L, handler);
+        invoke(w, fireDueWindows, call.apply(nullValued));
         assertEquals(List.of(), fired);
 
         // max fires per record clamp (config = 2, three due windows)
@@ -213,13 +219,13 @@ class RedisWindowedStreamHelperUnitTest {
                 new ScoredEntry<>(1.0, "s:k" + D + "1" + D + "2"),
                 new ScoredEntry<>(2.0, "s:k" + D + "3" + D + "4"),
                 new ScoredEntry<>(3.0, "s:k" + D + "5" + D + "6"));
-        invoke(w, fireDueWindows, many, 50L, handler);
+        invoke(w, fireDueWindows, call.apply(many));
         assertEquals(2, fired.size());
     }
 
     private static Method findFireDueWindows(Object target) throws Exception {
         for (Method m : target.getClass().getDeclaredMethods()) {
-            if ("fireDueWindows".equals(m.getName()) && m.getParameterCount() == 3) {
+            if ("fireDueWindows".equals(m.getName()) && m.getParameterCount() == 6) {
                 m.setAccessible(true);
                 return m;
             }

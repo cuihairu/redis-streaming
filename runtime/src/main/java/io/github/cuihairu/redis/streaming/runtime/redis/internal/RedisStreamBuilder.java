@@ -412,6 +412,13 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                     WindowEmitter emitter) {
                 String stateName = "__internal:window:" + kind + ":" + operatorId + ":" + upstreamOperators.size();
                 List<RedisOperatorNode> ops = new ArrayList<>(upstreamOperators);
+                // Window triggers (todo B3): one trigger instance per (partition, key, window)
+                // bucket, obtained fresh from WindowAssigner#getDefaultTrigger on first sight
+                // (per its contract). The registry lives per registered operator for as long
+                // as the buckets are due; entries are dropped when their bucket leaves the
+                // due set. After a restart the registry starts empty, so due windows fire by
+                // the stock close-time semantics (a stateful custom trigger loses its counts).
+                Map<String, WindowAssigner.Trigger<V>> bucketTriggers = new java.util.concurrent.ConcurrentHashMap<>();
                 ops.add((value, ctx, emit) -> {
                     V v = castValue(value);
                     if (guard != null) {
@@ -431,6 +438,10 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                         stateStore.registerStateKey(dueKey);
                         RScoredSortedSet<String> due = redissonClient.getScoredSortedSet(dueKey, StringCodec.INSTANCE);
                         long watermark = ctx.currentWatermark();
+                        WindowFireHandler fireHandler = (member, windowStart, windowEnd, purgeState) -> {
+                            RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
+                            emitter.emit(ref, stateName, member, windowStart, windowEnd, partitionId, emit, purgeState);
+                        };
 
                         for (WindowAssigner.Window w : assigner.assignWindows(v, eventTimeMs)) {
                             if (w == null) continue;
@@ -446,12 +457,30 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                             RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
                             accumulator.accumulate(ref, stateName, member, v, due, closeTime);
                             stateStore.touch(ref.redisKey(), stateName, ref.map());
+
+                            // Window trigger wiring (todo B3): consult the bucket's trigger on
+                            // every element. The stock EventTimeTrigger answers CONTINUE here,
+                            // which is exactly the pre-wiring behavior.
+                            String triggerKey = partitionId + D + member;
+                            WindowAssigner.Trigger<V> trigger = bucketTriggers.computeIfAbsent(
+                                    triggerKey, k -> assigner.getDefaultTrigger());
+                            WindowAssigner.TriggerResult tr = trigger.onElement(v, eventTimeMs, w);
+                            if (tr == WindowAssigner.TriggerResult.FIRE) {
+                                // partial fire: emit, keep accumulating, stay due
+                                fireHandler.fire(member, w.getStart(), w.getEnd(), false);
+                            } else if (tr == WindowAssigner.TriggerResult.FIRE_AND_PURGE) {
+                                fireHandler.fire(member, w.getStart(), w.getEnd(), true);
+                                due.remove(member);
+                                bucketTriggers.remove(triggerKey);
+                            } else if (tr == WindowAssigner.TriggerResult.PURGE) {
+                                purgeWindowState(stateName, member);
+                                due.remove(member);
+                                bucketTriggers.remove(triggerKey);
+                            }
+                            // CONTINUE: keep accumulating
                         }
 
-                        fireDueWindows(due, watermark, (member, windowStart, windowEnd) -> {
-                            RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
-                            emitter.emit(ref, stateName, member, windowStart, windowEnd, partitionId, emit);
-                        });
+                        fireDueWindows(due, watermark, partitionId, stateName, bucketTriggers, fireHandler);
                     } finally {
                         stateStore.clearCurrentKey();
                         stateStore.clearCurrentPartitionId();
@@ -473,9 +502,21 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
 
             @FunctionalInterface
             private interface WindowEmitter {
+                /**
+                 * Emits the fire result of one window member. With {@code purgeState} the
+                 * member state is removed after emitting (final close fire / early
+                 * FIRE_AND_PURGE); without it the member keeps accumulating (a trigger's
+                 * early {@code FIRE}, which must not end the window).
+                 */
                 void emit(RedisKeyedStateStore.StateMapRef ref, String stateName, String member,
                           long windowStart, long windowEnd, int partitionId,
-                          RedisPipelineRunner.Emitter emit) throws Exception;
+                          RedisPipelineRunner.Emitter emit, boolean purgeState) throws Exception;
+            }
+
+            /** Fires one window member: decodes its bounds and delegates to the emitter. */
+            @FunctionalInterface
+            private interface WindowFireHandler {
+                void fire(String member, long windowStart, long windowEnd, boolean purgeState) throws Exception;
             }
 
             @Override
@@ -513,7 +554,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                 due.add(closeTime, member);
                             }
                         },
-                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit) -> {
+                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit, purgeState) -> {
                             RMap<String, String> state = ref.map();
                             String json = state.get(member);
                             if (json == null) {
@@ -534,8 +575,10 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                             } catch (Exception e) {
                                 throw new RuntimeException("Failed to emit window reduce result", e);
                             } finally {
-                                state.remove(member);
-                                stateStore.touch(ref.redisKey(), stateName, state);
+                                if (purgeState) {
+                                    state.remove(member);
+                                    stateStore.touch(ref.redisKey(), stateName, state);
+                                }
                             }
                         });
             }
@@ -572,7 +615,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                             }
                             due.add(closeTime, member);
                         },
-                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit) -> {
+                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit, purgeState) -> {
                             RMap<String, String> state = ref.map();
                             String json = state.get(member);
                             if (json == null) {
@@ -589,8 +632,10 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                             } catch (Exception e) {
                                 throw new RuntimeException("Failed to emit window aggregate result", e);
                             } finally {
-                                state.remove(member);
-                                stateStore.touch(ref.redisKey(), stateName, state);
+                                if (purgeState) {
+                                    state.remove(member);
+                                    stateStore.touch(ref.redisKey(), stateName, state);
+                                }
                             }
                         });
             }
@@ -622,7 +667,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                             }
                             due.add(closeTime, member);
                         },
-                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit) -> {
+                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit, purgeState) -> {
                             RMap<String, String> state = ref.map();
                             String json = state.get(member);
                             if (json == null || json.isBlank()) {
@@ -660,8 +705,10 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                             } catch (Exception e) {
                                 throw new RuntimeException("Window function failed", e);
                             } finally {
-                                state.remove(member);
-                                stateStore.touch(ref.redisKey(), stateName, state);
+                                if (purgeState) {
+                                    state.remove(member);
+                                    stateStore.touch(ref.redisKey(), stateName, state);
+                                }
                             }
                             try {
                                 RedisRuntimeMetrics.get().incWindowFired(config.getJobName(), topic, consumerGroup, operatorId, stateName, partitionId);
@@ -710,7 +757,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                             }
                             due.add(closeTime, member);
                         },
-                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit) -> {
+                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit, purgeState) -> {
                             RMap<String, String> state = ref.map();
                             String json = state.get(member);
                             if (json == null || json.isBlank()) {
@@ -732,8 +779,10 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                             } catch (Exception e) {
                                 throw new RuntimeException("Failed to emit window sum result", e);
                             } finally {
-                                state.remove(member);
-                                stateStore.touch(ref.redisKey(), stateName, state);
+                                if (purgeState) {
+                                    state.remove(member);
+                                    stateStore.touch(ref.redisKey(), stateName, state);
+                                }
                             }
                         });
             }
@@ -755,7 +804,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                             state.put(member, Long.toString(cur));
                             due.add(closeTime, member);
                         },
-                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit) -> {
+                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit, purgeState) -> {
                             RMap<String, String> state = ref.map();
                             String s = state.get(member);
                             if (s == null || s.isBlank()) {
@@ -770,8 +819,10 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                             } catch (Exception e) {
                                 throw new RuntimeException("Failed to emit window count result", e);
                             } finally {
-                                state.remove(member);
-                                stateStore.touch(ref.redisKey(), stateName, state);
+                                if (purgeState) {
+                                    state.remove(member);
+                                    stateStore.touch(ref.redisKey(), stateName, state);
+                                }
                             }
                         });
             }
@@ -790,6 +841,9 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
 
             private void fireDueWindows(RScoredSortedSet<String> due,
                                         long watermark,
+                                        int partitionId,
+                                        String stateName,
+                                        Map<String, WindowAssigner.Trigger<V>> bucketTriggers,
                                         WindowFireHandler handler) throws Exception {
                 int max = Math.max(1, config.getWindowMaxFiresPerRecord());
                 for (int i = 0; i < max; i++) {
@@ -805,8 +859,36 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                         return;
                     }
                     ParsedWindow pw = parseWindow(entry.getValue());
-                    handler.fire(entry.getValue(), pw.start, pw.end);
+                    // Window trigger wiring (todo B3): the bucket's trigger gets the final say
+                    // at close. The stock EventTimeTrigger answers FIRE_AND_PURGE (watermark
+                    // >= window end is implied by the due score) — exactly the pre-wiring
+                    // behavior. CONTINUE re-queues the member (earliest due score) for a
+                    // later record; PURGE drops it silently; FIRE fires like FIRE_AND_PURGE
+                    // since the window is closing anyway.
+                    String triggerKey = partitionId + D + entry.getValue();
+                    WindowAssigner.Trigger<V> trigger = bucketTriggers.computeIfAbsent(
+                            triggerKey, k -> assigner.getDefaultTrigger());
+                    WindowAssigner.TriggerResult result = trigger.onEventTime(watermark,
+                            new io.github.cuihairu.redis.streaming.window.TimeWindow(pw.start, pw.end));
+                    if (result == WindowAssigner.TriggerResult.CONTINUE) {
+                        due.add(entry.getScore(), entry.getValue());
+                        return;
+                    }
+                    if (result == WindowAssigner.TriggerResult.PURGE) {
+                        purgeWindowState(stateName, entry.getValue());
+                        bucketTriggers.remove(triggerKey);
+                        continue;
+                    }
+                    handler.fire(entry.getValue(), pw.start, pw.end, true);
+                    bucketTriggers.remove(triggerKey);
                 }
+            }
+
+            /** Clears one window member's accumulated state without emitting. */
+            private void purgeWindowState(String stateName, String member) {
+                RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
+                ref.map().remove(member);
+                stateStore.touch(ref.redisKey(), stateName, ref.map());
             }
 
             private ParsedWindow parseWindow(String member) {
@@ -881,11 +963,6 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
 
 
             private record ParsedWindow(String keyField, long start, long end) {
-            }
-
-            @FunctionalInterface
-            private interface WindowFireHandler {
-                void fire(String member, long windowStart, long windowEnd) throws Exception;
             }
         }
 

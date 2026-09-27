@@ -70,13 +70,13 @@ RedisJobClient job = env.executeAsync();            // 每环境仅可调用一�
 ### 2.3 关键语义
 
 - **事件时间** = 消息投递时间戳;水位线 = max(投递) − `watermarkOutOfOrderness`,用户 `WatermarkGenerator` 只能**单调提升**水位线(`Context.raiseWatermark`)。
-- **窗口触发**:在每条消息处理过程中检查到期窗口(每记录最多 `windowMaxFiresPerRecord` 个),迟到元素计数并丢弃。
+- **窗口触发**:在每条消息处理过程中检查到期窗口(每记录最多 `windowMaxFiresPerRecord` 个),迟到元素计数并丢弃。窗口算子同时驱动 `WindowAssigner.getDefaultTrigger()`:每个 (partition,key,window) 桶一个实例,元素到达调用 `onElement`(FIRE/FIRE_AND_PURGE 提前发射,PURGE 丢桶),到期发射前调用 `onEventTime`(CONTINUE 推迟、PURGE 静默丢弃);默认 `EventTimeTrigger` 与纯水位线关闭行为等价(见 docs/watermark.md)。
 - **状态**:`RedisKeyedStateStore`(按 key 分片到多 Redis Hash,支持 TTL、schema 演进策略、热键告警);`keyBy().process` 中 `ctx.getState(StateDescriptor)` 取 `ValueState`。
 - **检查点**:`RedisRuntimeCheckpointManager` 快照 key 状态集合 + 消费组 pending/commit frontier;恢复时回放 sink `onCheckpointRestore` 并可从 commit frontier 重建消费组。
 - **exactly-once 演示 sink**:`runtime/redis/sink` 下 `RedisIdempotentListSink` / `RedisCheckpointedIdempotentListSink` / `RedisAtomicCheckpointListSink`(去重表/Lua 原子提交)。
 - **定时器**:`KeyedProcessFunction` 的 processing-time(共享 ScheduledExecutor)与 event-time(优先队列,随水位线触发)。
 - **sink 生命周期**:首条消息时 `open()`,`job.cancel()/close()` 时 `close()`。
-- 未支持:`fromCollection/fromElements/addSource`(仅 MQ 源);`(TimestampAssigner, generator)` 重载;窗口 Trigger 接口。
+- 未支持:`fromCollection/fromElements/addSource`(仅 MQ 源);`(TimestampAssigner, generator)` 重载;Trigger 的 `onProcessingTime`(无 processing-time 窗口定时器)。
 
 ## 3. 指标
 

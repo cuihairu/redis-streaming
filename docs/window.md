@@ -48,28 +48,38 @@ stream.window(SessionWindow.withGap(Duration.ofSeconds(30)))
 窗口分配器，决定元素属于哪些窗口。
 
 ```java
-public interface WindowAssigner<T, W extends Window> {
-    // 分配窗口
-    Iterable<W> assignWindows(T element, long timestamp);
+public interface WindowAssigner<T> extends Serializable {
+    // 分配窗口（嵌套接口 Window 含 getStart()/getEnd()）
+    Iterable<Window> assignWindows(T element, long timestamp);
 
-    // 获取默认触发器
+    // 获取默认触发器（每个 key×window 桶调用一次，须返回新实例）
     Trigger<T> getDefaultTrigger();
+
+    // 会话类可合并窗口覆写为 true
+    default boolean supportsWindowMerging() { return false; }
 }
 ```
 
 ### Trigger
 
-触发器，决定何时触发窗口计算。
+触发器（core `WindowAssigner.Trigger`），决定窗口何时发射/丢弃。引擎按 (key, window) 桶从 `WindowAssigner.getDefaultTrigger()` 取**新实例**并调用：
 
 ```java
-public interface Trigger<T> {
-    // 检查是否可以触发
-    boolean canTrigger(Watermark watermark);
+interface Trigger<T> {
+    TriggerResult onElement(T element, long timestamp, Window window);   // 每个元素到达时
+    TriggerResult onProcessingTime(long time, Window window);            // 处理时间定时器（当前无引擎接入）
+    TriggerResult onEventTime(long time, Window window);                 // 水位线到达关闭时间时
+}
 
-    // 处理元素
-    void onElement(T element) throws Exception;
+enum TriggerResult {
+    CONTINUE,         // 不发射，继续累积
+    FIRE,             // 发射窗口结果，保留状态
+    FIRE_AND_PURGE,   // 发射并清空窗口状态
+    PURGE             // 不发射，直接丢弃窗口状态
 }
 ```
+
+两个执行引擎（InMemory 与 Redis）均已驱动 `onElement`/`onEventTime`：Redis 引擎在元素累加后与到期关闭前分别咨询触发器，默认 `EventTimeTrigger`（CONTINUE / FIRE_AND_PURGE）与纯水位线关闭行为等价；`onProcessingTime` 因两引擎均无 processing-time 窗口定时器而暂未调用（见 docs/watermark.md、todo.md B3）。
 
 ## 使用方式
 

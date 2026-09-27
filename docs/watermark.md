@@ -57,7 +57,7 @@ stream.assignTimestampsAndWatermarks(
 
 ## 已知限制
 
-- `WindowAssigner.getDefaultTrigger()` 与 window 模块的 `EventTimeTrigger` 等尚未被任一引擎调用(死接口,待统一,见 todo.md B3)。
+- `WindowAssigner.getDefaultTrigger()` 已接入 Redis 引擎窗口算子(原死接口,见 todo.md B3):按 (partition, key, window) 桶各持一个触发器实例,元素到达时调用 `onElement`(`FIRE` 提前发射并保留状态、`FIRE_AND_PURGE` 提前发射并清空桶、`PURGE` 丢弃桶),到期检查前调用 `onEventTime`(`CONTINUE` 推迟本次关闭、`PURGE` 不发射直接丢弃)。默认 `EventTimeTrigger`(CONTINUE / FIRE_AND_PURGE)与接入前的纯关闭行为完全等价。`onProcessingTime` 仍未被任一引擎调用(两引擎均无 processing-time 窗口定时器,窗口只随水位线触发)。
 - `SourceContext.getCheckpointLock` 目前返回无锁对象,未参与检查点对齐。
 
 ## References
