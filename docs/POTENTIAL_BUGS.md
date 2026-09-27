@@ -472,11 +472,13 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **验证与修复**：mover Lua 的 payload 读取去掉 `or ''` 兜底（字段缺失时 HGET 返回 false，与存量为 `""` 天然可区分——空串在 Lua 中为真值），XADD args 改为仅在 payload 存在时携带该字段——null 经桶往返仍是"无 payload 字段"，解码侧 `data.get("payload")` 如实得 null；`""` 往返仍逐字保留为 `""`（不过度修正）。入队侧跳过 null put（保留"缺失"表示）与 ≤50ms 快速路径（removeIf(isNull) 本已保 null）不变。
 - **回归测试**：`RetryBucketNullPayloadIntegrationTest`（@Tag("integration")，真实 Redis，强制 backoff>50ms 走桶路径：无 payload 字段条目经 handler 首抛→桶→mover 重投，第二次投递 payload 仍为 null——旧代码失败理由精确命中缺陷 `expected: <null> but was: <>`；对照用例：显式 `""` payload 桶往返后仍为 `""`，新旧皆绿防误伤）。既有 mover 用例（RetryMoverBadField/RetryMoverLuaEdge/ConsumerWorkerFlow/RetryPayloadPassthrough 两路径 + 三个 mock 级 Coverage 类）不改一字全绿。
 
-### MQ-15 rebalance 与租约续期任务可在多线程调度器上并发：check-then-act 产生重复 worker ⏳
+### MQ-15 rebalance 与租约续期任务可在多线程调度器上并发：check-then-act 产生重复 worker [已修复]
 - **位置**：`mq/.../impl/RedisMessageConsumer.java:955-978`（rebalance）、`:994-1002`（renew 移除）、`:67-68`（两个 `newScheduledThreadPool(schedulerThreads)`，默认 2）
 - **触发**：`schedulerThreads > 1` 时 rebalance 与 renewLeases 交错：renew 移除丢租约 worker 的同时 rebalance 看到 `containsKey==false` 再启一个同分区 worker。
 - **影响**：两个 worker 线程并发读同组同分区（消息仍按 consumer 名单次投递，无重复消费，但读交错、双重 `releaseIfOwner`、worker 数指标超 `maxLeased`）。`workers.size() >= maxLeased` 同为 check-then-act。
 - **审计置信度**：中（窗口窄，后果有限）
+- **验证与修复**：危害链的核心在 worker 退出路径：`runPartitionWorker` 的 finally 无条件 `releaseIfOwner(leaseKey, consumerName)`，而新旧 worker 携带**同一 owner 名**——renew 误判移除 w1、rebalance 经 `isOwner` 复活 w2 后，w1 排空退出时的 compare-and-delete 会删掉 w2 赖以持有的活租约（租约窃取，分区在续期察觉前无主/被他进程抢入）。修复两点：① rebalance 的 containsKey→tryAcquire→put 合并为单键 `workers.compute(pk, ...)`（槽位占用则原样返回，不再叠放），与 renew/unsubscribe 的移除按键原子；② worker 退出改为 compute 裁决——仅当注册项仍是自己或已被清空（stop/unsubscribe 语义保留）才释放租约，被继任者替换则跳过（自摘除+释放、替换则弃权）。`workers.size() >= maxLeased` 门槛保持：加 worker 者只有 rebalance 一处且 fixed-delay 不自重叠，交错只可能来自移除方（收缩方向，安全）。
+- **回归测试**：`ReplacedWorkerLeaseReleaseTest`（mock LeaseManager + 门控 broker.readGroup，确定性编排"renew 移除 → rebalance 复活 → w1 排空退出"全程，无需真实竞态线程；renew 前先等待 w1 确已停在第一次 readGroup（reads≥1 屏障）——机器重载下 worker 池线程可能晚启动，w1 未进读即退休会落进"槽位已空=自摘除即释放"的合法路径，属测试时序假设而非产品缺陷）——旧代码 T1 以 `MoreThanAllowedActualInvocations`（releaseIfOwner 被排空的退役 worker 调用，窃取继任租约）失败，精确命中缺陷；对照 T2/T3 钉住 stop()/unsubscribe() 退出路径仍即时释放（新旧皆绿，防过度修正）。既有 ConsumerLeaseRebalance/ConsumerRebalanceClaim/ConsumerWorkerFlow 集成与 3 个 mock 级 Coverage、LeaseManagerTest 不改一字全绿。
 
 ### mq 审计确认无问题项
 

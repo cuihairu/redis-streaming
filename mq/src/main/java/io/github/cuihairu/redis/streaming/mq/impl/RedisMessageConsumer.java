@@ -330,9 +330,26 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 }
             }
         } finally {
-            try {
-                leaseManager.releaseIfOwner(leaseKey, consumerName);
-            } catch (Exception ignore) {
+            // MQ-15: release the lease only while this worker is still the registered owner of
+            // the slot, or the slot was already cleared by stop()/unsubscribe() (preserving the
+            // existing prompt-release semantics). If renewLeases() dropped this worker and a
+            // successor was registered meanwhile — same consumer name, same lease key — a
+            // release here would compare-and-delete the successor's live lease and orphan the
+            // partition for the whole remaining lease TTL.
+            PartitionKey pk = new PartitionKey(topic, group, partitionId);
+            final boolean[] replaced = {false};
+            workers.compute(pk, (k, current) -> {
+                if (current == null || current == worker) {
+                    return null;
+                }
+                replaced[0] = true;
+                return current;
+            });
+            if (!replaced[0]) {
+                try {
+                    leaseManager.releaseIfOwner(leaseKey, consumerName);
+                } catch (Exception ignore) {
+                }
             }
         }
     }
@@ -989,31 +1006,37 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 if (workers.size() >= maxLeased) {
                     continue;
                 }
-                PartitionKey pk = new PartitionKey(topic, sub.consumerGroup, i);
-                String leaseKey = StreamKeys.lease(topic, sub.consumerGroup, i);
-                // If we already own and have a worker, continue
-                if (workers.containsKey(pk)) {
-                    continue;
-                }
-                // Try acquire lease and start worker
-                boolean acquired = leaseManager.tryAcquire(leaseKey, consumerName, options.getLeaseTtlSeconds());
-                if (!acquired) {
-                    if (leaseManager.isOwner(leaseKey, consumerName)) {
+                final PartitionKey pk = new PartitionKey(topic, sub.consumerGroup, i);
+                final String leaseKey = StreamKeys.lease(topic, sub.consumerGroup, i);
+                final int pid = i;
+                // MQ-15: the old containsKey -> tryAcquire -> put sequence was a check-then-act
+                // across two maintenance tasks sharing a multi-thread scheduler: renewLeases()
+                // (or unsubscribe()) could drop the slot's entry between the check and the put,
+                // registering a successor while the retired worker was still draining — two live
+                // readers per partition and a double releaseIfOwner at retirement. Per-key
+                // compute makes acquire+register atomic against those removals.
+                workers.compute(pk, (k, current) -> {
+                    if (current != null) {
+                        return current; // a live worker already owns this slot
+                    }
+                    boolean acquired = leaseManager.tryAcquire(leaseKey, consumerName, options.getLeaseTtlSeconds());
+                    if (!acquired && leaseManager.isOwner(leaseKey, consumerName)) {
                         acquired = true;
                         try {
                             leaseManager.renewIfOwner(leaseKey, consumerName, options.getLeaseTtlSeconds());
                         } catch (Exception ignore) {
                         }
                     }
-                }
-                if (acquired) {
-                    PartitionWorker worker = new PartitionWorker(topic, sub.consumerGroup, i, sub.handler);
+                    if (!acquired) {
+                        return null;
+                    }
+                    PartitionWorker worker = new PartitionWorker(topic, sub.consumerGroup, pid, sub.handler);
                     worker.batchOverride = sub.batchOverride;
                     worker.timeoutOverrideMs = sub.timeoutOverrideMs;
-                    workers.put(pk, worker);
                     consumerPool.submit(() -> runPartitionWorker(worker));
-                    log.info("Acquired partition {}-{} for group {}", topic, i, sub.consumerGroup);
-                }
+                    log.info("Acquired partition {}-{} for group {}", topic, pid, sub.consumerGroup);
+                    return worker;
+                });
             }
             publishPartitionMetrics(topic, sub.consumerGroup, eligibleCount);
         });
