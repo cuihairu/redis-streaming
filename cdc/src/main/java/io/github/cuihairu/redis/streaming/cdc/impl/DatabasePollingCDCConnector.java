@@ -9,6 +9,7 @@ import javax.sql.DataSource;
 import java.sql.*;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -29,7 +30,12 @@ public class DatabasePollingCDCConnector extends AbstractCDCConnector {
 
     private DataSource dataSource;
     private final Queue<ChangeEvent> eventQueue = new ConcurrentLinkedQueue<>();
-    private final Map<String, Object> lastPolledValues = new HashMap<>();
+    // CDC-M2: written by the polling scheduler thread AND by user-thread commit()/reset()
+    // (doCommit/doResetToPosition), read by the public snapshot getter. A plain HashMap
+    // corrupts under concurrent resize (lost watermarks -> silent re-polling, CME/NPE in
+    // copies). All put sites store non-null values (249/342 null-guarded; doCommit parses
+    // non-empty strings), so a null-hostile ConcurrentHashMap is a safe drop-in.
+    private final Map<String, Object> lastPolledValues = new ConcurrentHashMap<>();
     private List<String> tables;
     private String timestampColumn;
     private String incrementalColumn;

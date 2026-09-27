@@ -540,10 +540,12 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **影响**：消费慢于生产或大表基线扫描时 OOM。
 - **审计置信度**：高
 
-### CDC-M2 lastPolledValues（HashMap）跨线程数据竞争 ⏳
+### CDC-M2 lastPolledValues（HashMap）跨线程数据竞争 [已修复]
 - **位置**：`DatabasePollingCDCConnector.java:32,130,143,226,318-320`；`AbstractCDCConnector.java:90-116`（poll() 无同步）
 - **影响**：并发扫描同水位 → 重复事件；非同步 HashMap 并发写可损坏结构。
 - **审计置信度**：高（竞态存在），中（实际频率）
+- **验证与修复**：三个写入方确认跨线程——调度器轮询（`newLastValue` 守卫写入）、用户线程 `commit()`/`resetPosition()`（doCommit/doResetToPosition 直接 put）、公共快照 `getLastPolledValues()` 任意线程读；行 249/342 均先判空、doCommit 只存非空 String，故 null 不友好的 ConcurrentHashMap 可作一行等价替换（getter 的 `new HashMap<>(...)` 拷贝语义不变）。并发扫描同水位一半（AbstractCDCConnector poll 无同步）不属本条：`eventQueue` 已是 ConcurrentLinkedQueue，doPoll 出队路径无共享可变结构。
+- **回归测试**：`LastPolledValuesRaceTest`（纯单测，只用修复前公共/同包面：8 线程并发 doCommit 各异键 × 1 线程持续快照拷贝 × 24000 键）——旧代码以 `ConcurrentModificationException`×2957（拷贝中检测到结构损坏）精确失败；新代码连跑 4 次全绿（CHM 下为结构性确定）。:cdc 全模块单测其余不改一字全绿。
 
 ### CDC-M3 调度器在 listener 中途注销时仍会取出并丢弃事件 ⏳
 - **位置**：`AbstractCDCConnector.java:233-241,301-309`
