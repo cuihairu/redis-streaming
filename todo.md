@@ -6,31 +6,32 @@
 
 ## 优先级 1：覆盖率 < 20%（紧急）
 
-### 1. io.github.cuihairu.redis.streaming.cdc.impl - 5%
-**关键问题：** CDC 实现类几乎完全没有测试覆盖
-**未覆盖的关键类：**
-- `MySQLBinlogCDCConnector` - 0% (21 个方法未覆盖)
-- `PostgreSQLLogicalReplicationCDCConnector` - 0% (24 个方法未覆盖)
-- `DatabasePollingCDCConnector` - 0% (24 个方法未覆盖)
-- `AbstractCDCConnector` - 0% (31 个方法未覆盖)
+### 1. io.github.cuihairu.redis.streaming.cdc.impl - ✅ 已完成（2026-09-27）
+**原状态：** 5%（数据过期；补测前实测包内已约 86% 指令 / 74% 分支）
+**当前状态：** **98% 指令 / 87% 分支**（JaCoCo，单元测试）；各核心类：
+- `AbstractCDCConnector` - 100% 指令 / 97% 分支
+- `DatabasePollingCDCConnector` - 99% 指令 / 92% 分支
+- `MySQLBinlogCDCConnector` - 94% 指令 / 79% 分支
+- `PostgreSQLLogicalReplicationCDCConnector` - 98% 指令 / 83% 分支
+- `TableFilter` / `DriverManagerMySQLColumnNameResolver` / `BackpressureSettings` - 100% / 100%
 
-**建议添加的测试类型：**
-- [ ] **集成测试**（必需）
-  - MySQL Binlog CDC 集成测试（需要 MySQL 环境）
-  - PostgreSQL 逻辑复制 CDC 集成测试（需要 PostgreSQL 环境）
-  - 数据库轮询 CDC 集成测试
-  - CDC 连接失败重试测试
-  - CDC 断连恢复测试
-  - Binlog/逻辑复制位置偏移量测试
-- [ ] **单元测试**
-  - CDC 配置构建测试
-  - 事件过滤测试
-  - 错误处理测试
+**已添加的测试（新增 4 个单元测试类 + 1 个集成测试类，约 50 个用例）：**
+- [x] **单元测试**（不依赖外部环境）
+  - CDC 配置构建测试（配置工厂、非法值容错、列解析降级与缓存）
+  - 事件过滤测试（TableFilter include/exclude、无 TableMap 静默跳过）
+  - 错误处理测试（启动失败清理、调度器关闭异常吞掉、抛异常监听器不杀死轮询循环、反压中断不推进水位）
+  - 重试/恢复分支测试（初始连接失败清理与 UNHEALTHY、重连循环退避/恢复/停止、槽位失效检测、限速重连）
+  - DatabasePolling 水位线分支（批量截断并列组、abort/interrupt 不持久化超发水位，H2 内存库驱动）
+- [x] **集成测试**（`CDCPositionResumeIntegrationTest`，@Tag("integration")，无环境时自动跳过）
+  - MySQL Binlog：水位线读取 → 停机窗口写入 → 从记录的 binlog 位点重启恢复（停机窗口重放 ≥1、位点前变更零重放）
+  - PostgreSQL 逻辑复制：slot 停机保留 WAL → 重启同 slot 续读（无丢失）
+  - 连接失败重试 / 断连恢复：见既有 `CDCDisconnectReconnectIntegrationTest`（上轮 CDC-H3 已补）
 
 **测试环境要求：**
-- MySQL 5.7+（启用 binlog）
-- PostgreSQL 10+（启用逻辑复制）
-- 测试数据库和表
+- MySQL 5.7+（启用 binlog）/ PostgreSQL 10+（wal_level=logical）——仅集成测试需要，单元测试零外部依赖
+
+**遗留观察（后续任务候选，本次未改动生产代码）：**
+- test_decoding 对 `character varying` 类型的输出在 `[类型]` 标签内含不带引号的空格，`parseColumnData` 的 quote-aware 分词器会在该空格处切断列 token（`v[character varying]:'x'` → 键变成 `varying]`，半截 `v[character` 被丢弃）。CDC-M7 修复了"值内空格"，未覆盖"类型名内空格"。集成测试改用 TEXT 列规避。
 
 ---
 
