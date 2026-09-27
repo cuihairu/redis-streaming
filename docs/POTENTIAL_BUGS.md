@@ -547,10 +547,12 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **验证与修复**：三个写入方确认跨线程——调度器轮询（`newLastValue` 守卫写入）、用户线程 `commit()`/`resetPosition()`（doCommit/doResetToPosition 直接 put）、公共快照 `getLastPolledValues()` 任意线程读；行 249/342 均先判空、doCommit 只存非空 String，故 null 不友好的 ConcurrentHashMap 可作一行等价替换（getter 的 `new HashMap<>(...)` 拷贝语义不变）。并发扫描同水位一半（AbstractCDCConnector poll 无同步）不属本条：`eventQueue` 已是 ConcurrentLinkedQueue，doPoll 出队路径无共享可变结构。
 - **回归测试**：`LastPolledValuesRaceTest`（纯单测，只用修复前公共/同包面：8 线程并发 doCommit 各异键 × 1 线程持续快照拷贝 × 24000 键）——旧代码以 `ConcurrentModificationException`×2957（拷贝中检测到结构损坏）精确失败；新代码连跑 4 次全绿（CHM 下为结构性确定）。:cdc 全模块单测其余不改一字全绿。
 
-### CDC-M3 调度器在 listener 中途注销时仍会取出并丢弃事件 ⏳
-- **位置**：`AbstractCDCConnector.java:233-241,301-309`
+### CDC-M3 调度器在 listener 中途注销时仍会取出并丢弃事件 [已修复]
+- **位置**：`AbstractCDCConnector.java:233-241,301-309`（行号已随修复偏移：现调度块在 `startScheduledPolling`，二次读 null 在 `notifyEvent`）
 - **影响**：`poll()` 已排空批次后 listener 变 null → 事件静默丢弃（窄窗口）。
 - **审计置信度**：高（路径确定），低（概率）
+- **验证与修复**：机制核实——调度任务先判 `eventListener == null` 再 `poll()` 排空批次，`notifyEvent` 在投递时**二次重读** `eventListener`：窗口期内 `setEventListener(null)` 使已出队批次静默丢弃。修复：调度块内**单次捕获** `CDCEventListener listener = eventListener`——null 则直接 return（批次留给 pull 消费者，既有语义不变）；非空则排空后把批次直接投递给捕获引用（异常隔离与 `notifyEvent` 同款 catch/warn）。注销竞态下的最坏行为从"静默丢事件"变为"最后一投递仍达已捕获的监听者"。其余通知路径（poll 内 capture 计数、error/health/commit 通知）不取队列载荷、维持 `notifyEvent` 原样不动。
+- **回归测试**：`CDCListenerDeregistrationDropTest`（纯单测，测试内 `AbstractCDCConnector` 子类走生产同款接线 `doStart → startScheduledPolling`，只用修复前 API 可对旧代码编译）——门控 `doPoll`：排空 3 事件后挂起 → 测试在 drain→notify 窗口内 `setEventListener(null)` → 释放门闩 → 旧代码批次被静默丢弃（`delivered` 恒空，断言超时失败，精确命中缺陷）；新代码批次仍送达已捕获监听者（3/3），连跑 2 次全绿。:cdc 全模块单测（含 M2 race、M5 位点、既有 EventHandling/M4 泄漏等）不改一字全绿。
 
 ### CDC-M4 失败路径泄漏调度器（非守护线程，阻止 JVM 退出）与 Hikari 池 ✅已修复
 - **位置**：`AbstractCDCConnector.java:57-88`（doStop 先于 scheduler 关闭块抛出则调度器泄漏）；`DatabasePollingCDCConnector.java:87-91`

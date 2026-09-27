@@ -253,14 +253,27 @@ public abstract class AbstractCDCConnector implements CDCConnector {
             scheduler = Executors.newScheduledThreadPool(1);
             scheduler.scheduleWithFixedDelay(() -> {
                 try {
-                    if (eventListener == null) {
+                    // CDC-M3: capture the listener ONCE, before draining. The old code checked
+                    // eventListener, then poll()ed, then re-read eventListener inside
+                    // notifyEvent — a concurrent setEventListener(null) in between made the
+                    // connector take a batch out of the queue and silently discard it. With
+                    // the capture, an already-drained batch is delivered to the listener that
+                    // was registered when the drain started.
+                    CDCEventListener listener = eventListener;
+                    if (listener == null) {
                         // No push subscriber: leave the events for pull consumers (poll()) instead
                         // of draining and silently dropping them.
                         return;
                     }
                     List<ChangeEvent> events = poll();
                     if (events != null && !events.isEmpty()) {
-                        notifyEvent(listener -> listener.onEvents(getName(), events));
+                        try {
+                            listener.onEvents(getName(), events);
+                        } catch (Exception e) {
+                            // same isolation as notifyEvent: a throwing listener must not
+                            // break the polling loop
+                            log.warn("Error notifying event listener for connector: {}", getName(), e);
+                        }
                     }
                 } catch (Exception e) {
                     log.error("Error in scheduled polling for connector: {}", getName(), e);
