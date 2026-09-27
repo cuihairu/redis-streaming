@@ -448,11 +448,13 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **测试**：RedisMessageConsumerCommitFrontierScriptTest——eval 契约（旧代码零 eval 调用，"Wanted but not invoked"）、脚本失败被吞、8 线程×250 id 并发 ack 以内存 CAS 钉死 max 归约；CommitFrontierAtomicityIntegrationTest（真 Redis，40 轮×8 线程乱序 ack，frontier 必须收在最大 id；旧代码 round 0 即 expected 5-8 but was 5-0）；CommitFrontierUpdate/MultiGroupIntegrationTest 读端改 StringCodec 适配明文 hash。
 - **审计置信度**：高（竞态真实，影响良性方向）
 
-### MQ-12 管理路径全库 SCAN：`getKeys()` 不带 pattern ⏳
+### MQ-12 管理路径全库 SCAN：`getKeys()` 不带 pattern [已修复]
 - **位置**：`mq/.../dlq/RedisDeadLetterAdmin.java:33`（pattern @28 已算出但没用）；`mq/.../admin/impl/RedisMessageQueueAdmin.java:464`
 - **触发**：大共享 Redis 上 `listTopics()`（或 pc<=1 主题的 `deleteConsumerGroup`）。
 - **影响**：阻塞式全库 SCAN，管理路径延迟/负载尖峰。
 - **审计置信度**：高
+- **验证与修复**：两处改为模式化 SCAN（B-15 同款 `getKeys(KeysScanOptions.defaults().pattern(...))`）：`RedisDeadLetterAdmin.listTopics` 用已算出的 `DlqKeys.dlq("*")` 模式，`RedisMessageQueueAdmin.deleteConsumerGroup` 的 pc<=1 回退用 `{streamPrefix}:{topic}:p:*` 模式；手工前缀/后缀过滤保留作第二道防线，扫描范围收窄而结果集不变。
+- **回归测试**：单测 `RedisDeadLetterAdminScanPatternTest` / `RedisMessageQueueAdminDeleteConsumerGroupScanTest`（旧代码 2/2 失败：`expected:<[orders, billing]> but was:<[]>`、`expected:<true> but was:<false>`——旧代码只调无参 `getKeys()`，模式化桩零命中即坐实全库扫描）；集成 `AdminPatternScanIntegrationTest`（真实 Redis：DLQ 主题清单含两个种子 DLQ 且分区流 decoy 不入列、pc=1 回退经扫描发现并删除 p:1 上的组）。
 
 ### MQ-13 保留量/硬上限回退路径把无界区间整体载入内存 ⏳
 - **位置**：`mq/.../broker/impl/RedisBrokerPersistence.java:118-125`（`range(batch, MIN, MAX)` 只为拿 id）；`RedisMessageQueueAdmin.java:396`（`trimQueueByAge` 用 `Integer.MAX_VALUE`）

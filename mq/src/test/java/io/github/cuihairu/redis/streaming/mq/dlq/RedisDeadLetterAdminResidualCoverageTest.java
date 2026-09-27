@@ -56,7 +56,7 @@ class RedisDeadLetterAdminResidualCoverageTest {
     void listTopicsSkipsNullKeysAndDeduplicates() {
         RKeys keys = mock(RKeys.class);
         when(client.getKeys()).thenReturn(keys);
-        when(keys.getKeys()).thenReturn(Arrays.asList(
+        when(keys.getKeys(org.mockito.ArgumentMatchers.any(org.redisson.api.options.KeysScanOptions.class))).thenReturn(Arrays.asList(
                 null,
                 "other:thing:dlq",
                 "stream:topic:t1:dlq",

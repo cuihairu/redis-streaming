@@ -7,6 +7,7 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.redisson.api.RKeys;
 import org.redisson.api.RedissonClient;
+import org.redisson.api.options.KeysScanOptions;
 import org.redisson.api.stream.StreamMessageId;
 
 import java.util.ArrayList;
@@ -84,7 +85,7 @@ class RedisDeadLetterAdminTest {
     void listTopics_withNoDlqKeys_returnsEmptyList() {
         // Given
         admin = new RedisDeadLetterAdmin(redissonClient, deadLetterService);
-        when(rKeys.getKeys()).thenReturn(List.of("other:key", "stream:topic:test:p:0"));
+        when(rKeys.getKeys(any(KeysScanOptions.class))).thenReturn(List.of("other:key", "stream:topic:test:p:0"));
 
         // When
         List<String> result = admin.listTopics();
@@ -97,7 +98,7 @@ class RedisDeadLetterAdminTest {
     void listTopics_withValidDlqKeys_returnsTopics() {
         // Given
         admin = new RedisDeadLetterAdmin(redissonClient, deadLetterService);
-        when(rKeys.getKeys()).thenReturn(List.of("stream:topic:test1:dlq", "stream:topic:test2:dlq"));
+        when(rKeys.getKeys(any(KeysScanOptions.class))).thenReturn(List.of("stream:topic:test1:dlq", "stream:topic:test2:dlq"));
 
         // When
         List<String> result = admin.listTopics();
@@ -112,7 +113,7 @@ class RedisDeadLetterAdminTest {
     void listTopics_whenGetKeysThrows_returnsEmptyList() {
         // Given
         admin = new RedisDeadLetterAdmin(redissonClient, deadLetterService);
-        when(rKeys.getKeys()).thenThrow(new RuntimeException("Redis error"));
+        when(rKeys.getKeys(any(KeysScanOptions.class))).thenThrow(new RuntimeException("Redis error"));
 
         // When
         List<String> result = admin.listTopics();

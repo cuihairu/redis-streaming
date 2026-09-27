@@ -237,7 +237,11 @@ class RedisDeadLetterConsumerLoopGapTest {
         java.util.function.Supplier<Map<StreamMessageId, Map<String, Object>>> once = onceThenIdle(entry("p"));
         when(defaultStream.readGroup(anyString(), anyString(), any(org.redisson.api.stream.StreamReadGroupArgs.class)))
                 .thenAnswer(inv -> once.get());
-        when(partitionStream.add(any())).thenReturn(new StreamMessageId(8, 0));
+        java.util.concurrent.atomic.AtomicInteger adds = new java.util.concurrent.atomic.AtomicInteger();
+        when(partitionStream.add(any())).thenAnswer(inv -> {
+            adds.incrementAndGet();
+            return new StreamMessageId(8, 0);
+        });
         when(partitionStream.isExists()).thenReturn(true);
         when(partitionStream.size()).thenReturn(0L);
 
@@ -249,7 +253,12 @@ class RedisDeadLetterConsumerLoopGapTest {
         });
         consumer.start();
         assertTrue(done.await(15000, TimeUnit.MILLISECONDS));
-        Thread.sleep(200);
+        // deadline-based instead of a fixed 200ms sleep: under machine load the loop thread
+        // may not reach the re-add within the old fixed window
+        long deadline = System.currentTimeMillis() + 10_000;
+        while (adds.get() < 2 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(25);
+        }
         verify(partitionStream, org.mockito.Mockito.times(2)).add(any());
         consumer.stop();
         consumer.close();
@@ -260,7 +269,11 @@ class RedisDeadLetterConsumerLoopGapTest {
         java.util.function.Supplier<Map<StreamMessageId, Map<String, Object>>> once = onceThenIdle(entry("p"));
         when(defaultStream.readGroup(anyString(), anyString(), any(org.redisson.api.stream.StreamReadGroupArgs.class)))
                 .thenAnswer(inv -> once.get());
-        when(partitionStream.add(any())).thenReturn(new StreamMessageId(8, 0));
+        java.util.concurrent.atomic.AtomicInteger adds = new java.util.concurrent.atomic.AtomicInteger();
+        when(partitionStream.add(any())).thenAnswer(inv -> {
+            adds.incrementAndGet();
+            return new StreamMessageId(8, 0);
+        });
         doThrow(new IllegalStateException("exists boom")).when(partitionStream).isExists();
 
         RedisDeadLetterConsumer consumer = spawn("gap-6");
@@ -271,6 +284,12 @@ class RedisDeadLetterConsumerLoopGapTest {
         });
         consumer.start();
         assertTrue(done.await(15000, TimeUnit.MILLISECONDS));
+        // await the first add by deadline (load-robust), then a bounded grace window for a
+        // wrongly-triggered re-add (negative assertion can never be airtight)
+        long deadline = System.currentTimeMillis() + 10_000;
+        while (adds.get() < 1 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(25);
+        }
         Thread.sleep(200);
         verify(partitionStream, org.mockito.Mockito.times(1)).add(any());
         consumer.stop();

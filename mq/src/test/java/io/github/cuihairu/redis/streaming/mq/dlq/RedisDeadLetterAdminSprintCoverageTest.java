@@ -30,7 +30,7 @@ class RedisDeadLetterAdminSprintCoverageTest {
 
     @Test
     void listTopicsSkipsEmptyTopicSegment() throws Exception {
-        when(keys.getKeys()).thenReturn(List.of(
+        when(keys.getKeys(org.mockito.ArgumentMatchers.any(org.redisson.api.options.KeysScanOptions.class))).thenReturn(List.of(
                 "stream:topic::dlq",
                 "stream:topic:alpha:dlq",
                 "stream:topic:beta:dlq"));

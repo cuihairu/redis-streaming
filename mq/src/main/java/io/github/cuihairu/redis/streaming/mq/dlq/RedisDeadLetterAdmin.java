@@ -30,7 +30,10 @@ public class RedisDeadLetterAdmin implements DeadLetterAdmin {
         try {
             String startToken = DlqKeys.dlq("");
             startToken = startToken.substring(0, Math.max(0, startToken.length() - ":dlq".length()));
-            Iterable<String> all = redissonClient.getKeys().getKeys();
+            // MQ-12: scan with the DLQ pattern instead of walking the entire keyspace —
+            // a plain getKeys() BLOCKING-SCANs every key of every other user of the DB.
+            Iterable<String> all = redissonClient.getKeys().getKeys(
+                    org.redisson.api.options.KeysScanOptions.defaults().pattern(pattern));
             for (String key : all) {
                 if (key == null) continue;
                 if (!key.endsWith(":dlq")) continue;

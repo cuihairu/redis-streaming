@@ -339,7 +339,7 @@ class RedisMessageQueueAdminBehaviorTest {
 
         when(partitionRegistry.getPartitionCount("t")).thenReturn(1);
         when(redisson.getKeys()).thenReturn(keys);
-        when(keys.getKeys()).thenReturn(List.of(StreamKeys.partitionStream("t", 0), StreamKeys.partitionStream("t", 9)));
+        when(keys.getKeys(org.mockito.ArgumentMatchers.any(org.redisson.api.options.KeysScanOptions.class))).thenReturn(List.of(StreamKeys.partitionStream("t", 0), StreamKeys.partitionStream("t", 9)));
         when(redisson.getStream(eq(StreamKeys.partitionStream("t", 0)), eq(StringCodec.INSTANCE))).thenReturn((RStream) s0);
         when(redisson.getStream(eq(StreamKeys.partitionStream("t", 9)), eq(StringCodec.INSTANCE))).thenReturn((RStream) sExtra);
 

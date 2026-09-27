@@ -461,7 +461,10 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
                     String pat = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.streamPrefix()
                             + ":" + topic + ":p:*";
                     try {
-                        for (String k : redissonClient.getKeys().getKeys()) {
+                        // MQ-12: scan with the partition pattern instead of walking the entire
+                        // keyspace — same result, but scoped to this topic's partitions.
+                        for (String k : redissonClient.getKeys().getKeys(
+                                org.redisson.api.options.KeysScanOptions.defaults().pattern(pat))) {
                             if (k != null && k.startsWith(io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.streamPrefix() + ":" + topic + ":p:")) {
                                 keys.add(k);
                             }

@@ -154,7 +154,7 @@ class RedisMessageQueueAdminSprintCoverageTest {
         all.add(null);
         all.add("totally-unrelated:key");
         all.add(StreamKeys.partitionStream("t", 7));
-        when(keys.getKeys()).thenReturn(all);
+        when(keys.getKeys(org.mockito.ArgumentMatchers.any(org.redisson.api.options.KeysScanOptions.class))).thenReturn(all);
 
         assertTrue(newAdmin().deleteConsumerGroup("t", "g"));
         verify(stream, times(2)).removeGroup("g");
