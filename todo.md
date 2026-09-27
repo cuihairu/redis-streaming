@@ -84,23 +84,21 @@
 
 ## 优先级 2：覆盖率 20%-50%（重要）
 
-### 5. io.github.cuihairu.redis.streaming.runtime.internal - 39%
-**关键问题：** 运行时核心实现测试不足
-**未覆盖的关键类：**
-- `InMemoryWindowedStream` - 0% (18 个方法未覆盖)
-- `InMemoryKeyedStream` - 39% (部分聚合方法未覆盖)
-- `InMemoryKeyedStream$6` - 0% (迭代器未覆盖)
+### 5. io.github.cuihairu.redis.streaming.runtime.internal - ✅ 已完成（2026-09-27，实测 100%/99%）
+**侦查发现：** 原 39% 数据过期——补测前包实测已 **100% 指令 / 99% 分支**：`InMemoryWindowedStream` 100%/100%（非 0%）、`InMemoryKeyedStream` 100%/100%（非 39%，全部匿名迭代器亦 100%）。清单要求五类场景均有既有测试背书（见下）。残差仅两处，本轮已处理。
 
-**建议添加的测试类型：**
-- [ ] **单元测试**
-  - 窗口分配和触发测试
-  - 窗口聚合函数测试（sum, count, avg, min, max）
-  - KeyedStream 分区测试
-  - 窗口水印对齐测试
-  - 窗口过期清理测试
-- [ ] **集成测试**
-  - 端到端窗口处理测试
-  - 窗口状态恢复测试
+**清单五类场景 → 既有背书：**
+- [x] 窗口分配和触发测试：`InMemoryWindowedStreamTriggerTest`（FIRE / FIRE_AND_PURGE / PURGE / CONTINUE + 端输入 flush）
+- [x] 窗口聚合函数测试（sum, count, avg, min, max）：`InMemoryWindowedStreamTest` 聚合用例 + `NumberAggregationUtilsCoverageTest`（含 BigDecimal/BigInteger 分支）
+- [x] KeyedStream 分区测试：`InMemoryKeyedStreamTest`/`EdgeCaseTest`（keyBy 路由、process、reduce/aggregate）
+- [x] 窗口水印对齐测试：`WatermarkStateTest` + `InMemoryKeyedStreamTest.eventTimeTimerFiresWhenWatermarkAdvances` + watermark 生成器用例
+- [x] 窗口过期清理测试：`InMemoryWindowedStreamTriggerTest` 的 PURGE / FIRE_AND_PURGE 清桶断言（`bucket.elements.clear()` 路径）
+
+**本轮新增（`InMemoryInternalResidualCoverageTest`，2 用例）：**
+- [x] Timer 回调抛异常 → 包装为 RuntimeException("Keyed process timer callback failed")、原异常为 cause、`finally` 恢复时间戳（`TimerQueue.fire` catch 臂语义钉住）
+- [x] `InMemoryCheckpointCoordinator.restoreFromCheckpoint` 跳过快照中无条目的后注册 store（不清空其状态；checkpoint 包分支残差同型修复）
+- 说明：包级分支 99% 为测试侧天花板——唯一漏分支是 `TimerQueue.fire` 枚举 switch 的合成 default 臂，计时器只可能以 PROCESSING_TIME/EVENT_TIME 注册，测试不可达，闭合需改生产代码（超出本轮"只补测试"边界）
+- [ ] ~~集成测试：端到端窗口处理 / 窗口状态恢复~~ —— redis 引擎侧已有 `RedisRuntimeWindowedStreamIntegrationTest`（6 用例）与 checkpoint/restore 集成套件，见 runtime/redis 清单
 
 ---
 
