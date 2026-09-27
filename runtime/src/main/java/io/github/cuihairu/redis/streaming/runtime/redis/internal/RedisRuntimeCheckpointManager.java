@@ -128,6 +128,20 @@ public final class RedisRuntimeCheckpointManager {
     public Checkpoint triggerCheckpoint(long checkpointId,
                                         List<PipelineKey> pipelines,
                                         Map<String, Map<Integer, String>> offsetsOverride) {
+        return triggerCheckpoint(checkpointId, pipelines, offsetsOverride, true);
+    }
+
+    /**
+     * RT-H2: same as {@link #triggerCheckpoint(long, List, Map)} with control over when the
+     * retention sweep runs. The sweep lists and fully deserializes every retained checkpoint,
+     * so a caller inside a stop-the-world window must pass {@code false} and invoke
+     * {@link #cleanupOld()} once it has resumed the consumers — otherwise the pause stretches
+     * by the size of the whole checkpoint history on every tick.
+     */
+    public Checkpoint triggerCheckpoint(long checkpointId,
+                                        List<PipelineKey> pipelines,
+                                        Map<String, Map<Integer, String>> offsetsOverride,
+                                        boolean cleanupRetainedAfterStore) {
         DefaultCheckpoint cp = new DefaultCheckpoint(checkpointId, System.currentTimeMillis());
         try {
             Map<String, Object> meta = new HashMap<>();
@@ -143,7 +157,9 @@ public final class RedisRuntimeCheckpointManager {
             cp.markCompleted();
             storage.storeCheckpoint(cp);
 
-            cleanupOld();
+            if (cleanupRetainedAfterStore) {
+                cleanupOld();
+            }
             return cp;
         } catch (Exception e) {
             log.warn("Failed to store checkpoint {}", checkpointId, e);
@@ -575,7 +591,13 @@ public final class RedisRuntimeCheckpointManager {
         }
     }
 
-    private void cleanupOld() {
+    /**
+     * RT-H2: evicts checkpoints beyond {@code checkpointsToKeep} (incomplete ones first, then
+     * the oldest completed ones). Public so a stop-the-world caller can run it after resuming
+     * the consumers instead of inside the pause; it lists and deserializes every retained
+     * checkpoint, so the call is not free.
+     */
+    public void cleanupOld() {
         int keep = config.getCheckpointsToKeep();
         if (keep <= 0) {
             return;

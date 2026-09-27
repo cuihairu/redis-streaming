@@ -661,6 +661,22 @@ public final class RedisStreamExecutionEnvironment {
                                                  RedisRuntimeCheckpointManager checkpointManager,
                                                  List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
                                                  DeferredAcks deferredAcks) {
+        Checkpoint cp = triggerCheckpointWhilePaused(consumers, runners, checkpointManager, pipelineKeys, deferredAcks);
+        if (cp != null) {
+            // RT-H2: the retention sweep lists and fully deserializes every retained
+            // checkpoint. It used to run inside the paused window below, stretching the
+            // stop-the-world pause on every tick by the size of the whole checkpoint
+            // history — run it now that the finally block has resumed the consumers.
+            checkpointManager.cleanupOld();
+        }
+        return cp;
+    }
+
+    private Checkpoint triggerCheckpointWhilePaused(List<MessageConsumer> consumers,
+                                                    List<RedisPipelineRunner<?>> runners,
+                                                    RedisRuntimeCheckpointManager checkpointManager,
+                                                    List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
+                                                    DeferredAcks deferredAcks) {
         if (consumers == null || consumers.isEmpty()) {
             return null;
         }
@@ -731,7 +747,8 @@ public final class RedisStreamExecutionEnvironment {
             }
 
             long storeStartNs = System.nanoTime();
-            Checkpoint cp = checkpointManager.triggerCheckpoint(checkpointId, pipelineKeys, offsetsOverride);
+            // RT-H2: the retention sweep is deferred to after the consumers are resumed
+            Checkpoint cp = checkpointManager.triggerCheckpoint(checkpointId, pipelineKeys, offsetsOverride, false);
             try {
                 RedisRuntimeMetrics.get().recordCheckpointStoreDuration(config.getJobName(), (System.nanoTime() - storeStartNs) / 1_000_000);
             } catch (Exception ignore) {

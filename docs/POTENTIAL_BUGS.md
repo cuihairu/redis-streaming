@@ -618,11 +618,13 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **审计置信度**：高（机制确定）
 - **验证与修复**：新增 `offsetForPartition` 查找：Integer key miss 时回退 String key（并兼容两种 key 混存，Integer 优先）；恢复失败日志从 DEBUG 升到 WARN。回归测试 `RedisRuntimeCheckpointManagerOffsetsTest`（4 用例：String-keyed 恢复命中、进程内 Integer 命中、缺失分区回退、混存优先级）。
 
-### RT-H2 stop-the-world checkpoint 期间做全库 SCAN：消费者暂停时长随整个 Redis 库大小伸缩 ⏳
+### RT-H2 stop-the-world checkpoint 期间做全库 SCAN：消费者暂停时长随整个 Redis 库大小伸缩 [已修复]
 - **位置**：`checkpoint/.../RedisCheckpointStorage.java:57-81`（`keys.getKeys()` 无 pattern）；调用点 `RedisRuntimeCheckpointManager.java:146,552-579,240`
 - **触发**：每个周期 checkpoint tick（STW 流程先 pause 消费者再 triggerCheckpoint）。
 - **影响**：`listCheckpoints` 对整个 keyspace SCAN 后逐 key GET 再排序。checkpoint 延迟（即消费暂停时长）与 DB 总键数成正比而非 checkpoint 数；共享/生产 Redis 上每个 tick 都卡住全部管道消费；`deferAckUntilCheckpoint=true` 时直接拉长未 ack 窗口，放大 claimIdleMs 重投递竞态。
 - **审计置信度**：高
+- **验证与修复**：两个层次。（1）扫描宽度——B-15 已把 `listCheckpoints` 的遍历改为前缀模式化 SCAN（`KeysScanOptions.defaults().pattern(keyPrefix + "*")`，纯数字后缀过滤保留），本条"与 DB 总键数成正比"的部分随之消除；（2）暂停窗口内的逐 key 完整反序列化——修复前每个 tick 在 pause 与 resume 之间执行 `cleanupOld()` → `listCheckpoints(Integer.MAX_VALUE)`，把保留的全部 checkpoint（每个含完整状态快照）逐个反序列化再排序（老代码事件序 `pause, store, listCheckpoints, …, resume` 实证），暂停时长仍随 `checkpointsToKeep × 快照大小` 伸缩。修复：`RedisRuntimeCheckpointManager.triggerCheckpoint` 新增带 `cleanupRetainedAfterStore` 参数的重载（缺省 true，原有调用方语义不变），`cleanupOld()` 改为 public；STW 路径 `RedisStreamExecutionEnvironment.triggerCheckpointInternal` 拆为"暂停窗口内 checkpoint（cleanup=false）+ resume 后统一 `cleanupOld()`"两段——清扫成本移出暂停窗口，淘汰语义不变（先不完整后最旧、保留 keepCount，见 B-14）。残留（非本条 STW 范围）：启动期 `initNextId`/`restoreFromLatestCheckpointOrNull`/`getLatestSinkCommittedCheckpoint` 仍走全量列表，成本以 `checkpointsToKeep` 为界，且不在消费暂停窗口内。
+- **回归测试**：`RedisStreamExecutionEnvironmentCleanupOffPauseTest`（pause/resume/listCheckpoints 事件序断言清扫发生在 resume 之后；3 次 trigger + keep=2 断言最旧者淘汰、留存 {2,3}）+ `RedisRuntimeCheckpointManagerCleanupDeferralTest`（4 参延迟清扫重载存在性、deferred trigger 零清扫、显式 `cleanupOld()` 裁剪语义）。旧代码复现：3 用例在修复前全数失败——env 级 `the retention sweep ran while the consumers were still paused (events=[pause, store, listCheckpoints, store, resume])`、`no sweep may precede the first resume`、manager 级 `triggerCheckpoint has no deferred-cleanup variant`。
 
 ### RT-H3 窗口/定时器状态在 emit 前被清除：sink 发送失败即永久丢失该窗口已累加数据 [设计缺陷]
 - **位置**：`runtime/.../redis/internal/RedisStreamBuilder.java`（reduce 516-539、aggregate 575-595、sum 713-738、count 758-777、apply 654-672）
