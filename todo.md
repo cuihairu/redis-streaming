@@ -35,18 +35,17 @@
 
 ---
 
-### 2. io.github.cuihairu.redis.streaming.window - 18%
-**关键问题：** 示例代码未被测试覆盖
-**未覆盖的关键类：**
-- `WindowExample` - 0% (7 个方法未覆盖)
+### 2. io.github.cuihairu.redis.streaming.window - ✅ 已完成（2026-09-27）
+**原状态：** 18%（数据过期；补测前实测 :window 模块已约 99% 指令 / 90% 分支——历史测试已覆盖大部分清单场景）
+**当前状态：** **100% 指令 / 100% 分支**（JaCoCo，:window 模块全部 3 个包 7 个类）；examples 模块的 `WindowExample` 亦已可测试化并由测试驱动（原 0%）
 
-**建议添加的测试类型：**
-- [ ] **单元测试**（将示例改为可测试的代码）
-  - 时间窗口分配测试
-  - 滚动窗口聚合测试
-  - 滑动窗口聚合测试
-  - 会话窗口测试
-  - 窗口触发器测试
+**本次补充（`WindowAssignerResidualCoverageTest` + `WindowExampleTest`，示例侧仅做可见性改造）：**
+- [x] **时间窗口分配测试**：TimeWindow contains/merge/intersects/maxTimestamp（既有 TimeWindowTest 等），新增滑动分配的半开区间排除分支与 Long.MAX_VALUE 溢出守卫分支
+- [x] **滚动窗口聚合测试**：对齐（floorMod 前纪元负时间戳）、批量时间戳→窗口映射、size<=0 校验（既有 TumblingWindowAssignerTest；聚合执行链路由 runtime/aggregation 模块承担，见清单第 5 项）
+- [x] **滑动窗口聚合测试**：重叠窗口确定性与成员断言、size==slide、大 slide、边界时间戳、size/slide<=0 校验（既有）+ 新增 start+size==timestamp 精确排除
+- [x] **会话窗口测试**：gap 种子窗口、shouldMerge 相交/相邻判定、零 gap、大 gap（既有）+ 新增 supportsWindowMerging 契约（session=true，tumbling/sliding=接口默认 false）
+- [x] **窗口触发器测试**：EventTime 水位触发/CONTINUE、ProcessingTime 到期触发、CountTrigger 计数触发与 maxCount<=0 校验（既有 CountTriggerTest / ProcessingTimeTriggerTest / EventTimeTriggerTest）
+- [x] **示例可测试化**：WindowExample 四个演示方法 private→包可见（无语义改动），examples 模块新增 WindowExampleTest 驱动 main 与各演示段并断言五类语义
 
 ---
 

@@ -29,7 +29,7 @@ public class WindowExample {
         log.info("Window Example completed successfully");
     }
 
-    private static void demonstrateTumblingWindow() {
+    static void demonstrateTumblingWindow() {
         log.info("=== Tumbling Window Example ===");
 
         TumblingWindow<String> assigner = TumblingWindow.of(Duration.ofSeconds(5));
@@ -58,7 +58,7 @@ public class WindowExample {
         }
     }
 
-    private static void demonstrateSlidingWindow() {
+    static void demonstrateSlidingWindow() {
         log.info("=== Sliding Window Example ===");
 
         SlidingWindow<String> assigner = SlidingWindow.of(
@@ -77,7 +77,7 @@ public class WindowExample {
         log.info("Event at {}ms belongs to {} windows", timestamp - baseTime, windows.size());
     }
 
-    private static void demonstrateSessionWindow() {
+    static void demonstrateSessionWindow() {
         log.info("=== Session Window Example ===");
 
         SessionWindow<String> assigner = SessionWindow.withGap(Duration.ofSeconds(30));
@@ -100,7 +100,7 @@ public class WindowExample {
         }
     }
 
-    private static void demonstrateWindowOperations() {
+    static void demonstrateWindowOperations() {
         log.info("=== Window Operations Example ===");
 
         TimeWindow w1 = new TimeWindow(0, 60000);
