@@ -147,20 +147,18 @@ public class DefaultBroker implements Broker {
                 } catch (Exception e) {
                     log.debug("Ack-set expire failed: {}", ackKey, e);
                 }
-                // Compute active groups: groups present on stream AND having an active lease on this partition
-                int active = 0;
+                // MQ-04: the deletion gate counts REGISTERED consumer groups, not lease-live ones.
+                // A registered group is the delivery contract — a stopped group (expired lease)
+                // will come back and still needs the entry. Counting only lease-live groups made
+                // a lone live group's ack delete entries that stopped groups had never read.
+                int registered = 0;
                 try {
-                    java.util.List<org.redisson.api.stream.StreamGroup> groups = stream.listGroups();
-                    for (org.redisson.api.stream.StreamGroup g : groups) {
-                        String leaseKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.lease(topic, g.getName(), partitionId);
-                        boolean live = redissonClient.getBucket(leaseKey, org.redisson.client.codec.StringCodec.INSTANCE).isExists();
-                        if (live) active++;
-                    }
+                    registered = stream.listGroups().size();
                 } catch (Exception e) {
-                    log.debug("Failed to compute active groups: {}:p:{}", topic, partitionId, e);
+                    log.debug("Failed to compute registered groups: {}:p:{}", topic, partitionId, e);
                 }
                 try {
-                    if (active > 0 && ackset.size() >= active) {
+                    if (registered > 0 && ackset.size() >= registered) {
                         stream.remove(parseStreamId(messageId));
                         try { ackset.delete(); } catch (Exception e) { log.debug("Ack-set delete failed: {}", ackKey, e); }
                     }

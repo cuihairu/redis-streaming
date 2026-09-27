@@ -107,7 +107,7 @@ class DefaultBrokerUnitTest {
     }
 
     @Test
-    void ackAllGroupsAckDeletesWhenActiveGroupsAcked() {
+    void ackAllGroupsAckDeletesOnlyWhenEveryRegisteredGroupAcked() {
         RedissonClient client = mock(RedissonClient.class);
         @SuppressWarnings("unchecked")
         RStream<String, Object> stream = mock(RStream.class);
@@ -120,20 +120,24 @@ class DefaultBrokerUnitTest {
         @SuppressWarnings("unchecked")
         RSet<String> ackSet = mock(RSet.class);
         when(client.getSet(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn((RSet) ackSet);
-        when(ackSet.size()).thenReturn(1);
 
         @SuppressWarnings("unchecked")
         RBucket<String> bucket = mock(RBucket.class);
         when(client.getBucket(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn((RBucket) bucket);
-        when(bucket.isExists()).thenReturn(true, false);
         when(bucket.expire(any(Duration.class))).thenReturn(true);
 
         DefaultBroker broker = new DefaultBroker(client, MqOptions.builder().ackDeletePolicy("all-groups-ack").acksetTtlSec(60).build(),
                 (t, k, h, pc) -> 0, (t, p, m) -> "x");
 
+        // MQ-04: g2 is registered but stopped (no live lease) — g1's lone ack must NOT delete
+        when(ackSet.size()).thenReturn(1);
         broker.ack("t1", "g1", 0, "5-1");
-
         verify(ackSet).add(eq("g1"));
+        verify(stream, never()).remove(any(StreamMessageId.class));
+
+        // once every REGISTERED group has acked, the entry may be deleted
+        when(ackSet.size()).thenReturn(2);
+        broker.ack("t1", "g2", 0, "5-1");
         verify(stream).remove(eq(new StreamMessageId(5, 1)));
         verify(ackSet).delete();
     }

@@ -382,11 +382,13 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **审计置信度**：高
 - **验证与修复**：`tryAcquire` 改为单次 `setIfAbsent(value, Duration)`（原子 SET NX EX）；`renewIfOwner` 改为 Lua compare-and-pexpire；`releaseIfOwner` 改为 Lua compare-and-delete（Redisson `RScript.ReturnType.LONG`）。`LeaseManagerTest` 重写为验证原子调用形态与脚本内容。
 
-### MQ-04 all-groups-ack 删除策略把"活跃组"等同于"有租约的组"：停机组的未消费消息被删 ⏳
+### MQ-04 all-groups-ack 删除策略把"活跃组"等同于"有租约的组"：停机组的未消费消息被删 [已修复]
 - **位置**：`mq/.../broker/impl/DefaultBroker.java:137-171`（计数 @150-161，删除 @162-166）
 - **触发**：`ackDeletePolicy="all-groups-ack"`，两消费组共用分区；B 组停机（租约 key 过期）时 A 组 ack。`active` 只算 A → `ackset.size()>=active` → `stream.remove(...)`。
 - **影响**：B 组数据丢失：条目在 B 读到之前被 XDEL；B 重启后消息已消失。
 - **审计置信度**：高
+- **验证与修复**：删除门槛从"有租约的组数"改为"已注册组数"（`stream.listGroups().size()`）——注册即投递契约：停机组（租约过期）会回来、仍需要该条目，其未 ack 期间删除门槛不满足（`registered > 0 && ackset.size() >= registered`）。租约活性只是消费心跳信号，不是"该组还需要这条消息吗"的答案。代价是无人再回来的僵尸组会暂留条目——方向安全（宁多留不丢数据），由 ackset TTL 与保留策略另行回收。
+- **回归测试**：`BrokerAllGroupsAckStoppedGroupIntegrationTest`（@Tag("integration")，真实 Redis，3 用例：gA 有租约/gB 停机时 gA 单独 ack 条目保留、gB 补 ack 后条目删除且 ack-set 清理、单注册组 ack 后照常删除、immediate 策略不受影响）。旧代码复现：`stoppedGroupIsNotStarvedOutOfDeletionGate` 以 "expected: <1> but was: <0>" 失败（条目在停机组读到前被删）。钉死旧租约过滤行为的 `DefaultBrokerUnitTest.ackAllGroupsAckDeletesWhenActiveGroupsAcked` 重写为两段式新契约（1<2 不删、2>=2 删），`DefaultBrokerAckEdgeTest` 四个 all-groups-ack 分支用例同步到注册组数语义，`ConsumerBrokerPathIntegrationTest` 注释更正（该流仅一个注册组，行为不变）。
 
 ### MQ-05 DLQ 重放路径硬编码 `stream:topic` 前缀，忽略配置前缀：重放消息石沉大海且 DLQ 条目被 ack [已修复]
 - **位置**：`mq/.../dlq/RedisDeadLetterService.java:155`；`mq/.../dlq/RedisDeadLetterConsumer.java:153`

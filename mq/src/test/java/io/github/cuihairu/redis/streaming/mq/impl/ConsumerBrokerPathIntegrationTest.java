@@ -160,7 +160,8 @@ class ConsumerBrokerPathIntegrationTest {
         immediate.ack(topic, "bg", 0, id);
         assertEquals(sizeBefore - 1, stream(0).size());
 
-        // policy all-groups-ack: entry is deleted once every group with a live lease acks
+        // policy all-groups-ack: entry is deleted once every REGISTERED group has acked
+        // (lease liveness is deliberately not part of the gate — MQ-04)
         Message m2 = new Message();
         m2.setTopic(topic);
         m2.setPayload("p2");
@@ -168,18 +169,16 @@ class ConsumerBrokerPathIntegrationTest {
         MqOptions allOpts = MqOptions.builder().ackDeletePolicy("all-groups-ack").acksetTtlSec(60).build();
         Broker all = new DefaultBroker(redis, allOpts, new HashBrokerRouter(),
                 new RedisBrokerPersistence(redis, allOpts));
-        redis.getBucket(StreamKeys.lease(topic, "bg", 0), org.redisson.client.codec.StringCodec.INSTANCE)
-                .set("bc", java.time.Duration.ofSeconds(30));
         long size2 = stream(0).size();
         all.ack(topic, "bg", 0, id2);
-        // single group with live lease -> delete should trigger
+        // "bg" is the only registered group and it has acked -> delete should trigger
         assertTrue(waitUntil(() -> {
             try {
                 return stream(0).size() < size2;
             } catch (Exception e) {
                 return false;
             }
-        }, 5_000) || stream(0).size() < size2, "all-groups-ack should delete after the only live group acks");
+        }, 5_000) || stream(0).size() < size2, "all-groups-ack should delete after the only registered group acks");
 
         // broker ack with broken stream id: parseStreamId falls back to MIN and the
         // invalid XACK surfaces as an error instead of corrupting state

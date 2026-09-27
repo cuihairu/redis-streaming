@@ -107,13 +107,13 @@ class DefaultBrokerAckEdgeTest {
     // ===== all-groups-ack branches =====
 
     @Test
-    void allGroupsAckSkipsDeleteWithoutActiveLeases() {
+    void allGroupsAckKeepsEntryWhileARegisteredGroupHasNotAcked() {
         RSet<String> ackSet = mock(RSet.class);
         when(client.getSet(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn((RSet) ackSet);
-        when(stream.listGroups()).thenReturn(List.of(mockGroup("g1")));
-        RBucket<String> lease = mock(RBucket.class);
-        when(client.getBucket(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn((RBucket) lease);
-        when(lease.isExists()).thenReturn(false); // no live lease -> active == 0
+        when(ackSet.size()).thenReturn(1);
+        // MQ-04: g2 is registered but stopped (no lease key at all) — registration, not
+        // lease liveness, gates deletion
+        when(stream.listGroups()).thenReturn(List.of(mockGroup("g1"), mockGroup("g2")));
 
         broker("all-groups-ack").ack("t", "g1", 0, "5-0");
         verify(ackSet).add("g1");
@@ -121,14 +121,11 @@ class DefaultBrokerAckEdgeTest {
     }
 
     @Test
-    void allGroupsAckDeletesWhenAllActiveGroupsAcked() {
+    void allGroupsAckDeletesWhenEveryRegisteredGroupAcked() {
         RSet<String> ackSet = mock(RSet.class);
         when(client.getSet(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn((RSet) ackSet);
         when(ackSet.size()).thenReturn(2);
         when(stream.listGroups()).thenReturn(List.of(mockGroup("g1"), mockGroup("g2")));
-        RBucket<String> lease = mock(RBucket.class);
-        when(client.getBucket(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn((RBucket) lease);
-        when(lease.isExists()).thenReturn(true);
 
         broker("all-groups-ack").ack("t", "g1", 0, "5-0");
         verify(stream).remove(eq(new StreamMessageId(5, 0)));
@@ -155,9 +152,6 @@ class DefaultBrokerAckEdgeTest {
         when(client.getSet(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn((RSet) ackSet);
         when(ackSet.size()).thenReturn(1);
         when(stream.listGroups()).thenReturn(List.of(mockGroup("g1"), mockGroup("g2")));
-        RBucket<String> lease = mock(RBucket.class);
-        when(client.getBucket(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn((RBucket) lease);
-        when(lease.isExists()).thenReturn(true);
 
         broker("all-groups-ack").ack("t", "g1", 0, "5-0");
         verify(stream, never()).remove(any(StreamMessageId.class));
@@ -170,9 +164,6 @@ class DefaultBrokerAckEdgeTest {
         when(client.getSet(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn((RSet) ackSet);
         when(ackSet.size()).thenReturn(1);
         when(stream.listGroups()).thenReturn(List.of(mockGroup("g1")));
-        RBucket<String> lease = mock(RBucket.class);
-        when(client.getBucket(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn((RBucket) lease);
-        when(lease.isExists()).thenReturn(true);
         doThrow(new IllegalStateException("xdel failed")).when(stream).remove(any(StreamMessageId.class));
         doThrow(new IllegalStateException("del failed")).when(ackSet).delete();
 
