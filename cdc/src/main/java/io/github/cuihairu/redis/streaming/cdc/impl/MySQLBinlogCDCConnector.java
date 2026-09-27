@@ -159,16 +159,24 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
 
                 case EXT_WRITE_ROWS:
                 case WRITE_ROWS:
+                    // CDC-M5: advance the watermark to THIS event's end before stamping rows.
+                    // The handlers read getCurrentPosition(); stamping first would hand every
+                    // ChangeEvent the PREVIOUS event's position, so commit+resume replays the
+                    // just-committed event (duplicate writes). Advancing past a filtered or
+                    // unmapped rows event is harmless: it emitted nothing to commit.
+                    updateCurrentPosition(event);
                     handleWriteRowsEvent((WriteRowsEventData) eventData);
                     break;
 
                 case EXT_UPDATE_ROWS:
                 case UPDATE_ROWS:
+                    updateCurrentPosition(event);
                     handleUpdateRowsEvent((UpdateRowsEventData) eventData);
                     break;
 
                 case EXT_DELETE_ROWS:
                 case DELETE_ROWS:
+                    updateCurrentPosition(event);
                     handleDeleteRowsEvent((DeleteRowsEventData) eventData);
                     break;
 

@@ -555,10 +555,12 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **影响**：`stop()` 中 `doStop()` 抛出 → 跳过 `scheduler.shutdown()`，非守护线程泄漏、JVM 无法退出；`start()` 中 `doStart()` 在 `startScheduledPolling()` 之后失败 → 调度器对着 `running=false` 的连接器永转；轮询连接器建池后基线查询失败 → Hikari 池与其连接永不关闭。
 - **验证与修复**：`stop()` 的调度器关闭移入 `finally`（原异常照常上抛、健康状态如实变 unhealthy）；`start()` 失败路径补调度器关闭；`DatabasePollingCDCConnector.doStart()` 对建池后的步骤加 try/catch，失败即关闭池（关闭异常 `addSuppressed` 不掩盖原异常）。回归测试 `CDCFailurePathLeakTest`（三个失败路径各一条断言，只用新旧共有 API 可对旧代码编译；旧代码 3/3 按预期失败：`isShutdown()`/`isClosed()` 均为 false；新代码 3/3 绿，且 start/stop 失败仍如实传给调用方）。
 
-### CDC-M5 MySQL 事件位置差一 [commit 后重启重复投递 ⏳]
-- **位置**：`MySQLBinlogCDCConnector.java:231,265,298` vs `:182`
+### CDC-M5 MySQL 事件位置差一 [commit 后重启重复投递 [已修复]]
+- **位置**：`MySQLBinlogCDCConnector.java:231,265,298` vs `:182`（行号已随修复偏移：现派发在 `handleBinlogEvent` switch，盖章在 rows handler 内）
 - **影响**：事件 E 的行带的是 E **前一个**事件的位置；从该位置恢复会重放 E → 重复写入。首个事件 position 为 null。
 - **审计置信度**：高
+- **验证与修复**：机制核实——监听器在 switch 之后统一 `updateCurrentPosition(event)`（推进水位到本事件末尾），而三个 rows handler 在此之前就用 `getCurrentPosition()` 给 ChangeEvent 盖章，故每个事件携带的都是前一事件的水位；commit 这样的位点后 `doResetToPosition` 恰好从 E 之前重放。修复取最小改动：WRITE/UPDATE/DELETE（含 EXT_ 变体）三类在派发 handler **之前** `updateCurrentPosition(event)`，使盖章=本事件末尾=“该事件已完整处理”的恢复点；监听器尾部的统一推进对 rows 事件成为同值重写（幂等），TABLE_MAP/XID/ROTATE/default 路径一字未动（ROTATE 仍先换文件名再盖章，顺序不变）。对被过滤/无表映射而 0 事件输出的 rows 事件先推进水位无害——它本无可提交物，恢复时其 TABLE_MAP 亦无需重放（后续事务自带）。
+- **回归测试**：`MySQLBinlogPositionOffByOneTest`（纯单测，mock binlog Event/EventData，沿用既有 `MySQLBinlogCDCConnectorEventHandlingTest` 的反射编排 harness，只用修复前 API 可对旧代码编译）——旧代码 2/2 按缺陷特征失败且实际值精确等于“前一事件位置”（`expected :200 but was :100`、`expected :250 but was :150`）；新代码 2/2 绿。既有 `MySQLBinlogCDCConnectorEventHandlingTest`（含 ROTATE 后 `getCurrentPosition()==mysql-bin.000002:4` 钉）与 :cdc 全模块单测不改一字全绿。
 
 ### CDC-M6 CDCManager 重启永久破坏健康监控（复用已终止的调度器） [已修复]
 - **位置**：`CDCManager.java:21,100,125-135,237-245`
