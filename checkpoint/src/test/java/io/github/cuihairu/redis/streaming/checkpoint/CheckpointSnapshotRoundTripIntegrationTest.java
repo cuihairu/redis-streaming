@@ -3,6 +3,7 @@ package io.github.cuihairu.redis.streaming.checkpoint;
 import io.github.cuihairu.redis.streaming.api.checkpoint.Checkpoint;
 import io.github.cuihairu.redis.streaming.checkpoint.redis.RedisCheckpointCoordinator;
 import io.github.cuihairu.redis.streaming.checkpoint.redis.RedisCheckpointStorage;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.redisson.Redisson;
@@ -14,6 +15,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -51,9 +54,27 @@ class CheckpointSnapshotRoundTripIntegrationTest {
     }
 
     private static RedissonClient createClient() {
+        String redisUrl = System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379");
+        Assumptions.assumeTrue(reachable(redisUrl), "no reachable Redis at " + redisUrl + " — skipping");
         Config config = new Config();
-        config.useSingleServer().setAddress(System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379"));
+        config.useSingleServer().setAddress(redisUrl);
         return Redisson.create(config);
+    }
+
+    private static boolean reachable(String redisUrl) {
+        Matcher m = Pattern.compile("://([^/:]+):(\\d+)").matcher(redisUrl);
+        String host = "127.0.0.1";
+        int port = 6379;
+        if (m.find()) {
+            host = m.group(1);
+            port = Integer.parseInt(m.group(2));
+        }
+        try (java.net.Socket socket = new java.net.Socket()) {
+            socket.connect(new java.net.InetSocketAddress(host, port), 500);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     @Test

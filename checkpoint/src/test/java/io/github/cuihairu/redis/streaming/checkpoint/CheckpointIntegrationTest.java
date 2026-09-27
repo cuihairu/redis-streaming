@@ -9,6 +9,9 @@ import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
 
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -25,6 +28,7 @@ public class CheckpointIntegrationTest {
     @BeforeEach
     public void setUp() {
         String redisUrl = System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379");
+        Assumptions.assumeTrue(reachable(redisUrl), "no reachable Redis at " + redisUrl + " — skipping");
         Config config = new Config();
         config.useSingleServer().setAddress(redisUrl);
         redisson = Redisson.create(config);
@@ -180,5 +184,21 @@ public class CheckpointIntegrationTest {
         assertEquals(3, deleted);
 
         log.info("Cleaned up {} old checkpoints", deleted);
+    }
+
+    private static boolean reachable(String redisUrl) {
+        Matcher m = Pattern.compile("://([^/:]+):(\\d+)").matcher(redisUrl);
+        String host = "127.0.0.1";
+        int port = 6379;
+        if (m.find()) {
+            host = m.group(1);
+            port = Integer.parseInt(m.group(2));
+        }
+        try (java.net.Socket socket = new java.net.Socket()) {
+            socket.connect(new java.net.InetSocketAddress(host, port), 500);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

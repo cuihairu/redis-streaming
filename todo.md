@@ -66,20 +66,19 @@
 
 ---
 
-### 4. io.github.cuihairu.redis.streaming.checkpoint - 21%
-**关键问题：** 示例代码未被测试覆盖
-**未覆盖的关键类：**
-- `CheckpointExample` - 0% (7 个方法未覆盖)
+### 4. io.github.cuihairu.redis.streaming.checkpoint - ✅ 已完成（2026-09-27，实测 100%/100%）
+**侦查发现：** 原 21% 数据过期——补测前 checkpoint 模块两个包实测已 100%/100%（主包）与 97%/98%（redis 包），既有 12 个测试类已覆盖创建/提交/恢复/快照序列化/协调器四类场景；残差仅在 `RedisCheckpointCoordinator.restoreFromCheckpoint` 的 sink 派发路径（"已完成 + 非空快照 → 逐条交给 BiConsumer"，单测 lane 从未喂过非空快照）。清单点名的 `CheckpointExample` 实际在 examples 模块（`examples.checkpoint` 包）而非 checkpoint 模块。
 
-**建议添加的测试类型：**
-- [ ] **单元测试**
-  - Checkpoint 创建和提交测试
-  - Checkpoint 恢复测试
-  - StateSnapshot 序列化测试
-  - Checkpoint 协调器测试
-- [ ] **集成测试**
-  - Redis Checkpoint 存储测试
-  - 分布式 Checkpoint 协调测试
+**本轮新增测试（85 个测试全绿）：**
+- [x] **单元测试**
+  - Checkpoint 创建和提交测试（既有 `DefaultCheckpointTest` + 协调器 trigger/ack/timeout 5 套件）
+  - Checkpoint 恢复测试（新增 `RedisCheckpointCoordinatorRestoreSinkTest`：sink 逐条派发+计数、两参重载日志 sink 委托、sink 异常返回 -1；补齐 redis 包残差 → **100% 指令 / 100% 分支**）
+  - StateSnapshot 序列化测试（既有 `DefaultCheckpointTest` + 集成 lane round-trip）
+  - Checkpoint 协调器测试（既有 trigger/ack/timeout/edge/completion-branch/cleanup-race 套件）
+- [x] **集成测试**（按仓库「可达性假设门控」口径：本地有 Redis 才执行并 shutdown，无 Redis 自动跳过）
+  - 新增 `CheckpointRedisLiveIntegrationTest`（进默认 `test` 任务，门禁内实际执行）：分布式协调端到端（2 任务 ack 完成含快照状态的 checkpoint → 全新 storage/coordinator 实例重启视角经 sink 恢复）+ B-14 不完整 checkpoint 不作为恢复点
+  - 新增 `examples.checkpoint.CheckpointExampleTest`（2 用例：main 端到端 + 四个演示段可观测效果断言；示例演示方法改包级可见，仅示例侧改动）
+  - 既有 3 个 `@Tag("integration")` 类与 `CheckpointGrandStormTest` 补 `Assumptions.assumeTrue(reachable)` 门控（此前无 Redis 环境下 `integrationTest`/storm 会硬失败）
 
 ---
 

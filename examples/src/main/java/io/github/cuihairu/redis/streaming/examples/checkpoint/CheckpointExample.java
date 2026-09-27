@@ -40,7 +40,7 @@ public class CheckpointExample {
         }
     }
 
-    private static void demonstrateBasicCheckpoint(RedisCheckpointCoordinator coordinator) {
+    static void demonstrateBasicCheckpoint(RedisCheckpointCoordinator coordinator) {
         log.info("=== Basic Checkpoint Example ===");
 
         long checkpointId = coordinator.triggerCheckpoint();
@@ -54,7 +54,7 @@ public class CheckpointExample {
         log.info("Checkpoint {} completed: {}", checkpointId, checkpoint.isCompleted());
     }
 
-    private static void demonstrateStateSnapshot(RedisCheckpointCoordinator coordinator) {
+    static void demonstrateStateSnapshot(RedisCheckpointCoordinator coordinator) {
         log.info("=== State Snapshot Example ===");
 
         long checkpointId = coordinator.triggerCheckpoint();
@@ -69,7 +69,7 @@ public class CheckpointExample {
         checkpoint.markCompleted();
     }
 
-    private static void demonstrateCheckpointRecovery(RedisCheckpointCoordinator coordinator) {
+    static void demonstrateCheckpointRecovery(RedisCheckpointCoordinator coordinator) {
         log.info("=== Checkpoint Recovery Example ===");
 
         Checkpoint latest = coordinator.getLatestCheckpoint();
@@ -82,7 +82,7 @@ public class CheckpointExample {
         log.info("Restored from checkpoint: {}", latest.getCheckpointId());
     }
 
-    private static void demonstrateCleanup(RedisCheckpointCoordinator coordinator) {
+    static void demonstrateCleanup(RedisCheckpointCoordinator coordinator) {
         log.info("=== Cleanup Example ===");
 
         for (int i = 0; i < 5; i++) {
