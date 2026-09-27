@@ -29,6 +29,10 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
     private static final String SLOT_NAME_PROPERTY = "slot.name";
     private static final String PUBLICATION_NAME_PROPERTY = "publication.name";
     private static final String STATUS_INTERVAL_PROPERTY = "status.interval.ms";
+    // CDC-H3: minimum delay between replication-stream reconnect attempts (the pull model
+    // retries from poll(), so no extra thread is needed).
+    private static final String RECONNECT_BACKOFF_PROPERTY = "reconnect.backoff.ms";
+    private static final int DEFAULT_RECONNECT_BACKOFF_MS = 1_000;
 
     private Connection connection;
     private PGReplicationStream replicationStream;
@@ -43,6 +47,17 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
     private LogSequenceNumber lastReceivedLSN;
     private long statusIntervalMs;
     private TableFilter tableFilter;
+    // CDC-H3: stream-failure recovery state. A dead stream used to be polled forever
+    // (SQLException swallowed per poll): health stayed HEALTHY, LSN feedback stopped and the
+    // server retained WAL in the slot without bound.
+    private volatile long reconnectBackoffMs = DEFAULT_RECONNECT_BACKOFF_MS;
+    private volatile long lastReconnectAttemptMs;
+    private volatile boolean slotInvalidated;
+    // CDC-H3: a missing/invalidated slot only halts the connector once a stream has actually
+    // run on it. {@code running} flips true before doStart() finishes, so an early poll()
+    // (e.g. CDCManager's scheduler racing start()) can reach the reconnect path while the
+    // slot does not exist yet — that must read as "not ready", never as "invalidated".
+    private volatile boolean streamEverStarted;
 
     // Pattern for parsing logical replication messages (test-decoding format)
     private static final Pattern TABLE_PATTERN = Pattern.compile("table\\s+(\\w+)\\.(\\w+):");
@@ -98,16 +113,15 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
             String.valueOf(configuration.getProperty(STATUS_INTERVAL_PROPERTY, "10000"))
         );
         this.tableFilter = TableFilter.from(configuration.getTableIncludes(), configuration.getTableExcludes());
+        // CDC-H3: a fresh start resets the recovery state — a halted (invalidated-slot) run
+        // only resumes when the operator explicitly restarts the connector.
+        this.slotInvalidated = false;
+        this.streamEverStarted = false;
+        this.lastReconnectAttemptMs = 0;
+        this.reconnectBackoffMs = BackpressureSettings.positiveInt(configuration,
+                RECONNECT_BACKOFF_PROPERTY, DEFAULT_RECONNECT_BACKOFF_MS);
 
-        Properties props = new Properties();
-        PGProperty.USER.set(props, username);
-        PGProperty.PASSWORD.set(props, password);
-        PGProperty.ASSUME_MIN_SERVER_VERSION.set(props, "9.4");
-        PGProperty.REPLICATION.set(props, "database");
-        PGProperty.PREFER_QUERY_MODE.set(props, "simple");
-
-        String url = String.format("jdbc:postgresql://%s:%d/%s", hostname, port, database);
-        this.connection = DriverManager.getConnection(url, props);
+        openConnection(hostname, port, database, username, password);
 
         createReplicationSlotIfNotExists();
         createPublicationIfNotExists();
@@ -118,10 +132,29 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
                  hostname, port, database, slotName);
     }
 
+    /**
+     * Opens (or reopens) the replication connection. CDC-H3: factored out of {@code doStart}
+     * so the reconnect path can re-establish the connection with identical settings.
+     * Protected so tests can substitute the reopened connection.
+     */
+    protected void openConnection(String hostname, int port, String database, String username, String password)
+            throws SQLException {
+        Properties props = new Properties();
+        PGProperty.USER.set(props, username);
+        PGProperty.PASSWORD.set(props, password);
+        PGProperty.ASSUME_MIN_SERVER_VERSION.set(props, "9.4");
+        PGProperty.REPLICATION.set(props, "database");
+        PGProperty.PREFER_QUERY_MODE.set(props, "simple");
+
+        String url = String.format("jdbc:postgresql://%s:%d/%s", hostname, port, database);
+        this.connection = DriverManager.getConnection(url, props);
+    }
+
     @Override
     protected void doStop() throws Exception {
         if (replicationStream != null) {
             replicationStream.close();
+            replicationStream = null;
         }
 
         if (connection != null && !connection.isClosed()) {
@@ -143,6 +176,13 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
             if (event != null) {
                 events.add(event);
             }
+        }
+
+        // CDC-H3: a torn-down stream is re-established from poll() (the connector's
+        // heartbeat), rate-limited by the reconnect backoff. An invalidated slot never
+        // reconnects on its own — that path halts loudly instead of silently skipping data.
+        if (running.get() && !slotInvalidated && replicationStream == null) {
+            attemptStreamReconnect();
         }
 
         if (replicationStream != null) {
@@ -237,6 +277,7 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
         }
 
         this.replicationStream = builder.start();
+        this.streamEverStarted = true;
         log.info("Started logical replication stream with slot: {}", slotName);
     }
 
@@ -258,9 +299,167 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
             this.currentPosition = lastReceivedLSN.asString();
 
         } catch (SQLException e) {
-            log.error("Error processing replication messages", e);
-            notifyEvent(listener -> listener.onConnectorError(getName(), e));
+            // CDC-H3: the old code logged and kept polling the dead stream forever — health
+            // stayed HEALTHY, LSN feedback stopped and the server retained WAL in the slot
+            // without bound. Tear the stream down and recover instead.
+            handleStreamFailure(e);
         }
+    }
+
+    /**
+     * CDC-H3: a replication read failed. Reports the error (as before), tears the dead
+     * stream down so {@code poll()} can rebuild it, flips health to UNHEALTHY and — when the
+     * slot itself was invalidated — halts reconnect attempts loudly instead of silently
+     * skipping the WAL the server already dropped. Package-private seam for the regression
+     * tests. No-op recovery-wise when the connector is stopping.
+     */
+    void handleStreamFailure(SQLException cause) {
+        log.error("Error processing replication messages", cause);
+        notifyEvent(listener -> listener.onConnectorError(getName(), cause));
+
+        if (!running.get()) {
+            return; // stop raced the read failure — doStop owns the teardown
+        }
+
+        closeReplicationStream();
+        // The read just failed — close the connection right away instead of probing it:
+        // isValid() on a terminated replication connection can block for tens of seconds
+        // (its timeout is not honored there), which delays the health flip past usefulness.
+        closeConnection();
+
+        String invalidated = invalidationReason(cause);
+        if (invalidated != null) {
+            markSlotInvalidated(invalidated);
+            return;
+        }
+        updateHealthStatus(CDCHealthStatus.unhealthy(
+                "PostgreSQL replication stream lost (CDC-H3): " + cause.getMessage() + "; reconnecting"));
+    }
+
+    private void closeReplicationStream() {
+        if (replicationStream != null) {
+            try {
+                replicationStream.close();
+            } catch (Exception ignore) {
+                // the stream is already dead — this is best-effort cleanup
+            }
+            replicationStream = null;
+        }
+    }
+
+    private void closeConnection() {
+        if (connection != null) {
+            try {
+                connection.close();
+            } catch (Exception ignore) {
+            }
+            connection = null;
+        }
+    }
+
+    /**
+     * CDC-H3: rebuild connection + stream (resuming at {@code lastReceivedLSN}) after a
+     * failure. Rate-limited by {@code reconnect.backoff.ms}; a lost/dropped slot stops all
+     * further attempts with an explicit UNHEALTHY status rather than recreating the slot
+     * mid-stream (which would silently skip the changes the server already discarded).
+     */
+    private void attemptStreamReconnect() {
+        long now = System.currentTimeMillis();
+        if (now - lastReconnectAttemptMs < reconnectBackoffMs) {
+            return;
+        }
+        lastReconnectAttemptMs = now;
+        try {
+            if (connection == null || connection.isClosed()) {
+                String hostname = (String) configuration.getProperty(HOSTNAME_PROPERTY, "localhost");
+                int port = Integer.parseInt(String.valueOf(configuration.getProperty(PORT_PROPERTY, "5432")));
+                String database = (String) configuration.getProperty(DATABASE_PROPERTY);
+                openConnection(hostname, port, database, configuration.getUsername(), configuration.getPassword());
+            }
+
+            // A vanished slot only halts the connector once a stream has actually run on it —
+            // before the first successful start a missing slot is just "not ready yet"
+            // (doStart may still be creating it; see streamEverStarted).
+            if (streamEverStarted) {
+                String serverSide = slotInvalidationOnServer();
+                if (serverSide != null) {
+                    markSlotInvalidated(serverSide);
+                    return;
+                }
+            }
+
+            startReplicationStream();
+            updateHealthStatus(CDCHealthStatus.healthy("PostgreSQL replication stream reconnected (CDC-H3)"));
+        } catch (SQLException e) {
+            String invalidated = streamEverStarted ? invalidationReason(e) : null;
+            if (invalidated != null) {
+                markSlotInvalidated(invalidated);
+                return;
+            }
+            updateHealthStatus(CDCHealthStatus.unhealthy(
+                    "PostgreSQL reconnect attempt failed (CDC-H3): " + e.getMessage()));
+        } catch (Exception e) {
+            updateHealthStatus(CDCHealthStatus.unhealthy(
+                    "PostgreSQL reconnect attempt failed (CDC-H3): " + e.getMessage()));
+        }
+    }
+
+    /**
+     * CDC-H3: best-effort server-side slot check. Returns a reason string when the slot is
+     * unusable for resumption (dropped, or flagged {@code lost} — PG 14+ removes retained WAL
+     * from invalidated slots), null when it looks fine or cannot be checked (pre-14 servers
+     * lack the column; the resume attempt itself then surfaces any problem).
+     */
+    private String slotInvalidationOnServer() {
+        if (connection == null) {
+            return null;
+        }
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT lost FROM pg_replication_slots WHERE slot_name = ?")) {
+            ps.setString(1, slotName);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return "replication slot '" + slotName + "' no longer exists on the server";
+                }
+                return rs.getBoolean("lost")
+                        ? "replication slot '" + slotName + "' is marked lost (retained WAL was removed)"
+                        : null;
+            }
+        } catch (Exception e) {
+            // best-effort probe: pre-PG14 servers lack the column, a broken probe must not
+            // mask the resume attempt itself (which surfaces real problems)
+            return null;
+        }
+    }
+
+    /** CDC-H3: server errors that mean the slot cannot resume (invalidated or dropped). */
+    private static String invalidationReason(SQLException e) {
+        String message = e.getMessage();
+        if (message == null) {
+            return null;
+        }
+        String lower = message.toLowerCase(Locale.ROOT);
+        if (lower.contains("was invalidated") || lower.contains("cannot continue replication")
+                || (lower.contains("replication slot") && lower.contains("does not exist"))) {
+            return message;
+        }
+        return null;
+    }
+
+    /**
+     * CDC-H3: mark the slot unusable and stop reconnecting — the retained WAL is gone, so
+     * resuming would silently skip changes. Halting loudly (UNHEALTHY + error notification)
+     * replaces the old infinite silent stall.
+     */
+    private void markSlotInvalidated(String reason) {
+        slotInvalidated = true;
+        closeReplicationStream();
+        notifyEvent(listener -> listener.onConnectorError(getName(),
+                new SQLException("CDC-H3 replication slot invalidated: " + reason)));
+        updateHealthStatus(CDCHealthStatus.unhealthy(
+                "PostgreSQL replication slot invalidated (CDC-H3): " + reason
+                        + " — connector halted to avoid a silent data gap;"
+                        + " recreate the slot and resetToPosition to resume"));
     }
 
     private void parseLogicalMessage(String message) {

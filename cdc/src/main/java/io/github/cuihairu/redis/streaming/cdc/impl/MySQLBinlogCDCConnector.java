@@ -21,6 +21,14 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
     private static final String SERVER_ID_PROPERTY = "server.id";
     private static final String BINLOG_FILENAME_PROPERTY = "binlog.filename";
     private static final String BINLOG_POSITION_PROPERTY = "binlog.position";
+    // CDC-H3 knobs: handshake timeout for connect(timeout), and the reconnect backoff window
+    // (first retry after `initial`, doubling up to `max`) used after an unexpected disconnect.
+    private static final String CONNECT_TIMEOUT_PROPERTY = "connect.timeout.ms";
+    private static final String RECONNECT_BACKOFF_INITIAL_PROPERTY = "reconnect.backoff.initial.ms";
+    private static final String RECONNECT_BACKOFF_MAX_PROPERTY = "reconnect.backoff.max.ms";
+    private static final int DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
+    private static final int DEFAULT_RECONNECT_BACKOFF_INITIAL_MS = 1_000;
+    private static final int DEFAULT_RECONNECT_BACKOFF_MAX_MS = 30_000;
 
     private BinaryLogClient binaryLogClient;
     // CDC-M1: bounded queue ("event.queue.capacity", default 10_000). The binlog listener
@@ -34,6 +42,15 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
     private final Map<Long, List<String>> tableColumnsById = new HashMap<>();
     private TableFilter tableFilter;
     private MySQLColumnNameResolver columnNameResolver;
+    // CDC-H3: the binlog client never reconnects on its own. After an unexpected disconnect
+    // the connector flips UNHEALTHY and retries on this executor (doubling backoff) until the
+    // stream is back; the flags keep at most one loop alive per connector.
+    private volatile int connectTimeoutMs = DEFAULT_CONNECT_TIMEOUT_MS;
+    private volatile long reconnectBackoffInitialMs = DEFAULT_RECONNECT_BACKOFF_INITIAL_MS;
+    private volatile long reconnectBackoffMaxMs = DEFAULT_RECONNECT_BACKOFF_MAX_MS;
+    private volatile java.util.concurrent.ExecutorService reconnectExecutor;
+    private final java.util.concurrent.atomic.AtomicBoolean reconnecting =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
 
     public MySQLBinlogCDCConnector(CDCConfiguration configuration) {
         super(configuration);
@@ -92,6 +109,39 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
         this.binaryLogClient = new BinaryLogClient(hostname, port, username, password);
         this.binaryLogClient.setServerId(serverId);
 
+        // CDC-H3: disconnect detection + automatic reconnect. mysql-binlog-connector-java does
+        // not reconnect on its own and the old code registered no lifecycle listener, so a
+        // network cut / MySQL restart / failover left the connector silently stalled forever
+        // while health kept reporting HEALTHY.
+        this.connectTimeoutMs = BackpressureSettings.positiveInt(configuration, CONNECT_TIMEOUT_PROPERTY,
+                DEFAULT_CONNECT_TIMEOUT_MS);
+        this.reconnectBackoffInitialMs = BackpressureSettings.positiveInt(configuration,
+                RECONNECT_BACKOFF_INITIAL_PROPERTY, DEFAULT_RECONNECT_BACKOFF_INITIAL_MS);
+        this.reconnectBackoffMaxMs = Math.max(this.reconnectBackoffInitialMs,
+                BackpressureSettings.positiveInt(configuration, RECONNECT_BACKOFF_MAX_PROPERTY,
+                        DEFAULT_RECONNECT_BACKOFF_MAX_MS));
+        this.binaryLogClient.registerLifecycleListener(new BinaryLogClient.AbstractLifecycleListener() {
+            @Override
+            public void onConnect(BinaryLogClient client) {
+                handleClientConnected();
+            }
+
+            @Override
+            public void onCommunicationFailure(BinaryLogClient client, Exception ex) {
+                handleClientDisconnected(ex);
+            }
+
+            @Override
+            public void onDisconnect(BinaryLogClient client) {
+                handleClientDisconnected(null);
+            }
+        });
+        this.reconnectExecutor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "mysql-binlog-reconnect-" + getName());
+            t.setDaemon(true);
+            return t;
+        });
+
         // Build include/exclude filter (empty includes means allow all).
         this.tableFilter = TableFilter.from(configuration.getTableIncludes(), configuration.getTableExcludes());
 
@@ -107,14 +157,37 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
         // Register event listener
         this.binaryLogClient.registerEventListener(this::handleBinlogEvent);
 
-        // Start the binary log client
-        this.binaryLogClient.connect();
+        // Start the binary log client. CDC-H3: connect(timeout) returns once the handshake
+        // completed and streams events on the library's own thread. The old no-arg connect()
+        // blocked this start thread until the stream died, so start() never completed and
+        // health never reached HEALTHY (and nothing reconnected afterwards).
+        try {
+            this.binaryLogClient.connect(connectTimeoutMs);
+        } catch (Exception e) {
+            // a failed initial connect is a failed start (existing contract) — do not leak
+            // the reconnect executor created above
+            java.util.concurrent.ExecutorService executor = this.reconnectExecutor;
+            this.reconnectExecutor = null;
+            reconnecting.set(false);
+            if (executor != null) {
+                executor.shutdownNow();
+            }
+            throw e;
+        }
 
         log.info("MySQL binlog CDC connector started: {}:{}, server ID: {}", hostname, port, serverId);
     }
 
     @Override
     protected void doStop() throws Exception {
+        // CDC-H3: running is already false (set by stop() before doStop), so the reconnect
+        // loop exits on its next check — this only reclaims the thread promptly.
+        java.util.concurrent.ExecutorService executor = this.reconnectExecutor;
+        this.reconnectExecutor = null;
+        reconnecting.set(false);
+        if (executor != null) {
+            executor.shutdownNow();
+        }
         if (binaryLogClient != null && binaryLogClient.isConnected()) {
             binaryLogClient.disconnect();
         }
@@ -133,6 +206,15 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
 
     @Override
     protected List<ChangeEvent> doPoll() throws Exception {
+        // CDC-H3 watchman: lifecycle callbacks can be missed (e.g. the connection dies before
+        // the listener is registered). poll() is the connector's heartbeat — a client that is
+        // not connected here goes through the same disconnect path. No-op while a reconnect
+        // loop is already running or the connector is stopping.
+        if (running.get() && !reconnecting.get()
+                && binaryLogClient != null && !binaryLogClient.isConnected()) {
+            handleClientDisconnected(null);
+        }
+
         List<ChangeEvent> events = new ArrayList<>();
         int batchSize = configuration.getBatchSize();
 
@@ -172,6 +254,108 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
             this.binaryLogClient.setBinlogFilename(binlogFilename);
             this.binaryLogClient.setBinlogPosition(binlogPosition.get());
             this.binaryLogClient.connect();
+        }
+    }
+
+    /**
+     * CDC-H3: the binlog connection is (re-)established — health goes back to HEALTHY.
+     * Invoked from the client's lifecycle {@code onConnect} and after a successful reconnect.
+     */
+    void handleClientConnected() {
+        if (!running.get()) {
+            return;
+        }
+        updateHealthStatus(CDCHealthStatus.healthy("MySQL binlog connection established"));
+    }
+
+    /**
+     * CDC-H3: the binlog connection dropped unexpectedly. The old code registered no
+     * lifecycle listener at all, so a network cut / MySQL restart / failover was undetectable:
+     * {@code poll()} kept returning empty lists, health stayed HEALTHY and nothing ever
+     * reconnected. This flips health to UNHEALTHY, reports the error and starts the
+     * reconnect loop. Package-private seam for the disconnect regression tests.
+     *
+     * <p>No-op when the connector is stopping — {@code doStop()} disconnects on purpose.
+     */
+    void handleClientDisconnected(Exception cause) {
+        if (!running.get()) {
+            return;
+        }
+        Exception error = cause != null ? cause : new IOException("MySQL binlog connection lost");
+        notifyEvent(listener -> listener.onConnectorError(getName(), error));
+        updateHealthStatus(CDCHealthStatus.unhealthy(
+                "MySQL binlog connection lost (CDC-H3): " + error.getMessage() + "; reconnecting with backoff"));
+        scheduleReconnect();
+    }
+
+    /** CDC-H3: start the single reconnect loop if none is running. */
+    private void scheduleReconnect() {
+        if (!reconnecting.compareAndSet(false, true)) {
+            return; // a reconnect loop is already retrying
+        }
+        try {
+            java.util.concurrent.ExecutorService executor = this.reconnectExecutor;
+            if (executor == null || executor.isShutdown()) {
+                reconnecting.set(false);
+                return;
+            }
+            executor.submit(this::runReconnectLoop);
+        } catch (Exception e) {
+            reconnecting.set(false);
+            log.warn("Failed to schedule MySQL binlog reconnect for connector {}", getName(), e);
+        }
+    }
+
+    /**
+     * CDC-H3: retry {@code connect(timeout)} with a doubling backoff until the stream is
+     * back or the connector stops. Resume from the live watermark so the outage window is
+     * replayed instead of skipped.
+     */
+    private void runReconnectLoop() {
+        try {
+            long backoff = reconnectBackoffInitialMs;
+            while (running.get()) {
+                try {
+                    Thread.sleep(backoff);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                BinaryLogClient client = this.binaryLogClient;
+                if (!running.get() || client == null) {
+                    return;
+                }
+                if (client.isConnected()) {
+                    handleClientConnected();
+                    return;
+                }
+                try {
+                    applyResumePosition(client);
+                    client.connect(connectTimeoutMs);
+                    if (running.get() && client.isConnected()) {
+                        handleClientConnected();
+                        return;
+                    }
+                } catch (Exception e) {
+                    log.warn("MySQL binlog reconnect attempt failed for connector {}: {}",
+                            getName(), e.getMessage());
+                }
+                backoff = Math.min(backoff * 2, reconnectBackoffMaxMs);
+            }
+        } finally {
+            reconnecting.set(false);
+        }
+    }
+
+    /**
+     * CDC-H3: point the client at the live watermark (kept across stop/start by CDC-H1)
+     * before a reconnect attempt. When it is unknown, leave the client's internally tracked
+     * binlog coordinates untouched.
+     */
+    private void applyResumePosition(BinaryLogClient client) {
+        if (binlogFilename != null) {
+            client.setBinlogFilename(binlogFilename);
+            client.setBinlogPosition(binlogPosition.get());
         }
     }
 

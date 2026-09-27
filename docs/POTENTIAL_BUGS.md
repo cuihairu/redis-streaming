@@ -516,11 +516,16 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **审计置信度**：高
 - **验证与修复**：`doStop` 不再清空 eventQueue；重启先排空保留的队列再从 lastReceivedLSN 续流，未交付事件不再丢失。
 
-### CDC-H3 断连后无重连（MySQL 与 PostgreSQL）——静默永久停摆 ⏳
-- **位置**：`MySQLBinlogCDCConnector.java:59-78`（一次性 `connect()`，无 LifecycleListener）；`PostgreSQLLogicalReplicationCDCConnector.java:213-233`（catch SQLException 后继续轮询死流）
+### CDC-H3 断连后无重连（MySQL 与 PostgreSQL）——静默永久停摆 [已修复]
+- **位置**：`MySQLBinlogCDCConnector.java`（一次性 `connect()`，无 LifecycleListener）；`PostgreSQLLogicalReplicationCDCConnector.java`（catch SQLException 后继续轮询死流）
 - **触发**：网络中断、MySQL 重启、PG 故障切换。
 - **影响**：`mysql-binlog-connector-java` 0.29.2 不自动重连；断连不可检测。`poll()` 持续返回空列表、health 保持 HEALTHY。PG 侧 LSN 反馈停止 → 服务端 WAL 在 slot 中无限堆积。
 - **审计置信度**：高
+- **验证与修复**：
+  - **MySQL**（`MySQLBinlogCDCConnector`）：注册 `LifecycleListener`（`onConnect`/`onCommunicationFailure`/`onDisconnect`）→ 断连翻转 UNHEALTHY + `onConnectorError` 通知；后台单线程重连循环（`compareAndSet` 防重入，指数退避 `reconnect.backoff.initial.ms`（默认 1000）→ `reconnect.backoff.max.ms`（默认 30000）），重连前按 CDC-H1 活水位（`binlogFilename`/`binlogPosition`）`setBinlogFilename`+`setBinlogPosition` 续读；`doPoll` 心跳看门狗兜底（`isConnected()==false` 走同一断连路径）；`start()` 由阻塞 `connect()` 改为 `connect(connect.timeout.ms)`（默认 10000，旧代码 start 永不返回、health 永远到不了 HEALTHY）；主动 `stop()` 不触发断连误报、重连线程即时关闭。
+  - **PostgreSQL**（`PostgreSQLLogicalReplicationCDCConnector`）：拉模型内检测与重建——`processReplicationMessages` 捕获 SQLException 后拆除死流（`replicationStream=null`）并**立即**关闭坏连接、翻转 UNHEALTHY；下一轮 `poll()` 按 `reconnect.backoff.ms`（默认 1000）限频重建连接与流（`openConnection` 提为 protected 接缝），从 `lastReceivedLSN` 续读。slot 流失效判定：错误消息匹配（`was invalidated`/`cannot continue replication`/slot `does not exist`）+ 服务端探测 `pg_replication_slots.lost`/行消失 → `slotInvalidated=true` 永久停止重连并以 UNHEALTHY 响亮报告（不再静默重建跳过已丢弃的 WAL）；`streamEverStarted` 守卫：首次流启动成功前 slot 缺失只视为"未就绪"（`running` 在 `doStart()` 前置位，早到的 poll——如 CDCManager 调度器与 `start()` 竞态——不得误判 invalidated 永久停摆）。
+  - **关键坑**：断连路径禁止 `isValid()` 探测——对已被服务端终止的复制连接，pgjdbc 的 `isValid(1)` 实测阻塞 ~20s（超时参数在该状态下不生效），导致健康态翻转迟到无用；读失败的连接一律直接 `close()`（非阻塞）。
+- **回归测试**：`CdcH3DisconnectReconnectTest`（纯单测，8 用例，经反射/行为触达新接缝）：MySQL 断连翻转 UNHEALTHY（消息含 CDC-H3）+ listener 通知 + 从水位（`mysql-bin.000004:8200`）重连、`poll()` 看门狗检测死客户端且 3 次退避失败后恢复、主动 stop 不误报不重连；PG 死流拆除（stream/connection 双 null）+ UNHEALTHY、下一轮 poll 重建流（assertSame）并在 lastReceivedLSN 续读、invalidated 消息 / `lost=true` / slot 行消失三路失效全部响亮停摆（不再重连不再重建）。**旧代码 8/8 红**：3 例精确命中缺陷本身（`expected: <UNHEALTHY> but was: <HEALTHY>`），其余因新接缝缺失失败。`CDCDisconnectReconnectIntegrationTest`（@Tag integration，端口不可达时 assumption 跳过；拉消费者驱动线程等价 CDCManager 的 pollAll 调度）：真实 MySQL 上 KILL `Binlog Dump` 线程 → UNHEALTHY → 退避重连 HEALTHY → 断连后新写入照常送达；真实 PG 15（wal_level=logical + test_decoding）上 `pg_terminate_backend` 终止 walsender → UNHEALTHY → 重建连接/流 → 续读送达。**旧代码两例皆红**：MySQL `start().get(30s)` 直接 `TimeoutException`（阻塞 connect 永不返回）；PG 死流在 stop 时爆 `Failed to stop connector`（health 恒 HEALTHY 无检测路径）。
 
 ### CDC-H4 轮询连接器 commit() 在第一个冒号处截断时间戳水位 [已修复]
 - **位置**：`cdc/.../impl/DatabasePollingCDCConnector.java:124-134`（doCommit）、`136-147`（doResetToPosition），对照 `:342`、`:320`
@@ -683,7 +688,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 ### 记为后续任务（未修复，原因见各条目）
 
-- **重构级**（需专项设计，非局部修复）：MQ-01/MQ-04（DLQ pending 回收与删除策略语义）、CDC-H3（断线重连框架）、RT-H2（checkpoint 全库 SCAN）、B-20（完成匹配的有界化）、B-24（KTable 物化清理）。
+- **重构级**（需专项设计，非局部修复）：MQ-01/MQ-04（DLQ pending 回收与删除策略语义）、RT-H2（checkpoint 全库 SCAN）、B-20（完成匹配的有界化）、B-24（KTable 物化清理）。
 - **设计决策类**：RT-H3（fire-and-purge 原子性，需两阶段提交）、B-06（配置通知重同步，涉及 API 契约）。
 - **风险可控/影响良性**：MQ-11（frontier 回退方向安全）、RT-M3/M6/M7（文档化语义）、B-36（文档已声明测试用途）等。
 - 其余 ⏳ 条目为审计发现但本轮未逐条复现验证（范围限制），均已给出触发条件、位置与修复方向，可直接作为下轮输入。
