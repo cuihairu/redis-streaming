@@ -22,6 +22,11 @@ public class RedisBrokerPersistence implements BrokerPersistence {
     private final RedissonClient redissonClient;
     private final TopicRegistry topicRegistry;
     private final MqOptions options;
+    // MQ-13: hard-cap rescue deletes only need entry IDS, so the range scan is paged with
+    // a bounded count instead of materializing the whole backlog (values included) in one
+    // range(Integer.MAX_VALUE-ish) call. Read per instance (not static) so tests can tune
+    // it for a fresh instance even when the class was already loaded with the default.
+    private final int hardCapPageSize = Math.max(1, Integer.getInteger("mq.retention.test.hardCapPageSize", 500));
 
     public RedisBrokerPersistence(RedissonClient redissonClient, MqOptions options) {
         this.redissonClient = redissonClient;
@@ -111,19 +116,34 @@ public class RedisBrokerPersistence implements BrokerPersistence {
                 }
                 // Enforce a hard cap if still above maxLen (delete oldest entries). This is a small exact trim
                 // to satisfy strict tests even on Redis versions without '=' exact trimming.
+                // MQ-13: page the id scan with a bounded count — the old single range(batch)
+                // call materialized the entire backlog (values included) just to collect ids.
                 try {
                     long size = stream.size();
                     if (size > maxLen) {
                         long toDelete = size - maxLen;
-                        int batch = (int) Math.min(Integer.MAX_VALUE, toDelete);
-                        @SuppressWarnings("deprecation")
-                        java.util.Map<StreamMessageId, java.util.Map<String, Object>> old = stream.range(batch, StreamMessageId.MIN, StreamMessageId.MAX);
-                        int removed = 0;
-                        for (StreamMessageId rid : old.keySet()) {
-                            try { stream.remove(rid); removed++; } catch (Exception ignore) {}
-                            if (removed >= toDelete) break;
+                        long removed = 0;
+                        StreamMessageId cursor = StreamMessageId.MIN;
+                        while (removed < toDelete) {
+                            @SuppressWarnings("deprecation")
+                            java.util.Map<StreamMessageId, java.util.Map<String, Object>> page =
+                                    stream.range(hardCapPageSize, cursor, StreamMessageId.MAX);
+                            if (page == null || page.isEmpty()) break;
+                            StreamMessageId last = null;
+                            for (StreamMessageId rid : page.keySet()) {
+                                try { stream.remove(rid); removed++; } catch (Exception ignore) {}
+                                last = rid;
+                                if (removed >= toDelete) break;
+                            }
+                            if (removed >= toDelete || page.size() < hardCapPageSize || last == null) break;
+                            StreamMessageId next = new StreamMessageId(last.getId0(), last.getId1() + 1);
+                            boolean advanced = next.getId0() > cursor.getId0()
+                                    || (next.getId0() == cursor.getId0() && next.getId1() > cursor.getId1());
+                            if (!advanced) break; // page re-delivered without progress — terminate
+                            cursor = next;
                         }
-                        try { io.github.cuihairu.redis.streaming.mq.metrics.RetentionMetrics.get().recordTrim(topic, partitionId, removed, "xdel"); } catch (Exception ignore) {}
+                        final long removedTotal = removed;
+                        try { io.github.cuihairu.redis.streaming.mq.metrics.RetentionMetrics.get().recordTrim(topic, partitionId, removedTotal, "xdel"); } catch (Exception ignore) {}
                     }
                 } catch (Exception ignore) {}
             }

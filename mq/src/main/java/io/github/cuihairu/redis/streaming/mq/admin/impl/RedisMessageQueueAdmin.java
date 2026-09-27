@@ -26,6 +26,10 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
     private final TopicRegistry topicRegistry;
     private final TopicPartitionRegistry partitionRegistry;
     private final PayloadLifecycleManager payloadLifecycleManager;
+    // MQ-13: trimQueueByAge pages its old-id scan with this bounded count instead of one
+    // range(Integer.MAX_VALUE) call that materialized the entire age range (values included)
+    // into the heap. Read per instance (not static) so tests can tune it for a fresh instance.
+    private final int trimAgePageSize = Math.max(1, Integer.getInteger("mq.admin.test.trimAgePageSize", 500));
 
     public RedisMessageQueueAdmin(RedissonClient redissonClient) {
         this(redissonClient, null);
@@ -391,12 +395,28 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             for (int i = 0; i < pc; i++) {
                 RStream<String, Object> s = redissonClient.getStream(pc == 1 ? StreamKeys.partitionStream(topic, 0) : StreamKeys.partitionStream(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
                 if (!s.isExists()) continue;
-                // Fallback: bounded range scan and remove (avoid relying on StreamTrimArgs API variations)
-                @SuppressWarnings("deprecation")
-                Map<StreamMessageId, Map<String, Object>> old = s.range(Integer.MAX_VALUE, StreamMessageId.MIN, new StreamMessageId(minTs));
-                for (StreamMessageId id : old.keySet()) {
-                    s.remove(id);
-                    deletedTotal++;
+                // Fallback: range scan and remove (avoid relying on StreamTrimArgs API variations).
+                // MQ-13: page with a bounded count and an id cursor — the old single
+                // range(Integer.MAX_VALUE, MIN, end) call loaded the whole age range (values
+                // included) into the heap, an OOM risk on large backlogs.
+                StreamMessageId end = new StreamMessageId(minTs);
+                StreamMessageId cursor = StreamMessageId.MIN;
+                while (true) {
+                    @SuppressWarnings("deprecation")
+                    Map<StreamMessageId, Map<String, Object>> page = s.range(trimAgePageSize, cursor, end);
+                    if (page == null || page.isEmpty()) break;
+                    StreamMessageId last = null;
+                    for (StreamMessageId id : page.keySet()) {
+                        s.remove(id);
+                        deletedTotal++;
+                        last = id;
+                    }
+                    if (page.size() < trimAgePageSize || last == null) break; // last page
+                    StreamMessageId next = new StreamMessageId(last.getId0(), last.getId1() + 1);
+                    boolean advanced = next.getId0() > cursor.getId0()
+                            || (next.getId0() == cursor.getId0() && next.getId1() > cursor.getId1());
+                    if (!advanced) break; // page re-delivered without progress — terminate
+                    cursor = next;
                 }
             }
             log.info("Trimmed queue {} by age {}: ~{} messages deleted", topic, maxAge, deletedTotal);

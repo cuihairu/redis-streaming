@@ -456,11 +456,13 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **验证与修复**：两处改为模式化 SCAN（B-15 同款 `getKeys(KeysScanOptions.defaults().pattern(...))`）：`RedisDeadLetterAdmin.listTopics` 用已算出的 `DlqKeys.dlq("*")` 模式，`RedisMessageQueueAdmin.deleteConsumerGroup` 的 pc<=1 回退用 `{streamPrefix}:{topic}:p:*` 模式；手工前缀/后缀过滤保留作第二道防线，扫描范围收窄而结果集不变。
 - **回归测试**：单测 `RedisDeadLetterAdminScanPatternTest` / `RedisMessageQueueAdminDeleteConsumerGroupScanTest`（旧代码 2/2 失败：`expected:<[orders, billing]> but was:<[]>`、`expected:<true> but was:<false>`——旧代码只调无参 `getKeys()`，模式化桩零命中即坐实全库扫描）；集成 `AdminPatternScanIntegrationTest`（真实 Redis：DLQ 主题清单含两个种子 DLQ 且分区流 decoy 不入列、pc=1 回退经扫描发现并删除 p:1 上的组）。
 
-### MQ-13 保留量/硬上限回退路径把无界区间整体载入内存 ⏳
+### MQ-13 保留量/硬上限回退路径把无界区间整体载入内存 [已修复]
 - **位置**：`mq/.../broker/impl/RedisBrokerPersistence.java:118-125`（`range(batch, MIN, MAX)` 只为拿 id）；`RedisMessageQueueAdmin.java:396`（`trimQueueByAge` 用 `Integer.MAX_VALUE`）
 - **触发**：积压远超 `retentionMaxLenPerPartition`（缩容配置）或对大流调 `trimQueueByAge`。
 - **影响**：整流（含 value）反序列化进堆；维护调用期间 OOM 风险。只需要 id，却拿了全量 map。
 - **审计置信度**：高
+- **验证与修复**：两处无界 `range(..., MIN, ...)` 改为有界分页扫描（COUNT=页大小 + id 游标推进）：硬上限救援按 `mq.retention.test.hardCapPageSize`（默认 500）分页删到 `toDelete` 为止；`trimQueueByAge` 按 `mq.admin.test.trimAgePageSize`（默认 500）分页删到短页/空页为止。终止性三重保障：短页即末页、游标严格前进否则终止、救援路径另有 `removed>=toDelete` 上界——对"每次返回同一页"的 mock 也保证收敛。页大小按实例读取（MQ-01 教训：不能 static final，共享 JVM 类加载顺序会吞掉测试配置）。删除语义与计数（RetentionMetrics/deletedTotal）不变。
+- **回归测试**：单测 `RedisBrokerPersistenceHardCapPagingTest`（size=7/maxLen=2/页 2 → 3 页删 5，捕获 range COUNT 参数断言全部 ≤ 页大小）、`TrimQueueByAgePagingTest`（3 页删 5，同款断言）——旧代码 2/2 失败且理由精确命中缺陷：`got [5]`（单次 range=toDelete）、`got [2147483647]`（单次 range=Integer.MAX_VALUE）。集成 `TrimQueueByAgePagingIntegrationTest`（真实 Redis：12 条、页大小 5 → 跨 5/5/2 三页全部删除、流清空）。既有钉 `anyInt()`/`eq(MIN)` 桩的 FallbackPaths/SprintCoverage/Behavior 等用例不改一字全绿（短页即断，首轮行为与旧单次调用一致）。
 
 ### MQ-14 null payload 经过 retry 桶往返后变成空字符串 ⏳
 - **位置**：`mq/.../impl/RedisMessageConsumer.java:909`（Lua `HGET ... or ''`）、`:913`（XADD 无条件带 payload 字段）、`:715-719`（重试入队跳过 null payload 的 put）

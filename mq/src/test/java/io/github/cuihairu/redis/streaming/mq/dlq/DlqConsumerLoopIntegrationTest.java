@@ -43,12 +43,20 @@ class DlqConsumerLoopIntegrationTest {
         redis = Redisson.create(cfg);
         uid = UUID.randomUUID().toString().substring(0, 8);
         topic = "it-mq-dlq-" + uid;
+        // A republish XADD can time out transiently under heavy machine load, which leaves the
+        // RETRY entry in the PEL. The pending sweep (MQ-01) is the designed recovery, but at the
+        // defaults (5s sweep / 300s claim-idle) a retry lands far outside this class's 15s
+        // windows. Speed the sweep up so a first-attempt failure is recovered in-window.
+        System.setProperty("mq.dlq.test.pendingSweepMs", "300");
+        System.setProperty("mq.dlq.test.claimIdleMs", "500");
     }
 
     @AfterEach
     void tearDown() {
         System.clearProperty("mq.dlq.test.holdBeforeHandleMs");
         System.clearProperty("mq.dlq.test.readAllIds");
+        System.clearProperty("mq.dlq.test.pendingSweepMs");
+        System.clearProperty("mq.dlq.test.claimIdleMs");
         redis.getKeys().deleteByPattern("stream:topic:*" + topic + "*");
         redis.getKeys().deleteByPattern("streaming:mq:*" + topic + "*");
         redis.shutdown();
