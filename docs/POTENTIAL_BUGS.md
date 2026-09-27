@@ -464,11 +464,13 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **验证与修复**：两处无界 `range(..., MIN, ...)` 改为有界分页扫描（COUNT=页大小 + id 游标推进）：硬上限救援按 `mq.retention.test.hardCapPageSize`（默认 500）分页删到 `toDelete` 为止；`trimQueueByAge` 按 `mq.admin.test.trimAgePageSize`（默认 500）分页删到短页/空页为止。终止性三重保障：短页即末页、游标严格前进否则终止、救援路径另有 `removed>=toDelete` 上界——对"每次返回同一页"的 mock 也保证收敛。页大小按实例读取（MQ-01 教训：不能 static final，共享 JVM 类加载顺序会吞掉测试配置）。删除语义与计数（RetentionMetrics/deletedTotal）不变。
 - **回归测试**：单测 `RedisBrokerPersistenceHardCapPagingTest`（size=7/maxLen=2/页 2 → 3 页删 5，捕获 range COUNT 参数断言全部 ≤ 页大小）、`TrimQueueByAgePagingTest`（3 页删 5，同款断言）——旧代码 2/2 失败且理由精确命中缺陷：`got [5]`（单次 range=toDelete）、`got [2147483647]`（单次 range=Integer.MAX_VALUE）。集成 `TrimQueueByAgePagingIntegrationTest`（真实 Redis：12 条、页大小 5 → 跨 5/5/2 三页全部删除、流清空）。既有钉 `anyInt()`/`eq(MIN)` 桩的 FallbackPaths/SprintCoverage/Behavior 等用例不改一字全绿（短页即断，首轮行为与旧单次调用一致）。
 
-### MQ-14 null payload 经过 retry 桶往返后变成空字符串 ⏳
+### MQ-14 null payload 经过 retry 桶往返后变成空字符串 [已修复]
 - **位置**：`mq/.../impl/RedisMessageConsumer.java:909`（Lua `HGET ... or ''`）、`:913`（XADD 无条件带 payload 字段）、`:715-719`（重试入队跳过 null payload 的 put）
 - **触发**：null payload 消息失败并走 scheduled-retry 路径。
 - **影响**：payload 类型跨重试改变（null → ""），按 null 分支的 handler 首次重试后行为改变。
 - **审计置信度**：高
+- **验证与修复**：mover Lua 的 payload 读取去掉 `or ''` 兜底（字段缺失时 HGET 返回 false，与存量为 `""` 天然可区分——空串在 Lua 中为真值），XADD args 改为仅在 payload 存在时携带该字段——null 经桶往返仍是"无 payload 字段"，解码侧 `data.get("payload")` 如实得 null；`""` 往返仍逐字保留为 `""`（不过度修正）。入队侧跳过 null put（保留"缺失"表示）与 ≤50ms 快速路径（removeIf(isNull) 本已保 null）不变。
+- **回归测试**：`RetryBucketNullPayloadIntegrationTest`（@Tag("integration")，真实 Redis，强制 backoff>50ms 走桶路径：无 payload 字段条目经 handler 首抛→桶→mover 重投，第二次投递 payload 仍为 null——旧代码失败理由精确命中缺陷 `expected: <null> but was: <>`；对照用例：显式 `""` payload 桶往返后仍为 `""`，新旧皆绿防误伤）。既有 mover 用例（RetryMoverBadField/RetryMoverLuaEdge/ConsumerWorkerFlow/RetryPayloadPassthrough 两路径 + 三个 mock 级 Coverage 类）不改一字全绿。
 
 ### MQ-15 rebalance 与租约续期任务可在多线程调度器上并发：check-then-act 产生重复 worker ⏳
 - **位置**：`mq/.../impl/RedisMessageConsumer.java:955-978`（rebalance）、`:994-1002`（renew 移除）、`:67-68`（两个 `newScheduledThreadPool(schedulerThreads)`，默认 2）

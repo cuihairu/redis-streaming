@@ -938,11 +938,15 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                         + "for i=1,#ids do local id=ids[i]; "
                         + "local t=redis.call('HGET', id, 'topic') or ''; "
                         + "local pid=tonumber(redis.call('HGET', id, 'partitionId')) or 0; "
-                        + "local payload=redis.call('HGET', id, 'payload') or ''; "
+                        // MQ-14: keep "absent" distinct from "": HGET returns false only when the
+                        // payload field was never stored (null payload). An empty string is truthy
+                        // in Lua and must round-trip verbatim as "".
+                        + "local payload=redis.call('HGET', id, 'payload'); "
                         + "local retry=redis.call('HGET', id, 'retryCount') or '0'; local maxr=redis.call('HGET', id, 'maxRetries') or '0'; "
                         + "local k=redis.call('HGET', id, 'key') or ''; local hdr=redis.call('HGET', id, 'headers') or ''; local orig=redis.call('HGET', id, 'originalMessageId') or ''; "
                         + "if t=='' then redis.call('ZREM', z, id); redis.call('DEL', id); "
-                        + "else local sk=sp..':'..t..':p:'..pid; local args={'payload',payload,'timestamp',ts,'retryCount',retry,'maxRetries',maxr,'topic',t,'partitionId',tostring(pid)}; "
+                        + "else local sk=sp..':'..t..':p:'..pid; local args={'timestamp',ts,'retryCount',retry,'maxRetries',maxr,'topic',t,'partitionId',tostring(pid)}; "
+                        + "if payload then table.insert(args,'payload'); table.insert(args,payload); end; "
                         + "if k~='' then table.insert(args,'key'); table.insert(args,k); end; if hdr~='' then table.insert(args,'headers'); table.insert(args,hdr); end; "
                         + "if orig~='' then table.insert(args,'originalMessageId'); table.insert(args,orig); end; "
                         + "redis.call('XADD', sk, '*', unpack(args)); redis.call('ZREM', z, id); redis.call('DEL', id); table.insert(moved, id); end; end; return moved;";
