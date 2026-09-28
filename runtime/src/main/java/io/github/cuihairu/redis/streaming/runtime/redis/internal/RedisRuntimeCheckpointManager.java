@@ -39,6 +39,8 @@ public final class RedisRuntimeCheckpointManager {
     private static final String SNAPSHOT_KEY_STATE = "runtime:state";
     private static final String SNAPSHOT_KEY_STATE_SCHEMA = "runtime:stateSchema";
     private static final String SNAPSHOT_KEY_META = "runtime:meta";
+    /** Two-phase-commit transaction handles ("runnerIndex:sinkIndex" -> encoded handle). */
+    public static final String SNAPSHOT_KEY_TXNS = "runtime:txns";
     private static final String SINK_COMMITTED_MARKER_PREFIX = "runtime:sinkCommitted:";
 
     public enum RedisStateType {
@@ -142,6 +144,22 @@ public final class RedisRuntimeCheckpointManager {
                                         List<PipelineKey> pipelines,
                                         Map<String, Map<Integer, String>> offsetsOverride,
                                         boolean cleanupRetainedAfterStore) {
+        return triggerCheckpoint(checkpointId, pipelines, offsetsOverride, cleanupRetainedAfterStore, null);
+    }
+
+    /**
+     * Two-phase-commit aware variant: stores the encoded transaction handles
+     * ({@code "runnerIndex:sinkIndex" -> handle}) into the snapshot so recovery can
+     * compensate with {@code recoverAndCommit}/{@code recoverAndAbort} after a crash
+     * between this store and the sink commit phase. Handles must be written
+     * <em>before</em> any sink commits; a null/empty map writes no txn key (checkpoints
+     * without two-phase-commit sinks stay byte-identical to the plain variant).
+     */
+    public Checkpoint triggerCheckpoint(long checkpointId,
+                                        List<PipelineKey> pipelines,
+                                        Map<String, Map<Integer, String>> offsetsOverride,
+                                        boolean cleanupRetainedAfterStore,
+                                        Map<String, String> txnHandles) {
         DefaultCheckpoint cp = new DefaultCheckpoint(checkpointId, System.currentTimeMillis());
         try {
             Map<String, Object> meta = new HashMap<>();
@@ -153,6 +171,9 @@ public final class RedisRuntimeCheckpointManager {
             cp.getStateSnapshot().putState(SNAPSHOT_KEY_OFFSETS, snapshotOffsets(pipelines, offsetsOverride));
             cp.getStateSnapshot().putState(SNAPSHOT_KEY_STATE, snapshotState());
             cp.getStateSnapshot().putState(SNAPSHOT_KEY_STATE_SCHEMA, snapshotStateSchema());
+            if (txnHandles != null && !txnHandles.isEmpty()) {
+                cp.getStateSnapshot().putState(SNAPSHOT_KEY_TXNS, txnHandles);
+            }
 
             cp.markCompleted();
             storage.storeCheckpoint(cp);
@@ -164,6 +185,21 @@ public final class RedisRuntimeCheckpointManager {
         } catch (Exception e) {
             log.warn("Failed to store checkpoint {}", checkpointId, e);
             return null;
+        }
+    }
+
+    /**
+     * Reads the two-phase-commit transaction handles stored in a checkpoint. Returns an
+     * empty map when the checkpoint carries none.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, String> getTxnHandles(Checkpoint checkpoint) {
+        try {
+            Map<String, String> handles = checkpoint.getStateSnapshot().getState(SNAPSHOT_KEY_TXNS);
+            return handles == null ? Map.of() : handles;
+        } catch (Exception e) {
+            log.debug("Failed to read txn handles from checkpoint {}", checkpoint.getCheckpointId(), e);
+            return Map.of();
         }
     }
 

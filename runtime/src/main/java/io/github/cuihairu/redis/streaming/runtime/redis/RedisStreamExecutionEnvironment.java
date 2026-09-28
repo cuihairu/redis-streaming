@@ -219,6 +219,10 @@ public final class RedisStreamExecutionEnvironment {
         AtomicBoolean checkpointing = new AtomicBoolean(false);
         DeferredAcks deferredAcks = new DeferredAcks();
         java.util.concurrent.atomic.AtomicReference<Long> restoredCheckpointIdRef = new java.util.concurrent.atomic.AtomicReference<>(null);
+        // full checkpoint object kept for two-phase-commit recovery (runner build happens
+        // after the restore, and the compensation needs the stored txn handles)
+        java.util.concurrent.atomic.AtomicReference<Checkpoint> restoredCheckpointRef =
+                new java.util.concurrent.atomic.AtomicReference<>(null);
         warnDeferAckConfiguration();
 
         try {
@@ -230,6 +234,7 @@ public final class RedisStreamExecutionEnvironment {
                     Checkpoint restored = checkpointManager.restoreFromLatestCheckpointOrNull(pipelineKeys);
                     if (restored != null) {
                         restoredCheckpointIdRef.set(restored.getCheckpointId());
+                        restoredCheckpointRef.set(restored);
                         log.info("Restored Redis runtime job from checkpoint {} (jobName={})",
                                 restoredCheckpointIdRef.get(), config.getJobName());
                     }
@@ -253,6 +258,10 @@ public final class RedisStreamExecutionEnvironment {
                     Long restoredCheckpointId = restoredCheckpointIdRef.get();
                     if (restoredCheckpointId != null) {
                         runner.onCheckpointRestore(restoredCheckpointId);
+                        Checkpoint restoredCp = restoredCheckpointRef.get();
+                        if (restoredCp != null) {
+                            recoverTwoPhaseTransactions(runner, runners.size() - 1, checkpointManager, restoredCp);
+                        }
                     }
 
                     String consumerName = config.getJobName() + "-" + config.getJobInstanceId() + "-" + (consumers.size() + 1);
@@ -672,6 +681,57 @@ public final class RedisStreamExecutionEnvironment {
         return cp;
     }
 
+    /** Best-effort abort of every open two-phase-commit epoch; failures are logged, not propagated. */
+    private void abortTwoPhaseQuietly(List<RedisPipelineRunner<?>> runners) {
+        for (RedisPipelineRunner<?> r : runners) {
+            try {
+                r.abortTwoPhaseCommits();
+            } catch (Exception e) {
+                log.warn("Two-phase abort failed (jobName={})", config.getJobName(), e);
+            }
+        }
+    }
+
+    /**
+     * Two-phase-commit recovery compensation after a restore. When the restored checkpoint
+     * was never marked sink-committed (crash between the checkpoint store and the sink
+     * commit phase), every stored transaction handle of this runner is replayed through
+     * {@code recoverAndCommit} — the sink contract makes that idempotent, so sinks that did
+     * commit before dying tolerate the replay. Handles of an already sink-committed
+     * checkpoint are stale and skipped: their data is visible, fresh epochs begin new
+     * transactions.
+     */
+    private void recoverTwoPhaseTransactions(RedisPipelineRunner<?> runner,
+                                             int runnerIndex,
+                                             RedisRuntimeCheckpointManager checkpointManager,
+                                             Checkpoint restored) {
+        try {
+            Map<String, String> handles = checkpointManager.getTxnHandles(restored);
+            if (handles.isEmpty()) {
+                return;
+            }
+            boolean sinkCommitted = checkpointManager.isSinkCommittedMarkerPresent(restored.getCheckpointId());
+            if (sinkCommitted) {
+                return;
+            }
+            String prefix = runnerIndex + ":";
+            for (Map.Entry<String, String> e : handles.entrySet()) {
+                if (!e.getKey().startsWith(prefix)) {
+                    continue;
+                }
+                int sinkIndex = Integer.parseInt(e.getKey().substring(prefix.length()));
+                runner.recoverTwoPhaseCommit(sinkIndex, e.getValue());
+                log.info("Recovered two-phase-commit transaction for runner {} sink {} from checkpoint {} (jobName={})",
+                        runnerIndex, sinkIndex, restored.getCheckpointId(), config.getJobName());
+            }
+        } catch (Exception e) {
+            // matches the restore path's tolerance: a broken compensation is surfaced in the
+            // logs but does not prevent the job from starting
+            log.error("Two-phase-commit recovery failed (jobName={}, checkpointId={})",
+                    config.getJobName(), restored.getCheckpointId(), e);
+        }
+    }
+
     private Checkpoint triggerCheckpointWhilePaused(List<MessageConsumer> consumers,
                                                     List<RedisPipelineRunner<?>> runners,
                                                     RedisRuntimeCheckpointManager checkpointManager,
@@ -746,14 +806,43 @@ public final class RedisStreamExecutionEnvironment {
                 offsetsOverride = deferredAcks.snapshotOffsets();
             }
 
+            // Two-phase-commit phase 1: pre-commit every 2PC sink and collect the encoded
+            // transaction handles ("runnerIndex:sinkIndex" -> handle). They go into the
+            // checkpoint BEFORE anything commits so recovery can compensate a crash in
+            // between. Keys are stable because runners are built in a deterministic
+            // (definition, subtask) order.
+            Map<String, String> txnHandles = new java.util.LinkedHashMap<>();
+            for (int ri = 0; ri < runners.size(); ri++) {
+                RedisPipelineRunner<?> r = runners.get(ri);
+                try {
+                    for (Map.Entry<Integer, String> e : r.prepareTwoPhaseCommits().entrySet()) {
+                        txnHandles.put(ri + ":" + e.getKey(), e.getValue());
+                    }
+                } catch (Exception e) {
+                    log.error("Two-phase preCommit failed (jobName={}, checkpointId={})", config.getJobName(), checkpointId, e);
+                    abortTwoPhaseQuietly(runners);
+                    for (RedisPipelineRunner<?> rr : runners) {
+                        rr.onCheckpointAbort(checkpointId, e);
+                    }
+                    try {
+                        RedisRuntimeMetrics.get().incCheckpointFailed(config.getJobName());
+                    } catch (Exception ignore) {
+                    }
+                    return null;
+                }
+            }
+
             long storeStartNs = System.nanoTime();
             // RT-H2: the retention sweep is deferred to after the consumers are resumed
-            Checkpoint cp = checkpointManager.triggerCheckpoint(checkpointId, pipelineKeys, offsetsOverride, false);
+            Checkpoint cp = checkpointManager.triggerCheckpoint(checkpointId, pipelineKeys, offsetsOverride, false,
+                    txnHandles.isEmpty() ? null : txnHandles);
             try {
                 RedisRuntimeMetrics.get().recordCheckpointStoreDuration(config.getJobName(), (System.nanoTime() - storeStartNs) / 1_000_000);
             } catch (Exception ignore) {
             }
             if (cp == null) {
+                // nothing was stored: the pre-committed transactions must never become visible
+                abortTwoPhaseQuietly(runners);
                 for (RedisPipelineRunner<?> r : runners) {
                     r.onCheckpointAbort(checkpointId, null);
                 }
@@ -769,6 +858,12 @@ public final class RedisStreamExecutionEnvironment {
                 for (RedisPipelineRunner<?> r : runners) {
                     r.onCheckpointComplete(checkpointId);
                 }
+                // Two-phase-commit phase 2: the handles are durably stored, so the sinks may
+                // finalize now. If a commit throws, the checkpoint stays NOT sink-committed
+                // and recovery replays recoverAndCommit from the stored handles.
+                for (RedisPipelineRunner<?> r : runners) {
+                    r.commitTwoPhaseCommits();
+                }
                 checkpointManager.markSinkCommitted(cp);
                 try {
                     RedisRuntimeMetrics.get().recordCheckpointSinkCommitDuration(config.getJobName(), (System.nanoTime() - sinkCommitStartNs) / 1_000_000);
@@ -776,6 +871,9 @@ public final class RedisStreamExecutionEnvironment {
                 }
             } catch (Exception e) {
                 log.error("Sink commit on checkpoint failed (jobName={}, checkpointId={})", config.getJobName(), checkpointId, e);
+                // discard the still-open epochs; a sink whose commit half-applied must be
+                // compensated through the idempotent recover path on restart
+                abortTwoPhaseQuietly(runners);
                 for (RedisPipelineRunner<?> r : runners) {
                     r.onCheckpointAbort(checkpointId, e);
                 }
