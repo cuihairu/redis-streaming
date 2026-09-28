@@ -287,8 +287,19 @@ class MySQLBinlogCDCConnectorResidualCoverageTest {
         delivering.join(30_000); // generous bound: the thread must still get scheduled under load
         assertFalse(delivering.isAlive());
 
-        assertTrue(errors.stream().anyMatch(e -> e.contains("not enqueued")),
-                "the undelivered event must surface as an error: " + errors);
+        // Poll for the error to surface — the InterruptedException path may take a few ms to
+        // propagate through the thread's exception handler and the listener callback, so we wait
+        // rather than asserting on a single instantaneous check.
+        boolean errorSeen = false;
+        long deadline = System.currentTimeMillis() + 30_000;
+        while (System.currentTimeMillis() < deadline) {
+            if (errors.stream().anyMatch(e -> e.contains("not enqueued"))) {
+                errorSeen = true;
+                break;
+            }
+            Thread.sleep(10);
+        }
+        assertTrue(errorSeen, "the undelivered event must surface as an error: " + errors);
         assertEquals(positionAfterFirstDelivery, connector.getBinlogPosition(),
                 "the watermark must NOT advance past an interrupted (un-delivered) event (CDC-M1)");
     }
