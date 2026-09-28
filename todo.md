@@ -130,12 +130,12 @@
 ---
 
 ### 8. io.github.cuihairu.redis.streaming.source.redis - 47%
-**关键问题：** Redis 数据源测试不足
+**关键问题：** Redis 数据源测试不足（已过期：2026-09-28 实测包级 line 99%/branch 96%，`RedisListSource` 仅剩 1 未覆盖行）
 **未覆盖的关键类：**
 - `RedisListSource` - 47% (10 个方法未覆盖)
 
 **建议添加的测试类型：**
-- [ ] **集成测试**（需要 Redis）
+- [x] **集成测试**（需要 Redis）（2026-09-28 补齐：`RedisListSourceIntegrationTest` 7 用例，10 轮重复全绿 —— List 数据读取/FIFO 排空、空/不存在列表全 API 读空且零建 key、consume 持续消费、poll 与 pollBatch 跨 tick 批投递、record 类型 JSON 反序列化往返、连接失败降级 null/空不抛。两处注明：① 该类**无 BLPOP/BRPOP**——实现为 LPOP（`remove(0)`）+ 空转退避轮询，consume 循环即其"阻塞"行为，按实际行为覆盖；② Redisson 3.29 `create()` 为急切连接、死端点无法产出客户端对象，连接失败用例改用已 shutdown 客户端（每条命令必失败）走同类 catch 路径）
   - Redis List 数据读取测试
   - List 阻塞弹出（BLPOP/BRPOP）测试
   - 批量读取测试
