@@ -441,7 +441,12 @@ class RedisListSourceTestExtended {
                 latch.countDown();
             }, Duration.ofMillis(10));
 
-            assertTrue(source.isRunning());
+            // the scheduled task has initial delay 0, so under load the whole
+            // deliver->stop cycle may complete before this line runs; "running" and
+            // "already delivered" are both proof that poll() activated the source
+            assertTrue(source.isRunning() || "v".equals(seen.get()),
+                    "source must be running, or the poller must have delivered already (running="
+                            + source.isRunning() + ", seen=" + seen.get() + ")");
             assertTrue(latch.await(3, TimeUnit.SECONDS));
             assertEquals("v", seen.get());
         } finally {
