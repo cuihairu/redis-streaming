@@ -77,12 +77,19 @@ public interface TwoPhaseCommitSink<T, Txn extends Serializable> extends Checkpo
      * containing this transaction's handle. Must be idempotent enough to survive a retry after
      * a crash between the checkpoint store and this call (the recovery path may commit the
      * same handle again via {@link #recoverAndCommit(Object)}).
+     *
+     * <p>A throwing commit is <em>not</em> compensated by {@link #abort(Object)}: the handle is
+     * already durable, so discarding the transaction would drop data the recovery path is
+     * required to commit. The runtime leaves the epoch open instead and replays
+     * {@link #recoverAndCommit(Object)} from the stored handle on restore.</p>
      */
     void commit(Txn txn) throws Exception;
 
     /**
      * Discards the open transaction because the checkpoint failed after
-     * {@link #preCommit(Object)}. Defaults to {@link #recoverAndAbort(Object)} since most
+     * {@link #preCommit(Object)} <em>without the transaction being stored</em> (a preCommit
+     * failure or a failed checkpoint store) — nothing references the epoch, so its data must
+     * not become visible. Defaults to {@link #recoverAndAbort(Object)} since most
      * implementations treat live and recovered aborts identically.
      */
     default void abort(Txn txn) throws Exception {

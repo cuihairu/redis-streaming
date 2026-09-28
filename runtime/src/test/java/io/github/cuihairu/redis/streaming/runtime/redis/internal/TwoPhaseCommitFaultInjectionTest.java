@@ -231,6 +231,31 @@ class TwoPhaseCommitFaultInjectionTest {
     }
 
     @Test
+    void failedCommitKeepsTheEpochOpenForARetryInsteadOfDiscardingIt() throws Exception {
+        FakeTwoPhaseSink sink = new FakeTwoPhaseSink();
+        sink.commitFailure = new IllegalStateException("kafka is down");
+        RedisPipelineRunner<Object> runner = runnerWith(sink);
+        try {
+            runner.handle(msg());
+            runner.prepareTwoPhaseCommits();
+
+            assertThrows(IllegalStateException.class, runner::commitTwoPhaseCommits);
+            assertTrue(sink.discarded.isEmpty(),
+                    "a failed commit must not discard the transaction: its handle is already stored in "
+                            + "a durable checkpoint, so recovery commits it rather than aborting it");
+            assertTrue(sink.committed.isEmpty(), "the half-applied commit must not report success");
+
+            // the epoch survived the failure, so either the retried phase 2 (next checkpoint on the
+            // same runner) or the recovery path can still finalize the staged data
+            sink.commitFailure = null;
+            runner.commitTwoPhaseCommits();
+            assertFalse(sink.committed.isEmpty(), "the retried commit finalizes the staged data");
+        } finally {
+            runner.close();
+        }
+    }
+
+    @Test
     void storeFailureDiscardsPreCommittedTransactions() throws Exception {
         RedisRuntimeCheckpointManager manager = manager();
         FakeTwoPhaseSink sink = new FakeTwoPhaseSink();

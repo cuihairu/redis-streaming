@@ -871,9 +871,11 @@ public final class RedisStreamExecutionEnvironment {
                 }
             } catch (Exception e) {
                 log.error("Sink commit on checkpoint failed (jobName={}, checkpointId={})", config.getJobName(), checkpointId, e);
-                // discard the still-open epochs; a sink whose commit half-applied must be
-                // compensated through the idempotent recover path on restart
-                abortTwoPhaseQuietly(runners);
+                // the 2PC epochs are deliberately NOT aborted here: their handles are already
+                // in the durable checkpoint, so discarding them would drop data that the
+                // recovery path is obliged to commit. The checkpoint stays unmarked and the
+                // deferred acks below are skipped, so the records come back and recovery
+                // replays recoverAndCommit from the stored handles (idempotent by contract).
                 for (RedisPipelineRunner<?> r : runners) {
                     r.onCheckpointAbort(checkpointId, e);
                 }
