@@ -117,24 +117,15 @@
 
 ---
 
-### 7. io.github.cuihairu.redis.streaming.cdc - 44%
-**关键问题：** CDC 接口层未完全测试
-**未覆盖的关键类：**
-- `CDCManager` - 0% (28 个方法未覆盖)
-- `CDCConfigurationBuilder.DefaultCDCConfiguration` - 26%
-- `ChangeEvent` - 0%
-- `CDCConnectorFactory` - 0%
-- `CDCEventListener` - 0% (接口)
+### 7. io.github.cuihairu.redis.streaming.cdc - ✅ 单测项完成（2026-09-28，实测包级 99% 指令/96% 分支）
+**侦查发现：** 原 44% 与各"0%"条目均数据过期——四组单测在既有测试中已基本存在，实测 `cdc` 包 **99%/96%**、`cdc.impl` 97%/87%、`cdc.mq` 100%/100%。按行覆盖标记：`CDCManager` 100%（CDCManagerTest 24 用例 + CDCManagerLifecycleCoverageTest + CDCManagerResidualCoverageTest）、`ChangeEvent` 100%、`CDCConfigurationBuilder`（含 DefaultCDCConfiguration 内部类）100%、`CDCEventListener` 100%；唯一残差是 `CDCConnectorFactory` L34 的枚举 switch 合成 default 臂——枚举仅 3 常量且全被 case 处理、`switch(null)` 抛 NPE 不会走 default，测试不可达（与 runtime `TimerQueue.fire` 同型天花板，闭合需改生产代码超范围）。
 
-**建议添加的测试类型：**
-- [ ] **单元测试**
-  - CDC 管理器生命周期测试
-  - CDC 配置构建器测试
-  - 变更事件序列化/反序列化测试
-  - 连接器工厂测试
-- [ ] **集成测试**
-  - CDC 启动和停止测试
-  - 多连接器并发测试
+**清单四组单测 → 背书/新增：**
+- [x] CDC 管理器生命周期测试：`CDCManagerTest`（24 用例，start/stop/生命周期/Mock 连接器）+ `CDCManagerLifecycleCoverageTest` + `CDCManagerResidualCoverageTest`
+- [x] CDC 配置构建器测试：`CDCConfigurationBuilderTest`（10 场景：各连接器专属配置/自定义属性/默认值/工厂方法/名称校验）+ `CDCConfigValidationCoverageTest` + `CDCConfigurationDtoTest` + `CDCConfigurationTest`
+- [x] 变更事件序列化/反序列化测试：**本轮新增 `ChangeEventSerializationTest`（5 用例）**——全字段 Jackson 往返（含 Instant 时间戳，jsr310 注册）、7 种 EventType 表驱动往返、无参构造器 null 字段往返、手写 JSON 容忍解析、线上 JSON 形状钉住；注：Lombok `is*()` 谓词会序列化出无 setter 的属性，读取端必须关闭 FAIL_ON_UNKNOWN_PROPERTIES（仓库惯例 `findAndRegisterModules()` 不够）；MQ 桥实际走 `ChangeEventQueueSink.toPayload` 的 payload-map 而非 Jackson（已有 `ChangeEventQueueSinkTest` 背书）
+- [x] 连接器工厂测试：`CDCConnectorFactoryTest`（3 类型枚举+字符串+大小写变体+非法名 IAE）+ `CdcFactorySourceCoverageTest`
+- [ ] 集成测试（CDC 启动停止 / 多连接器并发）：本轮不派——管理器级生命周期已由上述单测覆盖，Redis/真实库环境集成条目留待后续派发
 
 ---
 
