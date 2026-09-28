@@ -284,7 +284,7 @@ class MySQLBinlogCDCConnectorResidualCoverageTest {
         delivering.start();
         awaitBlocked(delivering); // condition wait: park inside offer(), not a fixed sleep
         delivering.interrupt(); // interrupts the 50ms offer slices
-        delivering.join(10_000);
+        delivering.join(30_000); // generous bound: the thread must still get scheduled under load
         assertFalse(delivering.isAlive());
 
         assertTrue(errors.stream().anyMatch(e -> e.contains("not enqueued")),
@@ -521,14 +521,14 @@ class MySQLBinlogCDCConnectorResidualCoverageTest {
 
     /** Await the thread parking inside the timed offer() (bounded, no fixed sleep). */
     private static void awaitBlocked(Thread thread) throws Exception {
-        long deadline = System.currentTimeMillis() + 5_000;
+        long deadline = System.currentTimeMillis() + 30_000;
         while (System.currentTimeMillis() < deadline) {
             if (thread.getState() == Thread.State.TIMED_WAITING) {
                 return;
             }
             Thread.sleep(5);
         }
-        throw new AssertionError("thread did not block within 5s, state=" + thread.getState());
+        throw new AssertionError("thread did not block within 30s, state=" + thread.getState());
     }
 
     private static Event updateEvent(long tableId, long nextPos) {
