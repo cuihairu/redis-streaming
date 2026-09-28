@@ -3,6 +3,7 @@ package io.github.cuihairu.redis.streaming.runtime.redis.internal;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.cuihairu.redis.streaming.api.stream.CheckpointAwareSink;
 import io.github.cuihairu.redis.streaming.api.stream.StreamSink;
+import io.github.cuihairu.redis.streaming.api.stream.TwoPhaseCommitSink;
 import io.github.cuihairu.redis.streaming.mq.Message;
 import io.github.cuihairu.redis.streaming.mq.MqHeaders;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisRuntimeConfig;
@@ -14,7 +15,9 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.PriorityQueue;
 import java.util.concurrent.ScheduledExecutorService;
@@ -41,6 +44,8 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
     private final String consumerGroup;
     private final List<RedisOperatorNode> operators;
     private final List<StreamSink<Object>> sinks;
+    /** Aligned with {@link #sinks}; null for sinks that are not two-phase-commit sinks. */
+    private final List<TwoPhaseCommitCoordinator> twoPhaseCoordinators;
 
     private final ScheduledExecutorService timerExecutor;
     private final boolean closeTimerExecutor;
@@ -86,6 +91,7 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
         this.consumerGroup = Objects.requireNonNull(consumerGroup, "consumerGroup");
         this.operators = List.copyOf(Objects.requireNonNull(operators, "operators"));
         this.sinks = List.copyOf(Objects.requireNonNull(sinks, "sinks"));
+        this.twoPhaseCoordinators = buildTwoPhaseCoordinators(this.sinks);
         if (timerExecutor != null) {
             this.timerExecutor = timerExecutor;
             this.closeTimerExecutor = closeTimerExecutor;
@@ -143,14 +149,23 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
         if (index >= operators.size()) {
             for (int i = 0; i < sinks.size(); i++) {
                 StreamSink<Object> sink = sinks.get(i);
+                TwoPhaseCommitCoordinator coordinator = twoPhaseCoordinators.get(i);
                 if (!config.isSinkDeduplicationEnabled()) {
-                    sink.invoke(value);
+                    if (coordinator != null) {
+                        coordinator.invoke(value);
+                    } else {
+                        sink.invoke(value);
+                    }
                     continue;
                 }
                 if (!shouldInvokeSink(i, ctx)) {
                     continue;
                 }
-                sink.invoke(value);
+                if (coordinator != null) {
+                    coordinator.invoke(value);
+                } else {
+                    sink.invoke(value);
+                }
                 markSinkInvoked(i, ctx);
             }
             return;
@@ -332,6 +347,98 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
                 cs.onCheckpointRestore(checkpointId);
             }
         }
+    }
+
+    /**
+     * Builds the per-sink two-phase-commit coordinators: one per {@link TwoPhaseCommitSink},
+     * null entries for plain sinks, index-aligned with {@code sinks}.
+     */
+    private static List<TwoPhaseCommitCoordinator> buildTwoPhaseCoordinators(List<StreamSink<Object>> sinks) {
+        List<TwoPhaseCommitCoordinator> coordinators = new java.util.ArrayList<>(sinks.size());
+        for (StreamSink<Object> sink : sinks) {
+            coordinators.add(sink instanceof TwoPhaseCommitSink<?, ?> tps
+                    ? new TwoPhaseCommitCoordinator(tps)
+                    : null);
+        }
+        // List.copyOf would reject the null entries; the list is built once and never mutated
+        return java.util.Collections.unmodifiableList(coordinators);
+    }
+
+    /**
+     * Two-phase-commit phase 1: pre-commits every two-phase-commit sink's open transaction and
+     * returns the encoded transaction handles keyed by sink index. The caller must store these
+     * handles into the checkpoint snapshot <em>before</em> calling
+     * {@link #commitTwoPhaseCommits()} so recovery can compensate if the process dies in
+     * between.
+     */
+    public Map<Integer, String> prepareTwoPhaseCommits() throws Exception {
+        Map<Integer, String> handles = new LinkedHashMap<>();
+        for (int i = 0; i < twoPhaseCoordinators.size(); i++) {
+            TwoPhaseCommitCoordinator coordinator = twoPhaseCoordinators.get(i);
+            if (coordinator != null) {
+                handles.put(i, coordinator.prepareCommit());
+            }
+        }
+        return handles;
+    }
+
+    /**
+     * Two-phase-commit phase 2: finalizes all open two-phase-commit transactions. Called by
+     * the environment after the checkpoint containing {@link #prepareTwoPhaseCommits()}'s
+     * handles was stored successfully.
+     */
+    public void commitTwoPhaseCommits() throws Exception {
+        for (TwoPhaseCommitCoordinator coordinator : twoPhaseCoordinators) {
+            if (coordinator != null) {
+                coordinator.commit();
+            }
+        }
+    }
+
+    /**
+     * Discards all open two-phase-commit transactions. Called by the environment when the
+     * checkpoint failed after the pre-commit phase.
+     */
+    public void abortTwoPhaseCommits() throws Exception {
+        for (TwoPhaseCommitCoordinator coordinator : twoPhaseCoordinators) {
+            if (coordinator != null) {
+                coordinator.abort();
+            }
+        }
+    }
+
+    /**
+     * True when at least one sink of this pipeline is a {@link TwoPhaseCommitSink}.
+     */
+    public boolean hasTwoPhaseCommitSinks() {
+        return twoPhaseCoordinators.stream().anyMatch(Objects::nonNull);
+    }
+
+    /**
+     * Recovery compensation: commits the transaction whose handle was restored from a stored
+     * checkpoint (crash between the checkpoint store and the commit phase). Idempotent by
+     * the {@link TwoPhaseCommitSink} contract.
+     */
+    public void recoverTwoPhaseCommit(int sinkIndex, String encodedTxn) throws Exception {
+        TwoPhaseCommitCoordinator coordinator = twoPhaseCoordinators.get(sinkIndex);
+        if (coordinator == null) {
+            throw new IllegalStateException(
+                    "sink " + sinkIndex + " of " + topic + "/" + consumerGroup + " is not a TwoPhaseCommitSink");
+        }
+        coordinator.recoverAndCommit(encodedTxn);
+    }
+
+    /**
+     * Recovery compensation: discards the transaction whose handle was restored from a
+     * rolled-back checkpoint.
+     */
+    public void recoverTwoPhaseAbort(int sinkIndex, String encodedTxn) throws Exception {
+        TwoPhaseCommitCoordinator coordinator = twoPhaseCoordinators.get(sinkIndex);
+        if (coordinator == null) {
+            throw new IllegalStateException(
+                    "sink " + sinkIndex + " of " + topic + "/" + consumerGroup + " is not a TwoPhaseCommitSink");
+        }
+        coordinator.recoverAndAbort(encodedTxn);
     }
 
     public final class Context {
