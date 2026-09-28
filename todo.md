@@ -214,7 +214,7 @@
 ---
 
 ### 13. io.github.cuihairu.redis.streaming.registry.impl - 55%
-**关键问题：** 服务注册实现测试不足
+**关键问题：** 服务注册实现测试不足（部分过期：2026-09-28 分支级扫描实测 `registry.lua` 包 line 98%/branch 81%，唯一残差 RegistryLuaScriptExecutor L894-896 catch 为防御性天花板——try 体内仅 final String 的 null/isEmpty 判断与 StringBuilder 操作，任何入参不可抛 Exception，不追；下方集成项仍需 Redis 环境，挂起不派）
 **未覆盖的关键类：**
 - `RedisNamingService` - 44% (18 个方法未覆盖)
 - `RedisServiceProvider` - 48% (13 个方法未覆盖)
