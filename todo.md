@@ -303,10 +303,11 @@
     - [x] Redis 幂等 sink 示例：`RedisIdempotentListSink<T>`（Lua 原子去重 + RPUSH）（已实现：2026-01-01）
     - [x] integration test：无 runtime dedup 时，幂等 sink 仍可防止重试重复写入（已实现：2026-01-01）
   - [ ] v2：Two-Phase Commit Sink（2PC）API 设计与实现（类似 Flink 两阶段提交）
-    - [ ] core：新增 `TwoPhaseCommitSink` API（Txn 可序列化进 checkpoint）
-    - [ ] runtime：checkpoint 流程加入 `preCommit -> storeCheckpoint(txn) -> commit -> mark sinkCommitted -> ack`
-    - [ ] runtime：恢复流程加入 txn 补偿（`recoverAndCommit/recoverAndAbort`）
-    - [ ] integration tests：故障注入（checkpoint 已写入但 commit 未执行/commit 抛错）与恢复验证
+    - [x] core：新增 `TwoPhaseCommitSink` API（Txn 可序列化进 checkpoint）（已实现：2026-09-28，`core/.../api/stream/TwoPhaseCommitSink.java`：beginTxn/invoke(value,txn)/preCommit/commit，默认 abort 委托 recoverAndAbort，Txn extends Serializable，单参 invoke 桥接为 fail-fast；单测 `TwoPhaseCommitSinkTest`）
+    - [x] runtime：checkpoint 流程加入 `preCommit -> storeCheckpoint(txn) -> commit -> mark sinkCommitted -> ack`（已实现：2026-09-28，`TwoPhaseCommitCoordinator`（懒开启事务/prepare/commit/abort，handle=Java 序列化+Base64）+ `RedisPipelineRunner.prepareTwoPhaseCommits/commitTwoPhaseCommits/abortTwoPhaseCommits` + manager overload 快照键 `runtime:txns`（"runnerIndex:sinkIndex"->handle，空 map 不写键）+ env 暂停窗口内 preCommit->store(txn)->commit->markSinkCommitted->ack）
+    - [x] runtime：恢复流程加入 txn 补偿（`recoverAndCommit/recoverAndAbort`）（已实现：2026-09-28，restore 后按 runner 索引回放：marker 存在→句柄已过期跳过；marker 缺失（store 后 commit 前崩溃）→对存储句柄逐个 recoverAndCommit（幂等）；补偿失败仅记日志不阻断启动）
+    - [x] unit 故障注入：checkpoint 已写入但 commit 未执行 / commit 抛错 / store 失败（`TwoPhaseCommitFaultInjectionTest` 7 例 + coordinator/runner 单测 13+6 例；Redis mock 注入）
+    - [ ] integration tests：Redis 真实环境下的 2PC 端到端故障注入与恢复验证（本轮不派，依赖 Redis 环境的集成条目继续挂起）
   - [ ] v2.5：Outbox/WAL（Redis 内 outbox + 异步投递器），作为跨系统 exactly-once 的折中方案
   - [ ] v3：Redis-only exactly-once（Lua 原子写 sink + 更新 offsets + XACK；Redis Cluster 需同 hash slot）
     - [x] Redis-only commit-on-checkpoint sink：`RedisCheckpointedIdempotentListSink<T>`（checkpoint complete 后 flush side effects）（已实现：2026-01-01）
