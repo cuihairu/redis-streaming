@@ -319,15 +319,23 @@ class PostgreSQLLogicalReplicationCDCConnectorResidualCoverageTest {
 
     @Test
     void interruptedBackpressuredEnqueueThrowsAndReportsLoss() throws Exception {
-        // capacity-1 queue: the second WAL message blocks until the delivery thread is
-        // interrupted; the event stays un-acknowledged so the stream replays it (at-least-once)
+        // capacity-1 queue. doPoll() drains BEFORE reading, so a single-event message can
+        // never meet a full queue on the delivering thread — its WAL message therefore
+        // carries TWO inserts: the first refills the queue, the second blocks in the timed
+        // offer() until the delivery thread is interrupted; the event stays un-acknowledged
+        // so the stream replays it (at-least-once)
         PGReplicationStream stream = mock(PGReplicationStream.class);
         java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
         when(stream.readPending()).thenAnswer(inv -> {
-            if (reads.incrementAndGet() == 1) {
-                return buffer("table public.users: INSERT: id[integer]:1\n");
+            switch (reads.incrementAndGet()) {
+                case 1:
+                    return buffer("table public.users: INSERT: id[integer]:1\n");
+                case 2:
+                    return buffer("table public.users: INSERT: id[integer]:2\n");
+                default:
+                    return buffer("table public.users: INSERT: id[integer]:3\n"
+                            + "table public.users: INSERT: id[integer]:4\n");
             }
-            return buffer("table public.users: INSERT: id[integer]:2\n");
         });
         when(stream.getLastReceiveLSN()).thenReturn(LogSequenceNumber.valueOf("0/40"));
         Connection connection = mock(Connection.class);
@@ -344,8 +352,9 @@ class PostgreSQLLogicalReplicationCDCConnectorResidualCoverageTest {
         List<String> errors = new CopyOnWriteArrayList<>();
         connector.setEventListener(recordingListener(errors));
 
-        Thread delivering = new Thread(connector::poll); // second delivery blocks on the full queue
+        Thread delivering = new Thread(connector::poll); // blocks on the 2nd of its two events
         delivering.start();
+        awaitBlocked(delivering); // condition wait: park inside offer(), not a fixed sleep
         delivering.interrupt();
         delivering.join(10_000);
         assertFalse(delivering.isAlive());
@@ -521,6 +530,18 @@ class PostgreSQLLogicalReplicationCDCConnectorResidualCoverageTest {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** Await the thread parking inside the timed offer() (bounded, no fixed sleep). */
+    private static void awaitBlocked(Thread thread) throws Exception {
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (System.currentTimeMillis() < deadline) {
+            if (thread.getState() == Thread.State.TIMED_WAITING) {
+                return;
+            }
+            Thread.sleep(5);
+        }
+        throw new AssertionError("thread did not block within 5s, state=" + thread.getState());
+    }
 
     private static CDCConfiguration config(String name) {
         return builder(name).build();

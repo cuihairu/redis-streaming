@@ -259,7 +259,10 @@ class MySQLBinlogCDCConnectorResidualCoverageTest {
 
     @Test
     void interruptedBackpressuredEnqueueThrowsAndDoesNotAdvanceWatermark() throws Exception {
-        // capacity-1 queue: the second row-dump blocks until the delivery thread is interrupted
+        // capacity-1 queue: poll() drains before the next handle, so the delivery thread's
+        // row-dump carries TWO rows — the first refills the queue, the second blocks in the
+        // timed offer() until the delivery thread is interrupted (at-least-once: the
+        // watermark must not advance past an un-delivered event, CDC-M1)
         MySQLBinlogCDCConnector connector = new MySQLBinlogCDCConnector(
                 CDCConfigurationBuilder.forMySQLBinlog("mysql-bp")
                         .property("event.queue.capacity", 1)
@@ -276,9 +279,10 @@ class MySQLBinlogCDCConnectorResidualCoverageTest {
         List<String> errors = new CopyOnWriteArrayList<>();
         connector.setEventListener(recordingListener(errors));
 
-        Thread delivering = new Thread(() ->
-                invokeHandle(connector, writeEvent(tableId, new Serializable[]{2}, 999)));
+        Thread delivering = new Thread(() -> invokeHandle(connector, writeRows(tableId,
+                List.of(new Serializable[]{2}, new Serializable[]{3}), 999)));
         delivering.start();
+        awaitBlocked(delivering); // condition wait: park inside offer(), not a fixed sleep
         delivering.interrupt(); // interrupts the 50ms offer slices
         delivering.join(10_000);
         assertFalse(delivering.isAlive());
@@ -505,10 +509,26 @@ class MySQLBinlogCDCConnectorResidualCoverageTest {
     }
 
     private static Event writeEvent(long tableId, Serializable[] row, long nextPos) {
+        return writeRows(tableId, List.<Serializable[]>of(row), nextPos);
+    }
+
+    private static Event writeRows(long tableId, List<Serializable[]> rows, long nextPos) {
         WriteRowsEventData write = mock(WriteRowsEventData.class);
         when(write.getTableId()).thenReturn(tableId);
-        when(write.getRows()).thenReturn(List.<Serializable[]>of(row));
+        when(write.getRows()).thenReturn(rows);
         return event(EventType.WRITE_ROWS, nextPos, write);
+    }
+
+    /** Await the thread parking inside the timed offer() (bounded, no fixed sleep). */
+    private static void awaitBlocked(Thread thread) throws Exception {
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (System.currentTimeMillis() < deadline) {
+            if (thread.getState() == Thread.State.TIMED_WAITING) {
+                return;
+            }
+            Thread.sleep(5);
+        }
+        throw new AssertionError("thread did not block within 5s, state=" + thread.getState());
     }
 
     private static Event updateEvent(long tableId, long nextPos) {
