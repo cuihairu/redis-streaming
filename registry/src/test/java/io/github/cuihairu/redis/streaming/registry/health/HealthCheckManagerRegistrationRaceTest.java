@@ -66,6 +66,13 @@ class HealthCheckManagerRegistrationRaceTest {
         Map<String, ClientHealthChecker> checkers = getCheckers(manager);
         ClientHealthChecker checker = checkers.values().iterator().next();
         assertTrue(checker.isRunning());
+        // the winning checker's initial probe is scheduled with delay 0 but executes
+        // asynchronously on the shared scheduler, so it may still be queued when the
+        // registration threads finish — wait for it instead of asserting instantaneously
+        long probeDeadline = System.currentTimeMillis() + 10_000;
+        while (probes.get() < 1 && System.currentTimeMillis() < probeDeadline) {
+            Thread.sleep(10);
+        }
         assertEquals(1, probes.get(),
                 "only the winning checker may start (one initial probe); losers must stay inert");
 
