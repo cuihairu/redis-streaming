@@ -13,6 +13,7 @@ import org.redisson.api.RMap;
 import org.redisson.api.RScript;
 import org.redisson.api.RSet;
 import org.redisson.api.RedissonClient;
+import org.redisson.api.options.KeysScanOptions;
 import org.redisson.client.codec.Codec;
 
 import java.io.Serializable;
@@ -25,10 +26,12 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -100,6 +103,7 @@ class TwoPhaseCommitFaultInjectionTest {
     }
 
     private RedissonClient redisson;
+    private RKeys rkeys;
     private final Map<String, RMap<String, String>> maps = new ConcurrentHashMap<>();
     private final Map<String, RBucket<Object>> buckets = new ConcurrentHashMap<>();
     private final Map<String, RBucket<String>> markers = new ConcurrentHashMap<>();
@@ -108,7 +112,7 @@ class TwoPhaseCommitFaultInjectionTest {
     @SuppressWarnings({"unchecked", "rawtypes"})
     void setUp() {
         redisson = mock(RedissonClient.class);
-        RKeys rkeys = mock(RKeys.class);
+        rkeys = mock(RKeys.class);
         RSet<String> index = (RSet<String>) mock(RSet.class);
         when(redisson.getKeys()).thenReturn(rkeys);
         when(redisson.getSet(anyString(), any(Codec.class))).thenReturn((RSet) index);
@@ -130,13 +134,17 @@ class TwoPhaseCommitFaultInjectionTest {
     }
 
     private RedisRuntimeCheckpointManager manager() {
-        RedisRuntimeConfig config = RedisRuntimeConfig.builder()
+        return manager(RedisRuntimeConfig.builder()
                 .jobName(JOB)
                 .stateKeyPrefix(PREFIX)
                 .checkpointKeyPrefix(PREFIX + ":cp")
                 .stateTtl(Duration.ZERO)
                 .checkpointsToKeep(5)
-                .build();
+                .deferAckUntilCheckpoint(true)
+                .build());
+    }
+
+    private RedisRuntimeCheckpointManager manager(RedisRuntimeConfig config) {
         return new RedisRuntimeCheckpointManager(redisson, config);
     }
 
@@ -306,6 +314,99 @@ class TwoPhaseCommitFaultInjectionTest {
         when(marker.isExists()).thenReturn(true);
 
         assertTrue(manager.isSinkCommittedMarkerPresent(checkpointId));
+    }
+
+    @Test
+    void inDoubtCheckpointIsAdoptedAsTheRestorePointWhenItIsTheNewest() throws Exception {
+        RedisRuntimeCheckpointManager manager = manager();
+        // an older, fully committed checkpoint
+        Checkpoint older = manager.triggerCheckpoint(1L, List.of(), null, false);
+        manager.markSinkCommitted(older);
+        presentMarker(manager, older.getCheckpointId());
+
+        // the crash: a newer checkpoint stored its handles but never committed them
+        Checkpoint inDoubt = manager.triggerCheckpoint(2L, List.of(), null, false,
+                Map.of("0:0", TwoPhaseCommitCoordinator.encodeTxn(new Txn(7))));
+
+        // listCheckpoints is the scan both lookups use; feed it the two stored checkpoints
+        publishCheckpoints(inDoubt, older);
+
+        Checkpoint adopted = manager.getLatestInDoubtTwoPhaseCheckpoint();
+        assertNotNull(adopted, "the stored-but-uncommitted epoch must be discoverable");
+        assertEquals(2L, adopted.getCheckpointId(),
+                "its offsets may only be adopted together with its transaction handles");
+        assertEquals(1, manager.getTxnHandles(adopted).size());
+
+        // and the normal restore path picks it over the older committed checkpoint
+        Checkpoint restored = manager.restoreFromLatestCheckpointOrNull(List.of());
+        assertNotNull(restored);
+        assertEquals(2L, restored.getCheckpointId(),
+                "a newer in-doubt checkpoint outranks the older sink-committed one");
+    }
+
+    @Test
+    void olderInDoubtCheckpointDoesNotOutrankANewerCommittedOne() throws Exception {
+        RedisRuntimeCheckpointManager manager = manager();
+        // the crashed epoch's checkpoint
+        Checkpoint inDoubt = manager.triggerCheckpoint(1L, List.of(), null, false,
+                Map.of("0:0", TwoPhaseCommitCoordinator.encodeTxn(new Txn(1))));
+        // a later checkpoint completed and finalized the same open transaction
+        Checkpoint newer = manager.triggerCheckpoint(2L, List.of(), null, false,
+                Map.of("0:0", TwoPhaseCommitCoordinator.encodeTxn(new Txn(1))));
+        manager.markSinkCommitted(newer);
+        presentMarker(manager, newer.getCheckpointId());
+
+        publishCheckpoints(newer, inDoubt);
+
+        assertNull(manager.getLatestInDoubtTwoPhaseCheckpoint(),
+                "the older epoch was already finalized by the newer committed checkpoint, "
+                        + "replaying its handle would double-commit");
+        Checkpoint restored = manager.restoreFromLatestCheckpointOrNull(List.of());
+        assertNotNull(restored);
+        assertEquals(2L, restored.getCheckpointId());
+    }
+
+    @Test
+    void abortedEpochIsNeverAdoptedBecauseItsDataNoLongerExists() throws Exception {
+        RedisRuntimeCheckpointManager manager = manager();
+        // epoch stored in checkpoint 1, then a later checkpoint failed before storing and
+        // the epoch was discarded: restoring checkpoint 1's offsets would skip records
+        // whose data was thrown away
+        Checkpoint dead = manager.triggerCheckpoint(1L, List.of(), null, false,
+                Map.of("0:0", TwoPhaseCommitCoordinator.encodeTxn(new Txn(3))));
+        assertTrue(manager.markTxnEpochAborted(dead.getCheckpointId()));
+        RBucket<String> marker = markers.get(manager.txnAbortedMarkerKey(dead.getCheckpointId()));
+        when(marker.isExists()).thenReturn(true);
+
+        publishCheckpoints(dead);
+
+        assertTrue(manager.isTxnEpochAborted(dead.getCheckpointId()));
+        assertNull(manager.getLatestInDoubtTwoPhaseCheckpoint(),
+                "a discarded epoch must not become a restore point");
+        assertNull(manager.restoreFromLatestCheckpointOrNull(List.of()),
+                "with no committed checkpoint left there is nothing safe to restore");
+    }
+
+    /** Makes a marker bucket report {@code isExists}, modelling a successful marker write. */
+    private void presentMarker(RedisRuntimeCheckpointManager manager, long checkpointId) {
+        RBucket<String> marker = markers.get(manager.sinkCommittedMarkerKey(checkpointId));
+        when(marker.isExists()).thenReturn(true);
+    }
+
+    /**
+     * Publishes checkpoints into the mocked keyspace so {@code listCheckpoints} — the scan
+     * both the sink-committed and the in-doubt lookup go through — can find them.
+     */
+    private void publishCheckpoints(Checkpoint... checkpoints) {
+        String prefix = PREFIX + ":cp" + JOB + ":";
+        List<String> keys = new ArrayList<>();
+        for (Checkpoint cp : checkpoints) {
+            String key = prefix + cp.getCheckpointId();
+            keys.add(key);
+            RBucket<Object> bucket = buckets.computeIfAbsent(key, k -> mock(RBucket.class));
+            when(bucket.get()).thenReturn(cp);
+        }
+        when(rkeys.getKeys(any(KeysScanOptions.class))).thenReturn(keys);
     }
 
     @Test

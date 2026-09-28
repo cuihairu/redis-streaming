@@ -15,6 +15,7 @@ import org.redisson.api.RScript;
 import org.redisson.api.RedissonClient;
 import org.redisson.client.codec.Codec;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.time.Duration;
@@ -101,7 +102,10 @@ class RedisStreamExecutionEnvironmentCheckpointGapTest {
             outer.setAccessible(true);
             Object env = outer.get(job);
             Method trigger = findTriggerMethod();
-            Object result = trigger.invoke(env, null, List.of(), null, List.of(), null);
+            Class<?> trackerType = trigger.getParameterTypes()[5];
+            Constructor<?> trackerCtor = trackerType.getDeclaredConstructor();
+            trackerCtor.setAccessible(true);
+            Object result = trigger.invoke(env, null, List.of(), null, List.of(), null, trackerCtor.newInstance());
             assertNull(result, "a missing consumer list must skip the checkpoint");
         } finally {
             job.cancel();
@@ -110,7 +114,10 @@ class RedisStreamExecutionEnvironmentCheckpointGapTest {
 
     private static Method findTriggerMethod() {
         for (Method m : RedisStreamExecutionEnvironment.class.getDeclaredMethods()) {
-            if (m.getName().equals("triggerCheckpointInternal") && m.getParameterCount() == 5) {
+            // 6 params: consumers, runners, checkpointManager, pipelineKeys, deferredAcks,
+            // twoPhaseEpochs — the first five are passed as null/empty by the test, the
+            // tracker is a private nested type so it is instantiated reflectively.
+            if (m.getName().equals("triggerCheckpointInternal") && m.getParameterCount() == 6) {
                 m.setAccessible(true);
                 return m;
             }

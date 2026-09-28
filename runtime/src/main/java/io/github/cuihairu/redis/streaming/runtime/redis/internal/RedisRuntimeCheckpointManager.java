@@ -42,6 +42,7 @@ public final class RedisRuntimeCheckpointManager {
     /** Two-phase-commit transaction handles ("runnerIndex:sinkIndex" -> encoded handle). */
     public static final String SNAPSHOT_KEY_TXNS = "runtime:txns";
     private static final String SINK_COMMITTED_MARKER_PREFIX = "runtime:sinkCommitted:";
+    private static final String TXN_ABORTED_MARKER_PREFIX = "runtime:txnAborted:";
 
     public enum RedisStateType {
         MAP,
@@ -257,6 +258,18 @@ public final class RedisRuntimeCheckpointManager {
         Checkpoint latest = config.isDeferAckUntilCheckpoint()
                 ? getLatestSinkCommittedCheckpoint()
                 : getLatestCheckpoint();
+        if (config.isDeferAckUntilCheckpoint()) {
+            // A two-phase-commit epoch is stored before it is committed, so the newest
+            // checkpoint can be in doubt: its offsets and its transaction handles were
+            // captured together, and adopting both lets recovery finalize the staged data
+            // with recoverAndCommit instead of re-processing those records. The lookup
+            // already refuses a superseded or discarded epoch, so whatever it returns is by
+            // construction newer than any sink-committed checkpoint.
+            Checkpoint inDoubt = getLatestInDoubtTwoPhaseCheckpoint();
+            if (inDoubt != null) {
+                latest = inDoubt;
+            }
+        }
         if (latest == null) {
             return null;
         }
@@ -292,18 +305,7 @@ public final class RedisRuntimeCheckpointManager {
             List<Checkpoint> all = storage.listCheckpoints(Integer.MAX_VALUE);
             for (Checkpoint c : all) {
                 if (c == null) continue;
-                try {
-                    if (isSinkCommittedMarkerPresent(c.getCheckpointId())) {
-                        return c;
-                    }
-                } catch (Exception ex) {
-                    log.debug("Checkpoint state operation failed", ex);
-                }
-                @SuppressWarnings("unchecked")
-                Map<String, Object> meta = c.getStateSnapshot().getState(SNAPSHOT_KEY_META);
-                if (meta == null) continue;
-                Object v = meta.get("sinkCommitted");
-                if (Boolean.TRUE.equals(v)) {
+                if (isSinkCommitted(c)) {
                     return c;
                 }
             }
@@ -312,6 +314,85 @@ public final class RedisRuntimeCheckpointManager {
             log.debug("Failed to scan for sink-committed checkpoints", e);
             return null;
         }
+    }
+
+    /**
+     * The newest checkpoint that stores two-phase-commit transaction handles while never
+     * having been marked sink-committed: its transactions are pre-committed and durable but
+     * not visible, because the process died (or the commit threw) between the checkpoint
+     * store and the commit phase.
+     *
+     * <p>Only the newest checkpoint qualifies. One that was later discarded through
+     * {@link #markTxnEpochAborted} is skipped — its data no longer exists, so adopting its
+     * offsets would skip records that were never written anywhere. One that an even newer
+     * sink-committed checkpoint superseded is skipped as well: both reference the same open
+     * transaction, which that newer checkpoint already finalized.</p>
+     */
+    public Checkpoint getLatestInDoubtTwoPhaseCheckpoint() {
+        try {
+            // newest first: the first checkpoint decides. A sink-committed one means the
+            // epoch of any older in-doubt checkpoint was already finalized by it (both
+            // checkpoints reference the same open transaction), so replaying that older
+            // handle would double-commit — such an epoch is superseded, not in doubt.
+            for (Checkpoint c : storage.listCheckpoints(Integer.MAX_VALUE)) {
+                if (c == null) continue;
+                if (isSinkCommitted(c)) {
+                    return null;
+                }
+                if (getTxnHandles(c).isEmpty()) {
+                    continue;
+                }
+                if (isTxnEpochAborted(c.getCheckpointId())) {
+                    log.info("Skipping in-doubt checkpoint {}: its transaction epoch was discarded",
+                            c.getCheckpointId());
+                    return null;
+                }
+                return c;
+            }
+            return null;
+        } catch (Exception e) {
+            log.debug("Failed to scan for in-doubt two-phase-commit checkpoints", e);
+            return null;
+        }
+    }
+
+    /**
+     * Records that the transaction epoch stored in this checkpoint was discarded (a later
+     * checkpoint failed before it was stored), so the checkpoint must never be adopted as
+     * a restore point.
+     */
+    public boolean markTxnEpochAborted(long checkpointId) {
+        try {
+            RBucket<String> b = redissonClient.getBucket(txnAbortedMarkerKey(checkpointId), StringCodec.INSTANCE);
+            b.set("1");
+            return true;
+        } catch (Exception e) {
+            log.debug("Failed to mark checkpoint {} txn epoch aborted", checkpointId, e);
+            return false;
+        }
+    }
+
+    public boolean isTxnEpochAborted(long checkpointId) {
+        try {
+            RBucket<String> b = redissonClient.getBucket(txnAbortedMarkerKey(checkpointId), StringCodec.INSTANCE);
+            return b.isExists();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public String txnAbortedMarkerKey(long checkpointId) {
+        return storage.getKeyPrefix() + TXN_ABORTED_MARKER_PREFIX + checkpointId;
+    }
+
+    /** A checkpoint is sink-committed once the marker exists or the snapshot meta says so. */
+    @SuppressWarnings("unchecked")
+    private boolean isSinkCommitted(Checkpoint c) throws Exception {
+        if (isSinkCommittedMarkerPresent(c.getCheckpointId())) {
+            return true;
+        }
+        Map<String, Object> meta = c.getStateSnapshot().getState(SNAPSHOT_KEY_META);
+        return meta != null && Boolean.TRUE.equals(meta.get("sinkCommitted"));
     }
 
     private Map<String, Map<Integer, String>> snapshotOffsets(List<PipelineKey> pipelines,

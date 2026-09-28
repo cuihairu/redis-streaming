@@ -218,6 +218,10 @@ public final class RedisStreamExecutionEnvironment {
         ScheduledExecutorService checkpointExecutor = null;
         AtomicBoolean checkpointing = new AtomicBoolean(false);
         DeferredAcks deferredAcks = new DeferredAcks();
+        TwoPhaseEpochTracker twoPhaseEpochs = new TwoPhaseEpochTracker();
+        // set when at least one runner replayed a stored transaction during restore
+        final java.util.concurrent.atomic.AtomicBoolean twoPhaseRecoveryReplayed =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
         java.util.concurrent.atomic.AtomicReference<Long> restoredCheckpointIdRef = new java.util.concurrent.atomic.AtomicReference<>(null);
         // full checkpoint object kept for two-phase-commit recovery (runner build happens
         // after the restore, and the compensation needs the stored txn handles)
@@ -259,8 +263,10 @@ public final class RedisStreamExecutionEnvironment {
                     if (restoredCheckpointId != null) {
                         runner.onCheckpointRestore(restoredCheckpointId);
                         Checkpoint restoredCp = restoredCheckpointRef.get();
-                        if (restoredCp != null) {
-                            recoverTwoPhaseTransactions(runner, runners.size() - 1, checkpointManager, restoredCp);
+                        if (restoredCp != null
+                                && recoverTwoPhaseTransactions(runner, runners.size() - 1,
+                                        checkpointManager, restoredCp)) {
+                            twoPhaseRecoveryReplayed.set(true);
                         }
                     }
 
@@ -295,6 +301,13 @@ public final class RedisStreamExecutionEnvironment {
                 }
             }
 
+            // every runner replayed its stored transactions: the restored checkpoint is now
+            // genuinely sink-committed, so mark it once (not per runner) to keep a later
+            // restore from replaying the same handles again
+            if (twoPhaseRecoveryReplayed.get()) {
+                markRecoveredCheckpointCommitted(checkpointManager, restoredCheckpointRef.get());
+            }
+
             Duration interval = config.getCheckpointInterval();
             if (interval != null && !interval.isZero() && !interval.isNegative()) {
                 int threads = Math.max(1, config.getCheckpointThreads());
@@ -307,7 +320,8 @@ public final class RedisStreamExecutionEnvironment {
                         return;
                     }
                     try {
-                        triggerCheckpointInternal(consumers, runners, checkpointManager, pipelineKeys, deferredAcks);
+                        triggerCheckpointInternal(consumers, runners, checkpointManager, pipelineKeys,
+                                deferredAcks, twoPhaseEpochs);
                     } catch (Exception e) {
                         log.debug("Periodic checkpoint failed (jobName={})", config.getJobName(), e);
                     } finally {
@@ -325,7 +339,7 @@ public final class RedisStreamExecutionEnvironment {
         }
 
         return new LaunchedJobClient(checkpointExecutor, sharedTimerExecutor, consumers, runners,
-                checkpointManager, pipelineKeys, deferredAcks, checkpointing, restoredCheckpointIdRef);
+                checkpointManager, pipelineKeys, deferredAcks, twoPhaseEpochs, checkpointing, restoredCheckpointIdRef);
     }
 
 
@@ -342,6 +356,7 @@ public final class RedisStreamExecutionEnvironment {
         private final RedisRuntimeCheckpointManager checkpointManager;
         private final List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys;
         private final DeferredAcks deferredAcks;
+        private final TwoPhaseEpochTracker twoPhaseEpochs;
         private final AtomicBoolean checkpointing;
         private final java.util.concurrent.atomic.AtomicReference<Long> restoredCheckpointId;
 
@@ -352,6 +367,7 @@ public final class RedisStreamExecutionEnvironment {
                                   RedisRuntimeCheckpointManager checkpointManager,
                                   List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
                                   DeferredAcks deferredAcks,
+                                  TwoPhaseEpochTracker twoPhaseEpochs,
                                   AtomicBoolean checkpointing,
                                   java.util.concurrent.atomic.AtomicReference<Long> restoredCheckpointId) {
             this.checkpointExecutor = checkpointExecutor;
@@ -361,6 +377,7 @@ public final class RedisStreamExecutionEnvironment {
             this.checkpointManager = checkpointManager;
             this.pipelineKeys = pipelineKeys;
             this.deferredAcks = deferredAcks;
+            this.twoPhaseEpochs = twoPhaseEpochs;
             this.checkpointing = checkpointing;
             this.restoredCheckpointId = restoredCheckpointId;
         }
@@ -397,7 +414,8 @@ public final class RedisStreamExecutionEnvironment {
                 return null;
             }
             try {
-                return triggerCheckpointInternal(consumers, runners, checkpointManager, pipelineKeys, deferredAcks);
+                return triggerCheckpointInternal(consumers, runners, checkpointManager, pipelineKeys,
+                        deferredAcks, twoPhaseEpochs);
             } finally {
                 checkpointing.set(false);
             }
@@ -669,8 +687,10 @@ public final class RedisStreamExecutionEnvironment {
                                                  List<RedisPipelineRunner<?>> runners,
                                                  RedisRuntimeCheckpointManager checkpointManager,
                                                  List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
-                                                 DeferredAcks deferredAcks) {
-        Checkpoint cp = triggerCheckpointWhilePaused(consumers, runners, checkpointManager, pipelineKeys, deferredAcks);
+                                                 DeferredAcks deferredAcks,
+                                                 TwoPhaseEpochTracker twoPhaseEpochs) {
+        Checkpoint cp = triggerCheckpointWhilePaused(consumers, runners, checkpointManager, pipelineKeys,
+                deferredAcks, twoPhaseEpochs);
         if (cp != null) {
             // RT-H2: the retention sweep lists and fully deserializes every retained
             // checkpoint. It used to run inside the paused window below, stretching the
@@ -681,14 +701,26 @@ public final class RedisStreamExecutionEnvironment {
         return cp;
     }
 
-    /** Best-effort abort of every open two-phase-commit epoch; failures are logged, not propagated. */
-    private void abortTwoPhaseQuietly(List<RedisPipelineRunner<?>> runners) {
+    /**
+     * Best-effort abort of every open two-phase-commit epoch; failures are logged, not
+     * propagated. When an earlier checkpoint already stored this epoch's handles, that
+     * checkpoint is marked aborted so a later restore skips it — its offsets must not be
+     * adopted, because the data they refer to was just discarded.
+     */
+    private void abortTwoPhaseQuietly(List<RedisPipelineRunner<?>> runners,
+                                      RedisRuntimeCheckpointManager checkpointManager,
+                                      TwoPhaseEpochTracker twoPhaseEpochs) {
         for (RedisPipelineRunner<?> r : runners) {
             try {
                 r.abortTwoPhaseCommits();
             } catch (Exception e) {
                 log.warn("Two-phase abort failed (jobName={})", config.getJobName(), e);
             }
+        }
+        Long durable = twoPhaseEpochs.takeDurable();
+        if (durable != null && checkpointManager.markTxnEpochAborted(durable)) {
+            log.info("Marked checkpoint {} as holding a discarded two-phase epoch (jobName={})",
+                    durable, config.getJobName());
         }
     }
 
@@ -699,36 +731,59 @@ public final class RedisStreamExecutionEnvironment {
      * {@code recoverAndCommit} — the sink contract makes that idempotent, so sinks that did
      * commit before dying tolerate the replay. Handles of an already sink-committed
      * checkpoint are stale and skipped: their data is visible, fresh epochs begin new
-     * transactions.
+     * transactions. Returns whether this runner replayed anything, so the caller can mark
+     * the checkpoint committed only after every runner finished.
      */
-    private void recoverTwoPhaseTransactions(RedisPipelineRunner<?> runner,
+    private boolean recoverTwoPhaseTransactions(RedisPipelineRunner<?> runner,
                                              int runnerIndex,
                                              RedisRuntimeCheckpointManager checkpointManager,
                                              Checkpoint restored) {
         try {
             Map<String, String> handles = checkpointManager.getTxnHandles(restored);
             if (handles.isEmpty()) {
-                return;
+                return false;
             }
             boolean sinkCommitted = checkpointManager.isSinkCommittedMarkerPresent(restored.getCheckpointId());
             if (sinkCommitted) {
-                return;
+                return false;
             }
             String prefix = runnerIndex + ":";
+            boolean replayedAny = false;
             for (Map.Entry<String, String> e : handles.entrySet()) {
                 if (!e.getKey().startsWith(prefix)) {
                     continue;
                 }
                 int sinkIndex = Integer.parseInt(e.getKey().substring(prefix.length()));
                 runner.recoverTwoPhaseCommit(sinkIndex, e.getValue());
+                replayedAny = true;
                 log.info("Recovered two-phase-commit transaction for runner {} sink {} from checkpoint {} (jobName={})",
                         runnerIndex, sinkIndex, restored.getCheckpointId(), config.getJobName());
             }
+            return replayedAny;
         } catch (Exception e) {
             // matches the restore path's tolerance: a broken compensation is surfaced in the
             // logs but does not prevent the job from starting
             log.error("Two-phase-commit recovery failed (jobName={}, checkpointId={})",
                     config.getJobName(), restored.getCheckpointId(), e);
+        }
+        return false;
+    }
+
+    /**
+     * Once every runner of the restored checkpoint has replayed its transaction handles, the
+     * staged data is visible again, so the checkpoint is genuinely sink-committed: marking
+     * it keeps a later restore from replaying the same handles a second time and lets the
+     * normal restore path pick it up. Only the last runner that actually replayed something
+     * triggers this, and only if no runner failed.
+     */
+    private void markRecoveredCheckpointCommitted(RedisRuntimeCheckpointManager checkpointManager,
+                                                  Checkpoint restored) {
+        if (checkpointManager.markSinkCommitted(restored)) {
+            log.info("Marked recovered checkpoint {} sink-committed after replaying its transactions (jobName={})",
+                    restored.getCheckpointId(), config.getJobName());
+        } else {
+            log.warn("Could not mark recovered checkpoint {} sink-committed; its transactions will be "
+                    + "replayed again on the next restore (jobName={})", restored.getCheckpointId(), config.getJobName());
         }
     }
 
@@ -736,7 +791,8 @@ public final class RedisStreamExecutionEnvironment {
                                                     List<RedisPipelineRunner<?>> runners,
                                                     RedisRuntimeCheckpointManager checkpointManager,
                                                     List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
-                                                    DeferredAcks deferredAcks) {
+                                                    DeferredAcks deferredAcks,
+                                                    TwoPhaseEpochTracker twoPhaseEpochs) {
         if (consumers == null || consumers.isEmpty()) {
             return null;
         }
@@ -820,7 +876,7 @@ public final class RedisStreamExecutionEnvironment {
                     }
                 } catch (Exception e) {
                     log.error("Two-phase preCommit failed (jobName={}, checkpointId={})", config.getJobName(), checkpointId, e);
-                    abortTwoPhaseQuietly(runners);
+                    abortTwoPhaseQuietly(runners, checkpointManager, twoPhaseEpochs);
                     for (RedisPipelineRunner<?> rr : runners) {
                         rr.onCheckpointAbort(checkpointId, e);
                     }
@@ -840,9 +896,14 @@ public final class RedisStreamExecutionEnvironment {
                 RedisRuntimeMetrics.get().recordCheckpointStoreDuration(config.getJobName(), (System.nanoTime() - storeStartNs) / 1_000_000);
             } catch (Exception ignore) {
             }
+            if (cp != null) {
+                // the epoch's handles are now durable in this checkpoint: it becomes the
+                // in-doubt restore point until the sink commit below succeeds
+                twoPhaseEpochs.markDurable(checkpointId);
+            }
             if (cp == null) {
                 // nothing was stored: the pre-committed transactions must never become visible
-                abortTwoPhaseQuietly(runners);
+                abortTwoPhaseQuietly(runners, checkpointManager, twoPhaseEpochs);
                 for (RedisPipelineRunner<?> r : runners) {
                     r.onCheckpointAbort(checkpointId, null);
                 }
@@ -865,6 +926,8 @@ public final class RedisStreamExecutionEnvironment {
                     r.commitTwoPhaseCommits();
                 }
                 checkpointManager.markSinkCommitted(cp);
+                // the epoch is finalized and its handles consumed: nothing stays in doubt
+                twoPhaseEpochs.clearDurable();
                 try {
                     RedisRuntimeMetrics.get().recordCheckpointSinkCommitDuration(config.getJobName(), (System.nanoTime() - sinkCommitStartNs) / 1_000_000);
                 } catch (Exception ignore) {
@@ -876,6 +939,9 @@ public final class RedisStreamExecutionEnvironment {
                 // recovery path is obliged to commit. The checkpoint stays unmarked and the
                 // deferred acks below are skipped, so the records come back and recovery
                 // replays recoverAndCommit from the stored handles (idempotent by contract).
+                // The checkpoint stays flagged as the in-doubt epoch (markDurable above), so
+                // a later failure that DOES abort the epoch invalidates exactly this
+                // checkpoint instead of leaving an adoptable-but-dead restore point.
                 for (RedisPipelineRunner<?> r : runners) {
                     r.onCheckpointAbort(checkpointId, e);
                 }
@@ -948,6 +1014,34 @@ public final class RedisStreamExecutionEnvironment {
             headers.put(MqHeaders.DEFER_ACK, "true");
             deferredAcks.record(topic, consumerGroup, pid, id);
         } catch (Exception ignore) {
+        }
+    }
+
+    /**
+     * Remembers which checkpoint currently holds the durable transaction handles of the
+     * open two-phase-commit epoch. A checkpoint written but never sink-committed is adopted
+     * as the restore point so recovery can finalize it — but once the epoch is discarded
+     * (a later checkpoint fails before it is stored), that checkpoint must be marked as
+     * aborted, otherwise recovery would adopt offsets for data that no longer exists.
+     */
+    private static final class TwoPhaseEpochTracker {
+        private final java.util.concurrent.atomic.AtomicLong durableCheckpointId =
+                new java.util.concurrent.atomic.AtomicLong(-1L);
+
+        /** The epoch's handles are now durable in this checkpoint. */
+        void markDurable(long checkpointId) {
+            durableCheckpointId.set(checkpointId);
+        }
+
+        /** The epoch was committed and sink-committed; its handles are consumed. */
+        void clearDurable() {
+            durableCheckpointId.set(-1L);
+        }
+
+        /** Returns the checkpoint holding the discarded epoch's handles, if any. */
+        Long takeDurable() {
+            long id = durableCheckpointId.getAndSet(-1L);
+            return id < 0 ? null : id;
         }
     }
 
