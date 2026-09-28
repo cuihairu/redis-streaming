@@ -100,6 +100,34 @@ export REDIS_URL=redis://custom-host:6379
 ./gradlew integrationTest
 ```
 
+### CDC Manager Integration Tests
+
+`CDCManagerLifecycleMultiConnectorIntegrationTest` (module `:cdc`) covers manager-level
+start/stop/restart and multi-connector concurrency with real `DatabasePollingCDCConnector`s:
+
+- The lifecycle/concurrency legs run against an **embedded H2 database** — no external
+  services needed, they always execute as part of `integrationTest`/`check`.
+- The **Redis MQ bridge leg** (`managerEventsBridgeToRealRedisMqTopic`) forwards captured
+  change events through `ChangeEventQueueSink` onto a real Redis-backed MQ topic and asserts
+  delivery via a real consumer. It requires a reachable Redis (`REDIS_URL`, default
+  `redis://127.0.0.1:6379`); when none is reachable the test is **skipped automatically** with
+  a message. To trigger it:
+
+  ```bash
+  # Option 1: full test environment (Redis + MySQL + PostgreSQL + Elasticsearch)
+  docker-compose -f docker-compose.test.yml up -d
+
+  # Option 2: any running Redis
+  export REDIS_URL=redis://localhost:6379
+
+  ./gradlew :cdc:integrationTest --tests "CDCManagerLifecycleMultiConnectorIntegrationTest"
+  ```
+
+- The MySQL/PostgreSQL connector-level integration tests
+  (`DatabasePollingCDCConnectorIntegrationTest`, `CDCDisconnectReconnectIntegrationTest`,
+  `CDCPositionResumeIntegrationTest`) additionally require `MYSQL_URL` / `POSTGRES_URL`
+  and skip via JUnit assumptions when those variables are not set.
+
 ## Common Test Scenarios
 
 ### Daily Development

@@ -125,7 +125,7 @@
 - [x] CDC 配置构建器测试：`CDCConfigurationBuilderTest`（10 场景：各连接器专属配置/自定义属性/默认值/工厂方法/名称校验）+ `CDCConfigValidationCoverageTest` + `CDCConfigurationDtoTest` + `CDCConfigurationTest`
 - [x] 变更事件序列化/反序列化测试：**本轮新增 `ChangeEventSerializationTest`（5 用例）**——全字段 Jackson 往返（含 Instant 时间戳，jsr310 注册）、7 种 EventType 表驱动往返、无参构造器 null 字段往返、手写 JSON 容忍解析、线上 JSON 形状钉住；注：Lombok `is*()` 谓词会序列化出无 setter 的属性，读取端必须关闭 FAIL_ON_UNKNOWN_PROPERTIES（仓库惯例 `findAndRegisterModules()` 不够）；MQ 桥实际走 `ChangeEventQueueSink.toPayload` 的 payload-map 而非 Jackson（已有 `ChangeEventQueueSinkTest` 背书）
 - [x] 连接器工厂测试：`CDCConnectorFactoryTest`（3 类型枚举+字符串+大小写变体+非法名 IAE）+ `CdcFactorySourceCoverageTest`
-- [ ] 集成测试（CDC 启动停止 / 多连接器并发）：本轮不派——管理器级生命周期已由上述单测覆盖，Redis/真实库环境集成条目留待后续派发
+- [x] 集成测试（CDC 启动停止 / 多连接器并发）：**本轮新增 `CDCManagerLifecycleMultiConnectorIntegrationTest`（3 用例，@Tag("integration")，10 轮 --rerun 全绿）**——真实 H2 JDBC + 真实 Redis（REDIS_URL）：(1) manager start/幂等 stop/重启——基线跳过存量行、运行期捕获、停机窗口行经重启按保留水位补收（CDC resume 语义 + CDC-M6 调度器重建）；(2) 3 连接器并发推模式互不串扰（onEvents 回调/健康/指标断言齐全，调度器独占批次不漏给 pull poll）；(3) 变更事件经 `ChangeEventQueueSink` 桥接真实 Redis MQ topic、真实消费者断言逐行 after-image 送达与分区键互异。守卫：Redis 不可达时 Assumptions 自动 SKIP，触发方式已注明 TESTING.md（H2 腿无外部依赖恒跑）。注：H2 将未加引号列名大写化，after-image 键为大写列名，`generateKey` 的 "id" 小写取键在 H2 下走全值 join 兜底——桥接用例不钉该内部格式
 
 ---
 
