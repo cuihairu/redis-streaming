@@ -16,7 +16,7 @@ class ConfigInterfaceDefaultsCoverageTest {
         ConfigService service = new ConfigService() {
             @Override
             public String getConfig(String dataId, String group) {
-                return null;
+                return dataId.equals("present") ? "value" : null;
             }
             @Override
             public boolean publishConfig(String dataId, String group, String content) {
@@ -51,6 +51,11 @@ class ConfigInterfaceDefaultsCoverageTest {
         assertEquals(0, service.trimHistoryBySize("d", "g", 5));
         assertEquals(0, service.trimHistoryByAge("d", "g", Duration.ofDays(1)));
         assertFalse(service.isRunning());
+
+        // ConfigService re-declares the 3-arg getConfig default (separate bytecode from
+        // ConfigManager's copy), so both branches need exercising through this reference
+        assertEquals("value", service.getConfig("present", "g", "fallback"));
+        assertEquals("fallback", service.getConfig("absent", "g", "fallback"));
     }
 
     @Test

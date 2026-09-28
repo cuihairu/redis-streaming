@@ -198,7 +198,7 @@
 ---
 
 ### 12. io.github.cuihairu.redis.streaming.config.impl - 55%
-**关键问题：** 配置中心实现测试不足
+**关键问题：** 配置中心实现测试不足（已过期：2026-09-28 实测包级 line 99%/branch 93%，config 接口包 100%/100%；`ConfigService`/`RedisConfigCenter`/`RedisConfigService` 三类 0 未覆盖行，唯一残差 RedisConfigService L521 catch-ignore 臂为防御性天花板——`handleConfigChangeEvent` 内部已捕获全部 Exception，外层臂仅 Error 可达。下方集成项仍需 Redis 环境，挂起不派）
 **未覆盖的关键类：**
 - `RedisConfigCenter` - 0% (14 个方法未覆盖)
 - `RedisConfigService` - 58% (3 个方法未覆盖)
