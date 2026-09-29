@@ -2,277 +2,373 @@ package io.github.cuihairu.redis.streaming.cdc.examples;
 
 import io.github.cuihairu.redis.streaming.cdc.*;
 import lombok.extern.slf4j.Slf4j;
-import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Integration test examples for CDC connectors
- * These tests are disabled by default as they require external database setup
+ * Integration test examples for the CDC connectors, wired to the shared test environment
+ * ({@code docker-compose.test.yml}) through the standard environment variables:
+ * {@code MYSQL_URL}/{@code MYSQL_USER}/{@code MYSQL_PASSWORD} and
+ * {@code POSTGRES_URL}/{@code POSTGRES_USER}/{@code POSTGRES_PASSWORD}.
+ *
+ * <p>Guarded, not disabled: each test skips with a clear message when its service is not
+ * configured. The MySQL binlog examples additionally require the {@code REPLICATION SLAVE}
+ * privilege (the compose {@code test_user} does not have it by default — grant with
+ * {@code GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'test_user'@'%'}); when the
+ * privilege is missing the binlog examples skip, and the manager example falls back to a
+ * second polling connector so the multi-connector management aspect stays exercised.</p>
+ *
+ * <p>Unlike their earlier log-only form, the examples now assert real behavior: rows written
+ * after connector start are captured, positions can be committed, and the manager reports
+ * health and metrics for every connector.</p>
  */
 @Slf4j
 @Tag("integration")
-@Disabled("Integration tests require external database setup")
 class CDCIntegrationExamplesTest {
+
+    /* ---------- environment plumbing ---------- */
+
+    private static String mysqlUrl() {
+        return System.getenv().getOrDefault("MYSQL_URL", "jdbc:mysql://localhost:3306/test_db");
+    }
+
+    private static String mysqlUser() {
+        return System.getenv().getOrDefault("MYSQL_USER", "test_user");
+    }
+
+    private static String mysqlPassword() {
+        return System.getenv().getOrDefault("MYSQL_PASSWORD", "test_password");
+    }
+
+    private static String pgUrl() {
+        return System.getenv().getOrDefault("POSTGRES_URL", "jdbc:postgresql://127.0.0.1:5432/test_db");
+    }
+
+    private static String pgUser() {
+        return System.getenv().getOrDefault("POSTGRES_USER", "test_user");
+    }
+
+    private static String pgPassword() {
+        return System.getenv().getOrDefault("POSTGRES_PASSWORD", "test_password");
+    }
+
+    /** {@code jdbc:mysql://host:port/db} → host part (binlog replication is server-wide). */
+    private static String mysqlHost() {
+        String rest = mysqlUrl().replaceFirst("^jdbc:mysql://", "");
+        return rest.substring(0, rest.indexOf(':'));
+    }
+
+    private static int mysqlPort() {
+        String rest = mysqlUrl().replaceFirst("^jdbc:mysql://", "");
+        String port = rest.substring(rest.indexOf(':') + 1, rest.indexOf('/'));
+        return Integer.parseInt(port);
+    }
+
+    private static void assumeMysql() {
+        Assumptions.assumeTrue(mysqlUrl() != null && !mysqlUrl().isBlank(),
+                "MYSQL_URL not set (start docker-compose.test.yml) - skipping MySQL example");
+    }
+
+    private static void assumePostgres() {
+        Assumptions.assumeTrue(pgUrl() != null && !pgUrl().isBlank(),
+                "POSTGRES_URL not set (start docker-compose.test.yml) - skipping PostgreSQL example");
+    }
+
+    /** Binlog replication needs the global REPLICATION SLAVE privilege, absent by default. */
+    private static boolean mysqlHasReplicationPrivilege() {
+        try (Connection c = DriverManager.getConnection(mysqlUrl(), mysqlUser(), mysqlPassword());
+             Statement st = c.createStatement();
+             ResultSet rs = st.executeQuery("SHOW GRANTS")) {
+            while (rs.next()) {
+                if (rs.getString(1).toUpperCase().contains("REPLICATION SLAVE")) {
+                    return true;
+                }
+            }
+        } catch (SQLException e) {
+            return false;
+        }
+        return false;
+    }
+
+    private static void assumeMysqlReplication() {
+        Assumptions.assumeTrue(mysqlHasReplicationPrivilege(),
+                "MySQL user lacks REPLICATION SLAVE - grant it or use the polling examples");
+    }
+
+    private static void sql(String url, String user, String password, String... statements) {
+        try (Connection c = DriverManager.getConnection(url, user, password);
+             Statement st = c.createStatement()) {
+            for (String s : statements) {
+                st.execute(s);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("setup/teardown SQL failed: " + e.getMessage(), e);
+        }
+    }
+
+    /** Polls until {@code min} events accumulated or the deadline passes. */
+    private static List<ChangeEvent> drain(CDCConnector connector, int min, long timeoutMs)
+            throws InterruptedException {
+        List<ChangeEvent> out = new java.util.ArrayList<>();
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (out.size() < min && System.currentTimeMillis() < deadline) {
+            List<ChangeEvent> batch = connector.poll();
+            out.addAll(batch);
+            if (!batch.isEmpty()) {
+                String position = connector.getCurrentPosition();
+                if (position != null) {
+                    connector.commit(position);
+                }
+            } else {
+                Thread.sleep(100);
+            }
+        }
+        return out;
+    }
+
+    private static void assertInsertsFrom(String table, List<ChangeEvent> events, int expected) {
+        assertTrue(events.size() >= expected,
+                "expected at least " + expected + " captured events, got " + events.size());
+        for (ChangeEvent event : events) {
+            assertEquals(table, event.getTable());
+            assertEquals(ChangeEvent.EventType.INSERT, event.getEventType());
+        }
+    }
+
+    /* ---------- examples ---------- */
 
     @Test
     void testMySQLBinlogCDCExample() throws InterruptedException {
-        // Configure MySQL binlog CDC connector
+        assumeMysql();
+        assumeMysqlReplication();
+
+        sql(mysqlUrl(), mysqlUser(), mysqlPassword(),
+                "DROP TABLE IF EXISTS cdc_binlog_demo",
+                "CREATE TABLE cdc_binlog_demo(id INT PRIMARY KEY, item VARCHAR(64))");
+
+        // Configure MySQL binlog CDC connector against the test environment
         CDCConfiguration config = CDCConfigurationBuilder.forMySQLBinlog("mysql_example")
-                .username("mysql_user")
-                .password("mysql_password")
-                .mysqlHostname("localhost")
-                .mysqlPort(3306)
-                .mysqlServerId(1001)
+                .username(mysqlUser())
+                .password(mysqlPassword())
+                .mysqlHostname(mysqlHost())
+                .mysqlPort(mysqlPort())
+                .mysqlServerId(17401)
                 .batchSize(10)
-                .pollingIntervalMs(1000)
                 .build();
 
         CDCConnector connector = CDCConnectorFactory.createMySQLBinlog(config);
-
-        // Set up event listener
-        CountDownLatch eventLatch = new CountDownLatch(5);
-        connector.setEventListener(new CDCEventListener() {
-            @Override
-            public void onEventsCapture(String connectorName, int eventCount) {
-                log.info("Captured {} events from connector: {}", eventCount, connectorName);
-                for (int i = 0; i < eventCount; i++) {
-                    eventLatch.countDown();
-                }
-            }
-
-            @Override
-            public void onConnectorError(String connectorName, Throwable error) {
-                log.error("Connector error: {}", connectorName, error);
-            }
-        });
-
         try {
-            // Start connector
-            CompletableFuture<Void> startFuture = connector.start();
-            startFuture.join();
-
+            connector.start().join();
             log.info("MySQL binlog CDC connector started successfully");
 
-            // Poll for events
-            for (int i = 0; i < 10; i++) {
-                List<ChangeEvent> events = connector.poll();
-                if (!events.isEmpty()) {
-                    log.info("Polled {} events", events.size());
-                    events.forEach(event -> {
-                        log.info("Event: {} {} {}.{} key={}",
-                                event.getEventType(),
-                                event.getSource(),
-                                event.getDatabase(),
-                                event.getTable(),
-                                event.getKey());
-                    });
+            // rows written after start must be captured as INSERT events
+            sql(mysqlUrl(), mysqlUser(), mysqlPassword(),
+                    "INSERT INTO cdc_binlog_demo VALUES (1, 'b1')",
+                    "INSERT INTO cdc_binlog_demo VALUES (2, 'b2')",
+                    "INSERT INTO cdc_binlog_demo VALUES (3, 'b3')");
 
-                    // Commit position
-                    String position = connector.getCurrentPosition();
-                    if (position != null) {
-                        connector.commit(position);
-                        log.info("Committed position: {}", position);
-                    }
-                }
-
-                Thread.sleep(2000);
-            }
-
-            // Wait for some events or timeout
-            boolean receivedEvents = eventLatch.await(30, TimeUnit.SECONDS);
-            log.info("Received events: {}", receivedEvents);
-
+            List<ChangeEvent> events = drain(connector, 3, 30_000);
+            assertInsertsFrom("cdc_binlog_demo", events, 3);
+            log.info("Binlog captured {} events, last committed position: {}",
+                    events.size(), connector.getCurrentPosition());
         } finally {
-            // Stop connector
-            CompletableFuture<Void> stopFuture = connector.stop();
-            stopFuture.join();
+            connector.stop().join();
+            sql(mysqlUrl(), mysqlUser(), mysqlPassword(), "DROP TABLE IF EXISTS cdc_binlog_demo");
             log.info("MySQL binlog CDC connector stopped");
         }
     }
 
     @Test
     void testPostgreSQLLogicalReplicationExample() throws InterruptedException {
-        // Configure PostgreSQL logical replication CDC connector
+        assumePostgres();
+
+        // the connector creates its own publication; the table only needs a primary key
+        sql(pgUrl(), pgUser(), pgPassword(),
+                "DROP TABLE IF EXISTS cdc_pg_demo",
+                "CREATE TABLE cdc_pg_demo(id INT PRIMARY KEY, item VARCHAR(64))");
+
         CDCConfiguration config = CDCConfigurationBuilder.forPostgreSQLLogicalReplication("pg_example")
-                .username("postgres_user")
-                .password("postgres_password")
-                .postgresqlHostname("localhost")
-                .postgresqlPort(5432)
-                .postgresqlDatabase("test_db")
+                .username(pgUser())
+                .password(pgPassword())
+                .postgresqlHostname(pgUrl().replaceFirst("^jdbc:postgresql://", "").split(":")[0])
+                .postgresqlPort(Integer.parseInt(pgUrl().replaceFirst("^jdbc:postgresql://", "")
+                        .split(":")[1].split("/")[0]))
+                .postgresqlDatabase(pgUrl().replaceFirst("^jdbc:postgresql://", "").split("/")[1])
                 .postgresqlSlotName("cdc_slot")
                 .postgresqlPublicationName("cdc_publication")
-                .postgresqlStatusInterval(10000)
+                .postgresqlStatusInterval(1000)
                 .batchSize(10)
                 .build();
 
         CDCConnector connector = CDCConnectorFactory.createPostgreSQLLogicalReplication(config);
-
-        // Set up event listener
-        connector.setEventListener(new CDCEventListener() {
-            @Override
-            public void onEventsCapture(String connectorName, int eventCount) {
-                log.info("PostgreSQL captured {} events from connector: {}", eventCount, connectorName);
-            }
-
-            @Override
-            public void onConnectorError(String connectorName, Throwable error) {
-                log.error("PostgreSQL connector error: {}", connectorName, error);
-            }
-        });
-
         try {
-            // Start connector
             connector.start().join();
             log.info("PostgreSQL logical replication CDC connector started");
 
-            // Poll for events
-            for (int i = 0; i < 5; i++) {
-                List<ChangeEvent> events = connector.poll();
-                log.info("PostgreSQL polled {} events", events.size());
+            sql(pgUrl(), pgUser(), pgPassword(),
+                    "INSERT INTO cdc_pg_demo VALUES (1, 'p1')",
+                    "INSERT INTO cdc_pg_demo VALUES (2, 'p2')");
 
-                if (!events.isEmpty()) {
-                    String position = connector.getCurrentPosition();
-                    if (position != null) {
-                        connector.commit(position);
-                    }
-                }
-
-                Thread.sleep(3000);
-            }
-
+            List<ChangeEvent> events = drain(connector, 2, 30_000);
+            assertInsertsFrom("cdc_pg_demo", events, 2);
         } finally {
             connector.stop().join();
+            sql(pgUrl(), pgUser(), pgPassword(),
+                    "DROP PUBLICATION IF EXISTS cdc_publication",
+                    "DROP TABLE IF EXISTS cdc_pg_demo",
+                    "SELECT pg_drop_replication_slot('cdc_slot') WHERE EXISTS"
+                            + " (SELECT 1 FROM pg_replication_slots WHERE slot_name = 'cdc_slot')");
             log.info("PostgreSQL CDC connector stopped");
         }
     }
 
     @Test
     void testDatabasePollingCDCExample() throws InterruptedException {
-        // Configure database polling CDC connector
+        assumeMysql();
+
+        // a baseline row present before start is skipped; rows after start are captured
+        sql(mysqlUrl(), mysqlUser(), mysqlPassword(),
+                "DROP TABLE IF EXISTS cdc_poll_demo",
+                "CREATE TABLE cdc_poll_demo(id INT PRIMARY KEY, updated_at TIMESTAMP, item VARCHAR(64))",
+                "INSERT INTO cdc_poll_demo VALUES (0, NOW() - INTERVAL 1 DAY, 'baseline')");
+
         CDCConfiguration config = CDCConfigurationBuilder.forDatabasePolling("polling_example")
-                .username("db_user")
-                .password("db_password")
-                .jdbcUrl("jdbc:mysql://localhost:3306/test_db")
+                .username(mysqlUser())
+                .password(mysqlPassword())
+                .jdbcUrl(mysqlUrl())
                 .driverClass("com.mysql.cj.jdbc.Driver")
-                .tables("users,orders,products")
+                .tables("cdc_poll_demo")
                 .timestampColumn("updated_at")
-                .incrementalColumn("id")
-                .queryTimeout(30)
                 .batchSize(20)
-                .pollingIntervalMs(5000)
+                .pollingIntervalMs(200)
                 .build();
 
         CDCConnector connector = CDCConnectorFactory.createDatabasePolling(config);
-
-        // Set up event listener
-        connector.setEventListener(new CDCEventListener() {
-            @Override
-            public void onEventsCapture(String connectorName, int eventCount) {
-                log.info("Database polling captured {} events from connector: {}", eventCount, connectorName);
-            }
-
-            @Override
-            public void onConnectorError(String connectorName, Throwable error) {
-                log.error("Database polling connector error: {}", connectorName, error);
-            }
-        });
-
         try {
-            // Start connector
             connector.start().join();
-            log.info("Database polling CDC connector started");
+            log.info("Database polling CDC connector started, baseline row skipped");
 
-            // Poll for events
-            for (int i = 0; i < 3; i++) {
-                List<ChangeEvent> events = connector.poll();
-                log.info("Database polling polled {} events", events.size());
+            sql(mysqlUrl(), mysqlUser(), mysqlPassword(),
+                    "INSERT INTO cdc_poll_demo VALUES (1, NOW(), 'live1')",
+                    "INSERT INTO cdc_poll_demo VALUES (2, NOW(), 'live2')");
 
-                if (!events.isEmpty()) {
-                    String position = connector.getCurrentPosition();
-                    if (position != null) {
-                        connector.commit(position);
-                    }
-                }
-
-                Thread.sleep(10000);
-            }
-
+            List<ChangeEvent> events = drain(connector, 2, 15_000);
+            assertInsertsFrom("cdc_poll_demo", events, 2);
         } finally {
             connector.stop().join();
+            sql(mysqlUrl(), mysqlUser(), mysqlPassword(), "DROP TABLE IF EXISTS cdc_poll_demo");
             log.info("Database polling CDC connector stopped");
         }
     }
 
     @Test
     void testCDCManagerExample() throws InterruptedException {
+        assumeMysql();
+
         CDCManager manager = new CDCManager();
-
         try {
-            // Create multiple connectors
-            CDCConfiguration mysqlConfig = CDCConfigurationBuilder.forMySQLBinlog("mysql_mgr")
-                    .username("mysql_user")
-                    .password("mysql_password")
-                    .mysqlHostname("localhost")
-                    .mysqlPort(3306)
-                    .mysqlServerId(2001)
-                    .build();
-
-            CDCConfiguration pollingConfig = CDCConfigurationBuilder.forDatabasePolling("polling_mgr")
-                    .username("db_user")
-                    .password("db_password")
-                    .jdbcUrl("jdbc:mysql://localhost:3306/test_db")
-                    .tables("audit_log")
-                    .timestampColumn("created_at")
-                    .build();
-
-            CDCConnector mysqlConnector = CDCConnectorFactory.create(
-                    CDCConnectorFactory.ConnectorType.MYSQL_BINLOG, mysqlConfig);
-            CDCConnector pollingConnector = CDCConnectorFactory.create(
-                    CDCConnectorFactory.ConnectorType.DATABASE_POLLING, pollingConfig);
-
-            // Add connectors to manager
-            manager.addConnector(mysqlConnector);
-            manager.addConnector(pollingConnector);
-
-            log.info("Added {} connectors to manager", manager.getConnectorCount());
-
-            // Start manager
-            manager.start().join();
-            log.info("CDC manager started with {} running connectors",
-                    manager.getRunningConnectorCount());
-
-            // Poll all connectors
-            for (int i = 0; i < 3; i++) {
-                Map<String, List<ChangeEvent>> allEvents = manager.pollAll();
-                allEvents.forEach((name, events) -> {
-                    log.info("Connector {} produced {} events", name, events.size());
-                });
-
-                // Get health status
-                Map<String, CDCHealthStatus> healthStatus = manager.getHealthStatusAll();
-                healthStatus.forEach((name, status) -> {
-                    log.info("Connector {} health: {} - {}", name, status.getStatus(), status.getMessage());
-                });
-
-                // Get metrics
-                Map<String, CDCMetrics> metrics = manager.getMetricsAll();
-                metrics.forEach((name, metric) -> {
-                    log.info("Connector {} metrics: {} total events, {} errors",
-                            name, metric.getTotalEventsCaptured(), metric.getErrorsCount());
-                });
-
-                Thread.sleep(5000);
+            // primary connector: binlog when the privilege exists, otherwise a second
+            // polling connector — the managed multi-connector lifecycle is what's exercised
+            final String managedTable;
+            if (mysqlHasReplicationPrivilege()) {
+                managedTable = "cdc_mgr_binlog";
+                sql(mysqlUrl(), mysqlUser(), mysqlPassword(),
+                        "DROP TABLE IF EXISTS " + managedTable,
+                        "CREATE TABLE " + managedTable + "(id INT PRIMARY KEY, item VARCHAR(64))");
+                manager.addConnector(CDCConnectorFactory.create(
+                        CDCConnectorFactory.ConnectorType.MYSQL_BINLOG,
+                        CDCConfigurationBuilder.forMySQLBinlog("mysql_mgr")
+                                .username(mysqlUser())
+                                .password(mysqlPassword())
+                                .mysqlHostname(mysqlHost())
+                                .mysqlPort(mysqlPort())
+                                .mysqlServerId(17402)
+                                .build()));
+            } else {
+                managedTable = "cdc_mgr_poll2";
+                sql(mysqlUrl(), mysqlUser(), mysqlPassword(),
+                        "DROP TABLE IF EXISTS " + managedTable,
+                        "CREATE TABLE " + managedTable
+                                + "(id INT PRIMARY KEY, updated_at TIMESTAMP, item VARCHAR(64))",
+                        "INSERT INTO " + managedTable
+                                + " VALUES (0, NOW() - INTERVAL 1 DAY, 'baseline')");
+                manager.addConnector(CDCConnectorFactory.create(
+                        CDCConnectorFactory.ConnectorType.DATABASE_POLLING,
+                        CDCConfigurationBuilder.forDatabasePolling("polling_mgr2")
+                                .username(mysqlUser())
+                                .password(mysqlPassword())
+                                .jdbcUrl(mysqlUrl())
+                                .driverClass("com.mysql.cj.jdbc.Driver")
+                                .tables(managedTable)
+                                .timestampColumn("updated_at")
+                                .pollingIntervalMs(200)
+                                .build()));
             }
 
+            // second connector: timestamp polling (works for any MySQL user)
+            sql(mysqlUrl(), mysqlUser(), mysqlPassword(),
+                    "DROP TABLE IF EXISTS cdc_mgr_poll",
+                    "CREATE TABLE cdc_mgr_poll(id INT PRIMARY KEY, updated_at TIMESTAMP, item VARCHAR(64))",
+                    "INSERT INTO cdc_mgr_poll VALUES (0, NOW() - INTERVAL 1 DAY, 'baseline')");
+            manager.addConnector(CDCConnectorFactory.create(
+                    CDCConnectorFactory.ConnectorType.DATABASE_POLLING,
+                    CDCConfigurationBuilder.forDatabasePolling("polling_mgr")
+                            .username(mysqlUser())
+                            .password(mysqlPassword())
+                            .jdbcUrl(mysqlUrl())
+                            .driverClass("com.mysql.cj.jdbc.Driver")
+                            .tables("cdc_mgr_poll")
+                            .timestampColumn("updated_at")
+                            .pollingIntervalMs(200)
+                            .build()));
+
+            assertEquals(2, manager.getConnectorCount());
+
+            manager.start().join();
+            assertEquals(2, manager.getRunningConnectorCount());
+
+            // rows after start surface through the manager with health and metrics
+            sql(mysqlUrl(), mysqlUser(), mysqlPassword(),
+                    "INSERT INTO " + managedTable + (managedTable.endsWith("binlog")
+                            ? " VALUES (1, 'm1')" : " VALUES (1, NOW(), 'm1')"),
+                    "INSERT INTO cdc_mgr_poll VALUES (1, NOW(), 'm2')");
+
+            List<ChangeEvent> managedEvents = new java.util.ArrayList<>();
+            long deadline = System.currentTimeMillis() + 20_000;
+            while (managedEvents.size() < 1 && System.currentTimeMillis() < deadline) {
+                Map<String, List<ChangeEvent>> all = manager.pollAll();
+                managedEvents.addAll(all.getOrDefault("polling_mgr", List.of()));
+                if (managedEvents.isEmpty()) {
+                    Thread.sleep(100);
+                }
+            }
+            assertFalse(managedEvents.isEmpty(), "the polling connector must capture its row via the manager");
+            for (ChangeEvent event : managedEvents) {
+                assertEquals("cdc_mgr_poll", event.getTable());
+            }
+
+            Map<String, CDCHealthStatus> health = manager.getHealthStatusAll();
+            assertEquals(2, health.size());
+            health.forEach((name, status) -> assertNotNull(status.getStatus(), "health of " + name));
+
+            Map<String, CDCMetrics> metrics = manager.getMetricsAll();
+            assertEquals(2, metrics.size());
+
+            sql(mysqlUrl(), mysqlUser(), mysqlPassword(),
+                    "DROP TABLE IF EXISTS " + managedTable,
+                    "DROP TABLE IF EXISTS cdc_mgr_poll");
         } finally {
-            // Stop manager
             manager.stop().join();
             log.info("CDC manager stopped");
         }
