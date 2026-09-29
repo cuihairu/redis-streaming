@@ -192,19 +192,19 @@
 
 ---
 
-### 12. io.github.cuihairu.redis.streaming.config.impl - 55%
+### 12. io.github.cuihairu.redis.streaming.config.impl - ✅ 单测+集成收口（2026-09-29；单测 99%/93% 见上方注记，集成条已背书）
 **关键问题：** 配置中心实现测试不足（已过期：2026-09-28 实测包级 line 99%/branch 93%，config 接口包 100%/100%；`ConfigService`/`RedisConfigCenter`/`RedisConfigService` 三类 0 未覆盖行，唯一残差 RedisConfigService L521 catch-ignore 臂为防御性天花板——`handleConfigChangeEvent` 内部已捕获全部 Exception，外层臂仅 Error 可达。下方集成项仍需 Redis 环境，挂起不派）
 **未覆盖的关键类：**
 - `RedisConfigCenter` - 0% (14 个方法未覆盖)
 - `RedisConfigService` - 58% (3 个方法未覆盖)
 
 **建议添加的测试类型：**
-- [ ] **集成测试**（需要 Redis）
-  - 配置发布和订阅测试
-  - 配置版本管理测试
-  - 配置变更通知测试
-  - 配置历史查询测试
-  - 配置权限测试
+- [x] **集成测试**（2026-09-29 收口：4/5 条既有真实 Redis 套件背书，1 条按当前实现不适用）
+  - 配置发布和订阅测试：`ConfigServiceIntegrationTest`（publish→getConfig 往返、`RedisConfigCenter` 生命周期/元数据/无描述发布/removeConfig）
+  - 配置版本管理测试：`ConfigServiceIntegrationTest`（ConfigHistory 含 version 断言）+ `ConfigServiceListenerHistoryIntegrationTest`
+  - 配置变更通知测试：`ConfigChangeSingleDeliveryIntegrationTest`（单次投递）+ `ConfigResyncIntegrationTest`（权威态 resync）+ `RedisConfigServiceListenerTest` + `testRedisConfigCenterListener`
+  - 配置历史查询测试：`ConfigServiceListenerHistoryIntegrationTest` + `ConfigHistorySizeZeroIntegrationTest`
+  - 配置权限测试：**按当前实现不适用**——config 模块生产代码无任何 permission/auth 特性（接口面仅 publish/get/remove/listener/history），条目描述的功能不存在；如需应作为生产特性单列，不在测试轮冒充
 
 ---
 
