@@ -165,12 +165,7 @@
 ## 优先级 3：覆盖率 50%-70%（中等）
 
 ### 10. io.github.cuihairu.redis.streaming.mq.impl - ✅ 集成+单测完成（2026-09-29；单测 95% 见下方既有注记，集成五条已背书）
-**关键问题：** MQ 核心实现测试覆盖不足
-**未覆盖的关键类：**
-- `RedisMessageProducer` - 0% (8 个方法未覆盖)
-- `DlqConsumerAdapter` - 15% (9 个方法未覆盖)
-- `RedisMessageConsumer` - 54% (18 个方法未覆盖)
-- `StreamEntryCodec` - 50% (11 个方法未覆盖)
+**关键问题：** ~~MQ 核心实现测试覆盖不足~~（过期：2026-09-29 新鲜 `:mq:test :mq:jacocoTestReport` 实测包级 95% 指令/91% 分支；`RedisMessageProducer` **100%/100%**（0 missed——`RedisMessageProducerTest` + `RedisMessageProducerSprintCoverageTest` + `RedisMessageProducerAsyncPathsTest` 覆盖，非 0%）、`BrokerBackedProducer` 100%/100%、`StreamEntryCodec` 99%/96%、`DlqConsumerAdapter` 98%/93%、`PayloadLifecycleManager` 99%/98%；唯一 <95% 类为 `RedisMessageConsumer` 91%/87%，残差 31 指令/8 分支为调度/重投防御臂，与上方案 C 专项线相邻不追）
 
 **建议添加的测试类型：**
 - [x] **集成测试**（2026-09-29 收口：五条全部有真实 Redis 集成套件背书；本轮新增 `ProduceConsumeEndToEndIntegrationTest`（2 用例，@Tag("integration")，10 轮 --rerun 全绿）补齐"端到端"条）
@@ -249,12 +244,8 @@
 
 ## 优先级 4：覆盖率 65%-70%（需要小幅提升）
 
-### 15. io.github.cuihairu.redis.streaming.table.impl - 65%
-**关键问题：** KTable 实现测试不足
-**未覆盖的关键类：**
-- `RedisKGroupedTable` - 0% (7 个方法未覆盖)
-- `RedisKTable` - 76% (6 个方法未覆盖)
-- `InMemoryKTable` - 93% (1 个方法未覆盖)
+### 15. io.github.cuihairu.redis.streaming.table.impl - ✅ 单测完成（2026-09-29 实测包级 99% 指令/99% 分支）；集成条挂起
+**关键问题：** ~~KTable 实现测试不足~~（过期：2026-09-29 新鲜 `:table:test :table:jacocoTestReport` 实测——`RedisKGroupedTable` **100%/100%**（0 missed，`RedisKGroupedTableInferenceCoverageTest` 等覆盖，非 0%）、`RedisKTable` 100%/100%、`InMemoryKGroupedTable` 100%/100%、`InMemoryKTable` 97%/90%；包残差 6 指令/1 分支，单测远超 70% 目标，无需新增）
 
 **建议添加的测试类型：**
 - [ ] **集成测试**
