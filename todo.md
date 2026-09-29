@@ -230,18 +230,16 @@
 
 ---
 
-### 14. io.github.cuihairu.redis.streaming.mq.config - 62%
-**关键问题：** MQ 配置构建器分支覆盖不足
-**未覆盖的关键类：**
-- `MqOptions.Builder` - 49% (16 个方法未覆盖，22 个分支未覆盖)
+### 14. io.github.cuihairu.redis.streaming.mq.config - ✅ 数据过期（2026-09-29 实测 100% 指令/100% 分支，0 missed/26 分支全绿）
+**关键问题：** ~~MQ 配置构建器分支覆盖不足~~（过期：62%/Builder 49% 为旧数据；2026-09-29 新鲜 `:mq:test :mq:jacocoTestReport` 实测 MqOptions 100%、MqOptions.Builder 100%/100%，既有 `MqOptionsTest`（93 用例全绿 0 跳过）已穷尽全部 33 个 setter 与全部钳制/忽略分支）
 
 **建议添加的测试类型：**
-- [ ] **单元测试**
-  - 配置参数校验测试
-  - 默认值测试
-  - Builder 模式各种组合测试
-  - 必填参数缺失测试
-  - 参数范围校验测试
+- [x] **单元测试**（既有 `MqOptionsTest` 已覆盖，按类对照）
+  - 配置参数校验测试：字符串 setter 的 null/blank/empty 逐分支用例（含 `dlqConsumerSuffix` 允许空串的特殊分支）
+  - 默认值测试：`testDefaultValues` 断言全部 33 个字段默认值
+  - Builder 模式各种组合测试：`testBuilderWithMultipleOptions`/`testBuilderChaining`/`testBuilderReturnsNewInstanceEachTime`
+  - 必填参数缺失测试：Builder 无必填参数——空 builder 直接 build 即合法（`testDefaultValues` 即该场景）
+  - 参数范围校验测试：每个数值 setter 的 0/负数钳制用例（min=1 / min=0 两档钳制语义均已钉住）
 
 ---
 
