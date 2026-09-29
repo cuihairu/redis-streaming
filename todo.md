@@ -179,20 +179,16 @@
 
 ---
 
-### 11. io.github.cuihairu.redis.streaming.mq.dlq - 51%
-**关键问题：** 死信队列功能测试不足
-**未覆盖的关键类：**
-- `RedisDeadLetterAdmin` - 0% (10 个方法未覆盖)
-- `RedisDeadLetterConsumer` - 39% (5 个方法未覆盖)
-- `RedisDeadLetterService` - 71% (2 个方法未覆盖)
+### 11. io.github.cuihairu.redis.streaming.mq.dlq - ✅ 单测+集成收口（2026-09-29 实测包级 95% 指令/91% 分支）
+**关键问题：** ~~死信队列功能测试不足~~（过期：2026-09-29 新鲜 `:mq:test :mq:jacocoTestReport` 实测——`RedisDeadLetterAdmin` **100%/95%**（非 0%）、`RedisDeadLetterService` **100%/96%**（非 71%）、`RedisDeadLetterConsumer` 88%/82%（非 39%）、`DeadLetterCodec` 100%/95%、`DlqKeys` 100%；既有单测 `RedisDeadLetter*Test`/`*SprintCoverageTest`/`*ResidualCoverageTest` 系列已饱和，唯一 <90% 类 RedisDeadLetterConsumer 残差 9 分支为循环/关闭防御臂）
 
 **建议添加的测试类型：**
-- [ ] **集成测试**
-  - 死信队列写入测试
-  - 死信消息消费测试
-  - 死信队列重试测试
-  - 死信队列管理操作测试
-  - 过期死信清理测试
+- [x] **集成测试**（2026-09-29 收口：4/5 条既有真实 Redis 套件背书，1 条按当前实现不适用）
+  - 死信队列写入测试：`RetryAndDlqIntegrationTest`（重试耗尽进 DLQ）+ `MissingPayloadDlqIntegrationTest`（payload 丢失进 DLQ）
+  - 死信消息消费测试：`DlqConsumerLoopIntegrationTest` + `DeadLetterStackIntegrationTest` + `DlqPendingReclaimIntegrationTest`
+  - 死信队列重试测试：`DeadLetterConsumerRetryFailIntegrationTest` + `DlqReplayAndAdminIntegrationTest`（replay 重放与 payload-hash TTL 刷新）
+  - 死信队列管理操作测试：`DlqAdminOpsIntegrationTest` + `DlqReplayAndAdminIntegrationTest`（list/replay/replayAll/delete/clear）
+  - 过期死信清理测试：**按当前实现不适用**——mq.dlq 全包不存在 TTL/过期清理生产 API（仅 delete/clear/replay；replay 时 payload-hash 的 TTL 刷新为内部细节，已由 `DlqReplayAndAdminIntegrationTest` 覆盖）。若需该功能应作为生产特性单列开发，不在测试轮冒充
 
 ---
 
