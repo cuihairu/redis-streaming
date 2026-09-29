@@ -102,18 +102,21 @@
 
 ---
 
-### 6. io.github.cuihairu.redis.streaming.source.kafka - 36%
-**关键问题：** Kafka 数据源测试不足
+### 6. io.github.cuihairu.redis.streaming.source.kafka - ✅ 单测项闭合（2026-09-29 实测 100% 指令/95% 分支）
+**关键问题：** ~~Kafka 数据源测试不足~~（过期：36% 为旧数据；2026-09-29 新鲜 `:source:test :source:jacocoTestReport` 实测本包 78%/81% → 补测后 **100% 指令/95% 分支**，`KafkaSource` 唯一类 428 条指令 0 missed）
 **未覆盖的关键类：**
-- `KafkaSource` - 36% (8 个方法未覆盖)
+- `KafkaSource` - ✅ 100%（原列 36%，8 个方法未覆盖）
 
 **建议添加的测试类型：**
-- [ ] **集成测试**（需要 Kafka 环境）
+- [x] **单元测试**（本轮新增 `KafkaSourceLifecycleCoverageTest` 10 用例，接既有 `KafkaSourceTest` 12 用例）：三个真实 `KafkaConsumer` 构造器（bootstrapServers / ObjectMapper / Properties 三种入口）——**Kafka 客户端惰性连接**，构造器不拨 broker，故用不可达地址 `127.0.0.1:1` 即可真跑并断言 topic/isRunning/close；构造器 10 条 `requireNonNull` 守卫（Properties/topic/ObjectMapper/valueClass/Consumer/handler）；`autoSubscribe=true` 公开构造器订阅 vs 包私有构造器不订阅；consume 循环的**逐条失败隔离**（handler 抛异常只记日志跳过、后续记录继续投递，且 tombstone(null value) 不进 handler）；`ensureAssigned()` 三态（已分配→不 poll；未分配→poll(ZERO) 后再短 poll 的兜底；poll 抛异常→吞掉仍执行 seek）
+- [ ] **集成测试**（需要 Kafka 环境）——**本轮不派**：`docker-compose.test.yml` 未提供 Kafka broker、本机无 Kafka 容器；且 `**/kafka/**` 已从聚合覆盖率门禁 classDirs 中排除（build.gradle `covClassDirs`），故此条纯属"真 broker 端到端"收益，挂起不阻塞 99% 门禁。触发方式：起 Kafka 后以 `@Tag("integration")` + `KAFKA_BOOTSTRAP_SERVERS` 环境变量守卫新增用例
   - Kafka 消息消费测试
   - 分区分配测试
   - Offset 提交测试
   - Consumer 重启恢复测试
   - 反序列化错误处理测试
+
+**唯一残差：** `KafkaSource` L260 `close()` 的 `if (consumer != null)` 假臂——`consumer` 为 final 字段且构造器已 `requireNonNull`，测试不可达（与 config L521、registry.lua L894-896 同型防御性天花板，闭合需改生产代码超范围）
 
 ---
 
@@ -161,7 +164,7 @@
 
 ## 优先级 3：覆盖率 50%-70%（中等）
 
-### 10. io.github.cuihairu.redis.streaming.mq.impl - 49%
+### 10. io.github.cuihairu.redis.streaming.mq.impl - ✅ 集成+单测完成（2026-09-29；单测 95% 见下方既有注记，集成五条已背书）
 **关键问题：** MQ 核心实现测试覆盖不足
 **未覆盖的关键类：**
 - `RedisMessageProducer` - 0% (8 个方法未覆盖)
@@ -170,12 +173,13 @@
 - `StreamEntryCodec` - 50% (11 个方法未覆盖)
 
 **建议添加的测试类型：**
-- [ ] **集成测试**
-  - 消息发送和接收端到端测试
-  - 死信队列转发测试
-  - 消费组管理测试
-  - 消息确认和重试测试
-  - Stream 数据结构序列化测试
+- [x] **集成测试**（2026-09-29 收口：五条全部有真实 Redis 集成套件背书；本轮新增 `ProduceConsumeEndToEndIntegrationTest`（2 用例，@Tag("integration")，10 轮 --rerun 全绿）补齐"端到端"条）
+  - 消息发送和接收端到端测试：**本轮新增**——(a) 4 分区 12 消息逐字段保真（payload/topic/key/用户 header 存活；transport 注入的 x-payload-*/partitionId 内部头不拦截），(b) 独立消费组扇出（两组各收全量、无串扰）；另实测注记：消费侧 Message.id 为 Redis stream entry id 而非生产侧生成 id，消息关联须用 key
+  - 死信队列转发测试：`RetryAndDlqIntegrationTest` + `MissingPayloadDlqIntegrationTest` + `DlqCodecCompatibilityIntegrationTest`
+  - 消费组管理测试：`CommitFrontierMultiGroupIntegrationTest` + `LeaseOwnershipIntegrationTest` + `PendingClaimIntegrationTest` + `MaxLeasedPartitionsIntegrationTest`
+  - 消息确认和重试测试：`AckNonePolicyIntegrationTest` + `AckDeletePolicyIntegrationTest` + `AckAllGroupsPolicyIntegrationTest` + `RetryMover*IntegrationTest`
+  - Stream 数据结构序列化测试：`DlqCodecCompatibilityIntegrationTest` + `PayloadLifecycleIntegrationTest`
+  - **遗留发现（不阻塞本条，待 mq 专项轮处理）**：fresh 消费组下分区 worker 间歇性推迟该分区首个 backlog 条目投递（实测 ~40% 轮次出现 `[1..7,0]` 或首条超 30s 窗口；条目最终仍送达——at-least-once 不丢，但位置不保序）。顺序敏感负载在消费端读路径修复前不可依赖跨条目顺序；本轮 E2E 用例已按此边界收窄断言并在 javadoc 注明
 - [x] **单元测试**（已饱和：2026-09-28 实测 `:mq:test` 包级 mq.impl 95%、mq.dlq 95%、mq.config 100%，全模块无 <90% 类 —— 本节与上方未覆盖清单为过期数据；"StreamEntry 编解码/消息生命周期" 单测已由既有套件覆盖，无需新增）
 
 ---
