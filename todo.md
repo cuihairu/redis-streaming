@@ -208,20 +208,16 @@
 
 ---
 
-### 13. io.github.cuihairu.redis.streaming.registry.impl - 55%
-**关键问题：** 服务注册实现测试不足（部分过期：2026-09-28 分支级扫描实测 `registry.lua` 包 line 98%/branch 81%，唯一残差 RegistryLuaScriptExecutor L894-896 catch 为防御性天花板——try 体内仅 final String 的 null/isEmpty 判断与 StringBuilder 操作，任何入参不可抛 Exception，不追；下方集成项仍需 Redis 环境，挂起不派）
-**未覆盖的关键类：**
-- `RedisNamingService` - 44% (18 个方法未覆盖)
-- `RedisServiceProvider` - 48% (13 个方法未覆盖)
-- `RedisServiceConsumer` - 58% (16 个方法未覆盖)
+### 13. io.github.cuihairu.redis.streaming.registry.impl - ✅ 数据过期（2026-09-29 实测 registry.impl 99% 指令，集成 76 用例全绿）
+**关键问题：** ~~服务注册实现测试不足~~（过期：44%/48%/58% 为旧数据；2026-09-29 新鲜 `:registry:test :registry:jacocoTestReport` 实测——`RedisNamingService` **100%**、`RedisServiceProvider` **98%**、`RedisServiceConsumer` **98%**、`InstanceEntryCodec` 100%，包级 99% 指令；`registry.lua` 包 98% 指令/81% 分支，残差 RegistryLuaScriptExecutor L894-896 catch 为防御性天花板——try 体内仅 final String 的 null/isEmpty 判断与 StringBuilder 操作，任何入参不可抛 Exception，不追）
 
 **建议添加的测试类型：**
-- [ ] **集成测试**
-  - 服务注册和发现测试
-  - 服务健康检查测试
-  - 服务元数据管理测试
-  - 服务实例过滤测试
-  - 命名服务解析测试
+- [x] **集成测试**（2026-09-29 `:registry:integrationTest --rerun-tasks` 实跑真实 Redis：76 用例 0 失败 0 跳过；5 项按既有套件对照，全部落地）
+  - 服务注册和发现测试：`RedisNamingServiceLifecycleIntegrationTest`（register→心跳→discover→deregister 全生命周期）+ `RegistryIntegrationTest`（单实例/多实例/重复注册覆盖）+ `RegistryBatchOpsIntegrationTest`（批量 register/update/unregister）
+  - 服务健康检查测试：`ConsumerHealthEventIntegrationTest`（健康失败事件到达监听器、退订停检）+ `ProviderCleanupHealthIntegrationTest`（过期清理回调 + HealthCheckManager 驱动）+ `ConsumerCacheHealthIntegrationTest`（缓存刷新/活查询/健康上报）+ `RegistryConsumerCoverageIntegrationTest`（心跳过期 → discoverHealthy 剔除、缺心跳分 → 全空）+ `RegistryAdminServiceCoverageIntegrationTest`（admin 视角实例/指标/健康）
+  - 服务元数据管理测试：`RegistryIntegrationTest.testMetadataManagement`（3 键 metadata 注册 → discover 往返逐键断言）
+  - 服务实例过滤测试：`RegistryConsumerCoverageIntegrationTest.discoverVariantsAndHeartbeatValidation`（`discoverByMetadata` region=cn/us 各 1、`discoverByFilters`、`discoverHealthyByFilters`、`discoverHealthyByMetadata` 四变体过滤）+ `RedisNamingServiceChooseIntegrationTest.chooseHealthyInstanceWorksThroughLoadBalancers`（仅健康实例进入选择）+ `ClientSelectorIntegrationTest`（fallback + scored LB 过滤选择）
+  - 命名服务解析测试：`RedisNamingServiceChooseIntegrationTest`（choose 经 LoadBalancer 解析 + subscribe/unsubscribe 往返）+ `RedisNamingServiceLifecycleIntegrationTest.serviceConsumerDirectApi` + `LoadBalancerIntegrationTest`（scored LB 按 cpu/latency 选低者）+ `DiscoveredInstancesCacheIntegrationTest`（缓存实例跨服务存活/注销逐出）
 
 ---
 
