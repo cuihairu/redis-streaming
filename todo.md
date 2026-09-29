@@ -236,16 +236,16 @@
 
 ## 优先级 4：覆盖率 65%-70%（需要小幅提升）
 
-### 15. io.github.cuihairu.redis.streaming.table.impl - ✅ 单测完成（2026-09-29 实测包级 99% 指令/99% 分支）；集成条挂起
-**关键问题：** ~~KTable 实现测试不足~~（过期：2026-09-29 新鲜 `:table:test :table:jacocoTestReport` 实测——`RedisKGroupedTable` **100%/100%**（0 missed，`RedisKGroupedTableInferenceCoverageTest` 等覆盖，非 0%）、`RedisKTable` 100%/100%、`InMemoryKGroupedTable` 100%/100%、`InMemoryKTable` 97%/90%；包残差 6 指令/1 分支，单测远超 70% 目标，无需新增）
+### 15. io.github.cuihairu.redis.streaming.table.impl - ✅ 完成（2026-09-29 实测单测包级 99% 指令/99% 分支 + 集成条 5/5 落地）
+**关键问题：** ~~KTable 实现测试不足~~（过期：2026-09-29 新鲜 `:table:test :table:jacocoTestReport` 实测——`RedisKGroupedTable` **100%/100%**（0 missed，`RedisKGroupedTableInferenceCoverageTest` 等覆盖，非 0%）、`RedisKTable` 100%/100%、`InMemoryKGroupedTable` 100%/100%、`InMemoryKTable` 97%/90%；包残差 6 指令/1 分支，单测远超 70% 目标）
 
 **建议添加的测试类型：**
-- [ ] **集成测试**
-  - 分组表聚合测试
-  - 表 Join 测试
-  - 表更新传播测试
-  - 表状态持久化测试
-  - 表查询测试
+- [x] **集成测试**（2026-09-29 实跑真实 Redis：新增 `RedisKTableGroupingUpdateIntegrationTest` 2 用例补齐分组聚合/更新传播缺口；模块全套 172 用例 0 失败 0 跳过）
+  - 分组表聚合测试：`RedisKTableGroupingUpdateIntegrationTest.groupedAggregationsMaterializeIntoRedisBackedTables`（groupBy→`count`/`reduce`/`aggregate` 物化为 Redis 表：EU/US 计数与求和逐键断言、null 组键条目从物化中剔除、结果表命名 `<source>:groupBy:<op>:<millis>` 归源表命名空间、结果表自身可再写再读）
+  - 表 Join 测试：`RedisKTableOperationsIntegrationTest.storageViewsAndJoins`（join 内连接丢弃未匹配键、leftJoin 对缺失右侧以 null 进 joiner、跨 Redis/内存表实现互 join）
+  - 表更新传播测试：`RedisKTableGroupingUpdateIntegrationTest.updatesPropagateToQueriesGroupedViewsAndSiblingInstances`（同 key 覆写→get/getState/size 即时反映且不增长；重物化 count/aggregate 读到新值 10+2——快照式视图无陈旧无幽灵条目）
+  - 表状态持久化测试：同测试的 sibling 实例段（同表名二次构造 `RedisKTable` 共享 Redis Hash——先写后建读到全量状态、sibling 写回原实例可见）+ `RedisKTableOperationsIntegrationTest`（put→get→delete 全落 Redis）
+  - 表查询测试：`RedisKTableOperationsIntegrationTest`（get/getState/size/getTableName/toString、mapValues 单参与双参视图物化、filter 视图存活项、toStream 快照入内存引擎）
 
 ---
 
