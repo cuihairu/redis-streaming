@@ -168,11 +168,10 @@ public class PrometheusMetricCollectorTest {
         collector.incrementCounter("plain.name", 1);
 
         Map<String, ?> counters = getMapField(collector, "counters");
-        // The internal map key is now type-prefixed to avoid cross-type collisions;
-        // the Prometheus-registered name remains the sanitized plain name.
-        assertTrue(counters.containsKey("counter:plain_name"), "map keys: " + counters.keySet());
-        assertTrue(counters.keySet().stream().noneMatch(k -> k.equals("plain_name")),
-                "type prefix protects against cross-type collision: " + counters.keySet());
+        // The internal map key is the sanitized name (without type prefix).
+        assertTrue(counters.containsKey("plain_name"), "map keys: " + counters.keySet());
+        // Type prefix protection: registering a different type under the same name should fail
+        assertThrows(IllegalArgumentException.class, () -> collector.setGauge("plain.name", 1.0));
     }
 
     @SuppressWarnings("unchecked")
