@@ -141,8 +141,6 @@ class RedisListSourceTestExtended {
 
     @Test
     void testReadBatchWithZeroCount() {
-        when(mockList.isEmpty()).thenReturn(true);
-
         RedisListSource<String> source = new RedisListSource<>(
                 mockRedissonClient, "test-list", String.class);
 
@@ -156,8 +154,8 @@ class RedisListSourceTestExtended {
 
     @Test
     void testReadBatchWithPartialData() {
-        when(mockList.isEmpty()).thenReturn(false, false, true);
-        when(mockList.remove(0)).thenReturn("value1", "value2");
+        when(mockList.remove(0)).thenReturn("value1", "value2")
+                .thenThrow(new IndexOutOfBoundsException());
 
         RedisListSource<String> source = new RedisListSource<>(
                 mockRedissonClient, "test-list", String.class);
@@ -172,7 +170,6 @@ class RedisListSourceTestExtended {
 
     @Test
     void testReadBatchWithDeserializationFailure() {
-        when(mockList.isEmpty()).thenReturn(false, true);
         when(mockList.remove(0)).thenReturn("invalid-json");
 
         RedisListSource<TestRecord> source = new RedisListSource<>(
@@ -205,7 +202,7 @@ class RedisListSourceTestExtended {
 
     @Test
     void testReadAllWithEmptyList() {
-        when(mockList.isEmpty()).thenReturn(true);
+        when(mockList.remove(anyInt())).thenThrow(new IndexOutOfBoundsException());
 
         RedisListSource<String> source = new RedisListSource<>(
                 mockRedissonClient, "test-list", String.class);
@@ -220,7 +217,7 @@ class RedisListSourceTestExtended {
 
     @Test
     void testReadAllWithException() {
-        when(mockList.isEmpty()).thenThrow(new RuntimeException("Redis error"));
+        when(mockList.remove(anyInt())).thenThrow(new RuntimeException("Redis error"));
 
         RedisListSource<String> source = new RedisListSource<>(
                 mockRedissonClient, "test-list", String.class);
@@ -249,8 +246,6 @@ class RedisListSourceTestExtended {
 
     @Test
     void testConsumeHandlesInterruptedException() throws Exception {
-        when(mockList.isEmpty()).thenReturn(true);
-
         RedisListSource<String> source = new RedisListSource<>(
                 mockRedissonClient, "test-list", String.class);
 
@@ -362,8 +357,6 @@ class RedisListSourceTestExtended {
 
     @Test
     void testStopStopsRunningConsumer() {
-        when(mockList.isEmpty()).thenReturn(true);
-
         RedisListSource<String> source = new RedisListSource<>(
                 mockRedissonClient, "test-list", String.class);
 
@@ -456,8 +449,8 @@ class RedisListSourceTestExtended {
 
     @Test
     void testPollBatchDeliversNonEmptyBatchAndCanStop() throws Exception {
-        when(mockList.isEmpty()).thenReturn(false, false, true);
-        when(mockList.remove(0)).thenReturn("a", "b");
+        when(mockList.remove(0)).thenReturn("a", "b")
+                .thenThrow(new IndexOutOfBoundsException());
 
         RedisListSource<String> source = new RedisListSource<>(
                 mockRedissonClient, "test-list", String.class);
@@ -481,8 +474,6 @@ class RedisListSourceTestExtended {
 
     @Test
     void testCloseStopsConsumerAndShutsDownScheduler() {
-        when(mockList.isEmpty()).thenReturn(true);
-
         RedisListSource<String> source = new RedisListSource<>(
                 mockRedissonClient, "test-list", String.class);
 

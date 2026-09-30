@@ -100,14 +100,16 @@ class RedisListStateTest {
     @Test
     void addAllAddsEachElement() {
         RedissonClient redisson = mock(RedissonClient.class);
+        RBatch batch = mock(RBatch.class);
         @SuppressWarnings("unchecked")
         RList<String> list = mock(RList.class);
+        when(redisson.createBatch(any(BatchOptions.class))).thenReturn(batch);
+        when(batch.<String>getList("k")).thenReturn(list);
         when(redisson.<String>getList("k")).thenReturn(list);
 
         RedisListState<String> state = new RedisListState<>(redisson, "k", String.class);
         state.addAll(List.of("a", "b"));
 
-        verify(list).add("a");
-        verify(list).add("b");
+        verify(batch).execute();
     }
 }

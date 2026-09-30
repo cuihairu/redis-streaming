@@ -53,8 +53,8 @@ class RedisListSourceTest {
         RList<String> list = mock(RList.class);
         when(redisson.<String>getList("l")).thenReturn(list);
 
-        when(list.isEmpty()).thenReturn(false, false, true);
-        when(list.remove(0)).thenReturn("a", "b");
+        // readBatch drains via remove(0) until null/IOOBE; isEmpty() is no longer consulted
+        when(list.remove(0)).thenReturn("a", "b").thenThrow(new IndexOutOfBoundsException());
 
         RedisListSource<String> source = new RedisListSource<>(redisson, "l", String.class);
         try {
@@ -71,8 +71,7 @@ class RedisListSourceTest {
         RList<String> list = mock(RList.class);
         when(redisson.<String>getList("l")).thenReturn(list);
 
-        when(list.isEmpty()).thenReturn(false, false, true);
-        when(list.remove(0)).thenReturn("a", "b");
+        when(list.remove(0)).thenReturn("a", "b").thenThrow(new IndexOutOfBoundsException());
 
         RedisListSource<String> source = new RedisListSource<>(redisson, "l", String.class);
         try {
@@ -90,8 +89,7 @@ class RedisListSourceTest {
         @SuppressWarnings("unchecked")
         RList<String> list = mock(RList.class);
         when(redisson.<String>getList("l")).thenReturn(list);
-        when(list.isEmpty()).thenReturn(false, true);
-        when(list.remove(0)).thenReturn("not-json");
+        when(list.remove(0)).thenReturn("not-json").thenThrow(new IndexOutOfBoundsException());
 
         RedisListSource<Event> source = new RedisListSource<>(redisson, "l", new ObjectMapper(), Event.class);
         try {
@@ -119,7 +117,7 @@ class RedisListSourceTest {
         @SuppressWarnings("unchecked")
         RList<String> list = mock(RList.class);
         when(redisson.<String>getList("l")).thenReturn(list);
-        when(list.isEmpty()).thenReturn(true);
+        when(list.remove(0)).thenThrow(new IndexOutOfBoundsException());
 
         RedisListSource<String> source = new RedisListSource<>(redisson, "l", String.class);
         try {
@@ -135,8 +133,7 @@ class RedisListSourceTest {
         @SuppressWarnings("unchecked")
         RList<String> list = mock(RList.class);
         when(redisson.<String>getList("l")).thenReturn(list);
-        when(list.isEmpty()).thenReturn(false, false, false, true);
-        when(list.remove(0)).thenReturn("a", "b", "c", "d", "e");
+        when(list.remove(0)).thenReturn("a", "b", "c").thenThrow(new IndexOutOfBoundsException());
 
         RedisListSource<String> source = new RedisListSource<>(redisson, "l", String.class);
         try {
@@ -170,8 +167,7 @@ class RedisListSourceTest {
         @SuppressWarnings("unchecked")
         RList<String> list = mock(RList.class);
         when(redisson.<String>getList("l")).thenReturn(list);
-        when(list.isEmpty()).thenReturn(false, true);
-        when(list.remove(0)).thenReturn("only-one");
+        when(list.remove(0)).thenReturn("only-one").thenThrow(new IndexOutOfBoundsException());
 
         RedisListSource<String> source = new RedisListSource<>(redisson, "l", String.class);
         try {
@@ -189,7 +185,7 @@ class RedisListSourceTest {
         @SuppressWarnings("unchecked")
         RList<String> list = mock(RList.class);
         when(redisson.<String>getList("l")).thenReturn(list);
-        when(list.isEmpty()).thenReturn(true);
+        when(list.remove(0)).thenThrow(new IndexOutOfBoundsException());
 
         RedisListSource<String> source = new RedisListSource<>(redisson, "l", String.class);
         try {
@@ -207,8 +203,8 @@ class RedisListSourceTest {
         @SuppressWarnings("unchecked")
         RList<String> list = mock(RList.class);
         when(redisson.<String>getList("l")).thenReturn(list);
-        when(list.isEmpty()).thenReturn(false, true);
-        when(list.remove(0)).thenReturn("{\"name\":\"Alice\",\"age\":30}");
+        when(list.remove(0)).thenReturn("{\"name\":\"Alice\",\"age\":30}")
+                .thenThrow(new IndexOutOfBoundsException());
 
         RedisListSource<Person> source = new RedisListSource<>(redisson, "l", new ObjectMapper(), Person.class);
         try {
@@ -227,8 +223,8 @@ class RedisListSourceTest {
         @SuppressWarnings("unchecked")
         RList<String> list = mock(RList.class);
         when(redisson.<String>getList("l")).thenReturn(list);
-        when(list.isEmpty()).thenReturn(false, false, false, true);
-        when(list.remove(0)).thenReturn("first", "second", "third");
+        when(list.remove(0)).thenReturn("first", "second", "third")
+                .thenThrow(new IndexOutOfBoundsException());
 
         RedisListSource<String> source = new RedisListSource<>(redisson, "l", String.class);
         try {
@@ -245,11 +241,10 @@ class RedisListSourceTest {
         RList<String> list = mock(RList.class);
         when(redisson.<String>getList("l")).thenReturn(list);
 
-        // Simulate 10 elements (simplified for testing)
-        when(list.isEmpty()).thenReturn(false, false, false, false, false,
-                false, false, false, false, false, true);
+        // Simulate 10 elements, then an exhausted list (IOOBE = drained)
         when(list.remove(0)).thenReturn("item-0", "item-1", "item-2", "item-3", "item-4",
-                "item-5", "item-6", "item-7", "item-8", "item-9");
+                "item-5", "item-6", "item-7", "item-8", "item-9")
+                .thenThrow(new IndexOutOfBoundsException());
 
         RedisListSource<String> source = new RedisListSource<>(redisson, "l", String.class);
         try {
@@ -266,8 +261,7 @@ class RedisListSourceTest {
         @SuppressWarnings("unchecked")
         RList<String> list = mock(RList.class);
         when(redisson.<String>getList("l")).thenReturn(list);
-        when(list.isEmpty()).thenReturn(true, false);
-        when(list.remove(0)).thenReturn("delayed-item");
+        when(list.remove(0)).thenReturn("delayed-item").thenThrow(new IndexOutOfBoundsException());
 
         RedisListSource<String> source = new RedisListSource<>(redisson, "l", String.class);
         try {
@@ -285,8 +279,7 @@ class RedisListSourceTest {
         @SuppressWarnings("unchecked")
         RList<String> list = mock(RList.class);
         when(redisson.<String>getList("l")).thenReturn(list);
-        when(list.isEmpty()).thenReturn(false, true);
-        when(list.remove(0)).thenReturn("single");
+        when(list.remove(0)).thenReturn("single").thenThrow(new IndexOutOfBoundsException());
 
         RedisListSource<String> source = new RedisListSource<>(redisson, "l", String.class);
         try {
@@ -317,8 +310,8 @@ class RedisListSourceTest {
         @SuppressWarnings("unchecked")
         RList<String> list = mock(RList.class);
         when(redisson.<String>getList("l")).thenReturn(list);
-        when(list.isEmpty()).thenReturn(false, true);
-        when(list.remove(0)).thenReturn("{\"value\":\"test\"}");
+        when(list.remove(0)).thenReturn("{\"value\":\"test\"}")
+                .thenThrow(new IndexOutOfBoundsException());
 
         ObjectMapper customMapper = new ObjectMapper();
         RedisListSource<Data> source = new RedisListSource<>(redisson, "l", customMapper, Data.class);
