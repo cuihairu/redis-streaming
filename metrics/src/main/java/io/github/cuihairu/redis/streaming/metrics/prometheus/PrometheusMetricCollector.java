@@ -20,8 +20,6 @@ import java.util.concurrent.atomic.AtomicLong;
 @Slf4j
 public class PrometheusMetricCollector implements MetricCollector {
 
-    private static final long serialVersionUID = 1L;
-
     private final Map<String, Counter> counters = new ConcurrentHashMap<>();
     private final Map<String, Gauge> gauges = new ConcurrentHashMap<>();
     private final Map<String, Histogram> histograms = new ConcurrentHashMap<>();
@@ -66,8 +64,12 @@ public class PrometheusMetricCollector implements MetricCollector {
 
     @Override
     public void incrementCounter(String name, long amount) {
+        if (amount < 0) {
+            throw new IllegalArgumentException("Counter increment amount must be non-negative");
+        }
         String metricKey = name;
         String sanitized = sanitizeName(name);
+        assertNameAvailableFor(sanitized, "counter", name);
         Counter counter = counters.computeIfAbsent(sanitized, k ->
                 Counter.build()
                         .namespace(namespace)
@@ -85,6 +87,7 @@ public class PrometheusMetricCollector implements MetricCollector {
     public void setGauge(String name, double value) {
         String metricKey = name;
         String sanitized = sanitizeName(name);
+        assertNameAvailableFor(sanitized, "gauge", name);
         Gauge gauge = gauges.computeIfAbsent(sanitized, k ->
                 Gauge.build()
                         .namespace(namespace)
@@ -100,6 +103,7 @@ public class PrometheusMetricCollector implements MetricCollector {
     public void recordHistogram(String name, double value) {
         String metricKey = name;
         String sanitized = sanitizeName(name);
+        assertNameAvailableFor(sanitized, "histogram", name);
         Histogram histogram = histograms.computeIfAbsent(sanitized, k ->
                 Histogram.build()
                         .namespace(namespace)
@@ -138,10 +142,11 @@ public class PrometheusMetricCollector implements MetricCollector {
 
         String key = sanitized + "_labeled";
         validateLabelSchema(key, labelNames);
+        assertNameAvailableFor(key, "counter", name);
         Counter counter = counters.computeIfAbsent(key, k ->
                 Counter.build()
                         .namespace(namespace)
-                        .name(key)
+                        .name(k)
                         .help("Counter metric: " + name)
                         .labelNames(labelNames)
                         .register(registry)
@@ -167,10 +172,11 @@ public class PrometheusMetricCollector implements MetricCollector {
 
         String key = sanitized + "_labeled";
         validateLabelSchema(key, labelNames);
+        assertNameAvailableFor(key, "gauge", name);
         Gauge gauge = gauges.computeIfAbsent(key, k ->
                 Gauge.build()
                         .namespace(namespace)
-                        .name(key)
+                        .name(k)
                         .help("Gauge metric: " + name)
                         .labelNames(labelNames)
                         .register(registry)
@@ -262,6 +268,27 @@ public class PrometheusMetricCollector implements MetricCollector {
         if (existing != null && !existing.equals(schema)) {
             throw new IllegalArgumentException(
                     "Inconsistent label schema for metric '" + prometheusName + "': existing=[" + existing + "], new=[" + schema + "]");
+        }
+    }
+
+    /**
+     * Fail fast when a metric name is already claimed by a different collector type.
+     * simpleclient's registry would throw "Collector already registered" from deep inside
+     * the registration path and strand the first collector in the shared registry forever;
+     * a clear IAE naming the conflicting type is actionable at the call site instead.
+     */
+    private void assertNameAvailableFor(String prometheusName, String requestedType, String originalName) {
+        boolean counterTaken = counters.containsKey(prometheusName);
+        boolean gaugeTaken = gauges.containsKey(prometheusName);
+        boolean histogramTaken = histograms.containsKey(prometheusName);
+        boolean conflict = switch (requestedType) {
+            case "counter" -> gaugeTaken || histogramTaken;
+            case "gauge" -> counterTaken || histogramTaken;
+            default -> counterTaken || gaugeTaken;
+        };
+        if (conflict) {
+            throw new IllegalArgumentException("Metric '" + originalName
+                    + "' is already registered as a different type under the name '" + prometheusName + "'");
         }
     }
 

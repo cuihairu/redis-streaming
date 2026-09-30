@@ -25,6 +25,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -106,7 +107,34 @@ class RedisConfigServiceFallbackTest {
     void fallbackSkipsRewriteWhenLuaVersionAlreadyApplied() throws Exception {
         RedisConfigService svc = newService();
 
-        // the stored hash already carries the version from the (lost-response) Lua write
+        // the stored hash already carries the version AND content of this instance's
+        // (lost-response) Lua write — the skip condition requires both to match
+        when(map.readAllMap()).thenAnswer(inv -> {
+            Map<String, String> m = new HashMap<>();
+            m.put("version", storedVersion());
+            m.put("content", "content-v2");
+            return m;
+        });
+
+        assertTrue(svc.publishConfig("d2", "g2", "content-v2", null));
+
+        verify(map, never()).fastPut(anyString(), anyString());
+        verify(client, never()).createBatch(any(BatchOptions.class));
+        verify(topic).publish(any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void fallbackRewritesWhenSameVersionHoldsDifferentContent() throws Exception {
+        RedisConfigService svc = newService();
+        RBatch batch = mock(RBatch.class);
+        RMapAsync<String, String> entry = mock(RMapAsync.class);
+        when(client.createBatch(any(BatchOptions.class))).thenReturn(batch);
+        when(batch.<String, String>getMap(anyString(), any(Codec.class))).thenReturn(entry);
+
+        // another instance minted the identical version string in the same millisecond
+        // but stored different content: this is NOT "my write already applied" — the
+        // fallback must rewrite with the caller's content instead of skipping
         when(map.readAllMap()).thenAnswer(inv -> {
             Map<String, String> m = new HashMap<>();
             m.put("version", storedVersion());
@@ -116,8 +144,10 @@ class RedisConfigServiceFallbackTest {
 
         assertTrue(svc.publishConfig("d2", "g2", "content-v2", null));
 
-        verify(map, never()).fastPut(anyString(), anyString());
-        verify(client, never()).createBatch(any(BatchOptions.class));
+        verify(batch).execute();
+        ArgumentCaptor<String> content = ArgumentCaptor.forClass(String.class);
+        verify(entry, atLeastOnce()).putAsync(eq("content"), content.capture());
+        assertEquals("content-v2", content.getValue());
         verify(topic).publish(any());
     }
 }

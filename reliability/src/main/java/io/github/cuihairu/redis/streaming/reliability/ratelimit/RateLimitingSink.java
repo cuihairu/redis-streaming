@@ -41,6 +41,10 @@ public class RateLimitingSink<T> implements StreamSink<T> {
     @Override
     public void invoke(T value) throws Exception {
         String key = keySelector.apply(value);
+        if (key == null) {
+            // Null key maps to a fixed sentinel key to avoid NPE inside limiter
+            key = "null";
+        }
         if (limiter.allow(key)) {
             delegate.invoke(value);
         } else if (denyPolicy == DenyPolicy.THROW) {

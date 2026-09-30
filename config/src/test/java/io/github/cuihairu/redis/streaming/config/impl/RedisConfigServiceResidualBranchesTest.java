@@ -119,6 +119,7 @@ class RedisConfigServiceResidualBranchesTest {
         when(script.eval(any(RScript.Mode.class), anyString(), any(RScript.ReturnType.class), anyList(), any()))
                 .thenThrow(new IllegalStateException("NOSCRIPT"));
         when(configMap.readAllMap()).thenReturn(Map.of("content", "old"));
+        when(configMap.delete()).thenReturn(true); // main delete succeeded; only the subscriber-set cleanup fails
         when(historyList.size()).thenReturn(0);
         doThrow(new IllegalStateException("boom")).when(subscribers).delete();
 

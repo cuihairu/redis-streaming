@@ -33,8 +33,10 @@ public class PrometheusMetricCollectorTest {
         Map<String, ?> gauges = getMapField(collector, "gauges");
         Map<String, ?> histograms = getMapField(collector, "histograms");
 
+        // incrementCounter + markMeter both use counter type internally (markMeter delegates to incrementCounter)
         assertEquals(2, counters.size());
         assertEquals(1, gauges.size());
+        // recordHistogram + recordTimer both use histogram type internally (recordTimer delegates to recordHistogram)
         assertEquals(2, histograms.size());
     }
 
@@ -52,6 +54,7 @@ public class PrometheusMetricCollectorTest {
         Map<String, ?> counters = getMapField(collector, "counters");
         Map<String, ?> gauges = getMapField(collector, "gauges");
 
+        // Both tagged calls use the same label schema key, so one counter and one gauge entry
         assertEquals(1, counters.size());
         assertEquals(1, gauges.size());
     }
@@ -139,6 +142,37 @@ public class PrometheusMetricCollectorTest {
         PrometheusMetricCollector second = new PrometheusMetricCollector(namespace);
         second.incrementCounter("recreate.me");
         second.clear();
+    }
+
+    @Test
+    public void testCrossTypeNameFailsFastWithClearMessage() throws Exception {
+        PrometheusMetricCollector collector = new PrometheusMetricCollector("ns_" + UUID.randomUUID().toString().replace("-", ""));
+
+        collector.incrementCounter("shared.name", 1);
+
+        // A different collector type under the same name used to surface as simpleclient's
+        // "Collector already registered" from deep inside the registry (stranding the first
+        // collector forever); now it is a clear IAE naming the metric
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> collector.setGauge("shared.name", 1.0));
+        assertTrue(ex.getMessage().contains("shared.name"), ex.getMessage());
+
+        // Same-type reuse of the name stays fine
+        collector.incrementCounter("shared.name", 1);
+    }
+
+    @Test
+    public void testCollectorsRegisterUnderSanitizedNameNotTypePrefixedKey() throws Exception {
+        PrometheusMetricCollector collector = new PrometheusMetricCollector("ns_" + UUID.randomUUID().toString().replace("-", ""));
+
+        collector.incrementCounter("plain.name", 1);
+
+        Map<String, ?> counters = getMapField(collector, "counters");
+        // The internal map key is now type-prefixed to avoid cross-type collisions;
+        // the Prometheus-registered name remains the sanitized plain name.
+        assertTrue(counters.containsKey("counter:plain_name"), "map keys: " + counters.keySet());
+        assertTrue(counters.keySet().stream().noneMatch(k -> k.equals("plain_name")),
+                "type prefix protects against cross-type collision: " + counters.keySet());
     }
 
     @SuppressWarnings("unchecked")

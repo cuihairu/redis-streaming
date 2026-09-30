@@ -196,10 +196,11 @@ class MetricCollectorTest {
         // When
         collector.incrementCounter("counter", 10);
         collector.incrementCounter("counter", 5);
-        collector.incrementCounter("counter", -3);
+        // Negative increment throws (matching Prometheus behavior)
+        assertThrows(IllegalArgumentException.class, () -> collector.incrementCounter("counter", -3));
 
         // Then
-        assertEquals(12.0, collector.getMetric("counter").getValue());
+        assertEquals(15.0, collector.getMetric("counter").getValue());
     }
 
     @Test
@@ -412,10 +413,10 @@ class MetricCollectorTest {
 
         // When
         collector.incrementCounter("counter", 100);
-        collector.incrementCounter("counter", -20);
 
         // Then
-        assertEquals(80.0, collector.getMetric("counter").getValue());
+        assertThrows(IllegalArgumentException.class, () -> collector.incrementCounter("counter", -20));
+        assertEquals(100.0, collector.getMetric("counter").getValue());
     }
 
     @Test

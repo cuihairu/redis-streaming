@@ -170,6 +170,7 @@ class RedisConfigServiceBranchCoverageTest {
         when(script.eval(any(RScript.Mode.class), anyString(), any(RScript.ReturnType.class), anyList(), any()))
                 .thenThrow(new IllegalStateException("NOSCRIPT"));
         when(configMap.readAllMap()).thenReturn(Map.of("content", "old", "version", "v0"));
+        when(configMap.delete()).thenReturn(true); // fallback must report what actually happened
         when(historyList.size()).thenReturn(0);
 
         RedisConfigService service = startedService();
@@ -183,6 +184,7 @@ class RedisConfigServiceBranchCoverageTest {
         when(script.eval(any(RScript.Mode.class), anyString(), any(RScript.ReturnType.class), anyList(), any()))
                 .thenThrow(new IllegalStateException("NOSCRIPT"));
         when(configMap.readAllMap()).thenReturn(new HashMap<>());
+        when(configMap.delete()).thenReturn(true);
 
         RedisConfigService service = startedService();
         assertTrue(service.removeConfig("d1", "g1"));
@@ -197,8 +199,11 @@ class RedisConfigServiceBranchCoverageTest {
         when(configMap.delete()).thenThrow(new IllegalStateException("redis gone"));
 
         RedisConfigService service = startedService();
-        // per-step failures inside the fallback are swallowed best-effort; removal still reports success
-        assertTrue(service.removeConfig("d1", "g1"));
+        // per-step failures are swallowed, but with neither the read nor the delete
+        // succeeding the fallback cannot claim removal — it reports false and must not
+        // broadcast a "config removed" event for a config that is still live in Redis
+        assertFalse(service.removeConfig("d1", "g1"));
+        verify(topic, never()).publish(any());
     }
 
     @Test

@@ -99,7 +99,15 @@ public class InMemoryTokenBucketRateLimiter implements RateLimiter {
         if (nowMillis - last < minGap || !lastSweepAtMs.compareAndSet(last, nowMillis)) {
             return;
         }
-        buckets.entrySet().removeIf(e -> isExpired(e.getValue(), nowMillis));
+        // Snapshot keys to only evict entries present at sweep start (avoids race where
+        // a bucket created fresh between computeIfAbsent and its synchronized block
+        // would be swept as "fully recharged" and lose its consumed token).
+        for (String key : buckets.keySet()) {
+            Bucket b = buckets.get(key);
+            if (b != null && isExpired(b, nowMillis)) {
+                buckets.remove(key, b);
+            }
+        }
     }
 
     private boolean isExpired(Bucket b, long nowMillis) {
