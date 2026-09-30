@@ -54,6 +54,40 @@ class MySQLColumnNameResolverTest {
     }
 
     @Test
+    void transientFailureDoesNotPoisonTheCache() throws Exception {
+        Connection connection = mock(Connection.class);
+        PreparedStatement ps = mock(PreparedStatement.class);
+        ResultSet rs = mock(ResultSet.class);
+
+        // first lookup fails (transient), later lookups succeed
+        when(connection.prepareStatement(anyString()))
+                .thenThrow(new SQLException("connection reset"))
+                .thenReturn(ps);
+        when(ps.executeQuery()).thenReturn(rs);
+        when(rs.next()).thenReturn(true, false);
+        when(rs.getString(1)).thenReturn("id");
+
+        TestDriver driver = new TestDriver(connection);
+        DriverManager.registerDriver(driver);
+        try {
+            MySQLColumnNameResolver resolver = new DriverManagerMySQLColumnNameResolver("jdbc:test:mysql", "u", "p", 2);
+
+            assertEquals(List.of(), resolver.resolve("db", "t"),
+                    "a failed lookup must return empty without caching");
+
+            assertEquals(List.of("id"), resolver.resolve("db", "t"),
+                    "the retry after recovery must reach the database again");
+
+            assertEquals(List.of("id"), resolver.resolve("db", "t"),
+                    "the successful resolution must now be cached");
+
+            verify(connection, times(2)).prepareStatement(anyString());
+        } finally {
+            DriverManager.deregisterDriver(driver);
+        }
+    }
+
+    @Test
     void resolverReturnsEmptyForInvalidInputs() {
         MySQLColumnNameResolver resolver = new DriverManagerMySQLColumnNameResolver("jdbc:test:mysql", "u", "p", 2);
         assertTrue(resolver.resolve(null, "t").isEmpty());

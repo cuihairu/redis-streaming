@@ -644,8 +644,11 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                                      Message message,
                                      Map<String, Object> messageData) {
         try {
+            // Effective cap: the per-message maxRetries (codec default 3) can only be tightened
+            // by the configured retry policy — retryMaxAttempts was previously dead config
+            int effectiveMax = Math.min(message.getMaxRetries(), retryPolicy.getMaxAttempts());
             // If current retry count already at/over limit, send to DLQ immediately
-            if (message.hasExceededMaxRetries()) {
+            if (message.getRetryCount() >= effectiveMax) {
                 if (sendToDeadLetterQueue(message, partitionId)) {
                     MqMetrics.get().incDeadLetter(message.getTopic(), partitionId);
                     ackViaBackend(message.getTopic(), consumerGroup, partitionId, stream, messageId, messageData);
@@ -677,7 +680,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
             long dueAt = System.currentTimeMillis() + delayMs;
 
             // If next retry would exceed max retries, dead-letter instead of rescheduling.
-            if (nextRetry > message.getMaxRetries()) {
+            if (nextRetry > effectiveMax) {
                 if (sendToDeadLetterQueue(message, partitionId)) {
                     MqMetrics.get().incDeadLetter(message.getTopic(), partitionId);
                     ackViaBackend(message.getTopic(), consumerGroup, partitionId, stream, messageId, messageData);

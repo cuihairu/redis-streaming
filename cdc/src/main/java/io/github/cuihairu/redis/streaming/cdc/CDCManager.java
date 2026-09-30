@@ -125,7 +125,10 @@ public class CDCManager {
                 .collect(Collectors.toList());
 
         return CompletableFuture.allOf(stopFutures.toArray(new CompletableFuture[0]))
-                .thenRun(() -> {
+                // whenComplete (not thenRun): the health-monitor scheduler must be shut down
+                // even when a connector's stop future completes exceptionally, otherwise its
+                // non-daemon threads leak and a later start() hits a dead scheduler
+                .whenComplete((v, error) -> {
                     ScheduledExecutorService current = scheduler;
                     if (current != null) {
                         current.shutdown();
@@ -139,7 +142,11 @@ public class CDCManager {
                         }
                         scheduler = null;
                     }
-                    log.info("CDC manager stopped");
+                    if (error != null) {
+                        log.error("CDC manager stopped with connector stop failures", error);
+                    } else {
+                        log.info("CDC manager stopped");
+                    }
                 });
     }
 
@@ -249,7 +256,9 @@ public class CDCManager {
     }
 
     private void startHealthMonitoring() {
-        if (scheduler == null) {
+        // (re)create unless a live scheduler exists: a terminated scheduler from a previous
+        // lifecycle would make scheduleWithFixedDelay throw RejectedExecutionException
+        if (scheduler == null || scheduler.isShutdown()) {
             scheduler = Executors.newScheduledThreadPool(4);
         }
         scheduler.scheduleWithFixedDelay(() -> {

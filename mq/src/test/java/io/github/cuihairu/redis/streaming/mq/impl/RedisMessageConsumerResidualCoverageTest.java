@@ -52,6 +52,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.doAnswer;
@@ -591,6 +592,25 @@ class RedisMessageConsumerResidualCoverageTest {
             verify(retryItem).put(eq("headers"), anyString());
         } finally {
             invoke(slow, "close", new Class<?>[]{});
+        }
+    }
+
+    @Test
+    void retryMaxAttemptsConfigCapsRequeueDecisions() throws Exception {
+        RedisMessageConsumer capped = new RedisMessageConsumer(client, "unit-capped", partitionRegistry,
+                MqOptions.builder().retryBaseBackoffMs(200).retryMaxBackoffMs(200).retryMaxAttempts(1).build());
+        try {
+            setField(capped, "deadLetterService", deadLetterService);
+            // per-message maxRetries=3 must not override the tighter configured cap of 1:
+            // with retryCount already 1 the message is exhausted and must dead-letter
+            Message m = message("p", 1, 3);
+            assertDoesNotThrow(() -> invoke(capped, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<>()));
+
+            verify(deadLetterService).send(any());
+            verify(dataStream, never()).add(any());
+            verify(retryItem, never()).put(anyString(), anyString());
+        } finally {
+            invoke(capped, "close", new Class<?>[]{});
         }
     }
 

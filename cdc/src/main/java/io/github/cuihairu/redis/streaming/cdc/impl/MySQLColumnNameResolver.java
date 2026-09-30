@@ -42,14 +42,23 @@ final class DriverManagerMySQLColumnNameResolver implements MySQLColumnNameResol
             return List.of();
         }
         String key = database + "." + table;
-        return cache.computeIfAbsent(key, k -> {
-            try {
-                return Collections.unmodifiableList(queryColumnNames(database, table));
-            } catch (Exception e) {
-                log.debug("Failed to resolve MySQL column names for {}", k, e);
-                return List.of();
+        // Only successful, non-empty resolutions are cached: a transient failure (network
+        // blip, MySQL restart) must not poison the entry, or every later event for the
+        // table would fall back to col_0/col_1 naming for the connector's lifetime.
+        List<String> cached = cache.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        try {
+            List<String> resolved = Collections.unmodifiableList(queryColumnNames(database, table));
+            if (!resolved.isEmpty()) {
+                cache.put(key, resolved);
             }
-        });
+            return resolved;
+        } catch (Exception e) {
+            log.debug("Failed to resolve MySQL column names for {}", key, e);
+            return List.of();
+        }
     }
 
     private List<String> queryColumnNames(String database, String table) throws Exception {

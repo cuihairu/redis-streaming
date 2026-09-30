@@ -240,7 +240,9 @@ class MySQLBinlogCDCConnectorResidualCoverageTest {
         verify(client).disconnect();
         verify(client).setBinlogFilename("mysql-bin.000009");
         verify(client).setBinlogPosition(4096L);
-        verify(client).connect();
+        // timed connect(): the no-arg variant blocks for the whole stream lifetime,
+        // wedging the reset inside the caller (connect-timeout fix)
+        verify(client).connect(anyLong());
         assertEquals("mysql-bin.000009", connector.getBinlogFilename());
         assertEquals(4096L, connector.getBinlogPosition());
     }

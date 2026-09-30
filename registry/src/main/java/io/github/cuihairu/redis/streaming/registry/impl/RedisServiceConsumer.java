@@ -223,8 +223,13 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                     .collect(Collectors.toSet());
             discoveredInstances.entrySet().removeIf(entry -> {
                 ServiceInstance cached = entry.getValue();
-                return serviceName.equals(cached.getServiceName())
+                boolean evicted = serviceName.equals(cached.getServiceName())
                         && !liveIds.contains(cached.getInstanceId());
+                if (evicted && config.isEnableHealthCheck() && healthCheckManager != null) {
+                    // stop the scheduled probe for an instance that no longer exists
+                    healthCheckManager.unregisterServiceInstance(entry.getKey());
+                }
+                return evicted;
             });
 
             logger.debug("Discovered {} instances for service: {}", instances.size(), serviceName);
@@ -423,7 +428,11 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                 // B-45: drop the cached entry right away — a removed instance must not
                 // keep answering health lookups and counting toward discovery until the
                 // next discovery cycle happens to reconcile it away.
-                discoveredInstances.remove(serviceName + ":" + instanceId);
+                if (discoveredInstances.remove(serviceName + ":" + instanceId) != null
+                        && config.isEnableHealthCheck() && healthCheckManager != null) {
+                    // stop the scheduled probe for a removed instance
+                    healthCheckManager.unregisterServiceInstance(serviceName + ":" + instanceId);
+                }
 
                 // For delete events, build instance info from message snapshot
                 var snap = message.getInstance();

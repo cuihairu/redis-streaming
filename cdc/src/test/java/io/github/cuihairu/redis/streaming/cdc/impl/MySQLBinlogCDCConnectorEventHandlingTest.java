@@ -128,6 +128,31 @@ class MySQLBinlogCDCConnectorEventHandlingTest {
         assertFalse(connector.getCurrentPosition() == null || connector.getCurrentPosition().isBlank());
     }
 
+    @Test
+    void midStreamRotateKeepsNewFilePayloadPositionInsteadOfOldFileHeaderOffset() {
+        CDCConfiguration config = CDCConfigurationBuilder.forMySQLBinlog("mysql")
+                .username("u")
+                .password("p")
+                .build();
+
+        MySQLBinlogCDCConnector connector = new MySQLBinlogCDCConnector(config);
+        connector.running.set(true);
+        setField(connector, "binlogFilename", "mysql-bin.000001");
+
+        // a real mid-stream rotate carries nextPosition = end offset in the OLD file (>0);
+        // only the artificial startup rotate has 0. The watermark must be the payload's
+        // start offset in the NEW file, not the old file's end offset under the new name —
+        // resuming from the latter would silently skip the head of the new file.
+        RotateEventData rotate = mock(RotateEventData.class);
+        when(rotate.getBinlogFilename()).thenReturn("mysql-bin.000002");
+        when(rotate.getBinlogPosition()).thenReturn(4L);
+        invokeHandle(connector, event(EventType.ROTATE, 1024, rotate));
+
+        assertEquals("mysql-bin.000002", connector.getBinlogFilename());
+        assertEquals("mysql-bin.000002:4", connector.getCurrentPosition(),
+                "header nextPosition of the OLD file must not overwrite the new-file offset");
+    }
+
     private static Event event(EventType type, long nextPosition, Object data) {
         EventHeaderV4 header = mock(EventHeaderV4.class);
         when(header.getEventType()).thenReturn(type);

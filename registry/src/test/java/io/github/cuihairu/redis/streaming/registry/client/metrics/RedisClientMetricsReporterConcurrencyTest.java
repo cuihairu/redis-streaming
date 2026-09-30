@@ -5,10 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.cuihairu.redis.streaming.registry.ServiceConsumerConfig;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RMap;
+import org.redisson.api.RScript;
 import org.redisson.api.RedissonClient;
 import org.redisson.client.codec.StringCodec;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -20,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -35,18 +38,40 @@ class RedisClientMetricsReporterConcurrencyTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    /**
+     * Backs the hash read (map.get) and the server-side merge script (script.eval) with
+     * one in-memory store; the eval answer performs the same merge semantics as the
+     * production Lua (overlay the incoming document onto the stored one).
+     */
+    private static Map<String, String> mockMergeBackedStore(RedissonClient redisson, RMap<String, String> map)
+            throws Exception {
+        Map<String, String> store = new ConcurrentHashMap<>();
+        when(map.get("metrics")).thenAnswer(inv -> store.get("metrics"));
+        RScript script = mock(RScript.class);
+        when(redisson.getScript(any(StringCodec.class))).thenReturn(script);
+        when(script.eval(any(RScript.Mode.class), anyString(), any(RScript.ReturnType.class), anyList(),
+                any(), any()))
+                .thenAnswer(inv -> {
+                    String incoming = inv.getArgument(5);
+                    Map<String, Object> merged = new HashMap<>();
+                    String existing = store.get("metrics");
+                    if (existing != null) {
+                        merged = MAPPER.readValue(existing, new TypeReference<Map<String, Object>>() {});
+                    }
+                    merged.putAll(MAPPER.readValue(incoming, new TypeReference<Map<String, Object>>() {}));
+                    store.put("metrics", MAPPER.writeValueAsString(merged));
+                    return 1L;
+                });
+        return store;
+    }
+
     @Test
     void concurrentInflightUpdatesAreAllCounted() throws Exception {
         RedissonClient redisson = mock(RedissonClient.class);
         @SuppressWarnings("unchecked")
         RMap<String, String> map = mock(RMap.class);
         when(redisson.<String, String>getMap(any(String.class), any(StringCodec.class))).thenReturn(map);
-
-        // in-memory stand-in for the Redis hash field, same non-atomic get/put shape
-        Map<String, String> store = new ConcurrentHashMap<>();
-        when(map.get("metrics")).thenAnswer(inv -> store.get("metrics"));
-        when(map.put(anyString(), anyString()))
-                .thenAnswer(inv -> store.put(inv.getArgument(0), inv.getArgument(1)));
+        Map<String, String> store = mockMergeBackedStore(redisson, map);
 
         ServiceConsumerConfig config = new ServiceConsumerConfig();
         config.setKeyPrefix("registry");
@@ -85,11 +110,7 @@ class RedisClientMetricsReporterConcurrencyTest {
         @SuppressWarnings("unchecked")
         RMap<String, String> map = mock(RMap.class);
         when(redisson.<String, String>getMap(any(String.class), any(StringCodec.class))).thenReturn(map);
-
-        Map<String, String> store = new ConcurrentHashMap<>();
-        when(map.get("metrics")).thenAnswer(inv -> store.get("metrics"));
-        when(map.put(anyString(), anyString()))
-                .thenAnswer(inv -> store.put(inv.getArgument(0), inv.getArgument(1)));
+        Map<String, String> store = mockMergeBackedStore(redisson, map);
 
         ServiceConsumerConfig config = new ServiceConsumerConfig();
         config.setKeyPrefix("registry");

@@ -6,11 +6,15 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.redisson.api.RMap;
+import org.redisson.api.RScript;
 import org.redisson.api.RedissonClient;
+import org.redisson.client.codec.Codec;
 import org.redisson.client.codec.StringCodec;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -26,6 +30,9 @@ class RedisClientMetricsReporterTest {
     @SuppressWarnings("rawtypes")
     private RMap mockMap;
 
+    @Mock
+    private RScript mockScript;
+
     private ServiceConsumerConfig config;
 
     @BeforeEach
@@ -33,9 +40,20 @@ class RedisClientMetricsReporterTest {
         MockitoAnnotations.openMocks(this);
         config = new ServiceConsumerConfig();
         config.setKeyPrefix("registry");
-        
+
         // Setup mock behavior
         when(mockRedissonClient.getMap(any(String.class), any(StringCodec.class))).thenReturn(mockMap);
+        // metrics are written through the server-side merge script (not a plain HSET)
+        when(mockRedissonClient.getScript(any(Codec.class))).thenReturn(mockScript);
+    }
+
+    private void verifyMetricsMerged() {
+        verifyMetricsMerged(times(1));
+    }
+
+    private void verifyMetricsMerged(org.mockito.verification.VerificationMode mode) {
+        verify(mockScript, mode).eval(eq(RScript.Mode.READ_WRITE), anyString(),
+                eq(RScript.ReturnType.LONG), anyList(), eq("metrics"), anyString());
     }
 
     @Test
@@ -89,7 +107,7 @@ class RedisClientMetricsReporterTest {
         RedisClientMetricsReporter reporter = new RedisClientMetricsReporter(mockRedissonClient, config);
         reporter.incrementInflight("test-service", "instance-1");
 
-        verify(mockMap).put(eq("metrics"), any(String.class));
+        verifyMetricsMerged();
     }
 
     @Test
@@ -99,7 +117,7 @@ class RedisClientMetricsReporterTest {
         RedisClientMetricsReporter reporter = new RedisClientMetricsReporter(mockRedissonClient, config);
         reporter.decrementInflight("test-service", "instance-1");
 
-        verify(mockMap).put(eq("metrics"), any(String.class));
+        verifyMetricsMerged();
     }
 
     @Test
@@ -109,7 +127,7 @@ class RedisClientMetricsReporterTest {
         RedisClientMetricsReporter reporter = new RedisClientMetricsReporter(mockRedissonClient, config);
         reporter.recordLatency("test-service", "instance-1", 100);
 
-        verify(mockMap).put(eq("metrics"), any(String.class));
+        verifyMetricsMerged();
     }
 
     @Test
@@ -119,7 +137,7 @@ class RedisClientMetricsReporterTest {
         RedisClientMetricsReporter reporter = new RedisClientMetricsReporter(mockRedissonClient, config);
         reporter.recordLatency("test-service", "instance-1", 0);
 
-        verify(mockMap).put(eq("metrics"), any(String.class));
+        verifyMetricsMerged();
     }
 
     @Test
@@ -129,7 +147,7 @@ class RedisClientMetricsReporterTest {
         RedisClientMetricsReporter reporter = new RedisClientMetricsReporter(mockRedissonClient, config);
         reporter.recordLatency("test-service", "instance-1", 100000);
 
-        verify(mockMap).put(eq("metrics"), any(String.class));
+        verifyMetricsMerged();
     }
 
     @Test
@@ -139,7 +157,7 @@ class RedisClientMetricsReporterTest {
         RedisClientMetricsReporter reporter = new RedisClientMetricsReporter(mockRedissonClient, config);
         reporter.recordOutcome("test-service", "instance-1", true);
 
-        verify(mockMap).put(eq("metrics"), any(String.class));
+        verifyMetricsMerged();
     }
 
     @Test
@@ -149,7 +167,7 @@ class RedisClientMetricsReporterTest {
         RedisClientMetricsReporter reporter = new RedisClientMetricsReporter(mockRedissonClient, config);
         reporter.recordOutcome("test-service", "instance-1", false);
 
-        verify(mockMap).put(eq("metrics"), any(String.class));
+        verifyMetricsMerged();
     }
 
     @Test
@@ -163,7 +181,7 @@ class RedisClientMetricsReporterTest {
         // Decrementing should not go below zero
         reporter.decrementInflight("test-service", "instance-1");
         
-        verify(mockMap).put(eq("metrics"), any(String.class));
+        verifyMetricsMerged();
     }
 
     @Test
@@ -174,7 +192,7 @@ class RedisClientMetricsReporterTest {
         RedisClientMetricsReporter reporter = new RedisClientMetricsReporter(mockRedissonClient, config);
         reporter.incrementInflight("test-service", "instance-1");
 
-        verify(mockMap).put(eq("metrics"), any(String.class));
+        verifyMetricsMerged();
     }
 
     @Test
@@ -184,7 +202,7 @@ class RedisClientMetricsReporterTest {
         RedisClientMetricsReporter reporter = new RedisClientMetricsReporter(mockRedissonClient, config);
         reporter.recordLatency("test-service", "instance-1", 75);
 
-        verify(mockMap).put(eq("metrics"), any(String.class));
+        verifyMetricsMerged();
     }
 
     @Test
@@ -208,7 +226,7 @@ class RedisClientMetricsReporterTest {
         reporter.recordOutcome("test-service", "instance-1", true);
         reporter.decrementInflight("test-service", "instance-1");
 
-        verify(mockMap, times(4)).put(eq("metrics"), any(String.class));
+        verifyMetricsMerged(times(4));
     }
 
     @Test
@@ -221,7 +239,7 @@ class RedisClientMetricsReporterTest {
         reporter.recordLatency("service-b", "instance-1", 75);
         reporter.recordLatency("service-c", "instance-1", 100);
 
-        verify(mockMap, times(3)).put(eq("metrics"), any(String.class));
+        verifyMetricsMerged(times(3));
     }
 
     @Test
@@ -234,6 +252,6 @@ class RedisClientMetricsReporterTest {
         reporter.recordLatency("test-service", "instance-2", 75);
         reporter.recordLatency("test-service", "instance-3", 100);
 
-        verify(mockMap, times(3)).put(eq("metrics"), any(String.class));
+        verifyMetricsMerged(times(3));
     }
 }

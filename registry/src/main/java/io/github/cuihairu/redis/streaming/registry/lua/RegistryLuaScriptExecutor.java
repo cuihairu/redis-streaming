@@ -63,6 +63,12 @@ public class RegistryLuaScriptExecutor {
             redis.call('ZADD', heartbeat_key, heartbeat_num, instance_id)
             redis.call('HSET', instance_key, 'lastHeartbeatTime', heartbeat_time)
 
+            -- A live heartbeat revives an instance previously marked unhealthy by the
+            -- expiry cleanup (persistent instances are only flagged, never deleted).
+            if redis.call('HGET', instance_key, 'healthy') == 'false' then
+                redis.call('HSET', instance_key, 'healthy', 'true')
+            end
+
             -- Refresh instance Hash TTL (only effective for ephemeral instances).
             -- Rule: ephemeral=true or unset means ephemeral instance, requires sliding expiration; ephemeral=false means persistent instance, no TTL.
             if ttl_seconds and ttl_seconds ~= '' then
@@ -75,6 +81,25 @@ public class RegistryLuaScriptExecutor {
                 end
             end
 
+            -- Merge the incoming metrics JSON into the existing document instead of replacing
+            -- the field: client-side metrics (clientInflight etc., written by
+            -- RedisClientMetricsReporter) and server-side metrics (cpu/memory, written by the
+            -- provider heartbeat) share one hash field and must not clobber each other's keys.
+            local function merge_metrics(new_json)
+                local merged = {}
+                local existing = redis.call('HGET', instance_key, 'metrics')
+                if existing and existing ~= '' then
+                    local ok, decoded = pcall(cjson.decode, existing)
+                    if ok and type(decoded) == 'table' then merged = decoded end
+                end
+                local ok_in, incoming = pcall(cjson.decode, new_json)
+                if ok_in and type(incoming) == 'table' then
+                    for k, v in pairs(incoming) do merged[k] = v end
+                end
+                redis.call('HSET', instance_key, 'metrics', cjson.encode(merged))
+                redis.call('HSET', instance_key, 'lastMetricsUpdate', heartbeat_time)
+            end
+
             -- Execute corresponding updates based on different modes
             if update_mode == 'heartbeat_only' then
                 -- Only update timestamp, done
@@ -83,8 +108,7 @@ public class RegistryLuaScriptExecutor {
             elseif update_mode == 'metrics_update' then
                 -- Only update metrics
                 if metrics_json and metrics_json ~= '' then
-                    redis.call('HSET', instance_key, 'metrics', metrics_json)
-                    redis.call('HSET', instance_key, 'lastMetricsUpdate', heartbeat_time)
+                    merge_metrics(metrics_json)
                 end
                 return 1
 
@@ -103,8 +127,7 @@ public class RegistryLuaScriptExecutor {
                     redis.call('HSET', instance_key, 'lastMetadataUpdate', heartbeat_time)
                 end
                 if metrics_json and metrics_json ~= '' then
-                    redis.call('HSET', instance_key, 'metrics', metrics_json)
-                    redis.call('HSET', instance_key, 'lastMetricsUpdate', heartbeat_time)
+                    merge_metrics(metrics_json)
                 end
                 return 1
             end

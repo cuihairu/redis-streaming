@@ -25,6 +25,29 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 @Slf4j
 public class RedisClientMetricsReporter {
+
+    /**
+     * Server-side read-merge-write of the instance 'metrics' JSON document. The provider's
+     * heartbeat writes server metrics (cpu/memory) into the same field from another process,
+     * so a plain {@code HPUT}-style replace would erase keys the reporter never saw (and the
+     * heartbeat merge would erase client keys in return). Overlaying the computed document
+     * onto the current server-side value atomically keeps concurrent server keys intact.
+     */
+    private static final String MERGE_METRICS_SCRIPT = """
+            local merged = {}
+            local existing = redis.call('HGET', KEYS[1], ARGV[1])
+            if existing and existing ~= '' then
+                local ok, decoded = pcall(cjson.decode, existing)
+                if ok and type(decoded) == 'table' then merged = decoded end
+            end
+            local ok_in, incoming = pcall(cjson.decode, ARGV[2])
+            if ok_in and type(incoming) == 'table' then
+                for k, v in pairs(incoming) do merged[k] = v end
+            end
+            redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(merged))
+            return 1
+            """;
+
     private final RedissonClient redisson;
     private final ServiceConsumerConfig cfg;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -84,7 +107,14 @@ public class RedisClientMetricsReporter {
                     metrics = new HashMap<>();
                 }
                 fn.accept(metrics);
-                map.put("metrics", mapper.writeValueAsString(metrics));
+                // merge server-side (instead of replacing the whole document) so the
+                // provider heartbeat's cpu/memory keys survive the client write window
+                redisson.getScript(StringCodec.INSTANCE).eval(
+                        org.redisson.api.RScript.Mode.READ_WRITE,
+                        MERGE_METRICS_SCRIPT,
+                        org.redisson.api.RScript.ReturnType.LONG,
+                        java.util.Collections.singletonList(key),
+                        "metrics", mapper.writeValueAsString(metrics));
             } finally {
                 lock.unlock();
             }

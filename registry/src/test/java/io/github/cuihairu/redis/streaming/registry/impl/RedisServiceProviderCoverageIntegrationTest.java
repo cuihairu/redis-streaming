@@ -1,6 +1,8 @@
 package io.github.cuihairu.redis.streaming.registry.impl;
 
 import io.github.cuihairu.redis.streaming.registry.DefaultServiceInstance;
+import io.github.cuihairu.redis.streaming.registry.ServiceConsumerConfig;
+import io.github.cuihairu.redis.streaming.registry.client.metrics.RedisClientMetricsReporter;
 import io.github.cuihairu.redis.streaming.registry.ServiceChangeAction;
 import io.github.cuihairu.redis.streaming.registry.ServiceInstance;
 import io.github.cuihairu.redis.streaming.registry.ServiceProviderConfig;
@@ -221,5 +223,103 @@ class RedisServiceProviderCoverageIntegrationTest {
         provider.stop();
         provider.stop();
         assertFalse(provider.isRunning());
+    }
+
+    @Test
+    void heartbeatRevivesUnhealthyPersistentInstance() throws Exception {
+        String svc = uniqueService();
+        // fastConfig (zero intervals): back-to-back sendHeartbeat calls must not be
+        // throttled to NO_UPDATE by the smart-heartbeat interval window
+        RedisServiceProvider provider = new RedisServiceProvider(
+                redis, new ServiceProviderConfig(), fastConfig(),
+                controllable(new AtomicReference<>(Map.of("k", 1))));
+        RedisServiceConsumer consumer = new RedisServiceConsumer(redis);
+        provider.start();
+        consumer.start();
+        try {
+            // persistent instances are flagged unhealthy by the expiry pass instead of deleted
+            ServiceInstance persistent = DefaultServiceInstance.builder()
+                    .serviceName(svc).instanceId("p1").host("127.0.0.1").port(1)
+                    .protocol(StandardProtocol.TCP).metadata(Map.of("r", "1"))
+                    .healthy(true).ephemeral(false).build();
+            provider.register(persistent);
+            provider.sendHeartbeat(persistent);
+
+            RScoredSortedSet<String> hb = redis.getScoredSortedSet(
+                    new ServiceProviderConfig().getRegistryKeys().getServiceHeartbeatsKey(svc),
+                    StringCodec.INSTANCE);
+            long deadline = System.currentTimeMillis() + 5_000;
+            while (hb.size() == 0 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50);
+            }
+            for (String member : hb.valueRange(0, -1)) {
+                hb.add(System.currentTimeMillis() - 86_400_000L, member);
+            }
+            Method cleanup = RedisServiceProvider.class
+                    .getDeclaredMethod("cleanupExpiredInstancesForService", String.class);
+            cleanup.setAccessible(true);
+            cleanup.invoke(provider, svc);
+
+            Map<String, String> stored = redis.<String, String>getMap(
+                    new ServiceProviderConfig().getRegistryKeys().getServiceInstanceKey(svc, "p1"),
+                    StringCodec.INSTANCE).readAllMap();
+            assertEquals("false", stored.get("healthy"),
+                    "an expired persistent instance must be flagged unhealthy");
+            assertTrue(consumer.discoverHealthy(svc).isEmpty(),
+                    "the flagged instance must drop out of healthy discovery");
+
+            // a resumed heartbeat must revive it — previously the flag stuck forever
+            provider.sendHeartbeat(persistent);
+            stored = redis.<String, String>getMap(
+                    new ServiceProviderConfig().getRegistryKeys().getServiceInstanceKey(svc, "p1"),
+                    StringCodec.INSTANCE).readAllMap();
+            assertEquals("true", stored.get("healthy"), "a live heartbeat must restore health");
+            assertEquals(1, consumer.discoverHealthy(svc).size(),
+                    "the revived instance must serve healthy discovery again");
+
+            provider.deregister(persistent);
+        } finally {
+            provider.stop();
+            consumer.stop();
+        }
+    }
+
+    @Test
+    void metricsMergePreservesClientAndServerKeys() throws Exception {
+        String svc = uniqueService();
+        AtomicReference<Object> serverMetrics = new AtomicReference<>(Map.of("cpu", 80));
+        RedisServiceProvider provider = new RedisServiceProvider(
+                redis, new ServiceProviderConfig(), new HeartbeatConfig(), controllable(serverMetrics));
+        RedisClientMetricsReporter reporter =
+                new RedisClientMetricsReporter(redis, new ServiceConsumerConfig());
+        provider.start();
+        try {
+            ServiceInstance a = ins(svc, "m1", Map.of("r", "1"));
+            provider.register(a);
+            provider.sendHeartbeat(a); // server metrics {"cpu":80} into the shared field
+
+            reporter.incrementInflight(svc, "m1");
+            reporter.recordLatency(svc, "m1", 25); // client keys, written from "another process"
+
+            // a later provider heartbeat must overlay server keys without erasing client keys
+            serverMetrics.set(Map.of("cpu", 90));
+            provider.sendHeartbeat(ins(svc, "m1", Map.of("r", "1")));
+
+            Map<String, String> stored = redis.<String, String>getMap(
+                    new ServiceProviderConfig().getRegistryKeys().getServiceInstanceKey(svc, "m1"),
+                    StringCodec.INSTANCE).readAllMap();
+            String metricsJson = stored.get("metrics");
+            assertNotNull(metricsJson);
+            assertTrue(metricsJson.contains("clientInflight"),
+                    "client keys must survive a provider heartbeat: " + metricsJson);
+            assertTrue(metricsJson.contains("clientLatencyMs"),
+                    "client keys must survive a provider heartbeat: " + metricsJson);
+            assertTrue(metricsJson.contains("cpu"),
+                    "server keys must survive client writes: " + metricsJson);
+
+            provider.deregister(a);
+        } finally {
+            provider.stop();
+        }
     }
 }

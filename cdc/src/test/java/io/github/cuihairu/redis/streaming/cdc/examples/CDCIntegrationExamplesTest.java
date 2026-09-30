@@ -63,35 +63,81 @@ class CDCIntegrationExamplesTest {
         return System.getenv().getOrDefault("POSTGRES_PASSWORD", "test_password");
     }
 
-    /** {@code jdbc:mysql://host:port/db} → host part (binlog replication is server-wide). */
+    /** {@code jdbc:mysql://host[:port]/db} → host part (binlog replication is server-wide). */
     private static String mysqlHost() {
-        String rest = mysqlUrl().replaceFirst("^jdbc:mysql://", "");
-        return rest.substring(0, rest.indexOf(':'));
+        return urlPart(mysqlUrl(), "^jdbc:mysql://", 1, "mysql host");
     }
 
+    /** Port is optional in JDBC URLs; the driver default applies when absent. */
     private static int mysqlPort() {
-        String rest = mysqlUrl().replaceFirst("^jdbc:mysql://", "");
-        String port = rest.substring(rest.indexOf(':') + 1, rest.indexOf('/'));
-        return Integer.parseInt(port);
+        return Integer.parseInt(urlPart(mysqlUrl(), "^jdbc:mysql://", 2, "mysql port"));
+    }
+
+    private static String pgHost() {
+        return urlPart(pgUrl(), "^jdbc:postgresql://", 1, "postgres host");
+    }
+
+    private static int pgPort() {
+        return Integer.parseInt(urlPart(pgUrl(), "^jdbc:postgresql://", 2, "postgres port"));
+    }
+
+    private static String pgDatabase() {
+        return pgUrl().replaceFirst("^jdbc:postgresql://[^/]+/", "").split("[?]")[0];
+    }
+
+    /**
+     * Extracts {@code group} of {@code jdbc:SCHEME//host[:port]/...}; group 2 (the port)
+     * falls back to {@code group1Default} when the URL omits it.
+     */
+    private static String urlPart(String url, String scheme, int group, int portDefault, String what) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile(scheme + "([^/:?]+)(?::(\\d+))?(?:/|$)").matcher(url);
+        if (!m.find()) {
+            throw new IllegalStateException("Cannot parse " + what + " from JDBC URL: " + url);
+        }
+        String value = group == 2 ? m.group(2) : m.group(1);
+        if (value == null) {
+            value = String.valueOf(portDefault);
+        }
+        return value;
+    }
+
+    private static String urlPart(String url, String scheme, int group, String what) {
+        return urlPart(url, scheme, group, -1, what);
+    }
+
+    /** TCP reachability probe — the guard for "environment not up" (skip), not auth problems. */
+    private static void requireReachable(String host, int port, String service) {
+        try (java.net.Socket socket = new java.net.Socket()) {
+            socket.connect(new java.net.InetSocketAddress(host, port), 2000);
+        } catch (Exception e) {
+            Assumptions.abort(service + " not reachable at " + host + ":" + port
+                    + " (start docker-compose.test.yml or point the *_URL env at a running instance)"
+                    + " - skipping example");
+        }
     }
 
     private static void assumeMysql() {
-        Assumptions.assumeTrue(mysqlUrl() != null && !mysqlUrl().isBlank(),
-                "MYSQL_URL not set (start docker-compose.test.yml) - skipping MySQL example");
+        requireReachable(mysqlHost(), mysqlPort(), "MySQL");
     }
 
     private static void assumePostgres() {
-        Assumptions.assumeTrue(pgUrl() != null && !pgUrl().isBlank(),
-                "POSTGRES_URL not set (start docker-compose.test.yml) - skipping PostgreSQL example");
+        requireReachable(pgHost(), pgPort(), "PostgreSQL");
     }
 
-    /** Binlog replication needs the global REPLICATION SLAVE privilege, absent by default. */
+    /**
+     * Binlog replication needs the global REPLICATION SLAVE privilege (renamed
+     * REPLICATION REPLICA in MySQL 8.4+); {@code ALL PRIVILEGES ON *.*} implies it.
+     * Absent by default for the compose {@code test_user}.
+     */
     private static boolean mysqlHasReplicationPrivilege() {
         try (Connection c = DriverManager.getConnection(mysqlUrl(), mysqlUser(), mysqlPassword());
              Statement st = c.createStatement();
              ResultSet rs = st.executeQuery("SHOW GRANTS")) {
             while (rs.next()) {
-                if (rs.getString(1).toUpperCase().contains("REPLICATION SLAVE")) {
+                String grant = rs.getString(1).toUpperCase();
+                if (grant.contains("REPLICATION SLAVE") || grant.contains("REPLICATION REPLICA")
+                        || (grant.contains("ALL PRIVILEGES") && grant.contains("ON *.*"))) {
                     return true;
                 }
             }
@@ -201,10 +247,9 @@ class CDCIntegrationExamplesTest {
         CDCConfiguration config = CDCConfigurationBuilder.forPostgreSQLLogicalReplication("pg_example")
                 .username(pgUser())
                 .password(pgPassword())
-                .postgresqlHostname(pgUrl().replaceFirst("^jdbc:postgresql://", "").split(":")[0])
-                .postgresqlPort(Integer.parseInt(pgUrl().replaceFirst("^jdbc:postgresql://", "")
-                        .split(":")[1].split("/")[0]))
-                .postgresqlDatabase(pgUrl().replaceFirst("^jdbc:postgresql://", "").split("/")[1])
+                .postgresqlHostname(pgHost())
+                .postgresqlPort(pgPort())
+                .postgresqlDatabase(pgDatabase())
                 .postgresqlSlotName("cdc_slot")
                 .postgresqlPublicationName("cdc_publication")
                 .postgresqlStatusInterval(1000)

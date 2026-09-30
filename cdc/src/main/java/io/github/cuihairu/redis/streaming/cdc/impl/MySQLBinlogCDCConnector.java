@@ -250,10 +250,11 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
             this.binlogFilename = parts[0];
             this.binlogPosition.set(Long.parseLong(parts[1]));
 
-            // Reconnect from new position
+            // Reconnect from new position — with the configured timeout, mirroring the start
+            // path: the no-arg connect() blocks the caller for the lifetime of the stream
             this.binaryLogClient.setBinlogFilename(binlogFilename);
             this.binaryLogClient.setBinlogPosition(binlogPosition.get());
-            this.binaryLogClient.connect();
+            this.binaryLogClient.connect(connectTimeoutMs);
         }
     }
 
@@ -407,7 +408,16 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
                     break;
             }
 
-            updateCurrentPosition(event);
+            // ROTATE advances the watermark via its payload (handleRotateEvent switches to the
+            // new file and its payload start offset). Stamping it with this event's header
+            // nextPosition instead would pair the NEW filename with an OLD-file end offset —
+            // "newfile:oldEndOffset" — and silently skip the head of the new file on resume.
+            if (event.getHeader().getEventType() == EventType.ROTATE) {
+                String fn = (binlogFilename != null) ? binlogFilename : "";
+                this.currentPosition = fn + ":" + binlogPosition.get();
+            } else {
+                updateCurrentPosition(event);
+            }
 
         } catch (Exception e) {
             log.error("Error handling binlog event", e);

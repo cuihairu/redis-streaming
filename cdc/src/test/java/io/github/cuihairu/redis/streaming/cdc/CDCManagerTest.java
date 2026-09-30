@@ -447,6 +447,40 @@ class CDCManagerTest {
         assertThat(manager.getRunningConnectorCount()).isEqualTo(0);
     }
 
+    @Test
+    void stopWithFailingConnectorCompletesAndRestartUsesFreshScheduler() throws Exception {
+        // Given
+        manager.addConnector(connector1);
+        connector1.failNextStops(1);
+        manager.start().get(5, TimeUnit.SECONDS);
+        assertThat(schedulerField()).isNotNull();
+
+        // When: a connector's stop future fails — the manager's own shutdown bookkeeping
+        // must still run (scheduler shut down, field cleared), and stop() must complete
+        CompletableFuture<Void> stopFuture = manager.stop();
+        assertThatThrownBy(() -> stopFuture.get(5, TimeUnit.SECONDS))
+                .isInstanceOf(java.util.concurrent.ExecutionException.class);
+
+        // Then
+        assertThat(stopFuture).isCompletedExceptionally();
+        assertThat(schedulerField()).isNull();
+
+        // And: a restart must work again on a fresh, live scheduler (no RejectedExecutionException)
+        manager.start().get(5, TimeUnit.SECONDS);
+        java.util.concurrent.ScheduledExecutorService restarted = schedulerField();
+        assertThat(restarted).isNotNull();
+        assertThat(restarted.isShutdown()).isFalse();
+
+        manager.stop().get(5, TimeUnit.SECONDS);
+    }
+
+    @SuppressWarnings("unchecked")
+    private java.util.concurrent.ScheduledExecutorService schedulerField() throws Exception {
+        java.lang.reflect.Field f = CDCManager.class.getDeclaredField("scheduler");
+        f.setAccessible(true);
+        return (java.util.concurrent.ScheduledExecutorService) f.get(manager);
+    }
+
     /**
      * Mock CDC connector for testing
      */
@@ -454,6 +488,7 @@ class CDCManagerTest {
         private final String name;
         private final List<ChangeEvent> eventsToReturn = new java.util.ArrayList<>();
         private final java.util.concurrent.atomic.AtomicBoolean running = new java.util.concurrent.atomic.AtomicBoolean(false);
+        private final java.util.concurrent.atomic.AtomicInteger failStopCount = new java.util.concurrent.atomic.AtomicInteger();
         private CDCConfiguration configuration;
         private CDCEventListener eventListener;
         private CDCHealthStatus healthStatus = CDCHealthStatus.unknown("Not started");
@@ -476,6 +511,11 @@ class CDCManagerTest {
             }
         }
 
+        /** Makes the next {@code n} stop() calls complete exceptionally (simulated broker outage). */
+        public void failNextStops(int n) {
+            this.failStopCount.set(n);
+        }
+
         public void setCurrentPosition(String position) {
             this.currentPosition = position;
         }
@@ -495,6 +535,10 @@ class CDCManagerTest {
         @Override
         public CompletableFuture<Void> stop() {
             return CompletableFuture.runAsync(() -> {
+                if (failStopCount.getAndUpdate(v -> v > 0 ? v - 1 : 0) > 0) {
+                    healthStatus = CDCHealthStatus.unknown("Stop failed");
+                    throw new RuntimeException("simulated stop failure");
+                }
                 running.set(false);
                 healthStatus = CDCHealthStatus.unknown("Stopped");
             });

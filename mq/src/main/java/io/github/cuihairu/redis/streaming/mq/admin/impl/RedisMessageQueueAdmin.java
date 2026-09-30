@@ -365,15 +365,30 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
                 long size = s.size();
                 if (size > per) {
                     long toDelete = size - per;
-                    int batch = (int) Math.min(Integer.MAX_VALUE, toDelete);
-                    @SuppressWarnings("deprecation")
-                    Map<StreamMessageId, Map<String, Object>> old = s.range(batch, StreamMessageId.MIN, StreamMessageId.MAX);
-                    int removed = 0;
-                    for (StreamMessageId id : old.keySet()) {
-                        s.remove(id);
-                        removed++;
+                    // MQ-13 pattern (same as trimQueueByAge): page the id scan with a bounded
+                    // count — one range() over the whole to-delete range materializes every
+                    // entry (values included) on the heap, an OOM risk on large backlogs.
+                    StreamMessageId cursor = StreamMessageId.MIN;
+                    while (toDelete > 0) {
+                        @SuppressWarnings("deprecation")
+                        Map<StreamMessageId, Map<String, Object>> page =
+                                s.range(trimAgePageSize, cursor, StreamMessageId.MAX);
+                        if (page == null || page.isEmpty()) break;
+                        StreamMessageId last = null;
+                        for (StreamMessageId id : page.keySet()) {
+                            if (toDelete <= 0) break;
+                            s.remove(id);
+                            toDelete--;
+                            deletedTotal++;
+                            last = id;
+                        }
+                        if (toDelete <= 0 || last == null || page.size() < trimAgePageSize) break;
+                        StreamMessageId next = new StreamMessageId(last.getId0(), last.getId1() + 1);
+                        boolean advanced = next.getId0() > cursor.getId0()
+                                || (next.getId0() == cursor.getId0() && next.getId1() > cursor.getId1());
+                        if (!advanced) break; // page re-delivered without progress — terminate
+                        cursor = next;
                     }
-                    deletedTotal += removed;
                 }
             }
             log.info("Trimmed queue {} (pc={}): ~{} messages deleted", topic, pc, deletedTotal);
