@@ -5,7 +5,7 @@ services:
     image: redis:7-alpine
     container_name: streaming-redis-test
     ports:
-      - "6379:6379"
+      - "${REDIS_TEST_PORT:-6379}:6379"
     command: redis-server --appendonly no --save ""
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -19,7 +19,7 @@ services:
     image: mysql:8.0
     container_name: streaming-mysql-test
     ports:
-      - "3306:3306"
+      - "${MYSQL_TEST_PORT:-3306}:3306"
     environment:
       MYSQL_ROOT_PASSWORD: test_password
       MYSQL_DATABASE: test_db
