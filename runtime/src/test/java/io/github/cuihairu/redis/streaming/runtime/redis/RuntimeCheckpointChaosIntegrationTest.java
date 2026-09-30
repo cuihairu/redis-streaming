@@ -136,8 +136,9 @@ class RuntimeCheckpointChaosIntegrationTest {
                 MessageProducer p2 = mq2.createProducer();
                 p2.send(topic, "k-y", "b-1").get(5, TimeUnit.SECONDS);
                 // restored job rebuilds the consumer group and drains state first; under full-suite
-                // load 15s was flaky (failed twice in CI/local) — allow a generous bounded wait
-                deadline = System.currentTimeMillis() + 45_000;
+                // load 15s flaked twice (CI/local) and 45s flaked once on the 2-core CI runner —
+                // allow a generous bounded wait (assertion itself is unchanged)
+                deadline = System.currentTimeMillis() + 90_000;
                 while (sink2.values.isEmpty() && System.currentTimeMillis() < deadline) {
                     Thread.sleep(100);
                 }
