@@ -59,10 +59,10 @@ class RedisKTableUnitTest {
         @SuppressWarnings("rawtypes")
         RMap map = mock(RMap.class);
         when(redissonClient.getMap(eq("t"), eq(StringCodec.INSTANCE))).thenReturn(map);
-        when(map.entrySet()).thenReturn(Map.of(
+        when(map.readAllMap()).thenReturn(Map.of(
                 "\"k1\"", "\"v1\"",
                 "\"k2\"", "\"v2\""
-        ).entrySet());
+        ));
 
         RedisKTable<String, String> table = new RedisKTable<>(redissonClient, "t", String.class, String.class);
         Map<String, String> state = table.getState();
@@ -128,10 +128,10 @@ class RedisKTableUnitTest {
         @SuppressWarnings("rawtypes")
         RMap map = mock(RMap.class);
         when(redissonClient.getMap(any(String.class), eq(StringCodec.INSTANCE))).thenReturn(map);
-        when(map.entrySet()).thenReturn(Map.of(
+        when(map.readAllMap()).thenReturn(Map.of(
                 "\"k1\"", "\"v1\"",
                 "\"k2\"", "\"v2\""
-        ).entrySet());
+        ));
         when(map.size()).thenReturn(2);
 
         RedisKTable<String, String> table = new RedisKTable<>(redissonClient, "t", String.class, String.class);
@@ -144,15 +144,35 @@ class RedisKTableUnitTest {
     }
 
     @Test
+    void derivedTableNamesAreUniquePerCall() {
+        // A bare currentTimeMillis() suffix collided for two derivations in the same
+        // millisecond (e.g. chained mapValues in a loop), silently merging both
+        // results into one hash — the random suffix keeps them distinct
+        RedissonClient redissonClient = mock(RedissonClient.class);
+        @SuppressWarnings("rawtypes")
+        RMap map = mock(RMap.class);
+        when(redissonClient.getMap(any(String.class), eq(StringCodec.INSTANCE))).thenReturn(map);
+        when(map.readAllMap()).thenReturn(Map.of("\"k1\"", "\"v1\""));
+
+        RedisKTable<String, String> table = new RedisKTable<>(redissonClient, "t", String.class, String.class);
+
+        KTable<String, String> first = table.mapValues(v -> v.toUpperCase());
+        KTable<String, String> second = table.mapValues(v -> v.toLowerCase());
+
+        assertNotEquals(((RedisKTable<?, ?>) first).getTableName(),
+                ((RedisKTable<?, ?>) second).getTableName());
+    }
+
+    @Test
     void mapValuesWithKeyAndValueCreatesNewTable() {
         RedissonClient redissonClient = mock(RedissonClient.class);
         @SuppressWarnings("rawtypes")
         RMap map = mock(RMap.class);
         when(redissonClient.getMap(any(String.class), eq(StringCodec.INSTANCE))).thenReturn(map);
-        when(map.entrySet()).thenReturn(Map.of(
+        when(map.readAllMap()).thenReturn(Map.of(
                 "\"k1\"", "\"v1\"",
                 "\"k2\"", "\"v2\""
-        ).entrySet());
+        ));
         when(map.size()).thenReturn(2);
 
         RedisKTable<String, String> table = new RedisKTable<>(redissonClient, "t", String.class, String.class);
@@ -170,11 +190,11 @@ class RedisKTableUnitTest {
         @SuppressWarnings("rawtypes")
         RMap map = mock(RMap.class);
         when(redissonClient.getMap(any(String.class), eq(StringCodec.INSTANCE))).thenReturn(map);
-        when(map.entrySet()).thenReturn(Map.of(
+        when(map.readAllMap()).thenReturn(Map.of(
                 "\"k1\"", "\"v1\"",
                 "\"k2\"", "\"v2\"",
                 "\"k3\"", "\"v3\""
-        ).entrySet());
+        ));
         when(map.size()).thenReturn(3);
 
         RedisKTable<String, String> table = new RedisKTable<>(redissonClient, "t", String.class, String.class);
@@ -193,10 +213,10 @@ class RedisKTableUnitTest {
         @SuppressWarnings("rawtypes")
         RMap map = mock(RMap.class);
         when(redissonClient.getMap(any(String.class), eq(StringCodec.INSTANCE))).thenReturn(map);
-        when(map.entrySet()).thenReturn(Map.of(
+        when(map.readAllMap()).thenReturn(Map.of(
                 "\"k1\"", "\"v1\"",
                 "\"k2\"", "\"v2\""
-        ).entrySet());
+        ));
         when(map.size()).thenReturn(2);
 
         RedisKTable<String, String> table = new RedisKTable<>(redissonClient, "t", String.class, String.class);
@@ -214,10 +234,10 @@ class RedisKTableUnitTest {
         @SuppressWarnings("rawtypes")
         RMap map = mock(RMap.class);
         when(redissonClient.getMap(any(String.class), eq(StringCodec.INSTANCE))).thenReturn(map);
-        when(map.entrySet()).thenReturn(Map.of(
+        when(map.readAllMap()).thenReturn(Map.of(
                 "\"k1\"", "\"v1\"",
                 "\"k2\"", "\"v2\""
-        ).entrySet());
+        ));
         when(map.size()).thenReturn(2);
 
         RedisKTable<String, String> table = new RedisKTable<>(redissonClient, "t", String.class, String.class);
@@ -235,10 +255,10 @@ class RedisKTableUnitTest {
         @SuppressWarnings("rawtypes")
         RMap map = mock(RMap.class);
         when(redissonClient.getMap(any(String.class), eq(StringCodec.INSTANCE))).thenReturn(map);
-        when(map.entrySet()).thenReturn(Map.of(
+        when(map.readAllMap()).thenReturn(Map.of(
                 "\"k1\"", "\"v1\"",
                 "\"k2\"", "\"v2\""
-        ).entrySet());
+        ));
         when(map.size()).thenReturn(2);
         when(map.get(any(String.class))).thenAnswer(invocation -> {
             String key = invocation.getArgument(0);
@@ -266,9 +286,9 @@ class RedisKTableUnitTest {
         @SuppressWarnings("rawtypes")
         RMap map = mock(RMap.class);
         when(redissonClient.getMap(any(String.class), eq(StringCodec.INSTANCE))).thenReturn(map);
-        when(map.entrySet()).thenReturn(Map.of(
+        when(map.readAllMap()).thenReturn(Map.of(
                 "\"k1\"", "\"v1\""
-        ).entrySet());
+        ));
         when(map.size()).thenReturn(1);
         when(map.get(any(String.class))).thenReturn(null);
 
@@ -289,10 +309,10 @@ class RedisKTableUnitTest {
         @SuppressWarnings("rawtypes")
         RMap map = mock(RMap.class);
         when(redissonClient.getMap(any(String.class), eq(StringCodec.INSTANCE))).thenReturn(map);
-        when(map.entrySet()).thenReturn(Map.of(
+        when(map.readAllMap()).thenReturn(Map.of(
                 "\"k1\"", "\"v1\"",
                 "\"k2\"", "\"v2\""
-        ).entrySet());
+        ));
         when(map.size()).thenReturn(2);
         when(map.get(any(String.class))).thenAnswer(invocation -> {
             String key = invocation.getArgument(0);
@@ -383,7 +403,7 @@ class RedisKTableUnitTest {
         @SuppressWarnings("rawtypes")
         RMap map = mock(RMap.class);
         when(redissonClient.getMap(eq("t"), eq(StringCodec.INSTANCE))).thenReturn(map);
-        when(map.entrySet()).thenReturn(Map.of().entrySet());
+        when(map.readAllMap()).thenReturn(Map.of());
 
         RedisKTable<String, String> table = new RedisKTable<>(redissonClient, "t", String.class, String.class);
         Map<String, String> state = table.getState();
@@ -408,7 +428,7 @@ class RedisKTableUnitTest {
         @SuppressWarnings("rawtypes")
         RMap map = mock(RMap.class);
         when(redissonClient.getMap(any(String.class), eq(StringCodec.INSTANCE))).thenReturn(map);
-        when(map.entrySet()).thenReturn(Map.of().entrySet());
+        when(map.readAllMap()).thenReturn(Map.of());
         when(map.size()).thenReturn(0);
 
         RedisKTable<String, String> table = new RedisKTable<>(redissonClient, "t", String.class, String.class);

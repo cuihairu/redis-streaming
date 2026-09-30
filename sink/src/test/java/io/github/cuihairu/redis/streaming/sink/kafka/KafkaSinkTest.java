@@ -121,22 +121,24 @@ class KafkaSinkTest {
 
     @Test
     void writeAsyncHandlesFailure() throws Exception {
-        CompletableFuture<org.apache.kafka.clients.producer.RecordMetadata> failedFuture =
-                new CompletableFuture<>();
-        failedFuture.completeExceptionally(new RuntimeException("Simulated failure"));
-
-        MockProducer<String, String> producer = new MockProducer<>(false, new StringSerializer(), new StringSerializer()) {
-            @Override
-            public synchronized java.util.concurrent.Future<org.apache.kafka.clients.producer.RecordMetadata> send(ProducerRecord<String, String> record) {
-                // Simulate failure
-                return failedFuture;
-            }
-        };
+        // autoComplete=false: the callback only fires when errorNext() drives a batch
+        // completion. (The previous version overrode the 1-arg send(), which writeAsync
+        // never calls — the future just timed out and the test passed on the timeout.)
+        MockProducer<String, String> producer =
+                new MockProducer<>(false, new StringSerializer(), new StringSerializer());
 
         KafkaSink<String> sink = new KafkaSink<String>(producer, "t", new ObjectMapper(), null);
         try {
             var future = sink.writeAsync("v");
-            assertThrows(Exception.class, () -> future.get(3, TimeUnit.SECONDS));
+            assertFalse(future.isDone(), "no completion before the producer batch resolves");
+
+            RuntimeException failure = new RuntimeException("Simulated failure");
+            assertTrue(producer.errorNext(failure), "errorNext must complete the in-flight batch");
+
+            var ex = assertThrows(java.util.concurrent.ExecutionException.class,
+                    () -> future.get(1, TimeUnit.SECONDS));
+            assertSame(failure, ex.getCause(),
+                    "the sink future must fail with the producer's exception");
         } finally {
             sink.close();
         }

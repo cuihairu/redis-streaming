@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -21,6 +22,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class QuantileAnalyzerTest {
@@ -39,7 +41,7 @@ class QuantileAnalyzerTest {
         when(redisson.<String>getScoredSortedSet("p:quantile:lat:v")).thenReturn(value);
         when(redisson.<String>getSet("p:quantile:metrics")).thenReturn(metrics);
 
-        QuantileAnalyzer q = new QuantileAnalyzer(redisson, "p", Duration.ofMinutes(5));
+        QuantileAnalyzer q = new QuantileAnalyzer(redisson, "p", Duration.ofMinutes(5), () -> 100_000L);
         try {
             q.record("lat", 12.5, Instant.ofEpochMilli(1000));
             verify(metrics).add("lat");
@@ -176,7 +178,8 @@ class QuantileAnalyzerTest {
         try {
             q.record(" ", 1.0, Instant.ofEpochMilli(1));
             q.record(null, 1.0, Instant.ofEpochMilli(1));
-            assertTrue(true);
+            // blank/null metric must be rejected before any Redis access
+            org.mockito.Mockito.verifyNoInteractions(redisson);
         } finally {
             q.close();
         }
@@ -196,7 +199,7 @@ class QuantileAnalyzerTest {
         when(redisson.<String>getScoredSortedSet("p:quantile:m:v")).thenReturn(value);
         when(redisson.<String>getSet("p:quantile:metrics")).thenReturn(metrics);
 
-        QuantileAnalyzer q = new QuantileAnalyzer(redisson, "p", Duration.ofMinutes(5));
+        QuantileAnalyzer q = new QuantileAnalyzer(redisson, "p", Duration.ofMinutes(5), () -> 100_000L);
         try {
             q.record("m", 10.0, Instant.ofEpochMilli(0));
             verify(time).add(eq(0d), anyString());
@@ -222,9 +225,10 @@ class QuantileAnalyzerTest {
 
         QuantileAnalyzer q = new QuantileAnalyzer(redisson, "p", Duration.ofMinutes(5));
         try {
+            // future-dated samples would poison every quantile (the value read path has no
+            // time filter), so record() must reject them outright
             q.record("m", 10.0, Instant.ofEpochMilli(Long.MAX_VALUE));
-            verify(time).add(eq((double) Long.MAX_VALUE), anyString());
-            verify(value).add(eq(10.0d), anyString());
+            verifyNoInteractions(time, value, metrics);
         } finally {
             q.close();
         }
@@ -244,7 +248,7 @@ class QuantileAnalyzerTest {
         when(redisson.<String>getScoredSortedSet("p:quantile:m:v")).thenReturn(value);
         when(redisson.<String>getSet("p:quantile:metrics")).thenReturn(metrics);
 
-        QuantileAnalyzer q = new QuantileAnalyzer(redisson, "p", Duration.ofMinutes(5));
+        QuantileAnalyzer q = new QuantileAnalyzer(redisson, "p", Duration.ofMinutes(5), () -> 100_000L);
         try {
             q.record("m", -10.5, Instant.ofEpochMilli(1000));
             verify(value).add(eq(-10.5d), anyString());
@@ -267,7 +271,7 @@ class QuantileAnalyzerTest {
         when(redisson.<String>getScoredSortedSet("p:quantile:m:v")).thenReturn(value);
         when(redisson.<String>getSet("p:quantile:metrics")).thenReturn(metrics);
 
-        QuantileAnalyzer q = new QuantileAnalyzer(redisson, "p", Duration.ofMinutes(5));
+        QuantileAnalyzer q = new QuantileAnalyzer(redisson, "p", Duration.ofMinutes(5), () -> 100_000L);
         try {
             q.record("m", 0.0, Instant.ofEpochMilli(1000));
             verify(value).add(eq(0.0d), anyString());
@@ -435,7 +439,7 @@ class QuantileAnalyzerTest {
         when(redisson.<String>getScoredSortedSet("p:quantile:m:v")).thenReturn(value);
         when(redisson.<String>getSet("p:quantile:metrics")).thenReturn(metrics);
 
-        QuantileAnalyzer q = new QuantileAnalyzer(redisson, "p", Duration.ofMinutes(5));
+        QuantileAnalyzer q = new QuantileAnalyzer(redisson, "p", Duration.ofMinutes(5), () -> 100_000L);
         try {
             q.record("m", 10.0, Instant.ofEpochMilli(1000));
             q.record("m", 20.0, Instant.ofEpochMilli(2000));
@@ -483,8 +487,8 @@ class QuantileAnalyzerTest {
         RedissonClient redisson = mock(RedissonClient.class);
         QuantileAnalyzer q = new QuantileAnalyzer(redisson, "p", Duration.ofMinutes(5));
         q.close();
-        q.close();
-        assertTrue(true);
+        org.mockito.Mockito.verifyNoInteractions(redisson);
+        assertDoesNotThrow(q::close, "second close must not re-shutdown or throw");
     }
 
     @Test

@@ -94,6 +94,10 @@ class RedisStreamSourceRunCoverageTest {
                 return stopped.get();
             }
         });
-        assertTrue(true);
+        // the tolerated createGroup failure must not end the run: polling continued
+        // until the idle bound
+        org.mockito.Mockito.verify(stream).createGroup(any());
+        org.mockito.Mockito.verify(stream, org.mockito.Mockito.atLeastOnce())
+                .readGroup(any(String.class), any(String.class), any(StreamReadGroupArgs.class));
     }
 }

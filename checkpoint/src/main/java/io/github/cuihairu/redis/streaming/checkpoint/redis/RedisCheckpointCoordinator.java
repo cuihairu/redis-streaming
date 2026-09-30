@@ -36,6 +36,11 @@ public class RedisCheckpointCoordinator implements CheckpointCoordinator {
     private final CheckpointStorage storage;
     private final AtomicLong checkpointIdCounter;
 
+    // Set when the constructor could not read the latest checkpoint (Redis briefly
+    // unreachable): the counter then starts at 0 and the first trigger would overwrite
+    // a stored recovery point (e.g. checkpoint:0). The next trigger re-seeds lazily.
+    private volatile boolean idSeedUnverified = false;
+
     // Track pending checkpoints: checkpointId -> pending checkpoint with task acknowledgements
     private final Map<Long, PendingCheckpoint> pendingCheckpoints;
 
@@ -61,13 +66,21 @@ public class RedisCheckpointCoordinator implements CheckpointCoordinator {
                 checkpointIdCounter.set(latest.getCheckpointId() + 1);
             }
         } catch (Exception e) {
-            log.warn("Failed to load latest checkpoint", e);
+            // Construction stays best-effort (callers may build coordinators before the
+            // backend is reachable), but the id space is now unverified — triggerCheckpoint
+            // re-seeds lazily so a stored checkpoint is never blindly overwritten with id 0.
+            idSeedUnverified = true;
+            log.warn("Failed to load latest checkpoint; checkpoint id seed will be retried on next trigger", e);
         }
     }
 
     @Override
     public long triggerCheckpoint() {
         cleanupExpiredPendingCheckpoints();
+
+        if (idSeedUnverified) {
+            reseedCheckpointIdCounter();
+        }
 
         long checkpointId = checkpointIdCounter.getAndIncrement();
         long timestamp = System.currentTimeMillis();
@@ -88,6 +101,26 @@ public class RedisCheckpointCoordinator implements CheckpointCoordinator {
             log.error("Failed to trigger checkpoint {}", checkpointId, e);
             pendingCheckpoints.remove(checkpointId);
             return -1;
+        }
+    }
+
+    /**
+     * Re-read the latest stored checkpoint and raise the id counter above it, so a
+     * coordinator constructed while storage was unreachable cannot allocate id 0 and
+     * overwrite the previous run's stored recovery point. Serialized so concurrent
+     * triggers cannot double-apply; keeps the old counter if the read fails again.
+     */
+    private synchronized void reseedCheckpointIdCounter() {
+        if (!idSeedUnverified) {
+            return;
+        }
+        try {
+            Checkpoint latest = storage.getLatestCheckpoint();
+            long floor = (latest != null) ? latest.getCheckpointId() + 1 : 0L;
+            checkpointIdCounter.getAndUpdate(current -> Math.max(current, floor));
+            idSeedUnverified = false;
+        } catch (Exception e) {
+            log.warn("Still unable to load latest checkpoint; new checkpoint ids may collide with stored ones", e);
         }
     }
 

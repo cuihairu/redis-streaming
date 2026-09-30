@@ -44,15 +44,10 @@ class SessionWindowAssignerTest {
 
     @Test
     void testAssignWindowsWithZeroGap() {
-        SessionWindow<String> window = SessionWindow.withGapMillis(0L);
-
-        Iterator<io.github.cuihairu.redis.streaming.api.stream.WindowAssigner.Window> windows =
-                window.assignWindows("test", 5000L).iterator();
-
-        assertTrue(windows.hasNext());
-        TimeWindow w = (TimeWindow) windows.next();
-        assertEquals(5000L, w.getStart());
-        assertEquals(5000L, w.getEnd());
+        // A zero gap yields empty [ts, ts) windows that fire on arrival and can never
+        // merge — the factory rejects it instead of silently degrading session semantics
+        assertThrows(IllegalArgumentException.class, () -> SessionWindow.withGapMillis(0L));
+        assertThrows(IllegalArgumentException.class, () -> SessionWindow.withGap(Duration.ZERO));
     }
 
     @Test

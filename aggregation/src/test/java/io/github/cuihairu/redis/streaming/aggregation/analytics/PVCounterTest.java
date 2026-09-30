@@ -8,6 +8,7 @@ import org.redisson.api.RedissonClient;
 import java.time.Duration;
 import java.time.Instant;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -44,7 +45,8 @@ class PVCounterTest {
             assertEquals(3, out);
 
             verify(sortedSet).add(eq((double) ts.toEpochMilli()), argThat(v -> v.startsWith(ts.toEpochMilli() + "-")));
-            verify(sortedSet).removeRangeByScore(eq(0d), eq(true), anyDouble(), eq(true));
+            // floor unbounded below: pre-epoch (negative) scores must be pruned too
+            verify(sortedSet).removeRangeByScore(eq(Double.NEGATIVE_INFINITY), eq(true), anyDouble(), eq(true));
             verify(sortedSet, never()).size();
         } finally {
             counter.close();
@@ -145,8 +147,7 @@ class PVCounterTest {
     void closeIsIdempotent() {
         PVCounter counter = new PVCounter(mock(RedissonClient.class), "p", Duration.ofMinutes(10));
         counter.close();
-        counter.close();
-        assertTrue(true);
+        assertDoesNotThrow(counter::close, "second close must not re-shutdown or throw");
     }
 
     @Test

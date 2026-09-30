@@ -15,7 +15,7 @@ public class MetricRegistry implements Serializable {
     private static final long serialVersionUID = 1L;
 
     private final Map<String, MetricCollector> collectors;
-    private final MetricCollector defaultCollector;
+    private volatile MetricCollector defaultCollector;
 
     public MetricRegistry() {
         this.collectors = new ConcurrentHashMap<>();
@@ -31,6 +31,11 @@ public class MetricRegistry implements Serializable {
      */
     public void registerCollector(String name, MetricCollector collector) {
         collectors.put(name, collector);
+        // replacing the "default" entry must move getDefaultCollector() with it, else
+        // metrics silently split across the old and new default collectors
+        if ("default".equals(name)) {
+            this.defaultCollector = collector;
+        }
     }
 
     /**

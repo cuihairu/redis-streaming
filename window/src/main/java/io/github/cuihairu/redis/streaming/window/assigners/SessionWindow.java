@@ -6,6 +6,7 @@ import io.github.cuihairu.redis.streaming.window.triggers.EventTimeTrigger;
 
 import java.time.Duration;
 import java.util.Collections;
+import java.util.Objects;
 
 /**
  * SessionWindow groups elements into sessions based on a gap of inactivity.
@@ -21,10 +22,17 @@ public class SessionWindow<T> implements WindowAssigner<T> {
     }
 
     public static <T> SessionWindow<T> withGap(Duration gap) {
-        return new SessionWindow<>(gap.toMillis());
+        Objects.requireNonNull(gap, "gap");
+        return withGapMillis(gap.toMillis());
     }
 
     public static <T> SessionWindow<T> withGapMillis(long gapMillis) {
+        // A zero/negative gap yields empty [ts, ts) windows that fire on arrival and can
+        // never merge with anything — silently turning every element into its own
+        // fire-immediately session. Reject the configuration instead.
+        if (gapMillis <= 0) {
+            throw new IllegalArgumentException("session gap must be positive, got " + gapMillis + "ms");
+        }
         return new SessionWindow<>(gapMillis);
     }
 

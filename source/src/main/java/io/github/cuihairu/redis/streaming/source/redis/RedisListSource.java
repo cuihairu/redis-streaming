@@ -9,6 +9,8 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -28,6 +30,9 @@ public class RedisListSource<T> implements AutoCloseable {
     private final ObjectMapper objectMapper;
     private final Class<T> valueClass;
     private final ScheduledExecutorService scheduler;
+    /** periodic tasks registered by poll/pollBatch; cancelled by stop() so a poll/stop
+     * cycle does not accumulate zombie no-op tasks until close() */
+    private final List<ScheduledFuture<?>> scheduledTasks = new CopyOnWriteArrayList<>();
     private volatile boolean running = false;
 
     /**
@@ -93,6 +98,7 @@ public class RedisListSource<T> implements AutoCloseable {
             return deserialize(value);
 
         } catch (IndexOutOfBoundsException e) {
+            // empty (or concurrently drained) list: remove(0) on an empty list throws
             return null;
         } catch (Exception e) {
             log.error("Failed to read from Redis List: {}", listName, e);
@@ -112,13 +118,22 @@ public class RedisListSource<T> implements AutoCloseable {
         try {
             RList<String> list = redissonClient.getList(listName);
 
-            for (int i = 0; i < count && !list.isEmpty(); i++) {
-                String value = list.remove(0);
-                if (value != null) {
-                    T item = deserialize(value);
-                    if (item != null) {
-                        result.add(item);
-                    }
+            for (int i = 0; i < count; i++) {
+                String value;
+                try {
+                    value = list.remove(0);
+                } catch (IndexOutOfBoundsException exhausted) {
+                    // no isEmpty→remove race: a concurrent drain between them used to
+                    // throw here and be logged as an error, returning a partial batch
+                    // indistinguishable from "list ran out" — treat it as the latter
+                    break;
+                }
+                if (value == null) {
+                    break;
+                }
+                T item = deserialize(value);
+                if (item != null) {
+                    result.add(item);
                 }
             }
 
@@ -140,13 +155,19 @@ public class RedisListSource<T> implements AutoCloseable {
         try {
             RList<String> list = redissonClient.getList(listName);
 
-            while (!list.isEmpty()) {
-                String value = list.remove(0);
-                if (value != null) {
-                    T item = deserialize(value);
-                    if (item != null) {
-                        result.add(item);
-                    }
+            while (true) {
+                String value;
+                try {
+                    value = list.remove(0);
+                } catch (IndexOutOfBoundsException exhausted) {
+                    break; // drained: see readBatch()
+                }
+                if (value == null) {
+                    break;
+                }
+                T item = deserialize(value);
+                if (item != null) {
+                    result.add(item);
                 }
             }
 
@@ -202,7 +223,7 @@ public class RedisListSource<T> implements AutoCloseable {
         running = true;
         log.info("Starting Redis List polling for: {} every {}", listName, pollInterval);
 
-        scheduler.scheduleAtFixedRate(() -> {
+        scheduledTasks.add(scheduler.scheduleAtFixedRate(() -> {
             if (!running) {
                 return;
             }
@@ -215,7 +236,7 @@ public class RedisListSource<T> implements AutoCloseable {
             } catch (Exception e) {
                 log.error("Error in polling handler", e);
             }
-        }, 0, pollInterval.toMillis(), TimeUnit.MILLISECONDS);
+        }, 0, pollInterval.toMillis(), TimeUnit.MILLISECONDS));
     }
 
     /**
@@ -237,7 +258,7 @@ public class RedisListSource<T> implements AutoCloseable {
         log.info("Starting Redis List batch polling for: {} (batch={}, interval={})",
                 listName, batchSize, pollInterval);
 
-        scheduler.scheduleAtFixedRate(() -> {
+        scheduledTasks.add(scheduler.scheduleAtFixedRate(() -> {
             if (!running) {
                 return;
             }
@@ -250,7 +271,7 @@ public class RedisListSource<T> implements AutoCloseable {
             } catch (Exception e) {
                 log.error("Error in batch polling handler", e);
             }
-        }, 0, pollInterval.toMillis(), TimeUnit.MILLISECONDS);
+        }, 0, pollInterval.toMillis(), TimeUnit.MILLISECONDS));
     }
 
     /**
@@ -258,6 +279,10 @@ public class RedisListSource<T> implements AutoCloseable {
      */
     public void stop() {
         running = false;
+        for (ScheduledFuture<?> task : scheduledTasks) {
+            task.cancel(false);
+        }
+        scheduledTasks.clear();
         log.info("Stopping Redis List source for: {}", listName);
     }
 

@@ -24,6 +24,9 @@ public class RedisHashSink<K, V> {
     private final String hashName;
     private final ObjectMapper objectMapper;
     private final Duration ttl;
+    /** null for the legacy untyped behavior; when set, {@link #delete(Object)} returns a
+     * value deserialized to this type instead of an unchecked cast of an Object-parse */
+    private final Class<V> valueClass;
 
     /**
      * Create a Redis Hash sink without TTL.
@@ -33,6 +36,20 @@ public class RedisHashSink<K, V> {
      */
     public RedisHashSink(RedissonClient redissonClient, String hashName) {
         this(redissonClient, hashName, new ObjectMapper(), null);
+    }
+
+    /**
+     * Create a typed Redis Hash sink: {@link #delete(Object)} deserializes stored values
+     * to {@code valueClass}. The legacy untyped constructor parses to {@code Object} and
+     * blind-casts, which threw ClassCastException whenever the stored JSON shape (e.g. a
+     * raw number) did not match {@code V}.
+     *
+     * @param redissonClient the Redisson client
+     * @param hashName       the Redis Hash name
+     * @param valueClass     the class of stored values
+     */
+    public RedisHashSink(RedissonClient redissonClient, String hashName, Class<V> valueClass) {
+        this(redissonClient, hashName, new ObjectMapper(), null, valueClass);
     }
 
     /**
@@ -48,6 +65,15 @@ public class RedisHashSink<K, V> {
             String hashName,
             ObjectMapper objectMapper,
             Duration ttl) {
+        this(redissonClient, hashName, objectMapper, ttl, null);
+    }
+
+    private RedisHashSink(
+            RedissonClient redissonClient,
+            String hashName,
+            ObjectMapper objectMapper,
+            Duration ttl,
+            Class<V> valueClass) {
         Objects.requireNonNull(redissonClient, "RedissonClient cannot be null");
         Objects.requireNonNull(hashName, "Hash name cannot be null");
         Objects.requireNonNull(objectMapper, "ObjectMapper cannot be null");
@@ -56,6 +82,7 @@ public class RedisHashSink<K, V> {
         this.hashName = hashName;
         this.objectMapper = objectMapper;
         this.ttl = ttl;
+        this.valueClass = valueClass;
     }
 
     /**
@@ -172,6 +199,19 @@ public class RedisHashSink<K, V> {
 
             if (removed == null) {
                 return null;
+            }
+
+            if (valueClass != null) {
+                try {
+                    return objectMapper.readValue(removed, valueClass);
+                } catch (Exception e) {
+                    // not the declared type's JSON (stored by another writer): best-effort raw
+                    log.warn("Stored value for key {} in hash {} is not {}: returning raw string",
+                            key, hashName, valueClass.getSimpleName());
+                    @SuppressWarnings("unchecked")
+                    V raw = (V) removed;
+                    return raw;
+                }
             }
 
             try {

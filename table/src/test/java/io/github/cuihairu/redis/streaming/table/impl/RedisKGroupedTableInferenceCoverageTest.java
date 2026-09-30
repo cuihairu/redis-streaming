@@ -30,7 +30,7 @@ class RedisKGroupedTableInferenceCoverageTest {
     private RedisKTable<String, String> sourceTable(RedissonClient redisson, Map<String, String> entries) {
         RMap<String, String> map = mock(RMap.class);
         when(redisson.<String, String>getMap(anyString(), eq(StringCodec.INSTANCE))).thenReturn(map);
-        when(map.entrySet()).thenReturn(entries.entrySet());
+        when(map.readAllMap()).thenReturn(entries);
         return new RedisKTable<>(redisson, "src", String.class, String.class);
     }
 

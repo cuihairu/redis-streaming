@@ -8,6 +8,9 @@ public class MetricTimer implements AutoCloseable {
     private final String name;
     private final MetricCollector collector;
     private final long startTime;
+    /** stop() + close() used to record the same interval twice (close always called stop) */
+    private final java.util.concurrent.atomic.AtomicBoolean recorded =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
 
     private MetricTimer(String name, MetricCollector collector) {
         this.name = name;
@@ -33,7 +36,7 @@ public class MetricTimer implements AutoCloseable {
      */
     public long stop() {
         long duration = System.currentTimeMillis() - startTime;
-        if (collector != null) {
+        if (collector != null && recorded.compareAndSet(false, true)) {
             collector.recordTimer(name, duration);
         }
         return duration;

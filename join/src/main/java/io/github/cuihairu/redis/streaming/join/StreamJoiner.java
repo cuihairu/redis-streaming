@@ -46,7 +46,7 @@ public class StreamJoiner<L, R, K, O> {
      * @return List of joined output elements
      */
     public synchronized List<O> processLeft(L element) throws Exception {
-        K key = config.getLeftKeySelector().apply(element);
+        K key = requireJoinKey(config.getLeftKeySelector().apply(element), "left", element);
         long timestamp = extractTimestamp(element, config.getLeftTimestampExtractor());
 
         // Buffer the left element
@@ -87,7 +87,7 @@ public class StreamJoiner<L, R, K, O> {
      * @return List of joined output elements
      */
     public synchronized List<O> processRight(R element) throws Exception {
-        K key = config.getRightKeySelector().apply(element);
+        K key = requireJoinKey(config.getRightKeySelector().apply(element), "right", element);
         long timestamp = extractTimestamp(element, config.getRightTimestampExtractor());
 
         // Buffer the right element
@@ -116,6 +116,19 @@ public class StreamJoiner<L, R, K, O> {
 
         cleanup();
         return results;
+    }
+
+    /**
+     * Reject a null join key with a message naming the offending side: the ConcurrentHashMap
+     * buffers cannot hold null keys, so the raw NPE gave no hint which selector produced it
+     */
+    private static <T, K2> K2 requireJoinKey(K2 key, String side, T element) {
+        if (key == null) {
+            throw new IllegalArgumentException(
+                    side + " key selector returned null for element " + element
+                            + " — join keys must be non-null");
+        }
+        return key;
     }
 
     /**

@@ -95,7 +95,11 @@ public class BloomFilterDeduplicator<T> implements Deduplicator<T> {
             return false;
         }
         String key = keyExtractor.apply(element);
-        return bloomFilter.contains(key);
+        // stateLock: clear() deletes then re-inits the filter; an unsynchronized contains
+        // in that window hit "Bloom filter is not initialized!" from an unrelated thread
+        synchronized (stateLock) {
+            return bloomFilter.contains(key);
+        }
     }
 
     @Override
@@ -104,8 +108,10 @@ public class BloomFilterDeduplicator<T> implements Deduplicator<T> {
             return;
         }
         String key = keyExtractor.apply(element);
-        if (bloomFilter.add(key)) {
-            seenCount.incrementAndGet();
+        synchronized (stateLock) {
+            if (bloomFilter.add(key)) {
+                seenCount.incrementAndGet();
+            }
         }
     }
 
@@ -153,9 +159,11 @@ public class BloomFilterDeduplicator<T> implements Deduplicator<T> {
      * @return the expected false positive rate
      */
     public double getExpectedFalseProbability() {
-        return bloomFilter.getExpectedInsertions() > 0
-                ? bloomFilter.getFalseProbability()
-                : 0.0;
+        synchronized (stateLock) {
+            return bloomFilter.getExpectedInsertions() > 0
+                    ? bloomFilter.getFalseProbability()
+                    : 0.0;
+        }
     }
 
     /**
@@ -164,7 +172,9 @@ public class BloomFilterDeduplicator<T> implements Deduplicator<T> {
      * @return approximate count of elements
      */
     public long count() {
-        return bloomFilter.count();
+        synchronized (stateLock) {
+            return bloomFilter.count();
+        }
     }
 
     /**
@@ -174,6 +184,8 @@ public class BloomFilterDeduplicator<T> implements Deduplicator<T> {
      * @return true if the key might exist, false if definitely doesn't exist
      */
     public boolean containsKey(String key) {
-        return bloomFilter.contains(key);
+        synchronized (stateLock) {
+            return bloomFilter.contains(key);
+        }
     }
 }

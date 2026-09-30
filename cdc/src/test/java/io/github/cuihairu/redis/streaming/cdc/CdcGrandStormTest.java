@@ -1,19 +1,21 @@
 package io.github.cuihairu.redis.streaming.cdc;
 
 import io.github.cuihairu.redis.streaming.storm.Storms;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import io.github.cuihairu.redis.streaming.cdc.ChangeEvent;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Module-wide grand storm: sweep every cdc main class with a timeout-guarded pass. */
+@Tag("integration")
 class CdcGrandStormTest {
 
     @Test
     void sweepAllClasses() throws Exception {
         int total = Storms.grandStorm(ChangeEvent.class, "io.github.cuihairu.redis.streaming.cdc", REAL_HINTS, 150);
         System.err.println("GRAND cdc invocations=" + total);
-        assertTrue(total >= 0);
+        assertTrue(total > 0);
     }
 
     static final java.util.Map<Class<?>, Object> REAL_HINTS = buildRealHints();

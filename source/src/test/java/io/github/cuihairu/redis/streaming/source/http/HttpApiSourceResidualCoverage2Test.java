@@ -90,7 +90,8 @@ class HttpApiSourceResidualCoverage2Test {
         when(scheduler.scheduleAtFixedRate(any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
                 .thenAnswer(inv -> {
                     captured.set(inv.getArgument(0));
-                    return null;
+                    // stop() cancels registered futures, so the stub must return one
+                    return org.mockito.Mockito.mock(java.util.concurrent.ScheduledFuture.class);
                 });
         AtomicInteger handled = new AtomicInteger();
         try (MockedStatic<java.util.concurrent.Executors> executors =
@@ -115,7 +116,8 @@ class HttpApiSourceResidualCoverage2Test {
         when(scheduler.scheduleAtFixedRate(any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
                 .thenAnswer(inv -> {
                     captured.set(inv.getArgument(0));
-                    return null;
+                    // stop() cancels registered futures, so the stub must return one
+                    return org.mockito.Mockito.mock(java.util.concurrent.ScheduledFuture.class);
                 });
         AtomicInteger handled = new AtomicInteger();
         try (MockedStatic<java.util.concurrent.Executors> executors =
@@ -140,7 +142,8 @@ class HttpApiSourceResidualCoverage2Test {
         when(scheduler.scheduleAtFixedRate(any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
                 .thenAnswer(inv -> {
                     captured.set(inv.getArgument(0));
-                    return null;
+                    // stop() cancels registered futures, so the stub must return one
+                    return org.mockito.Mockito.mock(java.util.concurrent.ScheduledFuture.class);
                 });
         AtomicInteger handled = new AtomicInteger();
         try (MockedStatic<java.util.concurrent.Executors> executors =

@@ -49,6 +49,8 @@ public final class Storms {
         if (rt == byte.class) return (byte) 1;
         if (rt == char.class) return 'x';
         if (rt == String.class) return "storm";
+        if (rt == Duration.class) return Duration.ofSeconds(1);
+        if (rt == Instant.class) return Instant.ofEpochMilli(1000L);
         if (rt == List.class || rt == Iterable.class || rt == java.util.Collection.class) return new ArrayList<>();
         if (rt == Set.class) return new HashSet<>();
         if (rt == Map.class) return new HashMap<>();

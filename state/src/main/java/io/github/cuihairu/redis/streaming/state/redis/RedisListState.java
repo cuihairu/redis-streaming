@@ -59,10 +59,17 @@ public class RedisListState<T> implements ListState<T> {
 
     @Override
     public void addAll(Iterable<T> values) {
-        RList<T> list = getList();
-        for (T value : values) {
-            list.add(value);
+        // One atomic batch, mirroring update() (B-38): the per-element loop left a
+        // partial append behind on connection drop, and a retry re-appended duplicates
+        List<T> buffered = new ArrayList<>();
+        values.forEach(buffered::add);
+        if (buffered.isEmpty()) {
+            return;
         }
+        RBatch batch = redisson.createBatch(
+                BatchOptions.defaults().executionMode(BatchOptions.ExecutionMode.REDIS_WRITE_ATOMIC));
+        batch.getList(key).addAllAsync(buffered);
+        batch.execute();
     }
 
     @Override

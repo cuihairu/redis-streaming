@@ -28,6 +28,15 @@ public class RedisConfigService implements ConfigService, ConfigManager {
     private final Map<String, Set<ConfigChangeListener>> listeners = new ConcurrentHashMap<>();
     private final Map<String, RTopic> subscriptions = new ConcurrentHashMap<>();
 
+    // Serializes addListener's subscribe step against removeListener/stop teardown:
+    // unsynchronized, a removal that saw an empty listener set could tear down the topic
+    // a concurrent addListener had just (re)registered on, leaving that listener
+    // permanently deaf (registered in `listeners`, no live dispatch path).
+    private final Object subscriptionLock = new Object();
+    // Redis sets recording this instance's membership (config_subscribers:*), so stop()
+    // can remove its clientId without parsing "group:dataId" keys back apart
+    private final java.util.Set<String> subscriberSetKeys = ConcurrentHashMap.newKeySet();
+
     // B-06: what the in-process listeners were last told, per "group:dataId". The
     // reconciliation poll compares this against Redis and re-delivers when the
     // authoritative state moved without this JVM seeing the pub/sub notification.
@@ -128,7 +137,12 @@ public class RedisConfigService implements ConfigService, ConfigManager {
             Map<String, String> all = java.util.Collections.emptyMap();
             try { all = map.readAllMap(); } catch (Exception ignore) {}
 
-            if (newVersion.equals(all.get("version"))) {
+            if (newVersion.equals(all.get("version"))
+                    // content must match too: another instance can mint the identical
+                    // version string in the same millisecond (the generator is JVM-local),
+                    // and treating its content as "my write already applied" would publish
+                    // a change event whose content differs from what Redis holds
+                    && java.util.Objects.equals(content, all.get("content"))) {
                 publishConfigChangeEvent(dataId, group, content, newVersion);
                 logger.warn("Lua publish response for {}:{} was lost but version {} is applied; kept it",
                         group, dataId, newVersion);
@@ -202,22 +216,40 @@ public class RedisConfigService implements ConfigService, ConfigManager {
             }
             return false;
         } catch (Exception e) {
-            // Fallback: remove using regular commands and record history best-effort
+            // Fallback: remove using regular commands and record history best-effort.
+            // The result must reflect what actually happened: a failed delete previously
+            // still returned true and broadcast a "config removed" event, wiping listener
+            // caches for a config that is still live in Redis.
             try {
                 String configKey = config.getConfigKey(group, dataId);
                 RMap<String, String> map = redissonClient.getMap(configKey, org.redisson.client.codec.StringCodec.INSTANCE);
                 Map<String, String> all = java.util.Collections.emptyMap();
-                try { all = map.readAllMap(); } catch (Exception ignore) {}
-                String oldContent = all.get("content");
-                String oldVersion = all.get("version");
-                if (oldContent != null) {
-                    saveConfigHistory(dataId, group, oldContent, oldVersion, java.time.LocalDateTime.now(), "DELETED");
+                boolean readOk = true;
+                try {
+                    all = map.readAllMap();
+                } catch (Exception readFailure) {
+                    readOk = false;
                 }
-                try { map.delete(); } catch (Exception ignore) {}
-                try { redissonClient.getSet(config.getConfigSubscribersKey(group, dataId)).delete(); } catch (Exception ignore) {}
-                publishConfigChangeEvent(dataId, group, null, null);
-                logger.warn("Lua remove failed, applied Java fallback for {}:{}", group, dataId, e);
-                return true;
+                boolean deleted = false;
+                try {
+                    deleted = Boolean.TRUE.equals(map.delete());
+                } catch (Exception ignore) {}
+                if (!deleted && !readOk) {
+                    // neither the read nor the delete succeeded: cannot claim removal
+                    logger.error("Failed to remove config {}:{}", group, dataId, e);
+                    return false;
+                }
+                if (deleted) {
+                    String oldContent = all.get("content");
+                    String oldVersion = all.get("version");
+                    if (oldContent != null) {
+                        saveConfigHistory(dataId, group, oldContent, oldVersion, java.time.LocalDateTime.now(), "DELETED");
+                    }
+                    try { redissonClient.getSet(config.getConfigSubscribersKey(group, dataId)).delete(); } catch (Exception ignore) {}
+                    publishConfigChangeEvent(dataId, group, null, null);
+                    logger.warn("Lua remove failed, applied Java fallback for {}:{}", group, dataId, e);
+                }
+                return deleted;
             } catch (Exception e2) {
                 logger.error("Failed to remove config {}:{} (fallback also failed)", group, dataId, e2);
                 return false;
@@ -232,39 +264,44 @@ public class RedisConfigService implements ConfigService, ConfigManager {
         }
         
         String listenerKey = group + ":" + dataId;
-        
-        // Add listener
-        listeners.computeIfAbsent(listenerKey, k -> ConcurrentHashMap.newKeySet()).add(listener);
-        
-        // If this is the first listener, create Redis subscription. The guard must be atomic
-        // (B-25): with containsKey+put two concurrent addListener calls each registered an
-        // RTopic listener — every change event fired twice and removeListener left one Redis
-        // subscription leaking forever. compute per key makes it a single atomic step.
-        subscriptions.compute(listenerKey, (key, existingTopic) -> {
-            if (existingTopic != null) {
-                return existingTopic;
-            }
-            RTopic topic = redissonClient.getTopic(
-                config.getConfigChangeChannelKey(group, dataId), new JsonJacksonCodec());
-            topic.addListener(ConfigChangeEvent.class, (channel, message) -> {
-                // B-07: this JVM already delivered its own event synchronously in
-                // publishConfigChangeEvent, so the pub/sub loopback must not dispatch it
-                // again or in-process listeners fire twice per change. Events without a
-                // publisher marker (pre-B-07 publishers) still dispatch here.
-                if (message.getPublisherId() != null && message.getPublisherId().equals(clientId)) {
-                    return;
+
+        // Add listener and (re)create the Redis subscription under one lock: the teardown
+        // in removeListener/stop removes the topic a concurrent first addListener just
+        // registered on, leaving the new listener registered in `listeners` but deaf.
+        synchronized (subscriptionLock) {
+            listeners.computeIfAbsent(listenerKey, k -> ConcurrentHashMap.newKeySet()).add(listener);
+
+            // If this is the first listener, create Redis subscription. The guard must be atomic
+            // (B-25): with containsKey+put two concurrent addListener calls each registered an
+            // RTopic listener — every change event fired twice and removeListener left one Redis
+            // subscription leaking forever. compute per key makes it a single atomic step.
+            subscriptions.compute(listenerKey, (key, existingTopic) -> {
+                if (existingTopic != null) {
+                    return existingTopic;
                 }
-                handleConfigChangeEvent(dataId, group, message);
+                RTopic topic = redissonClient.getTopic(
+                    config.getConfigChangeChannelKey(group, dataId), new JsonJacksonCodec());
+                topic.addListener(ConfigChangeEvent.class, (channel, message) -> {
+                    // B-07: this JVM already delivered its own event synchronously in
+                    // publishConfigChangeEvent, so the pub/sub loopback must not dispatch it
+                    // again or in-process listeners fire twice per change. Events without a
+                    // publisher marker (pre-B-07 publishers) still dispatch here.
+                    if (message.getPublisherId() != null && message.getPublisherId().equals(clientId)) {
+                        return;
+                    }
+                    handleConfigChangeEvent(dataId, group, message);
+                });
+
+                // Add to subscribers list
+                String subscriberSetKey = config.getConfigSubscribersKey(group, dataId);
+                RSet<String> subscribersSet = redissonClient.getSet(subscriberSetKey);
+                subscribersSet.add(clientId);
+                subscriberSetKeys.add(subscriberSetKey);
+
+                logger.info("Added config listener for: {}:{}", group, dataId);
+                return topic;
             });
-
-            // Add to subscribers list
-            RSet<String> subscribersSet = redissonClient.getSet(
-                config.getConfigSubscribersKey(group, dataId));
-            subscribersSet.add(clientId);
-
-            logger.info("Added config listener for: {}:{}", group, dataId);
-            return topic;
-        });
+        }
         
         // Immediately notify with current configuration
         try {
@@ -289,26 +326,31 @@ public class RedisConfigService implements ConfigService, ConfigManager {
     @Override
     public void removeListener(String dataId, String group, ConfigChangeListener listener) {
         String listenerKey = group + ":" + dataId;
-        
-        Set<ConfigChangeListener> configListeners = listeners.get(listenerKey);
-        if (configListeners != null) {
-            configListeners.remove(listener);
-            
-            // If no listeners remain, cancel Redis subscription
-            if (configListeners.isEmpty()) {
-                listeners.remove(listenerKey);
-                lastDelivered.remove(listenerKey);
 
-                RTopic topic = subscriptions.remove(listenerKey);
-                if (topic != null) {
-                    topic.removeAllListeners();
-                    logger.info("Removed config listener for: {}:{}", group, dataId);
+        // Teardown is serialized against addListener's subscribe step: a removal that
+        // observed an empty listener set must not kill a subscription a concurrent
+        // addListener re-registered in the same window
+        synchronized (subscriptionLock) {
+            Set<ConfigChangeListener> configListeners = listeners.get(listenerKey);
+            if (configListeners != null) {
+                configListeners.remove(listener);
+
+                // If no listeners remain, cancel Redis subscription
+                if (configListeners.isEmpty()) {
+                    listeners.remove(listenerKey);
+                    lastDelivered.remove(listenerKey);
+
+                    RTopic topic = subscriptions.remove(listenerKey);
+                    if (topic != null) {
+                        topic.removeAllListeners();
+                        logger.info("Removed config listener for: {}:{}", group, dataId);
+                    }
+
+                    // Remove from subscribers list
+                    RSet<String> subscribersSet = redissonClient.getSet(
+                        config.getConfigSubscribersKey(group, dataId));
+                    try { subscribersSet.remove(clientId); } catch (Exception ignore) {}
                 }
-                
-                // Remove from subscribers list
-                RSet<String> subscribersSet = redissonClient.getSet(
-                    config.getConfigSubscribersKey(group, dataId));
-                try { subscribersSet.remove(clientId); } catch (Exception ignore) {}
             }
         }
     }
@@ -342,7 +384,10 @@ public class RedisConfigService implements ConfigService, ConfigManager {
         if (!running) throw new IllegalStateException("ConfigService is not running");
         try {
             String historyKey = config.getConfigHistoryKey(group, dataId);
-            String lua = "local key=KEYS[1]; local max=tonumber(ARGV[1]); local len=redis.call('LLEN', key); if max<0 then redis.call('DEL', key); return len; end; if len<=max then return 0; end; redis.call('LTRIM', key, 0, max-1); return len-max;";
+            // max<=0 means "keep no history" (same contract as the publish write path's
+            // B-28 handling): DEL the list. LTRIM key 0 -1 would be a silent no-op that
+            // still reported every record as removed.
+            String lua = "local key=KEYS[1]; local max=tonumber(ARGV[1]); local len=redis.call('LLEN', key); if max<=0 then if len>0 then redis.call('DEL', key); return len; else return 0; end; end; if len<=max then return 0; end; redis.call('LTRIM', key, 0, max-1); return len-max;";
             RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
             Long removed = script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.LONG,
                     java.util.Collections.singletonList(historyKey), String.valueOf(maxSize));
@@ -415,18 +460,32 @@ public class RedisConfigService implements ConfigService, ConfigManager {
             scheduler.shutdownNow();
         }
 
-        // Clean up all subscriptions
-        for (Map.Entry<String, RTopic> entry : subscriptions.entrySet()) {
-            try {
-                entry.getValue().removeAllListeners();
-            } catch (Exception e) {
-                logger.warn("Failed to cleanup config subscription for: {}", entry.getKey(), e);
+        // Clean up all subscriptions (serialized against addListener so a concurrent
+        // subscribe is not registered after the sweep below already ran)
+        synchronized (subscriptionLock) {
+            for (Map.Entry<String, RTopic> entry : subscriptions.entrySet()) {
+                try {
+                    entry.getValue().removeAllListeners();
+                } catch (Exception e) {
+                    logger.warn("Failed to cleanup config subscription for: {}", entry.getKey(), e);
+                }
             }
-        }
 
-        subscriptions.clear();
-        listeners.clear();
-        lastDelivered.clear();
+            // Drop this instance's membership from the config_subscribers:* sets — stop()
+            // previously left one leaked member per subscribed key behind on every restart
+            for (String subscriberSetKey : subscriberSetKeys) {
+                try {
+                    redissonClient.getSet(subscriberSetKey).remove(clientId);
+                } catch (Exception e) {
+                    logger.warn("Failed to remove subscriber id from {}", subscriberSetKey, e);
+                }
+            }
+            subscriberSetKeys.clear();
+
+            subscriptions.clear();
+            listeners.clear();
+            lastDelivered.clear();
+        }
 
         logger.info("RedisConfigService stopped");
     }

@@ -13,8 +13,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -33,6 +36,9 @@ public class HttpApiSource<T> implements AutoCloseable {
     private final Map<String, String> headers;
     private final Duration pollInterval;
     private final ScheduledExecutorService scheduler;
+    /** periodic tasks registered by poll/pollList; cancelled by stop() so poll/stop
+     * cycles do not accumulate zombie no-op tasks until close() */
+    private final List<ScheduledFuture<?>> scheduledTasks = new CopyOnWriteArrayList<>();
     private volatile boolean running = false;
 
     /**
@@ -87,10 +93,11 @@ public class HttpApiSource<T> implements AutoCloseable {
      * @return the fetched data, or null if error
      */
     public T fetch() {
+        HttpURLConnection conn = null;
         try {
             URI uri = URI.create(apiUrl);
             URL url = uri.toURL();
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(5000);
             conn.setReadTimeout(10000);
@@ -103,14 +110,15 @@ public class HttpApiSource<T> implements AutoCloseable {
 
             int responseCode = conn.getResponseCode();
             if (responseCode == HttpURLConnection.HTTP_OK) {
-                BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(conn.getInputStream()));
+                // try-with-resources: a readLine() failure used to leak the reader/socket
                 StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    response.append(line);
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        response.append(line);
+                    }
                 }
-                reader.close();
 
                 String jsonResponse = response.toString();
                 log.debug("Fetched from {}: {} bytes", apiUrl, jsonResponse.length());
@@ -124,6 +132,14 @@ public class HttpApiSource<T> implements AutoCloseable {
                 return objectMapper.readValue(jsonResponse, valueClass);
 
             } else {
+                // close the error stream so the socket is not stranded on error paths
+                try (java.io.InputStream err = conn.getErrorStream()) {
+                    if (err != null) {
+                        err.transferTo(java.io.OutputStream.nullOutputStream());
+                    }
+                } catch (Exception ignore) {
+                    // draining is best-effort
+                }
                 log.error("HTTP request failed with code: {}", responseCode);
                 return null;
             }
@@ -131,6 +147,10 @@ public class HttpApiSource<T> implements AutoCloseable {
         } catch (Exception e) {
             log.error("Failed to fetch from HTTP API: {}", apiUrl, e);
             return null;
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
         }
     }
 
@@ -140,10 +160,11 @@ public class HttpApiSource<T> implements AutoCloseable {
      * @return list of items
      */
     public List<T> fetchList() {
+        HttpURLConnection conn = null;
         try {
             URI uri = URI.create(apiUrl);
             URL url = uri.toURL();
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(5000);
             conn.setReadTimeout(10000);
@@ -155,14 +176,14 @@ public class HttpApiSource<T> implements AutoCloseable {
 
             int responseCode = conn.getResponseCode();
             if (responseCode == HttpURLConnection.HTTP_OK) {
-                BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(conn.getInputStream()));
                 StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    response.append(line);
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        response.append(line);
+                    }
                 }
-                reader.close();
 
                 String jsonResponse = response.toString();
                 log.debug("Fetched list from {}: {} bytes", apiUrl, jsonResponse.length());
@@ -173,6 +194,13 @@ public class HttpApiSource<T> implements AutoCloseable {
                 );
 
             } else {
+                try (java.io.InputStream err = conn.getErrorStream()) {
+                    if (err != null) {
+                        err.transferTo(java.io.OutputStream.nullOutputStream());
+                    }
+                } catch (Exception ignore) {
+                    // draining is best-effort
+                }
                 log.error("HTTP request failed with code: {}", responseCode);
                 return new ArrayList<>();
             }
@@ -180,6 +208,10 @@ public class HttpApiSource<T> implements AutoCloseable {
         } catch (Exception e) {
             log.error("Failed to fetch list from HTTP API: {}", apiUrl, e);
             return new ArrayList<>();
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
         }
     }
 
@@ -194,7 +226,7 @@ public class HttpApiSource<T> implements AutoCloseable {
         running = true;
         log.info("Starting HTTP API polling for: {}", apiUrl);
 
-        scheduler.scheduleAtFixedRate(() -> {
+        scheduledTasks.add(scheduler.scheduleAtFixedRate(() -> {
             if (!running) {
                 return;
             }
@@ -207,7 +239,7 @@ public class HttpApiSource<T> implements AutoCloseable {
             } catch (Exception e) {
                 log.error("Error in polling handler", e);
             }
-        }, 0, pollInterval.toMillis(), TimeUnit.MILLISECONDS);
+        }, 0, pollInterval.toMillis(), TimeUnit.MILLISECONDS));
     }
 
     /**
@@ -221,7 +253,7 @@ public class HttpApiSource<T> implements AutoCloseable {
         running = true;
         log.info("Starting HTTP API list polling for: {}", apiUrl);
 
-        scheduler.scheduleAtFixedRate(() -> {
+        scheduledTasks.add(scheduler.scheduleAtFixedRate(() -> {
             if (!running) {
                 return;
             }
@@ -238,7 +270,7 @@ public class HttpApiSource<T> implements AutoCloseable {
             } catch (Exception e) {
                 log.error("Error in list polling handler", e);
             }
-        }, 0, pollInterval.toMillis(), TimeUnit.MILLISECONDS);
+        }, 0, pollInterval.toMillis(), TimeUnit.MILLISECONDS));
     }
 
     /**
@@ -246,6 +278,10 @@ public class HttpApiSource<T> implements AutoCloseable {
      */
     public void stop() {
         running = false;
+        for (ScheduledFuture<?> task : scheduledTasks) {
+            task.cancel(false);
+        }
+        scheduledTasks.clear();
         log.info("Stopping HTTP API polling for: {}", apiUrl);
     }
 

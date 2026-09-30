@@ -203,6 +203,33 @@ class JoinConfigTest {
     }
 
     @Test
+    void testValidateRejectsRetentionShorterThanJoinWindow() {
+        JoinConfig<String, String, String> config = JoinConfig.<String, String, String>builder()
+                .joinType(JoinType.INNER)
+                .joinWindow(JoinWindow.ofSize(Duration.ofMillis(100)))
+                .leftKeySelector(s -> s)
+                .rightKeySelector(s -> s)
+                .stateRetentionTime(199) // 1ms short of the 200ms window span
+                .build();
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, config::validate);
+        assertTrue(exception.getMessage().contains("stateRetentionTime"),
+                "error should name the misconfigured property: " + exception.getMessage());
+    }
+
+    @Test
+    void testValidateAcceptsRetentionEqualToWindowSpan() {
+        JoinConfig<String, String, String> config = JoinConfig.<String, String, String>builder()
+                .joinType(JoinType.INNER)
+                .joinWindow(JoinWindow.of(Duration.ofMillis(30), Duration.ofMillis(70)))
+                .leftKeySelector(s -> s)
+                .rightKeySelector(s -> s)
+                .stateRetentionTime(100) // exactly before+after
+                .build();
+
+        assertDoesNotThrow(config::validate);
+    }
+
     void testInnerJoinFactoryMethod() {
         // Given
         Function<String, String> leftKeySelector = s -> s.split(":")[0];

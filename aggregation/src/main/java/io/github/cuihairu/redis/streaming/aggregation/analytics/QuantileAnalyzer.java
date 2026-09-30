@@ -15,6 +15,7 @@ import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.LongSupplier;
 
 /**
  * Quantile analyzer for rolling time windows.
@@ -34,11 +35,17 @@ public class QuantileAnalyzer implements AutoCloseable {
     private final Duration windowSize;
     private final ScheduledExecutorService cleanupExecutor;
     private final String metricsIndexKey;
+    private final LongSupplier clock;
 
     public QuantileAnalyzer(RedissonClient redissonClient, String keyPrefix, Duration windowSize) {
+        this(redissonClient, keyPrefix, windowSize, System::currentTimeMillis);
+    }
+
+    QuantileAnalyzer(RedissonClient redissonClient, String keyPrefix, Duration windowSize, LongSupplier clock) {
         this.redissonClient = redissonClient;
         this.keyPrefix = keyPrefix;
         this.windowSize = windowSize;
+        this.clock = clock;
         this.cleanupExecutor = Executors.newScheduledThreadPool(1);
         this.metricsIndexKey = keyPrefix + ":quantile:metrics";
 
@@ -50,25 +57,44 @@ public class QuantileAnalyzer implements AutoCloseable {
      * Record a numeric observation for a metric.
      */
     public void record(String metric, double value) {
-        record(metric, value, Instant.now());
+        record(metric, value, Instant.ofEpochMilli(clock.getAsLong()));
     }
 
     /**
      * Record a numeric observation for a metric at a specific time.
+     *
+     * <p>Trailing-window guard (B-41, mirroring PVCounter): an observation dated before
+     * {@code now - window} is rejected without writing — it can never fall inside the
+     * window and would only be pruned again. An observation dated in the future is also
+     * rejected: unlike PV's bounded trailing count, the quantile read path has no time
+     * filter, so a mis-dated sample would sit in the value index poisoning every
+     * quantile until the wall clock finally slides past it (potentially years).
+     *
+     * <p>The value index is written BEFORE the time index: cleanup derives its removal
+     * set from the time index, so a cleanup snapshot taken between the two writes sees
+     * the id only after its value entry exists and removes both — the reverse order let
+     * a value entry land after its time-index removal, orphaning it permanently.
      */
     public void record(String metric, double value, Instant timestamp) {
         if (metric == null || metric.isBlank()) {
             return;
         }
-        Instant ts = timestamp != null ? timestamp : Instant.now();
-        String id = ts.toEpochMilli() + "-" + UUID.randomUUID();
+        Instant ts = timestamp != null ? timestamp : Instant.ofEpochMilli(clock.getAsLong());
+        long now = clock.getAsLong();
+        long tsMillis = ts.toEpochMilli();
+        if (tsMillis < now - windowSize.toMillis() || tsMillis > now) {
+            log.debug("Rejected quantile observation for '{}' at {}: outside the {} trailing window",
+                    metric, ts, windowSize);
+            return;
+        }
+        String id = tsMillis + "-" + UUID.randomUUID();
 
         RScoredSortedSet<String> timeIndex = getTimeIndex(metric);
         RScoredSortedSet<String> valueIndex = getValueIndex(metric);
         getMetricsIndex().add(metric);
 
-        timeIndex.add(ts.toEpochMilli(), id);
         valueIndex.add(value, id);
+        timeIndex.add(tsMillis, id);
     }
 
     /**
@@ -138,11 +164,13 @@ public class QuantileAnalyzer implements AutoCloseable {
             return;
         }
         try {
-            long cutoff = Instant.now().minus(windowSize).toEpochMilli();
+            long cutoff = clock.getAsLong() - windowSize.toMillis();
             RScoredSortedSet<String> timeIndex = getTimeIndex(metric);
             RScoredSortedSet<String> valueIndex = getValueIndex(metric);
 
-            Collection<String> expired = timeIndex.valueRange(0d, true, (double) cutoff, true);
+            // lower bound unbounded below: a 0 floor made pre-epoch-dated scores
+            // (negative) invisible to cleanup forever
+            Collection<String> expired = timeIndex.valueRange(Double.NEGATIVE_INFINITY, true, (double) cutoff, true);
             if (expired != null && !expired.isEmpty()) {
                 // Remove from both indices (best-effort)
                 try {

@@ -124,6 +124,15 @@ public class WindowedDeduplicator<T> implements Deduplicator<T> {
         long now = clock.getAsLong();
         RScoredSortedSet<String> set = migratedSet();
         pruneExpired(set, now);
+        // ZADD NX claims a fresh element atomically: the old getScore→add pair let two
+        // threads both read "absent" and both report the element as fresh, so it was
+        // processed twice (the Deduplicator contract promises an atomic checkAndMark)
+        if (set.addIfAbsent(now, key)) {
+            stampTtl(set);
+            return false;
+        }
+        // already present: it is a duplicate unless its window just elapsed (prune keeps
+        // the exact-boundary score); refresh last-seen either way (B-09)
         Double score = set.getScore(key);
         boolean duplicate = isInWindow(score);
         set.add(now, key);

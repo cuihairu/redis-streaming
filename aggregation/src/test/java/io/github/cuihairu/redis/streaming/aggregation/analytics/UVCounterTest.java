@@ -9,10 +9,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
@@ -231,7 +233,7 @@ class UVCounterTest {
         when(redisson.<String>getSet("p:uv:home:buckets")).thenReturn(bucketIndex);
         when(hll.add("u1")).thenReturn(true);
 
-        UVCounter counter = new UVCounter(redisson, "p", Duration.ofMinutes(10), Duration.ofMillis(1));
+        UVCounter counter = new UVCounter(redisson, "p", Duration.ofSeconds(5), Duration.ofMillis(1));
         try {
             assertTrue(counter.add("home", "u1", Instant.ofEpochMilli(Long.MAX_VALUE)));
             verify(hll).add("u1");
@@ -380,11 +382,12 @@ class UVCounterTest {
 
     @Test
     void resetWithNullPage() {
-        UVCounter counter = new UVCounter(mock(RedissonClient.class), "p", Duration.ofMinutes(3), Duration.ofMinutes(1));
+        RedissonClient redisson = mock(RedissonClient.class);
+        UVCounter counter = new UVCounter(redisson, "p", Duration.ofMinutes(3), Duration.ofMinutes(1));
         try {
             counter.reset(null);
-            // Should not throw exception
-            assertTrue(true);
+            // null page must be rejected before any Redis access
+            org.mockito.Mockito.verifyNoInteractions(redisson);
         } finally {
             counter.close();
         }
@@ -460,8 +463,7 @@ class UVCounterTest {
     void closeIsIdempotent() {
         UVCounter counter = new UVCounter(mock(RedissonClient.class), "p", Duration.ofMinutes(3), Duration.ofMinutes(1));
         counter.close();
-        counter.close();
-        assertTrue(true);
+        assertDoesNotThrow(counter::close, "second close must not re-shutdown or throw");
     }
 
     @Test
@@ -513,5 +515,25 @@ class UVCounterTest {
         } finally {
             counter.close();
         }
+    }
+
+    @Test
+    void constructorRejectsWindowSpanningBeyondQueryBucketCap() {
+        // A window of 10_001 one-minute buckets exceeds the count-union cap: every
+        // count() would silently truncate the tail of the window, so the configuration
+        // is rejected up front instead of undercounting without any signal
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> new UVCounter(mock(RedissonClient.class), "p",
+                        Duration.ofMinutes(10_001), Duration.ofMinutes(1)));
+        assertTrue(ex.getMessage().contains("10001"),
+                "error should name the offending bucket count: " + ex.getMessage());
+    }
+
+    @Test
+    void constructorAcceptsWindowAtExactlyTheQueryBucketCap() {
+        // Exactly at the cap: the union still covers the whole window
+        UVCounter counter = new UVCounter(mock(RedissonClient.class), "p",
+                Duration.ofMinutes(10_000), Duration.ofMinutes(1));
+        counter.close();
     }
 }

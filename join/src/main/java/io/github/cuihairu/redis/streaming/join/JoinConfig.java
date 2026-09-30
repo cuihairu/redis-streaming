@@ -82,6 +82,17 @@ public class JoinConfig<L, R, K> implements Serializable {
         if (stateRetentionTime <= 0) {
             throw new IllegalArgumentException("State retention time must be positive");
         }
+        // cleanup() evicts buffered elements older than stateRetentionTime; if that is
+        // shorter than the join window itself, an element becomes unmatchable before its
+        // peer can arrive — the join silently misses pairs it was configured to find
+        long windowSpan = joinWindow.getBeforeMillis() + joinWindow.getAfterMillis();
+        if (stateRetentionTime < windowSpan) {
+            throw new IllegalArgumentException(
+                    "stateRetentionTime (" + stateRetentionTime + "ms) must cover the join window ("
+                            + windowSpan + "ms = before " + joinWindow.getBeforeMillis()
+                            + " + after " + joinWindow.getAfterMillis()
+                            + "), or late buffered elements are evicted while still matchable");
+        }
     }
 
     /**

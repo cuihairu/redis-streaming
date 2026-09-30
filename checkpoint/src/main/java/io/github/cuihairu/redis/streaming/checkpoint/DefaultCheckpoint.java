@@ -40,6 +40,22 @@ public class DefaultCheckpoint implements Checkpoint, Serializable {
         this.snapshotVersion = CURRENT_SNAPSHOT_VERSION;
     }
 
+    /**
+     * No-arg constructor for serialization frameworks only (e.g. Redisson's
+     * JsonJacksonCodec, whose mapper has no creators to invoke without it — every
+     * load of a checkpoint stored under that codec failed before this existed).
+     * Not for application use: creates an empty, uncompleted checkpoint whose fields
+     * the deserializer populates. Snapshot version deliberately keeps the LEGACY field
+     * initializer so a stored snapshot without a version marker round-trips as legacy,
+     * never as CURRENT (B-13).
+     */
+    public DefaultCheckpoint() {
+        this.checkpointId = 0L;
+        this.timestamp = 0L;
+        this.stateSnapshot = new StateSnapshotImpl();
+        this.completed = false;
+    }
+
     @Override
     public long getCheckpointId() {
         return checkpointId;

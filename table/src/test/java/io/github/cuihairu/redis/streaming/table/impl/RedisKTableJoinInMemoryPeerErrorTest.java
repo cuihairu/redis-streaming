@@ -47,7 +47,7 @@ class RedisKTableJoinInMemoryPeerErrorTest {
             Object v = inv.getArgument(1);
             return backing.put(String.valueOf(k), String.valueOf(v));
         });
-        when(map.entrySet()).thenAnswer(inv -> backing.entrySet());
+        when(map.readAllMap()).thenAnswer(inv -> new java.util.HashMap<>(backing));
         doAnswer(inv -> {
             backing.clear();
             return null;

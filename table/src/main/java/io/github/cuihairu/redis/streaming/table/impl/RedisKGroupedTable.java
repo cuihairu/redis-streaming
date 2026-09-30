@@ -8,6 +8,7 @@ import org.redisson.api.RedissonClient;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -126,7 +127,9 @@ public final class RedisKGroupedTable<KS, K, V> implements KGroupedTable<K, V> {
                                                       Class<VR> inferredValueClass,
                                                       Map<K, VR> values) {
         RedissonClient redissonClient = sourceTable.getRedissonClient();
-        String newTableName = sourceTable.getTableName() + ":groupBy:" + opName + ":" + System.currentTimeMillis();
+        // random suffix: two group-bys inside the same millisecond collided onto one hash
+        String newTableName = sourceTable.getTableName() + ":groupBy:" + opName + ":"
+                + System.currentTimeMillis() + "-" + UUID.randomUUID();
 
         @SuppressWarnings("unchecked")
         Class<K> keyCls = inferredKeyClass != null ? inferredKeyClass : (Class<K>) Object.class;

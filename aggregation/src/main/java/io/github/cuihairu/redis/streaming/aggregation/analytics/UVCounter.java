@@ -23,6 +23,10 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class UVCounter implements AutoCloseable {
 
+    /** Upper bound on buckets unioned per count(): also the constructor-enforced
+     * windowSize/bucketSize ratio (a wider window would silently truncate counts). */
+    private static final int MAX_QUERY_BUCKETS = 10_000;
+
     private final RedissonClient redissonClient;
     private final String keyPrefix;
     private final Duration windowSize;
@@ -41,6 +45,16 @@ public class UVCounter implements AutoCloseable {
         this.bucketSize = bucketSize == null || bucketSize.isZero() || bucketSize.isNegative()
                 ? Duration.ofMinutes(1)
                 : bucketSize;
+        // A window spanning more than MAX_QUERY_BUCKETS buckets silently truncates the
+        // tail of every count() union — the newest (most relevant) buckets — so reject
+        // the configuration up front instead of undercounting without any signal
+        long spanBuckets = windowSize.toMillis() / this.bucketSize.toMillis();
+        if (spanBuckets > MAX_QUERY_BUCKETS) {
+            throw new IllegalArgumentException(
+                    "windowSize " + windowSize + " spans " + spanBuckets + " buckets of " + this.bucketSize
+                            + "; the count union is capped at " + MAX_QUERY_BUCKETS
+                            + " buckets — use a coarser bucketSize or a smaller window");
+        }
         this.cleanupExecutor = Executors.newScheduledThreadPool(1);
         this.pagesIndexKey = keyPrefix + ":uv:pages";
 
@@ -168,7 +182,7 @@ public class UVCounter implements AutoCloseable {
     private String getBucketKey(String page, Instant timestamp) {
         long bucketMillis = bucketSize.toMillis();
         long ts = timestamp.toEpochMilli();
-        long bucketStart = (ts / bucketMillis) * bucketMillis;
+        long bucketStart = Math.floorDiv(ts, bucketMillis) * bucketMillis; // floorDiv: pre-epoch timestamps must round DOWN into their own bucket, not the next one
         return keyPrefix + ":uv:" + page + ":" + bucketStart;
     }
 
@@ -184,10 +198,10 @@ public class UVCounter implements AutoCloseable {
         long bucketMillis = bucketSize.toMillis();
         long from = start.toEpochMilli();
         long to = end.toEpochMilli();
-        long firstBucket = (from / bucketMillis) * bucketMillis;
-        long lastBucket = (to / bucketMillis) * bucketMillis;
+        long firstBucket = Math.floorDiv(from, bucketMillis) * bucketMillis;
+        long lastBucket = Math.floorDiv(to, bucketMillis) * bucketMillis;
 
-        int maxBuckets = (int) Math.min(10_000, (lastBucket - firstBucket) / bucketMillis + 1);
+        int maxBuckets = (int) Math.min(MAX_QUERY_BUCKETS, (lastBucket - firstBucket) / bucketMillis + 1);
         List<String> keys = new ArrayList<>(Math.max(0, maxBuckets));
         long cur = firstBucket;
         for (int i = 0; i < maxBuckets && cur <= lastBucket; i++) {
@@ -202,7 +216,7 @@ public class UVCounter implements AutoCloseable {
             Instant now = Instant.now();
             Instant start = now.minus(windowSize);
             long bucketMillis = bucketSize.toMillis();
-            long cutoffBucket = (start.toEpochMilli() / bucketMillis) * bucketMillis;
+            long cutoffBucket = Math.floorDiv(start.toEpochMilli(), bucketMillis) * bucketMillis;
 
             RSet<String> pages = getPagesIndex();
             for (String page : pages.readAll()) {

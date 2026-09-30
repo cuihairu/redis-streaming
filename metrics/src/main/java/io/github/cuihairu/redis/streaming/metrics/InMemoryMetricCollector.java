@@ -16,11 +16,14 @@ public class InMemoryMetricCollector implements MetricCollector {
     private final Map<String, AtomicLong> counters;
     private final Map<String, Double> gauges;
     private final Map<String, Metric> metrics;
+    /** For HISTOGRAM: stores count/sum/max/min to aggregate; value holds last sample for backward compat */
+    private final Map<String, HistogramState> histogramStates;
 
     public InMemoryMetricCollector() {
         this.counters = new ConcurrentHashMap<>();
         this.gauges = new ConcurrentHashMap<>();
         this.metrics = new ConcurrentHashMap<>();
+        this.histogramStates = new ConcurrentHashMap<>();
     }
 
     @Override
@@ -30,6 +33,9 @@ public class InMemoryMetricCollector implements MetricCollector {
 
     @Override
     public void incrementCounter(String name, long amount) {
+        if (amount < 0) {
+            throw new IllegalArgumentException("Counter increment amount must be non-negative");
+        }
         AtomicLong counter = counters.computeIfAbsent(name, k -> new AtomicLong(0));
         long newValue = counter.addAndGet(amount);
         updateMetric(name, MetricType.COUNTER, newValue, null);
@@ -43,12 +49,17 @@ public class InMemoryMetricCollector implements MetricCollector {
 
     @Override
     public void recordHistogram(String name, double value) {
+        HistogramState state = histogramStates.computeIfAbsent(name, k -> new HistogramState());
+        state.record(value);
+        // Metric value holds last sample for backward compatibility; aggregate stats in state
         updateMetric(name, MetricType.HISTOGRAM, value, null);
     }
 
     @Override
     public void markMeter(String name) {
-        AtomicLong meter = counters.computeIfAbsent(name + ".meter", k -> new AtomicLong(0));
+        // Use a distinct internal key to avoid colliding with incrementCounter(name)
+        String meterKey = name + ".meter";
+        AtomicLong meter = counters.computeIfAbsent(meterKey, k -> new AtomicLong(0));
         long newValue = meter.incrementAndGet();
         updateMetric(name, MetricType.METER, newValue, null);
     }
@@ -94,6 +105,7 @@ public class InMemoryMetricCollector implements MetricCollector {
         counters.clear();
         gauges.clear();
         metrics.clear();
+        histogramStates.clear();
     }
 
     /**
@@ -111,6 +123,14 @@ public class InMemoryMetricCollector implements MetricCollector {
         return gauges.getOrDefault(name, 0.0);
     }
 
+    /**
+     * Get histogram aggregate state (count/sum/max/min) if available.
+     * Returns null if no histogram recorded for this name.
+     */
+    public HistogramState getHistogramState(String name) {
+        return histogramStates.get(name);
+    }
+
     private void updateMetric(String name, MetricType type, double value, Map<String, String> tags) {
         Metric.Builder builder = Metric.builder(name, type).value(value);
         if (tags != null) {
@@ -120,8 +140,43 @@ public class InMemoryMetricCollector implements MetricCollector {
     }
 
     private String buildTaggedName(String name, Map<String, String> tags) {
+        // sorted by tag key: HashMap iteration order differs per map, so the same tags
+        // in a different insertion order used to mint two distinct series that each
+        // showed half the traffic (mirrors PrometheusMetricCollector's sorting)
         StringBuilder sb = new StringBuilder(name);
-        tags.forEach((k, v) -> sb.append(".").append(k).append("_").append(v));
+        tags.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(e -> sb.append(".").append(e.getKey()).append("_").append(e.getValue()));
         return sb.toString();
+    }
+
+    /**
+     * Aggregate state for a histogram metric.
+     */
+    public static class HistogramState {
+        private final AtomicLong count = new AtomicLong(0);
+        private final AtomicLong sum = new AtomicLong(0);
+        private final AtomicLong max = new AtomicLong(Long.MIN_VALUE);
+        private final AtomicLong min = new AtomicLong(Long.MAX_VALUE);
+
+        void record(double value) {
+            count.incrementAndGet();
+            long lval = Double.doubleToLongBits(value);
+            sum.addAndGet(lval);
+            while (true) {
+                long curMax = max.get();
+                if (lval <= curMax || max.compareAndSet(curMax, lval)) break;
+            }
+            while (true) {
+                long curMin = min.get();
+                if (lval >= curMin || min.compareAndSet(curMin, lval)) break;
+            }
+        }
+
+        public long getCount() { return count.get(); }
+        public double getSum() { return Double.longBitsToDouble(sum.get()); }
+        public double getMax() { return Double.longBitsToDouble(max.get()); }
+        public double getMin() { return Double.longBitsToDouble(min.get()); }
+        public double getMean() { return count.get() > 0 ? getSum() / count.get() : 0.0; }
     }
 }

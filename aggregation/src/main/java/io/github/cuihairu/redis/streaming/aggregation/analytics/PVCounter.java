@@ -89,7 +89,6 @@ public class PVCounter {
         double cutoffTime = now - windowSize.toMillis();
         String key = getKeyForPage(page);
         RScoredSortedSet<String> sortedSet = redissonClient.getScoredSortedSet(key);
-        getPagesIndex().add(page);
 
         // Use timestamp as score, and a unique ID as value
         double score = ts.toEpochMilli();
@@ -101,8 +100,14 @@ public class PVCounter {
 
         sortedSet.add(score, value);
 
-        // Remove old entries outside the window
-        sortedSet.removeRangeByScore(0, true, cutoffTime, true);
+        // Index the page only after the zset entry exists: cleanup drops a page whose
+        // zset reads empty, so registering first let cleanup observe the not-yet-written
+        // zset and un-index a page the recorder had just indexed
+        getPagesIndex().add(page);
+
+        // Remove old entries outside the window (floor unbounded below: a 0 floor made
+        // pre-epoch-dated scores invisible to cleanup forever)
+        sortedSet.removeRangeByScore(Double.NEGATIVE_INFINITY, true, cutoffTime, true);
 
         long count = trailingCount(sortedSet, cutoffTime, now);
         log.debug("Recorded PV for page '{}' at {}, current count: {}", page, ts, count);
@@ -127,7 +132,7 @@ public class PVCounter {
         // Remove old entries outside the window
         long now = clock.getAsLong();
         double cutoffTime = now - windowSize.toMillis();
-        sortedSet.removeRangeByScore(0, true, cutoffTime, true);
+        sortedSet.removeRangeByScore(Double.NEGATIVE_INFINITY, true, cutoffTime, true);
 
         // count within the trailing window only: size() would include future-dated
         // events, which used to inflate counts until wall clock reached them (B-41)
@@ -218,7 +223,7 @@ public class PVCounter {
                 String key = getKeyForPage(page);
                 RScoredSortedSet<String> sortedSet = redissonClient.getScoredSortedSet(key);
                 try {
-                    sortedSet.removeRangeByScore(0, true, cutoffTime, true);
+                    sortedSet.removeRangeByScore(Double.NEGATIVE_INFINITY, true, cutoffTime, true);
                 } catch (Exception ignore) {}
                 try {
                     if (sortedSet.size() == 0) {

@@ -17,7 +17,9 @@ public interface KGroupedTable<K, V> extends Serializable {
      *
      * @param initializer Function to create the initial aggregate value
      * @param adder Function to fold a value into the aggregate (receives the running aggregate)
-     * @param subtractor Function to remove a value from the aggregate (receives the running aggregate)
+     * @param subtractor Function to remove a value from the aggregate (receives the running aggregate);
+     *                   never invoked by the current one-shot implementations — they build each aggregate
+     *                   from a fresh snapshot in a single adder pass, with no retraction step
      * @param <VR> The type of the aggregate result
      * @return A KTable with aggregated values
      */

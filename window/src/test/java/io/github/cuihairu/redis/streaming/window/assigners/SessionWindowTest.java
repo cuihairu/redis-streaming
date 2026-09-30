@@ -61,18 +61,21 @@ class SessionWindowTest {
 
     @Test
     void testAssignWindowsWithZeroGap() {
-        // Given
-        SessionWindow<String> sessionWindow = SessionWindow.withGapMillis(0);
-        String element = "test";
-        long timestamp = 5000;
+        // A zero gap makes every window empty ([ts, ts)) — firing immediately and never
+        // mergeable — so the factory rejects it instead of silently degenerating
+        assertThrows(IllegalArgumentException.class, () -> SessionWindow.withGapMillis(0));
+        assertThrows(IllegalArgumentException.class, () -> SessionWindow.withGap(Duration.ZERO));
+    }
 
-        // When
-        Iterable<WindowAssigner.Window> windows = sessionWindow.assignWindows(element, timestamp);
-        WindowAssigner.Window window = windows.iterator().next();
+    @Test
+    void testAssignWindowsWithNegativeGap() {
+        assertThrows(IllegalArgumentException.class, () -> SessionWindow.withGapMillis(-1));
+        assertThrows(IllegalArgumentException.class, () -> SessionWindow.withGap(Duration.ofMillis(-100)));
+    }
 
-        // Then
-        assertEquals(5000, window.getStart());
-        assertEquals(5000, window.getEnd());
+    @Test
+    void testWithGapRejectsNull() {
+        assertThrows(NullPointerException.class, () -> SessionWindow.withGap(null));
     }
 
     @Test

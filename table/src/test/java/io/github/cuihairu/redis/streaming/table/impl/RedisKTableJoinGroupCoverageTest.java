@@ -49,7 +49,7 @@ class RedisKTableJoinGroupCoverageTest {
             return backing.remove(String.valueOf(k));
         });
         when(map.size()).thenAnswer(inv -> backing.size());
-        when(map.entrySet()).thenAnswer(inv -> backing.entrySet());
+        when(map.readAllMap()).thenAnswer(inv -> new java.util.HashMap<>(backing));
         doAnswer(inv -> {
             backing.clear();
             return null;

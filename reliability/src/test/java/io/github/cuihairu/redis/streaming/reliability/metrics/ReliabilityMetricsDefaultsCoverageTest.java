@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 /** Covers {@code ReliabilityMetrics} noop collector overrides and interface default methods. */
@@ -20,17 +21,20 @@ class ReliabilityMetricsDefaultsCoverageTest {
     }
 
     @Test
-    void interfaceDefaultMethodsAreInvokable() {
-        AtomicInteger deletes = new AtomicInteger();
+    void anonymousImplOverridingOnlyRecordDlqReplayIsComplete() {
+        // incDlqDelete/incDlqClear are documented no-op defaults: an implementor overriding
+        // only recordDlqReplay is a valid collector, and the defaults must stay silent
+        AtomicInteger replays = new AtomicInteger();
         ReliabilityMetricsCollector collector = new ReliabilityMetricsCollector() {
             @Override
             public void recordDlqReplay(String topic, int partitionId, boolean success, long durationNanos) {
+                replays.incrementAndGet();
             }
         };
-        collector.incDlqDelete("topic-x");
-        collector.incDlqClear("topic-x", 5);
-        deletes.incrementAndGet();
-        assertNotNull(collector);
+        assertDoesNotThrow(() -> collector.incDlqDelete("topic-x"));
+        assertDoesNotThrow(() -> collector.incDlqClear("topic-x", 5));
+        assertEquals(0, replays.get(),
+                "the no-op defaults must not route into recordDlqReplay");
     }
 
     @Test

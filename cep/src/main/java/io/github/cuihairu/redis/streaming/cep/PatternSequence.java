@@ -142,6 +142,11 @@ public class PatternSequence<T> implements Serializable {
      * Set a time constraint - pattern must complete within this duration
      */
     public PatternSequence<T> within(Duration timeWindow) {
+        // a zero/negative window can never contain any elapsed time, so every match would
+        // silently fail downstream — reject it at the builder
+        if (timeWindow == null || timeWindow.isZero() || timeWindow.isNegative()) {
+            throw new IllegalArgumentException("time window must be positive, got " + timeWindow);
+        }
         this.timeWindow = timeWindow;
         return this;
     }

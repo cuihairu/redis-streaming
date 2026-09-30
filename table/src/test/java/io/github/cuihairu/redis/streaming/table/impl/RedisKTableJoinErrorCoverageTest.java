@@ -48,7 +48,7 @@ class RedisKTableJoinErrorCoverageTest {
             return backing.remove(String.valueOf(k));
         });
         when(map.size()).thenAnswer(inv -> backing.size());
-        when(map.entrySet()).thenAnswer(inv -> backing.entrySet());
+        when(map.readAllMap()).thenAnswer(inv -> new java.util.HashMap<>(backing));
         doAnswer(inv -> {
             backing.clear();
             return null;
@@ -88,7 +88,7 @@ class RedisKTableJoinErrorCoverageTest {
         RMap<String, String> map = mock(RMap.class);
         Map<String, String> backing = new ConcurrentHashMap<>();
         backing.put("k1", "not-json-for-int");
-        when(map.entrySet()).thenAnswer(inv -> backing.entrySet());
+        when(map.readAllMap()).thenAnswer(inv -> new java.util.HashMap<>(backing));
         when(redissonClient.<String, String>getMap(anyString(), eq(StringCodec.INSTANCE))).thenReturn(map);
 
         RedisKTable<String, Integer> table = new RedisKTable<>(redissonClient, "bad", String.class, Integer.class);

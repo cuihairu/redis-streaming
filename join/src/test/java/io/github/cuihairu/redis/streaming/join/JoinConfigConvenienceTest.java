@@ -157,12 +157,12 @@ class JoinConfigConvenienceTest {
                 .leftKeySelector(s -> s)
                 .rightKeySelector(s -> s)
                 .maxStateSize(1000)
-                .stateRetentionTime(5000)
+                .stateRetentionTime(20_000) // must cover the 2x10s window span
                 .build();
 
         assertEquals(JoinType.FULL_OUTER, config.getJoinType());
         assertEquals(1000, config.getMaxStateSize());
-        assertEquals(5000, config.getStateRetentionTime());
+        assertEquals(20_000, config.getStateRetentionTime());
         config.validate();
     }
 
@@ -175,12 +175,12 @@ class JoinConfigConvenienceTest {
                 .leftKeySelector(s -> s)
                 .rightKeySelector(s -> s)
                 .maxStateSize(1)
-                .stateRetentionTime(1)
+                .stateRetentionTime(200) // must cover the 2x100ms window span
                 .build();
 
         assertEquals(JoinType.INNER, config.getJoinType());
         assertEquals(1, config.getMaxStateSize());
-        assertEquals(1, config.getStateRetentionTime());
+        assertEquals(200, config.getStateRetentionTime());
         config.validate();
     }
 
@@ -193,12 +193,12 @@ class JoinConfigConvenienceTest {
                 .leftKeySelector(s -> s)
                 .rightKeySelector(s -> s)
                 .maxStateSize(100000)
-                .stateRetentionTime(86400000)
+                .stateRetentionTime(2 * 86_400_000L) // must cover the 2x1d window span
                 .build();
 
         assertEquals(JoinType.LEFT, config.getJoinType());
         assertEquals(100000, config.getMaxStateSize());
-        assertEquals(86400000, config.getStateRetentionTime());
+        assertEquals(2 * 86_400_000L, config.getStateRetentionTime());
         config.validate();
     }
 

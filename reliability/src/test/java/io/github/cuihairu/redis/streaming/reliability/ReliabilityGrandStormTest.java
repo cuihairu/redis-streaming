@@ -1,12 +1,14 @@
 package io.github.cuihairu.redis.streaming.reliability;
 
 import io.github.cuihairu.redis.streaming.storm.Storms;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import io.github.cuihairu.redis.streaming.reliability.ratelimit.NamedRateLimiter;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Module-wide grand storm: sweep every reliability main class with a timeout-guarded pass. */
+@Tag("integration")
 class ReliabilityGrandStormTest {
 
     @Test
@@ -18,6 +20,7 @@ class ReliabilityGrandStormTest {
         hints.put(org.redisson.api.RedissonClient.class, real);
         int total = Storms.grandStorm(NamedRateLimiter.class, "io.github.cuihairu.redis.streaming.reliability", hints, 150);
         System.err.println("GRAND-REDIS reliability invocations=" + total);
+        assertTrue(total > 0);
         real.shutdown();
     }
 }

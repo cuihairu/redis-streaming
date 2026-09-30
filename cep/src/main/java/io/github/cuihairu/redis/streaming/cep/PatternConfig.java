@@ -53,7 +53,7 @@ public class PatternConfig<T> implements Serializable {
         if (pattern == null) {
             throw new IllegalArgumentException("Pattern must be specified");
         }
-        if (timeWindow == null || timeWindow.isNegative()) {
+        if (timeWindow == null || timeWindow.isZero() || timeWindow.isNegative()) {
             throw new IllegalArgumentException("Time window must be positive");
         }
         if (maxSequenceLength <= 0) {

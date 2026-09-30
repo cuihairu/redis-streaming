@@ -74,7 +74,7 @@ class UVCounterBucketBoundaryCoverageTest {
         RHyperLogLog<String> hll = mock(RHyperLogLog.class);
         RedissonClient redisson = redisson(pages, bucketIndex, hll);
 
-        UVCounter counter = new UVCounter(redisson, "p", Duration.ofMinutes(5), Duration.ofMillis(1));
+        UVCounter counter = new UVCounter(redisson, "p", Duration.ofSeconds(5), Duration.ofMillis(1));
         try {
             long count = counter.count("home",
                     Instant.ofEpochMilli(Long.MIN_VALUE), Instant.ofEpochMilli(Long.MAX_VALUE));

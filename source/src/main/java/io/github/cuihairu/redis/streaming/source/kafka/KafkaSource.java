@@ -184,6 +184,9 @@ public class KafkaSource<T> implements AutoCloseable {
             log.error("Error in Kafka consumer loop", e);
             throw new RuntimeException("Kafka consumer error", e);
         } finally {
+            // the loop can also die by exception (not just stop()); leaving the flag set
+            // made isRunning() report a dead consumer as healthy
+            running = false;
             log.info("Kafka consumer stopped for topic: {}", topic);
         }
     }

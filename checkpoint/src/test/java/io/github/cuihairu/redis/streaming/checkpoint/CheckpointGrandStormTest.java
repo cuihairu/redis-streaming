@@ -1,12 +1,14 @@
 package io.github.cuihairu.redis.streaming.checkpoint;
 
 import io.github.cuihairu.redis.streaming.storm.Storms;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import io.github.cuihairu.redis.streaming.checkpoint.DefaultCheckpoint;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Module-wide grand storm: sweep every checkpoint main class with a timeout-guarded pass. */
+@Tag("integration")
 class CheckpointGrandStormTest {
 
     @Test
@@ -21,6 +23,7 @@ class CheckpointGrandStormTest {
         hints.put(org.redisson.api.RedissonClient.class, real);
         int total = Storms.grandStorm(DefaultCheckpoint.class, "io.github.cuihairu.redis.streaming.checkpoint", hints, 150);
         System.err.println("GRAND-REDIS checkpoint invocations=" + total);
+        assertTrue(total > 0);
         real.shutdown();
     }
 

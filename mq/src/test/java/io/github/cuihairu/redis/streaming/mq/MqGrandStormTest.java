@@ -1,6 +1,7 @@
 package io.github.cuihairu.redis.streaming.mq;
 
 import io.github.cuihairu.redis.streaming.storm.Storms;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
@@ -9,6 +10,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Module-wide grand storm: sweep every mq class with a timeout-guarded invocation pass. */
+@Tag("integration")
 class MqGrandStormTest {
 
     @Test
@@ -22,6 +24,7 @@ class MqGrandStormTest {
         hints.put(Message.class, new Message("t", "k", "p"));
         int total = Storms.grandStorm(MessageQueueFactory.class, "io.github.cuihairu.redis.streaming.mq", hints, 150);
         System.err.println("GRAND-REDIS mq invocations=" + total);
+        assertTrue(total > 0);
         real.shutdown();
     }
 }

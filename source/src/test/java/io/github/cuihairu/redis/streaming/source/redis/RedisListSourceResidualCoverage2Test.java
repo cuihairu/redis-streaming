@@ -51,7 +51,8 @@ class RedisListSourceResidualCoverage2Test {
             when(scheduler.scheduleAtFixedRate(any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
                     .thenAnswer(inv -> {
                         scheduled.set(inv.getArgument(0));
-                        return null;
+                        // stop() cancels registered futures, so the stub must return one
+                        return org.mockito.Mockito.mock(java.util.concurrent.ScheduledFuture.class);
                     });
             doAnswer(inv -> {
                 executed.set(inv.getArgument(0));

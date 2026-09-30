@@ -187,8 +187,8 @@ class PatternConfigTest {
 
         assertEquals(Duration.ZERO, config.getTimeWindow());
         assertEquals(0L, config.getTimeWindowMillis());
-        // Zero time window passes validation (not negative)
-        assertDoesNotThrow(config::validate);
+        // A zero window can never contain elapsed time, so validate() rejects it
+        assertThrows(IllegalArgumentException.class, config::validate);
     }
 
     @Test

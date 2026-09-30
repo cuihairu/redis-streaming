@@ -1,12 +1,14 @@
 package io.github.cuihairu.redis.streaming.source;
 
 import io.github.cuihairu.redis.streaming.storm.Storms;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import io.github.cuihairu.redis.streaming.source.collection.CollectionSource;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Module-wide grand storm: sweep every source main class with a timeout-guarded pass. */
+@Tag("integration")
 class SourceGrandStormTest {
 
     @Test
@@ -18,6 +20,7 @@ class SourceGrandStormTest {
         hints.put(org.redisson.api.RedissonClient.class, real);
         int total = Storms.grandStorm(CollectionSource.class, "io.github.cuihairu.redis.streaming.source", hints, 150);
         System.err.println("GRAND-REDIS source invocations=" + total);
+        assertTrue(total > 0);
         real.shutdown();
     }
 }

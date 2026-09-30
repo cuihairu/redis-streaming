@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
@@ -55,6 +56,16 @@ public class RedisKTable<K, V> implements KTable<K, V> {
         this.keyClass = keyClass;
         this.valueClass = valueClass;
         log.info("Created RedisKTable: {}", tableName);
+    }
+
+    /**
+     * Derive a unique Redis key for a transformation result. A bare
+     * {@code System.currentTimeMillis()} collided for two calls in the same millisecond
+     * (e.g. chained filter/mapValues in a loop), silently merging the two results into
+     * one hash — the random suffix makes each derivation a distinct table.
+     */
+    private String derivedTableName(String op) {
+        return tableName + ":" + op + ":" + System.currentTimeMillis() + "-" + UUID.randomUUID();
     }
 
     /**
@@ -114,7 +125,10 @@ public class RedisKTable<K, V> implements KTable<K, V> {
             RMap<String, String> map = getMap();
             Map<K, V> result = new HashMap<>();
 
-            for (Map.Entry<String, String> entry : map.entrySet()) {
+            // readAllMap (single HGETALL) instead of entrySet (HSCAN cursor): the cursor
+            // walk could observe a key deleted mid-iteration as a null entry value and
+            // feed a torn snapshot to filter/join/groupBy (B-45)
+            for (Map.Entry<String, String> entry : map.readAllMap().entrySet()) {
                 K key = deserializeKey(entry.getKey());
                 V value = deserializeValue(entry.getValue());
                 result.put(key, value);
@@ -152,7 +166,7 @@ public class RedisKTable<K, V> implements KTable<K, V> {
 
     @Override
     public <VR> KTable<K, VR> mapValues(Function<V, VR> mapper) {
-        String newTableName = tableName + ":mapValues:" + System.currentTimeMillis();
+        String newTableName = derivedTableName("mapValues");
         try {
             Map<K, VR> temp = new HashMap<>();
             Class<VR> inferred = null;
@@ -181,7 +195,7 @@ public class RedisKTable<K, V> implements KTable<K, V> {
 
     @Override
     public <VR> KTable<K, VR> mapValues(BiFunction<K, V, VR> mapper) {
-        String newTableName = tableName + ":mapValues:" + System.currentTimeMillis();
+        String newTableName = derivedTableName("mapValues");
         try {
             Map<K, VR> temp = new HashMap<>();
             Class<VR> inferred = null;
@@ -210,7 +224,7 @@ public class RedisKTable<K, V> implements KTable<K, V> {
 
     @Override
     public KTable<K, V> filter(BiFunction<K, V, Boolean> predicate) {
-        String newTableName = tableName + ":filter:" + System.currentTimeMillis();
+        String newTableName = derivedTableName("filter");
         RedisKTable<K, V> result = new RedisKTable<>(
             redissonClient, newTableName, keyClass, valueClass
         );
@@ -245,7 +259,7 @@ public class RedisKTable<K, V> implements KTable<K, V> {
         } else {
             throw new UnsupportedOperationException("Can only join with RedisKTable or InMemoryKTable");
         }
-        String newTableName = tableName + ":join:" + System.currentTimeMillis();
+        String newTableName = derivedTableName("join");
 
         try {
             Map<K, VR> temp = new HashMap<>();
@@ -294,7 +308,7 @@ public class RedisKTable<K, V> implements KTable<K, V> {
         } else {
             throw new UnsupportedOperationException("Can only join with RedisKTable or InMemoryKTable");
         }
-        String newTableName = tableName + ":leftJoin:" + System.currentTimeMillis();
+        String newTableName = derivedTableName("leftJoin");
 
         try {
             Map<K, VR> temp = new HashMap<>();
