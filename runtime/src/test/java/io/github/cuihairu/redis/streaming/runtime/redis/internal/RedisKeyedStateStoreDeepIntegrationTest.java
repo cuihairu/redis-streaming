@@ -43,7 +43,8 @@ class RedisKeyedStateStoreDeepIntegrationTest {
                                                        RedisRuntimeConfig.StateSchemaMismatchPolicy policy) {
         return new RedisKeyedStateStore<>(redis, new com.fasterxml.jackson.databind.ObjectMapper(),
                 prefix, "job", "t", "g", "op", ttl, sizeReportEvery, 1,
-                hotKeyThreshold, hotKeyInterval, evolution, policy);
+                hotKeyThreshold, hotKeyInterval,
+                RedisRuntimeConfig.HotKeyPolicy.LOG_ONLY, 200, evolution, policy);
     }
 
     @Test

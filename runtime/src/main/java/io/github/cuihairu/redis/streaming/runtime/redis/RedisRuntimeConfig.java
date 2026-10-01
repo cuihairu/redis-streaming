@@ -21,6 +21,29 @@ public final class RedisRuntimeConfig {
         IGNORE
     }
 
+    /**
+     * Handling applied to writes hitting a keyed-state hash that was detected hot (field
+     * count at/above {@code keyedStateHotKeyFieldsWarnThreshold}).
+     *
+     * <p>Detection is sampled (every {@code stateSizeReportEveryNStateWrites} writes) and
+     * arms a per-key handling window of {@code keyedStateHotKeyWarnInterval}; while the
+     * window is active, every write to that key goes through the policy:</p>
+     *
+     * <ul>
+     *   <li>{@link #LOG_ONLY} — warn log + metric only (previous behavior).</li>
+     *   <li>{@link #THROTTLE} — additionally sleep up to {@code keyedStateHotKeyThrottleMaxMs}
+     *       before the write, using latency as backpressure against the hot key.</li>
+     *   <li>{@link #FAIL_FAST} — additionally throw {@link KeyedStateHotKeyException}; the MQ
+     *       consumer's retry/backoff machinery turns this into backpressure and, after the
+     *       configured attempts, routes the record to the dead-letter queue.</li>
+     * </ul>
+     */
+    public enum HotKeyPolicy {
+        LOG_ONLY,
+        THROTTLE,
+        FAIL_FAST
+    }
+
     private final String jobName;
     private final String jobInstanceId;
     private final String stateKeyPrefix;
@@ -29,6 +52,8 @@ public final class RedisRuntimeConfig {
     private final int keyedStateShardCount;
     private final long keyedStateHotKeyFieldsWarnThreshold;
     private final Duration keyedStateHotKeyWarnInterval;
+    private final HotKeyPolicy keyedStateHotKeyPolicy;
+    private final long keyedStateHotKeyThrottleMaxMs;
     private final boolean stateSchemaEvolutionEnabled;
     private final StateSchemaMismatchPolicy stateSchemaMismatchPolicy;
     private final boolean restoreConsumerGroupFromCommitFrontier;
@@ -72,6 +97,11 @@ public final class RedisRuntimeConfig {
         }
         this.keyedStateHotKeyFieldsWarnThreshold = b.keyedStateHotKeyFieldsWarnThreshold;
         this.keyedStateHotKeyWarnInterval = b.keyedStateHotKeyWarnInterval == null ? Duration.ofMinutes(1) : b.keyedStateHotKeyWarnInterval;
+        this.keyedStateHotKeyPolicy = b.keyedStateHotKeyPolicy == null ? HotKeyPolicy.LOG_ONLY : b.keyedStateHotKeyPolicy;
+        if (b.keyedStateHotKeyThrottleMaxMs < 0) {
+            throw new IllegalArgumentException("keyedStateHotKeyThrottleMaxMs must be >= 0");
+        }
+        this.keyedStateHotKeyThrottleMaxMs = b.keyedStateHotKeyThrottleMaxMs;
         this.stateSchemaEvolutionEnabled = b.stateSchemaEvolutionEnabled;
         this.stateSchemaMismatchPolicy = b.stateSchemaMismatchPolicy == null ? StateSchemaMismatchPolicy.FAIL : b.stateSchemaMismatchPolicy;
         this.restoreConsumerGroupFromCommitFrontier = b.restoreConsumerGroupFromCommitFrontier;
@@ -176,10 +206,27 @@ public final class RedisRuntimeConfig {
     }
 
     /**
-     * Minimum interval between hot-key warnings for the same state hash key.
+     * Minimum interval between hot-key warnings for the same state hash key. Also the length
+     * of the handling window armed per key on a hot detection.
      */
     public Duration getKeyedStateHotKeyWarnInterval() {
         return keyedStateHotKeyWarnInterval;
+    }
+
+    /**
+     * Handling applied to writes hitting a detected-hot keyed-state hash
+     * (default {@link HotKeyPolicy#LOG_ONLY}).
+     */
+    public HotKeyPolicy getKeyedStateHotKeyPolicy() {
+        return keyedStateHotKeyPolicy;
+    }
+
+    /**
+     * Upper bound of the per-write sleep applied while {@link HotKeyPolicy#THROTTLE} handling
+     * is active for a hot key.
+     */
+    public long getKeyedStateHotKeyThrottleMaxMs() {
+        return keyedStateHotKeyThrottleMaxMs;
     }
 
     public boolean isStateSchemaEvolutionEnabled() {
@@ -387,6 +434,8 @@ public final class RedisRuntimeConfig {
         private int keyedStateShardCount = 1;
         private long keyedStateHotKeyFieldsWarnThreshold = 0;
         private Duration keyedStateHotKeyWarnInterval = Duration.ofMinutes(1);
+        private HotKeyPolicy keyedStateHotKeyPolicy = HotKeyPolicy.LOG_ONLY;
+        private long keyedStateHotKeyThrottleMaxMs = 200;
         private boolean stateSchemaEvolutionEnabled = true;
         private StateSchemaMismatchPolicy stateSchemaMismatchPolicy = StateSchemaMismatchPolicy.FAIL;
         private boolean restoreConsumerGroupFromCommitFrontier = true;
@@ -455,6 +504,16 @@ public final class RedisRuntimeConfig {
 
         public Builder keyedStateHotKeyWarnInterval(Duration interval) {
             this.keyedStateHotKeyWarnInterval = interval;
+            return this;
+        }
+
+        public Builder keyedStateHotKeyPolicy(HotKeyPolicy policy) {
+            this.keyedStateHotKeyPolicy = policy;
+            return this;
+        }
+
+        public Builder keyedStateHotKeyThrottleMaxMs(long maxMs) {
+            this.keyedStateHotKeyThrottleMaxMs = maxMs;
             return this;
         }
 

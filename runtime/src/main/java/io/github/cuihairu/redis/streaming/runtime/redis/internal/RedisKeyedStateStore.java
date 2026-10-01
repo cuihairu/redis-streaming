@@ -17,6 +17,7 @@ import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import io.github.cuihairu.redis.streaming.runtime.redis.KeyedStateHotKeyException;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisRuntimeConfig;
 
@@ -43,6 +44,8 @@ public final class RedisKeyedStateStore<K> {
     private final int keyedStateShardCount;
     private final long keyedStateHotKeyFieldsWarnThreshold;
     private final Duration keyedStateHotKeyWarnInterval;
+    private final RedisRuntimeConfig.HotKeyPolicy keyedStateHotKeyPolicy;
+    private final long keyedStateHotKeyThrottleMaxMs;
     private final boolean stateSchemaEvolutionEnabled;
     private final RedisRuntimeConfig.StateSchemaMismatchPolicy stateSchemaMismatchPolicy;
     private final AtomicLong stateWriteCount = new AtomicLong();
@@ -53,6 +56,8 @@ public final class RedisKeyedStateStore<K> {
     private final RMap<String, String> stateSchema;
     private final ConcurrentHashMap<String, String> schemaCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Long> hotKeyLastWarnAtMs = new ConcurrentHashMap<>();
+    /** per redisKey: epoch ms until which hot-key handling applies to every write */
+    private final ConcurrentHashMap<String, Long> hotKeyActiveUntilMs = new ConcurrentHashMap<>();
 
     public RedisKeyedStateStore(RedissonClient redissonClient,
                                ObjectMapper objectMapper,
@@ -66,6 +71,8 @@ public final class RedisKeyedStateStore<K> {
                                int keyedStateShardCount,
                                long keyedStateHotKeyFieldsWarnThreshold,
                                Duration keyedStateHotKeyWarnInterval,
+                               RedisRuntimeConfig.HotKeyPolicy keyedStateHotKeyPolicy,
+                               long keyedStateHotKeyThrottleMaxMs,
                                boolean stateSchemaEvolutionEnabled,
                                RedisRuntimeConfig.StateSchemaMismatchPolicy stateSchemaMismatchPolicy) {
         this.redissonClient = Objects.requireNonNull(redissonClient, "redissonClient");
@@ -80,6 +87,8 @@ public final class RedisKeyedStateStore<K> {
         this.keyedStateShardCount = Math.max(1, keyedStateShardCount);
         this.keyedStateHotKeyFieldsWarnThreshold = Math.max(0, keyedStateHotKeyFieldsWarnThreshold);
         this.keyedStateHotKeyWarnInterval = keyedStateHotKeyWarnInterval == null ? Duration.ofMinutes(1) : keyedStateHotKeyWarnInterval;
+        this.keyedStateHotKeyPolicy = keyedStateHotKeyPolicy == null ? RedisRuntimeConfig.HotKeyPolicy.LOG_ONLY : keyedStateHotKeyPolicy;
+        this.keyedStateHotKeyThrottleMaxMs = Math.max(0, keyedStateHotKeyThrottleMaxMs);
         this.stateSchemaEvolutionEnabled = stateSchemaEvolutionEnabled;
         this.stateSchemaMismatchPolicy = stateSchemaMismatchPolicy == null
                 ? RedisRuntimeConfig.StateSchemaMismatchPolicy.FAIL
@@ -242,6 +251,32 @@ public final class RedisKeyedStateStore<K> {
             }
         }
 
+        // Hot-key handling: sampled detection below arms a per-key window; while active,
+        // EVERY write to that key goes through the configured policy (not just samples).
+        if (keyedStateHotKeyPolicy != RedisRuntimeConfig.HotKeyPolicy.LOG_ONLY && redisKey != null) {
+            Long activeUntil = hotKeyActiveUntilMs.get(redisKey);
+            long now = System.currentTimeMillis();
+            if (activeUntil != null && now < activeUntil) {
+                if (keyedStateHotKeyPolicy == RedisRuntimeConfig.HotKeyPolicy.FAIL_FAST) {
+                    throw new KeyedStateHotKeyException("Keyed state hash is hot (fields >= "
+                            + keyedStateHotKeyFieldsWarnThreshold + "): " + redisKey
+                            + " (state=" + stateName + "); policy=FAIL_FAST");
+                }
+                // THROTTLE: latency as backpressure; a flat bounded sleep keeps behavior
+                // deterministic and testable. Interrupts never break the pipeline.
+                if (keyedStateHotKeyThrottleMaxMs > 0) {
+                    try {
+                        TimeUnit.MILLISECONDS.sleep(keyedStateHotKeyThrottleMaxMs);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            } else if (activeUntil != null) {
+                // expired window — remove to keep the map bounded
+                hotKeyActiveUntilMs.remove(redisKey, activeUntil);
+            }
+        }
+
         int everyN = stateSizeReportEveryNStateWrites;
         if (everyN <= 0) {
             return;
@@ -261,6 +296,12 @@ public final class RedisKeyedStateStore<K> {
             if (threshold > 0 && size >= threshold) {
                 long now = System.currentTimeMillis();
                 long intervalMs = Math.max(0, keyedStateHotKeyWarnInterval == null ? 0 : keyedStateHotKeyWarnInterval.toMillis());
+                // (re)arm the handling window on every hot sample so it slides forward
+                // while the key stays hot — independent of the warn rate limit below
+                if (redisKey != null && intervalMs > 0
+                        && keyedStateHotKeyPolicy != RedisRuntimeConfig.HotKeyPolicy.LOG_ONLY) {
+                    hotKeyActiveUntilMs.put(redisKey, now + intervalMs);
+                }
                 Long prev = redisKey == null ? null : hotKeyLastWarnAtMs.get(redisKey);
                 if (prev == null || intervalMs <= 0 || now - prev >= intervalMs) {
                     if (redisKey != null) {

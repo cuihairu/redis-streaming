@@ -33,7 +33,7 @@ class RedisKeyedStateStoreIntegrationTest {
                                                        boolean evolution, RedisRuntimeConfig.StateSchemaMismatchPolicy policy) {
         return new RedisKeyedStateStore<>(client, new com.fasterxml.jackson.databind.ObjectMapper(),
                 prefix, job, "t1", "g1", "op1", ttl, sizeReportEvery, shards, 0L, Duration.ofMinutes(1),
-                evolution, policy);
+                RedisRuntimeConfig.HotKeyPolicy.LOG_ONLY, 200, evolution, policy);
     }
 
     @Test

@@ -31,6 +31,7 @@ class RuntimeDeepStormTest {
             RedisKeyedStateStore<String> store = new RedisKeyedStateStore<>(client,
                     new com.fasterxml.jackson.databind.ObjectMapper(), "deep:ks-" + System.nanoTime(), "job",
                     "t", "g", "op", Duration.ofMillis(500), 2, 3, 1, Duration.ofMillis(1),
+                    RedisRuntimeConfig.HotKeyPolicy.LOG_ONLY, 200,
                     true, RedisRuntimeConfig.StateSchemaMismatchPolicy.IGNORE);
             store.setCurrentPartitionId(0);
             store.setCurrentKey("k");

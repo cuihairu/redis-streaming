@@ -32,6 +32,7 @@ class StateStoreTouchReportIntegrationTest {
             RedisKeyedStateStore<String> store = new RedisKeyedStateStore<>(redis,
                     new com.fasterxml.jackson.databind.ObjectMapper(), prefix, "job", "t", "g", "op",
                     Duration.ofSeconds(60), 2, 1, 1, Duration.ofMillis(1),
+                    RedisRuntimeConfig.HotKeyPolicy.LOG_ONLY, 200,
                     true, RedisRuntimeConfig.StateSchemaMismatchPolicy.IGNORE);
             store.setCurrentPartitionId(0);
             ValueState<String> state = store.getValueState(new StateDescriptor<>("counter", String.class, "0"));
@@ -67,7 +68,8 @@ class StateStoreTouchReportIntegrationTest {
             RedisRuntimeCheckpointManager mgr = new RedisRuntimeCheckpointManager(redis, cfg);
             RedisKeyedStateStore<String> store = new RedisKeyedStateStore<>(redis,
                     new com.fasterxml.jackson.databind.ObjectMapper(), prefix, job, "t", "g", "op",
-                    Duration.ZERO, 0, 1, 0L, Duration.ofMinutes(1), true,
+                    Duration.ZERO, 0, 1, 0L, Duration.ofMinutes(1),
+                    RedisRuntimeConfig.HotKeyPolicy.LOG_ONLY, 200, true,
                     RedisRuntimeConfig.StateSchemaMismatchPolicy.IGNORE);
             store.setCurrentPartitionId(0);
             store.setCurrentKey("k");

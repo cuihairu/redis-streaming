@@ -305,7 +305,7 @@
   - [x] State size 上报（抽样）：`RedisRuntimeConfig.stateSizeReportEveryNStateWrites(n)`（每 N 次 state 写入上报一次 hash 字段数）
   - [x] 热点 key 保护（基础）：`RedisRuntimeConfig.keyedStateShardCount(n)`（按 key hash 分片，降低单个 hash 过热/过大风险，默认 1 不启用）
   - [x] 热点 key 告警（阈值+限频日志+指标）：`keyedStateHotKeyFieldsWarnThreshold`/`keyedStateHotKeyWarnInterval`
-  - [ ] 热点 key 处置（阈值/采样/限流/降级/DLQ）
+  - [x] 热点 key 处置（阈值/采样/限流/降级/DLQ）：`RedisRuntimeConfig.keyedStateHotKeyPolicy(LOG_ONLY/THROTTLE/FAIL_FAST)` + `keyedStateHotKeyThrottleMaxMs`——采样命中阈值后按 `keyedStateHotKeyWarnInterval` 开启逐键处置窗口，窗口内每笔写入限流（THROTTLE 有界 sleep 背压）或快速失败（FAIL_FAST 抛 `KeyedStateHotKeyException`，走 MQ 重试/退避并最终入 DLQ），默认 LOG_ONLY 仅保留告警（已实现：2026-10-01）
 
 ## P2：可扩展与性能
 - [x] 并行度模型（基础）：`pipelineParallelism(n)` + 分区固定分配（`partitionId % n`）以实现多子任务并行（已实现：2026-01-01）

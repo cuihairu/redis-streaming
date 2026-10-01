@@ -66,7 +66,7 @@ class RedisKeyedStateStoreGapClosureTest {
                                                Duration hotKeyInterval) {
         return new RedisKeyedStateStore<>(redisson, new ObjectMapper(), "prefix", "job", "topic",
                 "group", "op", ttl, everyN, 1, hotKeyThreshold, hotKeyInterval,
-                true, RedisRuntimeConfig.StateSchemaMismatchPolicy.FAIL);
+                RedisRuntimeConfig.HotKeyPolicy.LOG_ONLY, 200, true, RedisRuntimeConfig.StateSchemaMismatchPolicy.FAIL);
     }
 
     private static void setField(Object target, String name, Object value) throws Exception {

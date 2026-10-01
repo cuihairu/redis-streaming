@@ -173,6 +173,7 @@ class RedisRuntimeCheckpointManagerIntegrationTest {
                                                           String topic, String group, Duration ttl) {
         return new RedisKeyedStateStore<>(client, new com.fasterxml.jackson.databind.ObjectMapper(),
                 prefix, job, topic, group, "op-1", ttl, 0, 1, 0L, Duration.ofMinutes(1),
+                RedisRuntimeConfig.HotKeyPolicy.LOG_ONLY, 200,
                 false, RedisRuntimeConfig.StateSchemaMismatchPolicy.FAIL);
     }
 }

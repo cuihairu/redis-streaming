@@ -129,6 +129,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                 config.getStateKeyPrefix(), config.getJobName(), topic, consumerGroup, operatorId, config.getStateTtl(),
                 config.getStateSizeReportEveryNStateWrites(), config.getKeyedStateShardCount(),
                 config.getKeyedStateHotKeyFieldsWarnThreshold(), config.getKeyedStateHotKeyWarnInterval(),
+                config.getKeyedStateHotKeyPolicy(), config.getKeyedStateHotKeyThrottleMaxMs(),
                 config.isStateSchemaEvolutionEnabled(), config.getStateSchemaMismatchPolicy());
         return new RedisKeyedStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup,
                 subscriptionOptions, operators, keySelector, store, operatorId);

@@ -76,7 +76,8 @@ class RedisKeyedStateStoreFaultInjectionTest {
                                               int shards, long hotKeyThreshold, Duration hotKeyInterval,
                                               boolean evolution, RedisRuntimeConfig.StateSchemaMismatchPolicy policy) {
         return new RedisKeyedStateStore<>(redisson, new ObjectMapper(), PREFIX, "job", "t", "g", "op",
-                ttl, sizeReportEveryN, shards, hotKeyThreshold, hotKeyInterval, evolution, policy);
+                ttl, sizeReportEveryN, shards, hotKeyThreshold, hotKeyInterval,
+                RedisRuntimeConfig.HotKeyPolicy.LOG_ONLY, 200, evolution, policy);
     }
 
     @Test

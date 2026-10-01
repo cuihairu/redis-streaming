@@ -222,6 +222,7 @@ class RedisRuntimeCheckpointManagerBranchIntegrationTest {
             RedisKeyedStateStore<String> store = new RedisKeyedStateStore<>(redis,
                     new com.fasterxml.jackson.databind.ObjectMapper(), prefix, job, "t", "g", "op",
                     java.time.Duration.ZERO, 0, 1, 0L, java.time.Duration.ofMinutes(1),
+                    RedisRuntimeConfig.HotKeyPolicy.LOG_ONLY, 200,
                     false, RedisRuntimeConfig.StateSchemaMismatchPolicy.FAIL);
 
             // registered but never created -> pruned from the index during snapshot

@@ -3,6 +3,7 @@ package io.github.cuihairu.redis.streaming.runtime.redis.internal;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.cuihairu.redis.streaming.api.state.StateDescriptor;
 import io.github.cuihairu.redis.streaming.api.state.ValueState;
+import io.github.cuihairu.redis.streaming.runtime.redis.KeyedStateHotKeyException;
 import org.redisson.api.RMap;
 
 import java.util.Objects;
@@ -65,6 +66,10 @@ final class RedisKeyedValueState<K, T> implements ValueState<T> {
             map.put(field, objectMapper.writeValueAsString(value));
             store.touch(ref.redisKey(), descriptor.getName(), map);
             store.recordKeyedStateWrite(descriptor.getName(), (System.nanoTime() - startNs) / 1_000_000);
+        } catch (KeyedStateHotKeyException e) {
+            // hot-key FAIL_FAST is a policy signal, not a serialization failure — keep it
+            // unwrapped so the MQ retry/DLQ machinery sees the real cause
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException("Failed to serialize state value for " + descriptor.getName(), e);
         }

@@ -73,6 +73,16 @@ Redis runtime 当前提供的是 “at-least-once + 更强对齐”的一致性�
 **优点**：在支持事务的 sink 上可获得严格 exactly-once side effects。  
 **缺点**：实现复杂；每个 sink 都要实现事务协议；外部系统不支持事务时无法使用。
 
+**As-built（2026-09-28 落地，与上述提案的差异以此为准）**：
+
+- **API**（`core/.../api/stream/TwoPhaseCommitSink.java`）：`Txn beginTxn()`（无 checkpointId 参数，由运行时在 epoch 首条消息前**惰性开启**，commit/abort 后自动开新 epoch）、`invoke(T value, Txn txn)`、`preCommit(Txn)`、`commit(Txn)`、`abort(Txn)`（默认委托 `recoverAndAbort`）、`Txn recoverAndCommit(Txn)` / `Txn recoverAndAbort(Txn)`。`Txn extends Serializable`。单参 `invoke(T)` 被桥接为 fail-fast（2PC sink 不允许直写）。
+- **句柄持久化**：`TwoPhaseCommitCoordinator`（runtime）以 Java 序列化 + Base64 编码句柄，存储无关（内存/Redis checkpoint 皆可放）；checkpoint 快照键 `runtime:txns`，键 `"runnerIndex:sinkIndex"`，空 map 不写键。
+- **运行时序**：`prepareCommit → storeCheckpoint(handle) → commit → markSinkCommitted → ack`；空 epoch 也 preCommit（句柄总是落 checkpoint）。
+- **commit 抛错不予 abort 补偿**：句柄已落 checkpoint，丢弃会丢数据——epoch 保持未决，恢复路径从存储句柄重放 `recoverAndCommit`（幂等）。仅 preCommit 失败或 store 失败走 `abort`。
+- **恢复补偿**：restore 后按 runner 索引回放——`sinkCommitted` marker 存在→句柄已过期跳过；marker 缺失（store 后 commit 前崩溃）→逐个 `recoverAndCommit`；补偿失败仅记日志不阻断启动。
+- **参考实现**：`RedisOutboxSink<T>`（方案 C 的 outbox 即以 2PC API 驱动：preCommit 逐条 XADD、commit 翻 epoch 状态 COMMITTED）。注意其投递语义为 at-least-once，端到端 exactly-once 需目标端按稳定 record id 幂等（方案 C 折中口径）。
+- **测试**：`TwoPhaseCommitSinkTest`（6）、`TwoPhaseCommitCoordinatorTest`（9）、`RedisPipelineRunnerTwoPhaseCommitTest`（5）、`TwoPhaseCommitFaultInjectionTest`（11，含 store 后 commit 前崩溃/commit 抛错/store 失败注入）、`TwoPhaseCommitRecoveryCompensationTest`（4）；v2.5 侧 sink/dispatcher/fault 28 例。集成测试（真 Redis 故障注入与恢复）挂起，依赖 Redis 环境的集成条目。
+
 ### 方案 C：Outbox / WAL（推荐作为 v2.5 或特定场景）
 
 **思路**：把 side effects 写入一个“可恢复的 outbox”（例如 Redis Stream/Hash/表），outbox 写入与 checkpoint 同域（Redis 内部），然后由异步 dispatcher 把 outbox 投递到外部系统。

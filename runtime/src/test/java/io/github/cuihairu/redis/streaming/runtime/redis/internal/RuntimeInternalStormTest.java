@@ -39,7 +39,8 @@ class RuntimeInternalStormTest {
         RedisKeyedStateStore<String> happy = Storms.constructing(() -> new RedisKeyedStateStore<>(
                 Storms.deep(RedissonClient.class), new com.fasterxml.jackson.databind.ObjectMapper(),
                 "storm:ks-h", "job", "t", "g", "op", Duration.ofMinutes(1), 3, 2, 5,
-                Duration.ofMillis(1), true, RedisRuntimeConfig.StateSchemaMismatchPolicy.CLEAR));
+                Duration.ofMillis(1), RedisRuntimeConfig.HotKeyPolicy.LOG_ONLY, 200,
+                true, RedisRuntimeConfig.StateSchemaMismatchPolicy.CLEAR));
         happy.setCurrentPartitionId(0);
         happy.setCurrentKey("k");
         assertTrue(Storms.storm(happy, null) > 5);
@@ -49,7 +50,7 @@ class RuntimeInternalStormTest {
         RedisKeyedStateStore<String> failing = Storms.constructing(() -> new RedisKeyedStateStore<>(
                 Storms.exploding(RedissonClient.class), new com.fasterxml.jackson.databind.ObjectMapper(),
                 "storm:ks-f", "job", "t", "g", "op", null, 1, 1, 0L, null,
-                false, null));
+                RedisRuntimeConfig.HotKeyPolicy.LOG_ONLY, 200, false, null));
         assertTrue(Storms.storm(failing, null) > 5);
     }
 
