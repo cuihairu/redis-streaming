@@ -46,6 +46,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -629,11 +630,11 @@ class RedisStreamExecutionEnvironmentResidualBranchTest {
         List<Object> runners = (List<Object>) runnersField.get(job);
         runners.add(null);
 
-        Field executorField = job.getClass().getDeclaredField("checkpointExecutor");
+        Field executorField = job.getClass().getDeclaredField("checkpointExecutorRef");
         executorField.setAccessible(true);
         ScheduledExecutorService brokenExecutor = mock(ScheduledExecutorService.class);
         doThrow(new IllegalStateException("shutdown down")).when(brokenExecutor).shutdownNow();
-        executorField.set(job, brokenExecutor);
+        executorField.set(job, new AtomicReference<>(brokenExecutor));
 
         job.cancel();
         assertTrue(job.awaitTermination(Duration.ofSeconds(5)));

@@ -263,4 +263,167 @@ class RedisRuntimeCheckpointManagerGapClosureTest {
     void restoreRejectsNullCheckpoint() {
         org.junit.jupiter.api.Assertions.assertFalse(manager().restoreFromCheckpoint(null, List.of()));
     }
+
+    @Test
+    void triggerCheckpointAttachesFencingTokenWhenElectorPresent() {
+        RedisLeaderElector elector = mock(RedisLeaderElector.class);
+        when(elector.currentFencingToken()).thenReturn(9L);
+        RedisRuntimeCheckpointManager m = new RedisRuntimeCheckpointManager(redisson, config, elector);
+
+        Checkpoint cp = m.triggerCheckpoint(11L, List.of(), null);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> meta = (Map<String, Object>) cp.getStateSnapshot().getState("runtime:meta");
+        assertEquals(9L, meta.get("fencingToken"));
+    }
+
+    @Test
+    void triggerCheckpointOmitsFencingTokenWhenElectorAbsent() {
+        Checkpoint cp = manager().triggerCheckpoint(12L, List.of(), null);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> meta = (Map<String, Object>) cp.getStateSnapshot().getState("runtime:meta");
+        assertTrue(meta == null || !meta.containsKey("fencingToken"));
+    }
+
+    @Test
+    void restoreScanKeepsOnlyMaxFencingTokenCheckpoints() throws Exception {
+        Checkpoint stale = checkpointWith(Map.of("runtime:meta", Map.of("fencingToken", 3L)));
+        when(stale.getCheckpointId()).thenReturn(50L);
+        Checkpoint fresh = checkpointWith(Map.of("runtime:meta", Map.of("fencingToken", 7L)));
+        when(fresh.getCheckpointId()).thenReturn(40L);
+        Checkpoint preElection = checkpointWith(Map.of("runtime:meta", Map.of("jobName", "cp-gap")));
+        when(preElection.getCheckpointId()).thenReturn(60L);
+
+        RedisCheckpointStorage storage = mock(RedisCheckpointStorage.class);
+        when(storage.listCheckpoints(anyInt())).thenReturn(List.of(stale, fresh, preElection));
+        RedisRuntimeCheckpointManager m = managerWithElector(storage, 7L);
+
+        // newest by id (60) carries no token and must not win; the max-token (7) checkpoint does
+        assertEquals(40L, m.getLatestCheckpointForRestore().getCheckpointId());
+    }
+
+    @Test
+    void restoreScanWithoutTokensFallsBackToFullHistory() throws Exception {
+        Checkpoint older = checkpointWith(Map.of("runtime:meta", Map.of("jobName", "cp-gap")));
+        when(older.getCheckpointId()).thenReturn(10L);
+        Checkpoint newer = checkpointWith(Map.of("runtime:meta", Map.of("jobName", "cp-gap")));
+        when(newer.getCheckpointId()).thenReturn(20L);
+
+        RedisCheckpointStorage storage = mock(RedisCheckpointStorage.class);
+        when(storage.listCheckpoints(anyInt())).thenReturn(List.of(newer, older));
+        RedisRuntimeCheckpointManager m = managerWithElector(storage, 0L);
+
+        assertEquals(20L, m.getLatestCheckpointForRestore().getCheckpointId());
+    }
+
+    @Test
+    void sinkCommittedScanRejectsStaleFencingTokenCheckpoints() throws Exception {
+        Checkpoint stale = checkpointWith(Map.of("runtime:meta", Map.of("fencingToken", 3L, "sinkCommitted", true)));
+        when(stale.getCheckpointId()).thenReturn(50L);
+        Checkpoint fresh = checkpointWith(Map.of("runtime:meta", Map.of("fencingToken", 7L)));
+        when(fresh.getCheckpointId()).thenReturn(40L);
+
+        RedisCheckpointStorage storage = mock(RedisCheckpointStorage.class);
+        when(storage.listCheckpoints(anyInt())).thenReturn(List.of(stale, fresh));
+        RedisRuntimeCheckpointManager m = managerWithElector(storage, 7L);
+
+        RBucket<String> marker = mock(RBucket.class);
+        when(marker.isExists()).thenReturn(false);
+        when(redisson.getBucket(anyString(), any(Codec.class))).thenReturn((RBucket) marker);
+
+        // the sink-committed checkpoint carries a stale token (3 < 7) and is skipped
+        assertNull(m.getLatestSinkCommittedCheckpoint());
+    }
+
+    @Test
+    void getTxnHandlesReturnsEmptyWhenSnapshotReadFails() {
+        Checkpoint cp = mock(Checkpoint.class);
+        Checkpoint.StateSnapshot snap = mock(Checkpoint.StateSnapshot.class);
+        when(cp.getCheckpointId()).thenReturn(42L);
+        when(cp.getStateSnapshot()).thenReturn(snap);
+        when(snap.getState(anyString())).thenThrow(new RuntimeException("corrupt snapshot"));
+
+        assertEquals(Map.of(), manager().getTxnHandles(cp));
+    }
+
+    @Test
+    void sinkCommittedAndInDoubtScansSwallowStorageFailures() throws Exception {
+        RedisCheckpointStorage storage = mock(RedisCheckpointStorage.class);
+        when(storage.listCheckpoints(anyInt())).thenThrow(new RuntimeException("redis down"));
+        RedisRuntimeCheckpointManager m = manager();
+        swapField(m, "storage", storage);
+
+        assertNull(m.getLatestSinkCommittedCheckpoint());
+        assertNull(m.getLatestInDoubtTwoPhaseCheckpoint());
+    }
+
+    @Test
+    void inDoubtScanReturnsNullWhenNewestIsSinkCommitted() throws Exception {
+        Checkpoint committed = checkpointWith(Map.of("runtime:meta", Map.of("sinkCommitted", true)));
+        RedisCheckpointStorage storage = mock(RedisCheckpointStorage.class);
+        when(storage.listCheckpoints(anyInt())).thenReturn(List.of(committed));
+        RedisRuntimeCheckpointManager m = manager();
+        swapField(m, "storage", storage);
+
+        RBucket<String> marker = mock(RBucket.class);
+        when(marker.isExists()).thenReturn(false);
+        when(redisson.getBucket(anyString(), any(Codec.class))).thenReturn((RBucket) marker);
+
+        assertNull(m.getLatestInDoubtTwoPhaseCheckpoint());
+    }
+
+    @Test
+    void restoreScanTreatsUnreadableMetaAsTokenZero() throws Exception {
+        Checkpoint broken = mock(Checkpoint.class);
+        Checkpoint.StateSnapshot snap = mock(Checkpoint.StateSnapshot.class);
+        when(broken.getCheckpointId()).thenReturn(9L);
+        when(broken.getStateSnapshot()).thenReturn(snap);
+        when(snap.getState(anyString())).thenThrow(new RuntimeException("corrupt meta"));
+        RedisCheckpointStorage storage = mock(RedisCheckpointStorage.class);
+        when(storage.listCheckpoints(anyInt())).thenReturn(List.of(broken));
+        RedisRuntimeCheckpointManager m = managerWithElector(storage, 0L);
+
+        assertNotNull(m.getLatestCheckpointForRestore());
+    }
+
+    @Test
+    void restoreFromLatestReturnsNullWhenRestoreRejectsCheckpoint() throws Exception {
+        Checkpoint mismatched = checkpointWith(Map.of("runtime:meta", Map.of("jobName", "other")));
+        RedisCheckpointStorage storage = mock(RedisCheckpointStorage.class);
+        when(storage.listCheckpoints(anyInt())).thenReturn(List.of(mismatched));
+        RedisRuntimeCheckpointManager m = manager();
+        swapField(m, "storage", storage);
+
+        assertNull(m.restoreFromLatestCheckpointOrNull(List.of()));
+    }
+
+    @Test
+    void cleanupOldSwallowsDeleteFailures() throws Exception {
+        RedisRuntimeConfig keepOne = RedisRuntimeConfig.builder()
+                .jobName("cp-gap")
+                .stateKeyPrefix("it-cp-gap")
+                .checkpointKeyPrefix("it-cp-gap:cp")
+                .checkpointsToKeep(1)
+                .build();
+        RedisRuntimeConfig cfg = mock(RedisRuntimeConfig.class, delegatesTo(keepOne));
+        RedisRuntimeCheckpointManager m = new RedisRuntimeCheckpointManager(redisson, cfg);
+
+        Checkpoint first = checkpointWith(Map.of());
+        Checkpoint second = checkpointWith(Map.of());
+        RedisCheckpointStorage storage = mock(RedisCheckpointStorage.class);
+        when(storage.listCheckpoints(anyInt())).thenReturn(List.of(first, second));
+        when(storage.deleteCheckpoint(anyLong())).thenThrow(new RuntimeException("redis down"));
+        swapField(m, "storage", storage);
+
+        // 2 retained > keep 1: the eviction loop runs and the delete failure is swallowed
+        m.cleanupOld();
+    }
+
+    private RedisRuntimeCheckpointManager managerWithElector(RedisCheckpointStorage storage, long token)
+            throws Exception {
+        RedisLeaderElector elector = mock(RedisLeaderElector.class);
+        when(elector.currentFencingToken()).thenReturn(token);
+        RedisRuntimeCheckpointManager m = new RedisRuntimeCheckpointManager(redisson, config, elector);
+        swapField(m, "storage", storage);
+        return m;
+    }
 }

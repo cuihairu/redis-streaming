@@ -78,6 +78,9 @@ public final class RedisRuntimeConfig {
     private final Duration checkpointDrainTimeout;
     private final MqOptions mqOptions;
     private final MessageHandleResult processingErrorResult;
+    private final boolean leaderElectionEnabled;
+    private final Duration leaderLeaseTtl;
+    private final Duration leaderRenewInterval;
 
     private RedisRuntimeConfig(Builder b) {
         this.jobName = Objects.requireNonNull(b.jobName, "jobName");
@@ -153,6 +156,18 @@ public final class RedisRuntimeConfig {
         this.checkpointDrainTimeout = b.checkpointDrainTimeout == null ? Duration.ofSeconds(30) : b.checkpointDrainTimeout;
         this.mqOptions = b.mqOptions == null ? MqOptions.builder().build() : b.mqOptions;
         this.processingErrorResult = b.processingErrorResult == null ? MessageHandleResult.RETRY : b.processingErrorResult;
+        this.leaderElectionEnabled = b.leaderElectionEnabled;
+        this.leaderLeaseTtl = b.leaderLeaseTtl == null ? Duration.ofSeconds(30) : b.leaderLeaseTtl;
+        if (this.leaderLeaseTtl.isZero() || this.leaderLeaseTtl.isNegative()) {
+            throw new IllegalArgumentException("leaderLeaseTtl must be > 0");
+        }
+        this.leaderRenewInterval = b.leaderRenewInterval == null ? Duration.ofSeconds(10) : b.leaderRenewInterval;
+        if (this.leaderRenewInterval.isZero() || this.leaderRenewInterval.isNegative()) {
+            throw new IllegalArgumentException("leaderRenewInterval must be > 0");
+        }
+        if (this.leaderRenewInterval.compareTo(this.leaderLeaseTtl) >= 0) {
+            throw new IllegalArgumentException("leaderRenewInterval must be < leaderLeaseTtl");
+        }
     }
 
     public String getJobName() {
@@ -421,6 +436,33 @@ public final class RedisRuntimeConfig {
         return processingErrorResult;
     }
 
+    /**
+     * Whether multi-node coordination is enabled (leader election + fencing token).
+     *
+     * <p>Default false: every instance behaves as today. When enabled, instances compete
+     * for a Redis-backed lease and only the leader runs coordination duties (periodic
+     * checkpoint scheduling), preventing split-brain double-writes.</p>
+     */
+    public boolean isLeaderElectionEnabled() {
+        return leaderElectionEnabled;
+    }
+
+    /**
+     * Leadership lease TTL. The lease expires automatically if the leader dies or stalls,
+     * allowing another instance to take over. Must be positive.
+     */
+    public Duration getLeaderLeaseTtl() {
+        return leaderLeaseTtl;
+    }
+
+    /**
+     * Interval at which the leader renews its lease. Must be positive and smaller than
+     * {@link #getLeaderLeaseTtl()} so the lease cannot expire between renewals.
+     */
+    public Duration getLeaderRenewInterval() {
+        return leaderRenewInterval;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -460,6 +502,9 @@ public final class RedisRuntimeConfig {
         private Duration checkpointDrainTimeout = Duration.ofSeconds(30);
         private MqOptions mqOptions;
         private MessageHandleResult processingErrorResult = MessageHandleResult.RETRY;
+        private boolean leaderElectionEnabled = false;
+        private Duration leaderLeaseTtl = Duration.ofSeconds(30);
+        private Duration leaderRenewInterval = Duration.ofSeconds(10);
 
         public Builder jobName(String jobName) {
             if (jobName != null && !jobName.isBlank()) {
@@ -644,6 +689,21 @@ public final class RedisRuntimeConfig {
 
         public Builder processingErrorResult(MessageHandleResult processingErrorResult) {
             this.processingErrorResult = processingErrorResult;
+            return this;
+        }
+
+        public Builder leaderElectionEnabled(boolean enabled) {
+            this.leaderElectionEnabled = enabled;
+            return this;
+        }
+
+        public Builder leaderLeaseTtl(Duration ttl) {
+            this.leaderLeaseTtl = ttl;
+            return this;
+        }
+
+        public Builder leaderRenewInterval(Duration interval) {
+            this.leaderRenewInterval = interval;
             return this;
         }
 

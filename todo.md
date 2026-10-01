@@ -300,7 +300,7 @@
   - [x] Redis runtime state schema 元数据与校验（`stateSchemaEvolutionEnabled` + `stateSchemaMismatchPolicy=FAIL/CLEAR/IGNORE`）
   - [x] Checkpoint snapshot/restore state schema 元数据（避免恢复后 schema 丢失）
   - [ ] 状态迁移工具/策略：提供在线迁移或离线重放方案（按业务自定义）
-- [ ] State 治理：TTL/清理策略、热点 key 保护、state size 上报与告警
+- [x] State 治理：TTL/清理策略、热点 key 保护、state size 上报与告警（已实现：2026-10-01）
   - [x] State TTL：`RedisRuntimeConfig.stateTtl(...)`（对 keyed state Redis hash key 写入后 best-effort expire）
   - [x] State size 上报（抽样）：`RedisRuntimeConfig.stateSizeReportEveryNStateWrites(n)`（每 N 次 state 写入上报一次 hash 字段数）
   - [x] 热点 key 保护（基础）：`RedisRuntimeConfig.keyedStateShardCount(n)`（按 key hash 分片，降低单个 hash 过热/过大风险，默认 1 不启用）
@@ -332,7 +332,7 @@
 - [x] 多环境部署：Docker/K8s 参考部署，滚动升级与回滚建议（已实现：2026-01-01）
 
 ## P4：分布式与高可用（下一阶段）
-- [ ] 多节点协调：leader election + fencing token（防止 split-brain / 双写）
+- [x] 多节点协调：leader election + fencing token（防止 split-brain / 双写）：`RedisRuntimeConfig.leaderElectionEnabled`（默认 false 行为不变）+ `leaderLeaseTtl`/`leaderRenewInterval`——`RedisLeaderElector` Redis 租约选举（SET NX PX + Lua CAS 续租/释放），仅 leader 跑周期 checkpoint 调度；fencing token 按 leadership epoch INCR，checkpoint meta 携带 token，restore 按 max token 过滤拒绝 stale leader 快照（已实现：2026-10-01）
 - [ ] 作业 HA：节点宕机自动接管（checkpoint/offset/state 一致性保证）
 - [ ] 动态伸缩：并行度变更、分区再均衡、checkpoint 向前兼容
 - [ ] 控制面：job submit/upgrade/rollback API、权限控制与审计

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -83,5 +84,64 @@ class RedisRuntimeConfigTest {
                 .windowAllowedLateness(Duration.ofSeconds(1))
                 .mdcSampleRate(1.0d)
                 .build());
+    }
+
+    @Test
+    void leaderElectionDefaultsToDisabledWithSafeLease() {
+        RedisRuntimeConfig cfg = RedisRuntimeConfig.builder().build();
+        assertTrue(!cfg.isLeaderElectionEnabled());
+        assertTrue(cfg.getLeaderLeaseTtl().toMillis() > 0);
+        assertTrue(cfg.getLeaderRenewInterval().toMillis() > 0);
+        assertTrue(cfg.getLeaderRenewInterval().compareTo(cfg.getLeaderLeaseTtl()) < 0);
+    }
+
+    @Test
+    void leaderElectionAcceptsValidLeaseConfiguration() {
+        assertDoesNotThrow(() -> RedisRuntimeConfig.builder()
+                .leaderElectionEnabled(true)
+                .leaderLeaseTtl(Duration.ofSeconds(30))
+                .leaderRenewInterval(Duration.ofSeconds(10))
+                .build());
+    }
+
+    @Test
+    void leaderLeaseTtlMustBePositive() {
+        IllegalArgumentException e1 = assertThrows(IllegalArgumentException.class,
+                () -> RedisRuntimeConfig.builder().leaderLeaseTtl(Duration.ZERO).build());
+        assertTrue(e1.getMessage().contains("leaderLeaseTtl"));
+        IllegalArgumentException e2 = assertThrows(IllegalArgumentException.class,
+                () -> RedisRuntimeConfig.builder().leaderLeaseTtl(Duration.ofSeconds(-1)).build());
+        assertTrue(e2.getMessage().contains("leaderLeaseTtl"));
+    }
+
+    @Test
+    void leaderRenewIntervalMustBePositiveAndSmallerThanLease() {
+        IllegalArgumentException e1 = assertThrows(IllegalArgumentException.class,
+                () -> RedisRuntimeConfig.builder().leaderRenewInterval(Duration.ZERO).build());
+        assertTrue(e1.getMessage().contains("leaderRenewInterval"));
+        IllegalArgumentException e2 = assertThrows(IllegalArgumentException.class,
+                () -> RedisRuntimeConfig.builder()
+                        .leaderLeaseTtl(Duration.ofSeconds(10))
+                        .leaderRenewInterval(Duration.ofSeconds(10))
+                        .build());
+        assertTrue(e2.getMessage().contains("leaderRenewInterval"));
+        IllegalArgumentException e3 = assertThrows(IllegalArgumentException.class,
+                () -> RedisRuntimeConfig.builder()
+                        .leaderLeaseTtl(Duration.ofSeconds(5))
+                        .leaderRenewInterval(Duration.ofSeconds(10))
+                        .build());
+        assertTrue(e3.getMessage().contains("leaderRenewInterval"));
+    }
+
+    @Test
+    void leaderDurationsFallBackToDefaultsWhenExplicitlyNulled() {
+        // the builder ships 30s/10s defaults; explicitly nulling the fields exercises the
+        // constructor's default arm instead of leaving it unreachable
+        RedisRuntimeConfig cfg = RedisRuntimeConfig.builder()
+                .leaderLeaseTtl(null)
+                .leaderRenewInterval(null)
+                .build();
+        assertEquals(Duration.ofSeconds(30), cfg.getLeaderLeaseTtl());
+        assertEquals(Duration.ofSeconds(10), cfg.getLeaderRenewInterval());
     }
 }

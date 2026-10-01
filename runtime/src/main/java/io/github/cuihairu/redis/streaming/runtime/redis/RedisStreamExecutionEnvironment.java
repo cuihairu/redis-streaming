@@ -12,6 +12,7 @@ import io.github.cuihairu.redis.streaming.mq.SubscriptionOptions;
 import io.github.cuihairu.redis.streaming.mq.control.PausableMessageConsumer;
 import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
+import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisLeaderElector;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisPipeline;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisPipelineDefinition;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisPipelineRunner;
@@ -41,6 +42,7 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 /**
@@ -213,9 +215,31 @@ public final class RedisStreamExecutionEnvironment {
         ScheduledExecutorService sharedTimerExecutor = null;
         TopicPartitionRegistry partitionRegistry = new TopicPartitionRegistry(redissonClient);
         RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
-        RedisRuntimeCheckpointManager checkpointManager = new RedisRuntimeCheckpointManager(redissonClient, config);
+        // Leader election (optional): the leader is the only instance running coordination
+        // duties (periodic checkpoint scheduling), preventing split-brain double-writes.
+        RedisLeaderElector leaderElector = null;
+        AtomicBoolean isLeader = new AtomicBoolean(false);
+        if (config.isLeaderElectionEnabled()) {
+            leaderElector = new RedisLeaderElector(redissonClient, config);
+            try {
+                if (leaderElector.tryAcquireLeadership()) {
+                    isLeader.set(true);
+                    long token = leaderElector.nextFencingToken();
+                    log.info("Acquired leadership for job {} (instance {}, fencingToken={})",
+                            config.getJobName(), config.getJobInstanceId(), token);
+                } else {
+                    log.info("Leadership held by instance {} (jobName={}, instance={}); running as follower",
+                            leaderElector.currentLeader(), config.getJobName(), config.getJobInstanceId());
+                }
+            } catch (Exception e) {
+                log.warn("Leader election probe failed (jobName={})", config.getJobName(), e);
+            }
+        }
+        RedisRuntimeCheckpointManager checkpointManager =
+                new RedisRuntimeCheckpointManager(redissonClient, config, leaderElector);
         List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys = new ArrayList<>();
-        ScheduledExecutorService checkpointExecutor = null;
+        AtomicReference<ScheduledExecutorService> checkpointExecutorRef = new AtomicReference<>();
+        ScheduledExecutorService leaderRenewExecutor = null;
         AtomicBoolean checkpointing = new AtomicBoolean(false);
         DeferredAcks deferredAcks = new DeferredAcks();
         TwoPhaseEpochTracker twoPhaseEpochs = new TwoPhaseEpochTracker();
@@ -308,38 +332,122 @@ public final class RedisStreamExecutionEnvironment {
                 markRecoveredCheckpointCommitted(checkpointManager, restoredCheckpointRef.get());
             }
 
-            Duration interval = config.getCheckpointInterval();
-            if (interval != null && !interval.isZero() && !interval.isNegative()) {
-                int threads = Math.max(1, config.getCheckpointThreads());
-                ScheduledThreadPoolExecutor ex = new ScheduledThreadPoolExecutor(threads);
-                ex.setRemoveOnCancelPolicy(true);
-                checkpointExecutor = ex;
-                long ms = Math.max(50L, interval.toMillis());
-                checkpointExecutor.scheduleWithFixedDelay(() -> {
-                    if (!checkpointing.compareAndSet(false, true)) {
-                        return;
-                    }
-                    try {
-                        triggerCheckpointInternal(consumers, runners, checkpointManager, pipelineKeys,
-                                deferredAcks, twoPhaseEpochs);
-                    } catch (Exception e) {
-                        log.debug("Periodic checkpoint failed (jobName={})", config.getJobName(), e);
-                    } finally {
-                        checkpointing.set(false);
-                    }
-                }, ms, ms, TimeUnit.MILLISECONDS);
+            if (config.isLeaderElectionEnabled()) {
+                leaderRenewExecutor = startLeaderCoordination(checkpointExecutorRef, consumers, runners,
+                        checkpointManager, pipelineKeys, deferredAcks, twoPhaseEpochs, checkpointing,
+                        isLeader, leaderElector);
+            } else {
+                startCheckpointExecutor(checkpointExecutorRef, consumers, runners, checkpointManager,
+                        pipelineKeys, deferredAcks, twoPhaseEpochs, checkpointing);
             }
         } catch (Exception e) {
             stopConsumersQuietly(consumers);
             closeRunnersQuietly(runners);
             shutdownExecutorQuietly(sharedTimerExecutor);
-            shutdownExecutorQuietly(checkpointExecutor);
+            shutdownExecutorQuietly(checkpointExecutorRef.get());
+            shutdownExecutorQuietly(leaderRenewExecutor);
+            if (leaderElector != null) {
+                try {
+                    leaderElector.releaseLeadership();
+                } catch (Exception ignore) {
+                }
+            }
             executed.set(false);
             throw (e instanceof RuntimeException re) ? re : new RuntimeException("Failed to start Redis runtime job", e);
         }
 
-        return new LaunchedJobClient(checkpointExecutor, sharedTimerExecutor, consumers, runners,
+        return new LaunchedJobClient(checkpointExecutorRef, leaderRenewExecutor, leaderElector, isLeader,
+                sharedTimerExecutor, consumers, runners,
                 checkpointManager, pipelineKeys, deferredAcks, twoPhaseEpochs, checkpointing, restoredCheckpointIdRef);
+    }
+
+    /**
+     * Start the periodic checkpoint scheduler. With leader election disabled this runs on
+     * every instance (previous behavior); with election enabled it runs only on the leader.
+     */
+    private void startCheckpointExecutor(AtomicReference<ScheduledExecutorService> checkpointExecutorRef,
+                                         List<MessageConsumer> consumers,
+                                         List<RedisPipelineRunner<?>> runners,
+                                         RedisRuntimeCheckpointManager checkpointManager,
+                                         List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
+                                         DeferredAcks deferredAcks,
+                                         TwoPhaseEpochTracker twoPhaseEpochs,
+                                         AtomicBoolean checkpointing) {
+        Duration interval = config.getCheckpointInterval();
+        if (interval == null || interval.isZero() || interval.isNegative()) {
+            return;
+        }
+        int threads = Math.max(1, config.getCheckpointThreads());
+        ScheduledThreadPoolExecutor ex = new ScheduledThreadPoolExecutor(threads);
+        ex.setRemoveOnCancelPolicy(true);
+        checkpointExecutorRef.set(ex);
+        long ms = Math.max(50L, interval.toMillis());
+        ex.scheduleWithFixedDelay(() -> {
+            if (!checkpointing.compareAndSet(false, true)) {
+                return;
+            }
+            try {
+                triggerCheckpointInternal(consumers, runners, checkpointManager, pipelineKeys,
+                        deferredAcks, twoPhaseEpochs);
+            } catch (Exception e) {
+                log.debug("Periodic checkpoint failed (jobName={})", config.getJobName(), e);
+            } finally {
+                checkpointing.set(false);
+            }
+        }, ms, ms, TimeUnit.MILLISECONDS);
+    }
+
+    private void stopCheckpointExecutor(AtomicReference<ScheduledExecutorService> checkpointExecutorRef) {
+        shutdownExecutorQuietly(checkpointExecutorRef.getAndSet(null));
+    }
+
+    /**
+     * Leader coordination loop: renew the lease while leading, take over when the leader
+     * is lost, and start/stop the periodic checkpoint scheduler accordingly. Only the
+     * leader checkpoints periodically — two leaders running independent checkpoint
+     * schedules would allocate colliding checkpoint ids (split-brain double-write).
+     */
+    private ScheduledExecutorService startLeaderCoordination(AtomicReference<ScheduledExecutorService> checkpointExecutorRef,
+                                         List<MessageConsumer> consumers,
+                                         List<RedisPipelineRunner<?>> runners,
+                                         RedisRuntimeCheckpointManager checkpointManager,
+                                         List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
+                                         DeferredAcks deferredAcks,
+                                         TwoPhaseEpochTracker twoPhaseEpochs,
+                                         AtomicBoolean checkpointing,
+                                         AtomicBoolean isLeader,
+                                         RedisLeaderElector elector) {
+        long renewMs = Math.max(1000L, config.getLeaderRenewInterval().toMillis());
+        ScheduledThreadPoolExecutor renewEx = new ScheduledThreadPoolExecutor(1);
+        renewEx.setRemoveOnCancelPolicy(true);
+        renewEx.scheduleWithFixedDelay(() -> {
+            try {
+                if (isLeader.get()) {
+                    if (!elector.renewLeadership()) {
+                        isLeader.set(false);
+                        log.warn("Lost leadership for job {} (instance {}); periodic checkpointing stopped",
+                                config.getJobName(), config.getJobInstanceId());
+                        stopCheckpointExecutor(checkpointExecutorRef);
+                    }
+                } else if (elector.tryAcquireLeadership()) {
+                    isLeader.set(true);
+                    long token = elector.nextFencingToken();
+                    log.info("Acquired leadership for job {} (instance {}, fencingToken={})",
+                            config.getJobName(), config.getJobInstanceId(), token);
+                    startCheckpointExecutor(checkpointExecutorRef, consumers, runners, checkpointManager,
+                            pipelineKeys, deferredAcks, twoPhaseEpochs, checkpointing);
+                }
+            } catch (Exception e) {
+                log.debug("Leader coordination tick failed (jobName={})", config.getJobName(), e);
+            }
+        }, renewMs, renewMs, TimeUnit.MILLISECONDS);
+        // already leader at startup: begin checkpointing immediately (the first renew
+        // tick is one interval away)
+        if (isLeader.get()) {
+            startCheckpointExecutor(checkpointExecutorRef, consumers, runners, checkpointManager,
+                    pipelineKeys, deferredAcks, twoPhaseEpochs, checkpointing);
+        }
+        return renewEx;
     }
 
 
@@ -349,7 +457,10 @@ public final class RedisStreamExecutionEnvironment {
      */
     private final class LaunchedJobClient implements RedisJobClient {
 
-        private final ScheduledExecutorService checkpointExecutor;
+        private final AtomicReference<ScheduledExecutorService> checkpointExecutorRef;
+        private final ScheduledExecutorService leaderRenewExecutor;
+        private final RedisLeaderElector leaderElector;
+        private final AtomicBoolean isLeader;
         private final ScheduledExecutorService sharedTimerExecutor;
         private final List<MessageConsumer> consumers;
         private final List<RedisPipelineRunner<?>> runners;
@@ -360,7 +471,10 @@ public final class RedisStreamExecutionEnvironment {
         private final AtomicBoolean checkpointing;
         private final java.util.concurrent.atomic.AtomicReference<Long> restoredCheckpointId;
 
-        private LaunchedJobClient(ScheduledExecutorService checkpointExecutor,
+        private LaunchedJobClient(AtomicReference<ScheduledExecutorService> checkpointExecutorRef,
+                                  ScheduledExecutorService leaderRenewExecutor,
+                                  RedisLeaderElector leaderElector,
+                                  AtomicBoolean isLeader,
                                   ScheduledExecutorService sharedTimerExecutor,
                                   List<MessageConsumer> consumers,
                                   List<RedisPipelineRunner<?>> runners,
@@ -370,7 +484,10 @@ public final class RedisStreamExecutionEnvironment {
                                   TwoPhaseEpochTracker twoPhaseEpochs,
                                   AtomicBoolean checkpointing,
                                   java.util.concurrent.atomic.AtomicReference<Long> restoredCheckpointId) {
-            this.checkpointExecutor = checkpointExecutor;
+            this.checkpointExecutorRef = checkpointExecutorRef;
+            this.leaderRenewExecutor = leaderRenewExecutor;
+            this.leaderElector = leaderElector;
+            this.isLeader = isLeader;
             this.sharedTimerExecutor = sharedTimerExecutor;
             this.consumers = consumers;
             this.runners = runners;
@@ -395,7 +512,14 @@ public final class RedisStreamExecutionEnvironment {
                     RedisRuntimeMetrics.get().incJobCanceled(config.getJobName());
                 } catch (Exception ignore) {
                 }
-                shutdownExecutorQuietly(checkpointExecutor);
+                shutdownExecutorQuietly(checkpointExecutorRef.get());
+                shutdownExecutorQuietly(leaderRenewExecutor);
+                if (leaderElector != null) {
+                    try {
+                        leaderElector.releaseLeadership();
+                    } catch (Exception ignore) {
+                    }
+                }
                 stopConsumersQuietly(consumers);
                 closeRunnersQuietly(runners);
                 shutdownExecutorQuietly(sharedTimerExecutor);
@@ -488,6 +612,12 @@ public final class RedisStreamExecutionEnvironment {
                         out.put("inFlight", inFlight());
                         out.put("checkpointing", checkpointing.get());
                         out.put("restoredCheckpointId", restoredCheckpointId.get());
+                out.put("leaderElectionEnabled", config.isLeaderElectionEnabled());
+                if (leaderElector != null) {
+                    out.put("isLeader", isLeader.get());
+                    out.put("leaderInstanceId", leaderElector.currentLeader());
+                    out.put("fencingToken", leaderElector.currentFencingToken());
+                }
                         try {
                             Checkpoint latest = checkpointManager.getLatestCheckpoint();
                             out.put("latestCheckpointId", latest == null ? null : latest.getCheckpointId());

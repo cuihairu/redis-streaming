@@ -88,10 +88,18 @@ public final class RedisRuntimeCheckpointManager {
     private final RedisCheckpointStorage storage;
     private final TopicPartitionRegistry partitionRegistry;
     private final AtomicLong nextCheckpointId;
+    /** Optional leader elector; when present, checkpoints carry a fencing token and restore scans reject stale-token checkpoints. */
+    private final RedisLeaderElector leaderElector;
 
     public RedisRuntimeCheckpointManager(RedissonClient redissonClient, RedisRuntimeConfig config) {
+        this(redissonClient, config, null);
+    }
+
+    public RedisRuntimeCheckpointManager(RedissonClient redissonClient, RedisRuntimeConfig config,
+                                         RedisLeaderElector leaderElector) {
         this.redissonClient = Objects.requireNonNull(redissonClient, "redissonClient");
         this.config = Objects.requireNonNull(config, "config");
+        this.leaderElector = leaderElector;
         String prefix = config.getCheckpointKeyPrefix() + config.getJobName() + ":";
         this.storage = new RedisCheckpointStorage(redissonClient, prefix);
         this.partitionRegistry = new TopicPartitionRegistry(redissonClient);
@@ -165,8 +173,15 @@ public final class RedisRuntimeCheckpointManager {
         try {
             Map<String, Object> meta = new HashMap<>();
             meta.put("jobName", config.getJobName());
+            meta.put("jobInstanceId", config.getJobInstanceId());
             meta.put("stateKeyPrefix", config.getStateKeyPrefix());
             meta.put("sinkCommitted", Boolean.FALSE);
+            if (leaderElector != null) {
+                // Fencing token of the current leadership term: restore rejects checkpoints
+                // whose token is below the max seen, so a stale leader's in-flight write
+                // (landed after losing the lease) is never adopted.
+                meta.put("fencingToken", leaderElector.currentFencingToken());
+            }
             cp.getStateSnapshot().putState(SNAPSHOT_KEY_META, meta);
 
             cp.getStateSnapshot().putState(SNAPSHOT_KEY_OFFSETS, snapshotOffsets(pipelines, offsetsOverride));
@@ -257,7 +272,7 @@ public final class RedisRuntimeCheckpointManager {
     public Checkpoint restoreFromLatestCheckpointOrNull(List<PipelineKey> pipelines) {
         Checkpoint latest = config.isDeferAckUntilCheckpoint()
                 ? getLatestSinkCommittedCheckpoint()
-                : getLatestCheckpoint();
+                : getLatestCheckpointForRestore();
         if (config.isDeferAckUntilCheckpoint()) {
             // A two-phase-commit epoch is stored before it is committed, so the newest
             // checkpoint can be in doubt: its offsets and its transaction handles were
@@ -302,8 +317,7 @@ public final class RedisRuntimeCheckpointManager {
 
     public Checkpoint getLatestSinkCommittedCheckpoint() {
         try {
-            List<Checkpoint> all = storage.listCheckpoints(Integer.MAX_VALUE);
-            for (Checkpoint c : all) {
+            for (Checkpoint c : listCheckpointsForRestore()) {
                 if (c == null) continue;
                 if (isSinkCommitted(c)) {
                     return c;
@@ -334,7 +348,7 @@ public final class RedisRuntimeCheckpointManager {
             // epoch of any older in-doubt checkpoint was already finalized by it (both
             // checkpoints reference the same open transaction), so replaying that older
             // handle would double-commit — such an epoch is superseded, not in doubt.
-            for (Checkpoint c : storage.listCheckpoints(Integer.MAX_VALUE)) {
+            for (Checkpoint c : listCheckpointsForRestore()) {
                 if (c == null) continue;
                 if (isSinkCommitted(c)) {
                     return null;
@@ -393,6 +407,72 @@ public final class RedisRuntimeCheckpointManager {
         }
         Map<String, Object> meta = c.getStateSnapshot().getState(SNAPSHOT_KEY_META);
         return meta != null && Boolean.TRUE.equals(meta.get("sinkCommitted"));
+    }
+
+    /** Fencing token carried by a checkpoint's meta; 0 when absent (pre-election checkpoints). */
+    @SuppressWarnings("unchecked")
+    private static long fencingTokenOf(Checkpoint c) {
+        try {
+            Map<String, Object> meta = c.getStateSnapshot().getState(SNAPSHOT_KEY_META);
+            if (meta != null && meta.get("fencingToken") instanceof Number n) {
+                return Math.max(0, n.longValue());
+            }
+        } catch (Exception ignore) {
+            // best-effort: treat unreadable meta as token 0
+        }
+        return 0L;
+    }
+
+    /**
+     * Checkpoints eligible for restore, newest first. When leader election is active and
+     * any retained checkpoint carries a fencing token, only checkpoints with the maximum
+     * token are eligible: a stale leader that kept writing after losing the lease holds
+     * an older token, and adopting its checkpoint would roll the job back. Without
+     * tokens (election disabled, or no leader-written checkpoint yet) the full history
+     * is eligible.
+     */
+    private List<Checkpoint> listCheckpointsForRestore() {
+        List<Checkpoint> all;
+        try {
+            all = storage.listCheckpoints(Integer.MAX_VALUE);
+        } catch (Exception e) {
+            log.debug("Failed to list checkpoints for restore", e);
+            return List.of();
+        }
+        if (leaderElector == null) {
+            return all;
+        }
+        long maxToken = 0;
+        boolean anyToken = false;
+        for (Checkpoint c : all) {
+            long t = fencingTokenOf(c);
+            if (t > 0) {
+                anyToken = true;
+                if (t > maxToken) {
+                    maxToken = t;
+                }
+            }
+        }
+        if (!anyToken) {
+            return all;
+        }
+        List<Checkpoint> filtered = new ArrayList<>(all.size());
+        for (Checkpoint c : all) {
+            if (fencingTokenOf(c) == maxToken) {
+                filtered.add(c);
+            }
+        }
+        return filtered;
+    }
+
+    /**
+     * The newest checkpoint eligible for restore (fencing-token filtered). Returns null
+     * when no checkpoint exists. Unlike {@link #getLatestCheckpoint()} this never returns
+     * a stale leader's checkpoint.
+     */
+    public Checkpoint getLatestCheckpointForRestore() {
+        List<Checkpoint> eligible = listCheckpointsForRestore();
+        return eligible.isEmpty() ? null : eligible.get(0);
     }
 
     private Map<String, Map<Integer, String>> snapshotOffsets(List<PipelineKey> pipelines,
