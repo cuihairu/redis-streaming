@@ -333,7 +333,9 @@
 
 ## P4：分布式与高可用（下一阶段）
 - [x] 多节点协调：leader election + fencing token（防止 split-brain / 双写）：`RedisRuntimeConfig.leaderElectionEnabled`（默认 false 行为不变）+ `leaderLeaseTtl`/`leaderRenewInterval`——`RedisLeaderElector` Redis 租约选举（SET NX PX + Lua CAS 续租/释放），仅 leader 跑周期 checkpoint 调度；fencing token 按 leadership epoch INCR，checkpoint meta 携带 token，restore 按 max token 过滤拒绝 stale leader 快照（已实现：2026-10-01）
-- [ ] 作业 HA：节点宕机自动接管（checkpoint/offset/state 一致性保证）
+- [x] 作业 HA：节点宕机自动接管（checkpoint/offset/state 一致性保证）（已实现：2026-10-01）
+  - 前：接管只有选举语义（lease TTL 过期后 follower 抢到租约），但 `RedisRuntimeCheckpointManager.nextCheckpointId` 是构造时 `initNextId()` 的一次性快照——follower 运行期间死 leader 持续写入，接管后本地计数仍从陈旧值继续分配，**覆盖死 leader 最后写入的 checkpoint**（offset/状态恢复可能读到回退的历史）
+  - 后：接管分支（`startLeaderCoordination` 的 acquire 成功路径）先执行 `refreshCheckpointIdFromStorage()` 把计数对齐 storage max+1（只进不退；storage 故障保持本地值，下次接管再对齐），再分配 id；fencing token 按 leadership epoch INCR 刷新 + restore 按 max token 过滤 stale 快照 + CAS 释放防死实例回收新租约——故障注入集成测试（kill -9 语义：反射关停 renew/checkpoint 调度器且不释放 lease，模拟进程直接被杀）验证接管后新 leader checkpoint id 严格大于死 leader 末值、死 leader checkpoint 全部完好（摘除修复该用例必挂：`expected inst-A but was inst-B`），及旧实例事后优雅 cancel 不夺回租约；3 个单测覆盖计数抬升/只进不退/storage 故障三臂；`leaderElectionEnabled=false` 默认路径零改动
 - [ ] 动态伸缩：并行度变更、分区再均衡、checkpoint 向前兼容
 - [ ] 控制面：job submit/upgrade/rollback API、权限控制与审计
 - [ ] 多租户隔离：资源配额（线程/内存/in-flight）、指标维度隔离

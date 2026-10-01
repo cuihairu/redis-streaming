@@ -8,11 +8,15 @@ import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
 
+import java.lang.reflect.Field;
 import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -41,6 +45,9 @@ class RedisLeaderElectionIntegrationTest {
                 .leaderLeaseTtl(Duration.ofSeconds(3))
                 .leaderRenewInterval(Duration.ofMillis(500))
                 .checkpointInterval(Duration.ofMillis(200))
+                // no retention: these tests assert on the full checkpoint history, which
+                // the default keep=5 would evict mid-test
+                .checkpointsToKeep(0)
                 .mqOptions(MqOptions.builder().workerThreads(1).schedulerThreads(1).consumerPollTimeoutMs(100).build())
                 .build();
     }
@@ -212,6 +219,167 @@ class RedisLeaderElectionIntegrationTest {
         } finally {
             redis.getKeys().deleteByPattern(prefix + "*");
             redis.shutdown();
+        }
+    }
+
+    /**
+     * HA fault injection: kill -9 the leader (renew + checkpoint schedulers die, the lease
+     * is NOT released and only expires by TTL), then verify the follower takes over with a
+     * fresh epoch token, that its checkpoints do not fall back onto the dead leader's id
+     * range (takeover id refresh), and that the dead instance's later graceful cancel
+     * cannot release the new leader's lease (CAS release).
+     */
+    @Test
+    void takeoverAfterLeaderCrashKeepsCheckpointIdsMonotonic() throws Exception {
+        String prefix = "streaming:ha:" + UUID.randomUUID().toString().substring(0, 8);
+        String topic = "ha-" + UUID.randomUUID().toString().substring(0, 8);
+        String group = "g";
+        RedissonClient redis = client();
+        RedisJobClient jobA = null;
+        RedisJobClient jobB = null;
+        try {
+            RedisStreamExecutionEnvironment envA = RedisStreamExecutionEnvironment.create(redis, config(prefix, "inst-A"));
+            envA.fromMqTopic(topic, group).addSink(v -> {
+            });
+            jobA = envA.executeAsync();
+            assertTrue(isLeader(jobA), "instance A must win the initial lease");
+
+            RedisStreamExecutionEnvironment envB = RedisStreamExecutionEnvironment.create(redis, config(prefix, "inst-B"));
+            envB.fromMqTopic(topic, group).addSink(v -> {
+            });
+            jobB = envB.executeAsync();
+            assertFalse(isLeader(jobB), "instance B must start as follower");
+
+            // B runs with a startup id snapshot while the leader keeps writing past it
+            Thread.sleep(1_500);
+            String cpPrefix = prefix + ":cp:elect-job:";
+            Map<Long, Checkpoint> before = scanCheckpoints(redis, cpPrefix);
+            assertTrue(before.size() >= 3,
+                    "leader must have written several checkpoints before the crash, size=" + before.size());
+            long deadLeaderId = -1L;
+            for (long id : before.keySet()) {
+                if (id > deadLeaderId) {
+                    deadLeaderId = id;
+                }
+            }
+            long deadToken = tokenOf(before.get(deadLeaderId));
+
+            simulateCrash(jobA);
+
+            long deadline = System.currentTimeMillis() + 30_000;
+            while (System.currentTimeMillis() < deadline && !isLeader(jobB)) {
+                Thread.sleep(200);
+            }
+            assertTrue(isLeader(jobB), "follower must take over once the crashed leader's lease expires");
+
+            // The new leader must checkpoint strictly beyond the dead leader's last id. A
+            // stale id counter would first walk through (and clobber) the dead leader's id
+            // range, so keep scanning until it is past it — then every dead-leader
+            // checkpoint must still be intact and still attributed to inst-A.
+            Map<Long, Checkpoint> after = new java.util.HashMap<>();
+            boolean beyond = false;
+            deadline = System.currentTimeMillis() + 20_000;
+            while (System.currentTimeMillis() < deadline) {
+                after = scanCheckpoints(redis, cpPrefix);
+                beyond = false;
+                for (Map.Entry<Long, Checkpoint> e : after.entrySet()) {
+                    if (e.getKey() > deadLeaderId && "inst-B".equals(instanceOf(e.getValue()))) {
+                        beyond = true;
+                        break;
+                    }
+                }
+                if (beyond) {
+                    break;
+                }
+                Thread.sleep(200);
+            }
+            assertTrue(beyond, "new leader must checkpoint past the dead leader's last id=" + deadLeaderId);
+
+            for (Map.Entry<Long, Checkpoint> e : before.entrySet()) {
+                Checkpoint survivor = after.get(e.getKey());
+                assertNotNull(survivor, "takeover must not evict dead leader checkpoint id=" + e.getKey());
+                assertEquals("inst-A", instanceOf(survivor),
+                        "takeover must not overwrite dead leader checkpoint id=" + e.getKey());
+            }
+
+            long freshId = -1L;
+            for (Map.Entry<Long, Checkpoint> e : after.entrySet()) {
+                if (e.getKey() > deadLeaderId && "inst-B".equals(instanceOf(e.getValue()))
+                        && e.getKey() > freshId) {
+                    freshId = e.getKey();
+                }
+            }
+            assertTrue(freshId > deadLeaderId, "new leader must own a checkpoint past the dead leader's range");
+            assertTrue(tokenOf(after.get(freshId)) > deadToken,
+                    "new leader must checkpoint under a fresh epoch token: dead=" + deadToken
+                            + " new=" + tokenOf(after.get(freshId)));
+
+            // graceful cancel of the dead instance: CAS release must not free the new leader's lease
+            jobA.cancel();
+            assertEquals("inst-B", jobB.diagnostics().get("leaderInstanceId"),
+                    "the dead instance's release must not steal the new leader's lease");
+            assertTrue(isLeader(jobB), "the new leader must remain leader after the old instance's cancel");
+        } finally {
+            if (jobA != null) {
+                jobA.cancel();
+            }
+            if (jobB != null) {
+                jobB.cancel();
+            }
+            redis.getKeys().deleteByPattern(prefix + "*");
+            redis.shutdown();
+        }
+    }
+
+    /** Reads the shared checkpoints of one job into an id-sorted map (full history: retention is off). */
+    private static Map<Long, Checkpoint> scanCheckpoints(RedissonClient redis, String cpPrefix) {
+        Map<Long, Checkpoint> out = new java.util.TreeMap<>();
+        for (String key : redis.getKeys().getKeysByPattern(cpPrefix + "*")) {
+            try {
+                Checkpoint cp = (Checkpoint) redis.getBucket(key).get();
+                if (cp != null) {
+                    out.put(cp.getCheckpointId(), cp);
+                }
+            } catch (Exception ignore) {
+                // skip unreadable checkpoint keys
+            }
+        }
+        return out;
+    }
+
+    private static String instanceOf(Checkpoint cp) {
+        Map<String, Object> meta = metaOf(cp);
+        return meta == null ? "?" : String.valueOf(meta.get("jobInstanceId"));
+    }
+
+    private static long tokenOf(Checkpoint cp) {
+        Map<String, Object> meta = metaOf(cp);
+        Object token = meta == null ? null : meta.get("fencingToken");
+        return token instanceof Number n ? n.longValue() : 0L;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> metaOf(Checkpoint cp) {
+        return (Map<String, Object>) cp.getStateSnapshot().getState("runtime:meta");
+    }
+
+    /**
+     * kill -9 semantics: the renew loop and the checkpoint scheduler stop without
+     * {@code releaseLeadership}, so the lease survives until its TTL expires — the exact
+     * window a crashed node leaves behind. Consumers keep running (harmless: the group's
+     * other instance keeps consuming) and are stopped by cancel() during cleanup.
+     */
+    private static void simulateCrash(RedisJobClient job) throws Exception {
+        Field renew = job.getClass().getDeclaredField("leaderRenewExecutor");
+        renew.setAccessible(true);
+        ((ScheduledExecutorService) renew.get(job)).shutdownNow();
+        Field ref = job.getClass().getDeclaredField("checkpointExecutorRef");
+        ref.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        ScheduledExecutorService cpEx =
+                ((AtomicReference<ScheduledExecutorService>) ref.get(job)).getAndSet(null);
+        if (cpEx != null) {
+            cpEx.shutdownNow();
         }
     }
 }

@@ -418,6 +418,50 @@ class RedisRuntimeCheckpointManagerGapClosureTest {
         m.cleanupOld();
     }
 
+    @Test
+    void takeoverRefreshRaisesLocalIdCounterToStorageMax() throws Exception {
+        Checkpoint older = checkpointWith(Map.of());
+        when(older.getCheckpointId()).thenReturn(4L);
+        Checkpoint newest = checkpointWith(Map.of());
+        when(newest.getCheckpointId()).thenReturn(8L);
+        RedisCheckpointStorage storage = mock(RedisCheckpointStorage.class);
+        when(storage.listCheckpoints(anyInt())).thenReturn(Arrays.asList(null, older, newest));
+        RedisRuntimeCheckpointManager m = manager();
+        swapField(m, "storage", storage);
+
+        // the constructor's snapshot (empty storage) left the counter behind storage's max
+        assertTrue(m.allocateCheckpointId() < 9, "counter must still hold the stale startup snapshot");
+        m.refreshCheckpointIdFromStorage();
+        assertEquals(9L, m.allocateCheckpointId(), "takeover must not re-allocate the dead leader's ids");
+        assertEquals(10L, m.allocateCheckpointId(), "counter keeps advancing after the refresh");
+    }
+
+    @Test
+    void takeoverRefreshNeverLowersLocalCounter() throws Exception {
+        Checkpoint old = checkpointWith(Map.of());
+        when(old.getCheckpointId()).thenReturn(8L);
+        RedisCheckpointStorage storage = mock(RedisCheckpointStorage.class);
+        when(storage.listCheckpoints(anyInt())).thenReturn(List.of(old));
+        RedisRuntimeCheckpointManager m = manager();
+        swapField(m, "storage", storage);
+        swapField(m, "nextCheckpointId", new java.util.concurrent.atomic.AtomicLong(12L));
+
+        m.refreshCheckpointIdFromStorage();
+        assertEquals(12L, m.allocateCheckpointId(), "refresh must only ever move the counter forward");
+    }
+
+    @Test
+    void takeoverRefreshKeepsLocalCounterWhenStorageUnavailable() throws Exception {
+        RedisCheckpointStorage storage = mock(RedisCheckpointStorage.class);
+        when(storage.listCheckpoints(anyInt())).thenThrow(new RuntimeException("redis down"));
+        RedisRuntimeCheckpointManager m = manager();
+        swapField(m, "storage", storage);
+        swapField(m, "nextCheckpointId", new java.util.concurrent.atomic.AtomicLong(5L));
+
+        m.refreshCheckpointIdFromStorage();
+        assertEquals(5L, m.allocateCheckpointId(), "storage outage must keep the local counter untouched");
+    }
+
     private RedisRuntimeCheckpointManager managerWithElector(RedisCheckpointStorage storage, long token)
             throws Exception {
         RedisLeaderElector elector = mock(RedisLeaderElector.class);

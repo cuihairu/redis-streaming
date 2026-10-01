@@ -135,14 +135,18 @@ class RuntimeCheckpointChaosIntegrationTest {
                 MessageQueueFactory mq2 = new MessageQueueFactory(redis, cfg2.getMqOptions());
                 MessageProducer p2 = mq2.createProducer();
                 p2.send(topic, "k-y", "b-1").get(5, TimeUnit.SECONDS);
-                // restored job rebuilds the consumer group and drains state first; under full-suite
-                // load 15s flaked twice (CI/local) and 45s flaked once on the 2-core CI runner —
-                // allow a generous bounded wait (assertion itself is unchanged)
+                // Wait for the assertion's actual condition: the restored job drains
+                // deferred-ack redeliveries (e.g. "a-after", consumed but never acked when
+                // job1 was cancelled between checkpoints) before/around "b-1". Waiting on
+                // isEmpty let any redelivery short-circuit the wait and fail the
+                // contains("b-1") assertion outright — the earlier budget raises never
+                // protected it. Under full-suite load allow a generous bounded wait.
                 deadline = System.currentTimeMillis() + 90_000;
-                while (sink2.values.isEmpty() && System.currentTimeMillis() < deadline) {
+                while (!sink2.values.contains("b-1") && System.currentTimeMillis() < deadline) {
                     Thread.sleep(100);
                 }
-                assertTrue(sink2.values.contains("b-1"), "restored job must consume new traffic");
+                assertTrue(sink2.values.contains("b-1"),
+                        "restored job must consume new traffic, got=" + sink2.values);
                 Checkpoint cp = job2.triggerCheckpointNow();
                 assertNotNull(cp);
                 p2.close();

@@ -136,6 +136,32 @@ public final class RedisRuntimeCheckpointManager {
         return nextCheckpointId.getAndIncrement();
     }
 
+    /**
+     * HA: re-align the id counter when this instance takes over leadership at runtime.
+     * {@link #initNextId()} snapshots storage only at construction, so a follower that has
+     * been running while the previous leader kept writing would allocate ids below the
+     * dead leader's last checkpoint and overwrite it. Called on every leadership takeover
+     * (not at startup: there the constructor's snapshot is already fresh and, having just
+     * won the lease, this instance is the only writer). The counter only ever moves
+     * forward; a storage outage keeps the local value — the caller has just acquired the
+     * lease, so storage was reachable moments ago and a later takeover refreshes again.
+     */
+    public void refreshCheckpointIdFromStorage() {
+        long maxStoredId = 0L;
+        try {
+            for (Checkpoint c : storage.listCheckpoints(Integer.MAX_VALUE)) {
+                if (c != null && c.getCheckpointId() > maxStoredId) {
+                    maxStoredId = c.getCheckpointId();
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Failed to refresh checkpoint id counter from storage; keeping local counter", e);
+            return;
+        }
+        final long candidate = maxStoredId + 1;
+        nextCheckpointId.accumulateAndGet(candidate, Math::max);
+    }
+
     public Checkpoint triggerCheckpoint(long checkpointId,
                                         List<PipelineKey> pipelines,
                                         Map<String, Map<Integer, String>> offsetsOverride) {

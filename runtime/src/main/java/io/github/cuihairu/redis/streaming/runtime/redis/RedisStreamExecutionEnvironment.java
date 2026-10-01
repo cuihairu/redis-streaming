@@ -432,6 +432,9 @@ public final class RedisStreamExecutionEnvironment {
                 } else if (elector.tryAcquireLeadership()) {
                     isLeader.set(true);
                     long token = elector.nextFencingToken();
+                    // HA: the dead leader may have written checkpoints after this instance's
+                    // startup snapshot — re-align before allocating any id as the new leader
+                    checkpointManager.refreshCheckpointIdFromStorage();
                     log.info("Acquired leadership for job {} (instance {}, fencingToken={})",
                             config.getJobName(), config.getJobInstanceId(), token);
                     startCheckpointExecutor(checkpointExecutorRef, consumers, runners, checkpointManager,
