@@ -1,12 +1,18 @@
-# Redis-Streaming - 基于 Redis 的轻量级流处理框架
+<div align="center">
 
-一个基于 Redis 的现代化流处理框架，提供完整的流数据处理、状态管理、窗口聚合、CDC、可靠性保证等企业级功能。
+<img src="docs/public/logo.svg" width="64" alt="Redis-Streaming logo" />
+
+# Redis-Streaming - 基于 Redis 的轻量级流处理框架
 
 [![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://www.oracle.com/java/)
 [![Redis](https://img.shields.io/badge/Redis-6.0+-red.svg)](https://redis.io/)
 [![Version](https://img.shields.io/badge/Version-0.2.0-blue.svg)](https://github.com/cuihairu/redis-streaming)
 [![codecov](https://codecov.io/gh/cuihairu/redis-streaming/branch/main/graph/badge.svg)](https://codecov.io/gh/cuihairu/redis-streaming)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
+</div>
+
+一个基于 Redis 的现代化流处理框架，提供完整的流数据处理、状态管理、窗口聚合、CDC、可靠性保证等企业级功能。
 
 ## 核心特性
 
