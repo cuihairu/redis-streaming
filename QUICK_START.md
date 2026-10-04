@@ -17,18 +17,18 @@
 
 ### 安装 Redis
 
-**使用 Docker (推荐)**:
+用 Docker（推荐）：
 ```bash
 docker run -d -p 6379:6379 --name redis redis:7-alpine
 ```
 
-**使用 Docker Compose**:
+用 Docker Compose：
 ```bash
 cd redis-streaming
 docker-compose up -d
 ```
 
-**验证 Redis**:
+验证：
 ```bash
 redis-cli ping
 # 应该返回: PONG
@@ -102,62 +102,53 @@ consumer.start();
 
 ### 1. 消息队列 (MQ)
 
-基于 Redis Streams 的可靠消息队列。
+基于 Redis Streams 的消息队列。
 
-**特点**:
 - 支持消费者组
 - 死信队列 (DLQ)
 - 异步消息处理
 - 自动重试
 
-**使用场景**: 解耦服务、异步处理、削峰填谷
+适合解耦服务、异步处理、削峰填谷。
 
 ### 2. 服务注册发现 (Registry)
 
-轻量级服务注册与发现中心。
+轻量级服务注册与发现中心，提供：
 
-**特点**:
 - 服务自动注册/注销
 - 健康检查 (HTTP/TCP/WebSocket)
 - 配置管理
 - 服务订阅通知
 
-**使用场景**: 微服务架构、服务治理
+微服务架构的服务治理可以用它。
 
 ### 3. 窗口聚合 (Aggregation)
 
-实时数据聚合和统计。
+实时数据聚合和统计，支持的窗口和函数：
 
-**特点**:
 - 滚动窗口 / 滑动窗口
 - PV/UV 统计
 - Top-K 分析
 - 分位数计算
 
-**使用场景**: 实时大屏、业务监控、数据分析
+实时大屏、业务监控都会用到。
 
 ### 4. 复杂事件处理 (CEP)
 
-模式匹配和复杂事件检测。
+模式匹配和复杂事件检测，支持：
 
-**特点**:
 - Kleene closure (*, +, ?, {n})
 - 多种连续性约束
 - 时间窗口约束
 - 模式组合
 
-**使用场景**: 风控检测、业务告警、用户行为分析
+风控检测和业务告警是典型场景。
 
 ### 5. 流表二元性 (Table)
 
-可更新的 KTable 抽象。
+可更新的 KTable 抽象，有内存版和 Redis 持久化版两种实现，支持 map、filter、join，可分布式访问。
 
-**特点**:
-- 内存版 / Redis 持久化版
-- 支持 map、filter、join
-- 分布式访问
-
-**使用场景**: 用户画像、实时状态维护
+用于用户画像、实时状态维护。
 
 ## 常用功能示例
 
@@ -333,7 +324,7 @@ List<ChangeEvent> events = cdc.poll();
 
 ### 1. Redis 连接管理
 
-**推荐**: 使用单例模式管理 RedissonClient
+用单例模式管理 RedissonClient：
 
 ```java
 public class RedisManager {
@@ -359,7 +350,7 @@ public class RedisManager {
 
 ### 2. 异常处理
 
-**推荐**: 使用 RetryExecutor 处理瞬时故障
+瞬时故障交给 RetryExecutor 重试：
 
 ```java
 import io.github.cuihairu.redis.streaming.reliability.RetryPolicy;
@@ -382,7 +373,7 @@ executor.execute(() -> {
 
 ### 3. 资源清理
 
-**推荐**: 使用 try-with-resources 或 finally 块
+用 try-with-resources 或 finally 块释放连接：
 
 ```java
 RedissonClient redisson = Redisson.create(config);
@@ -395,7 +386,7 @@ try {
 
 ### 4. 性能优化
 
-**批量操作**:
+批量操作：
 ```java
 // ❌ 不推荐
 for (String id : ids) {
@@ -410,7 +401,7 @@ for (String id : ids) {
 // 批量写入 (如果支持)
 ```
 
-**连接池配置**:
+连接池配置：
 ```java
 config.useSingleServer()
       .setConnectionPoolSize(50)  // 根据并发量调整
@@ -422,7 +413,7 @@ config.useSingleServer()
 
 ### 5. 监控和可观测性
 
-**推荐**: 启用 Prometheus 监控
+建议启用 Prometheus 监控：
 
 ```java
 import io.github.cuihairu.redis.streaming.metrics.MetricTimer;
@@ -444,7 +435,7 @@ try (MetricTimer timer = MetricTimer.start("operation_duration", metrics)) {
 
 ### Q1: Redis 连接失败怎么办？
 
-**A**: 检查以下几点：
+按顺序检查：
 1. Redis 服务是否启动: `redis-cli ping`
 2. 地址和端口是否正确
 3. 防火墙是否允许连接
@@ -452,21 +443,18 @@ try (MetricTimer timer = MetricTimer.start("operation_duration", metrics)) {
 
 ### Q2: 如何查看 Prometheus 指标？
 
-**A**:
 1. 启动 PrometheusExporter
 2. 浏览器访问 `http://localhost:9090/metrics`
 3. 或配置 Prometheus 服务器抓取该端点
 
 ### Q3: KTable 数据丢失怎么办？
 
-**A**:
 1. 检查 Redis 持久化配置 (RDB/AOF)
 2. 使用 RedisKTable 而非 InMemoryKTable
 3. 定期备份 Redis 数据
 
 ### Q4: CEP 模式不匹配？
 
-**A**:
 1. 检查时间窗口是否足够大
 2. 检查模式定义是否正确
 3. 启用日志查看详细匹配过程
@@ -474,7 +462,6 @@ try (MetricTimer timer = MetricTimer.start("operation_duration", metrics)) {
 
 ### Q5: 如何提高性能？
 
-**A**:
 1. 增大 Redis 连接池大小
 2. 使用批量操作
 3. 合理设置 TTL 避免数据堆积
@@ -483,7 +470,6 @@ try (MetricTimer timer = MetricTimer.start("operation_duration", metrics)) {
 
 ### Q6: 生产环境部署建议？
 
-**A**:
 1. 使用 Redis 主从复制或 Cluster
 2. 配置 Redis 持久化 (AOF + RDB)
 3. 监控 Redis 内存使用
@@ -504,7 +490,3 @@ try (MetricTimer timer = MetricTimer.start("operation_duration", metrics)) {
 - [问题反馈 (GitHub Issues)](https://github.com/cuihairu/redis-streaming/issues)
 - [讨论 (GitHub Discussions)](https://github.com/cuihairu/redis-streaming/discussions)
 - 邮件: chuihairu@gmail.com
-
----
-
-**祝你使用愉快！**

@@ -1,15 +1,15 @@
 # Project Summary
 
-`redis-streaming` is a multi-module (Gradle) Java 17 project that provides a pragmatic set of **streaming building blocks** on top of Redis (and optional external systems like Kafka / MySQL / PostgreSQL).
+`redis-streaming` is a multi-module (Gradle) Java 17 project that provides a pragmatic set of streaming building blocks on top of Redis (and optional external systems like Kafka / MySQL / PostgreSQL).
 
-The goal is to keep the core APIs small and composable, while shipping production-grade “infrastructure modules” (MQ / registry / config / state / reliability / metrics) that can be adopted independently.
+The goal is to keep the core APIs small and composable, while shipping infrastructure modules (MQ / registry / config / state / reliability / metrics) that can be adopted independently.
 
 ## Quick Links
 - Start here: `README.md`, `QUICK_START.md`
 - Run demos: `RUNNING_EXAMPLES.md`
 - How to test: `TESTING.md` (unit vs integration)
 - Completion & coverage notes: `docs/archive/COMPLETION_REPORT.md`
-- Design docs index: `docs/README.md` (and `wiki/`)
+- Design docs index: `docs/README.md`
 
 ## Module Overview (20 modules)
 
@@ -34,8 +34,8 @@ The goal is to keep the core APIs small and composable, while shipping productio
 - `cdc`: CDC connectors (MySQL binlog, PostgreSQL logical replication, polling-based connector).
 
 ### Connectors & Integration
-- `source`: Sources (Kafka, HTTP API, Redis List).
-- `sink`: Sinks (Kafka, Redis Stream/Hash).
+- `source`: Sources (Kafka, HTTP API, Redis List/Stream, file, collection, generator).
+- `sink`: Sinks (Kafka, Redis Stream/Hash/List, file, print, collection).
 - `reliability`: Retry policies/executor, DLQ services, deduplication, rate-limiters.
 - `metrics`: Prometheus exporter + metrics collectors.
 - `spring-boot-starter`: Spring Boot auto-configuration & operational integration.

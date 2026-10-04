@@ -6,8 +6,8 @@ This guide explains how to run tests in the streaming framework project.
 
 The project separates tests into two categories:
 
-1. **Unit Tests** - Fast tests that don't require external dependencies (Redis)
-2. **Integration Tests** - Tests that require Redis and test real integrations
+1. Unit tests - fast tests that don't require external dependencies (Redis)
+2. Integration tests - tests tagged `@Tag("integration")` that require Redis (and, for CDC, MySQL/PostgreSQL)
 
 ## Quick Start
 
@@ -26,32 +26,35 @@ The project separates tests into two categories:
 ### Run Integration Tests (Redis Required)
 
 ```bash
-# 1. Start Redis
-docker-compose up -d
+# 1. Start Redis (docker compose V2 CLI, same as .github/workflows/ci.yml and ./test-env.sh)
+docker compose up -d
 
 # 2. Run integration tests
 ./gradlew integrationTest
 
 # 3. Stop Redis
-docker-compose down
+docker compose down
 ```
 
 ## Test Configuration
 
 ### Gradle Test Tasks
 
-The project provides two test tasks:
+The project provides these test tasks (see root `build.gradle`):
 
-- **`test`** - Runs unit tests only (excludes `@Tag("integration")`)
-- **`integrationTest`** - Runs integration tests only (includes `@Tag("integration")`)
-- **`check`** - Runs both unit and integration tests
+- `test` runs unit tests only (excludes `@Tag("integration")`)
+- `integrationTest` runs integration tests only (includes `@Tag("integration")`); registered per module and serialized across modules via a shared Gradle build service (`maxParallelUsages = 1`) because integration tests share one Redis
+- `check` runs unit tests, integration tests, and the aggregate coverage gate (`jacocoRootCoverageVerification`, INSTRUCTION covered ratio ≥ 0.99; connector classes that cannot run without Kafka/MySQL binlog/PostgreSQL replication are excluded from the gate)
+- `jacocoRootReport` produces the aggregated JaCoCo report (XML at `build/reports/jacoco/jacocoRootReport/jacocoRootReport.xml`)
+
+All `Test` tasks run with `maxHeapSize = 1536m` (the `:mq:test` suite OOMs with the 512m default).
 
 ### Test Tags
 
 Tests are organized using JUnit 5 tags:
 
-- **Unit tests**: No tag (default)
-- **Integration tests**: `@Tag("integration")`
+- Unit tests: no tag (default)
+- Integration tests: `@Tag("integration")`
 
 Example integration test:
 ```java
@@ -68,23 +71,38 @@ public class RedisRegistryIntegrationExample {
 
 ### Docker Compose
 
-The project includes a `docker-compose.yml` file for test infrastructure:
+The repository ships three compose files:
+
+- `docker-compose.yml` - development environment (Redis, MySQL, PostgreSQL, Elasticsearch, with persistence)
+- `docker-compose.test.yml` - CI/test environment (same services, tmpfs/no persistence, health checks)
+- `docker-compose.minimal.yml` - Redis only (enough for most integration tests)
 
 ```bash
 # Start services
-docker-compose up -d
+docker compose up -d
 
 # Check status
-docker-compose ps
+docker compose ps
 
 # View logs
-docker-compose logs -f redis
+docker compose logs -f redis
 
 # Stop services
-docker-compose down
+docker compose down
 
 # Stop and remove volumes
-docker-compose down -v
+docker compose down -v
+```
+
+The `./test-env.sh` helper wraps `docker-compose.test.yml` with the `docker compose` command:
+
+```bash
+./test-env.sh start    # start all test services
+./test-env.sh status   # show status
+./test-env.sh logs     # logs (all services or one: ./test-env.sh logs redis)
+./test-env.sh test     # auto-start environment if needed, then run tests
+./test-env.sh restart
+./test-env.sh stop     # stop and cleanup
 ```
 
 ### Redis Configuration
@@ -105,17 +123,17 @@ export REDIS_URL=redis://custom-host:6379
 `CDCManagerLifecycleMultiConnectorIntegrationTest` (module `:cdc`) covers manager-level
 start/stop/restart and multi-connector concurrency with real `DatabasePollingCDCConnector`s:
 
-- The lifecycle/concurrency legs run against an **embedded H2 database** — no external
-  services needed, they always execute as part of `integrationTest`/`check`.
-- The **Redis MQ bridge leg** (`managerEventsBridgeToRealRedisMqTopic`) forwards captured
+- The lifecycle/concurrency legs run against an embedded H2 database. No external
+  services are needed, so they always execute as part of `integrationTest`/`check`.
+- The Redis MQ bridge leg (`managerEventsBridgeToRealRedisMqTopic`) forwards captured
   change events through `ChangeEventQueueSink` onto a real Redis-backed MQ topic and asserts
   delivery via a real consumer. It requires a reachable Redis (`REDIS_URL`, default
-  `redis://127.0.0.1:6379`); when none is reachable the test is **skipped automatically** with
+  `redis://127.0.0.1:6379`); when none is reachable the test is skipped automatically with
   a message. To trigger it:
 
   ```bash
   # Option 1: full test environment (Redis + MySQL + PostgreSQL + Elasticsearch)
-  docker-compose -f docker-compose.test.yml up -d
+  docker compose -f docker-compose.test.yml up -d
 
   # Option 2: any running Redis
   export REDIS_URL=redis://localhost:6379
@@ -140,10 +158,10 @@ start/stop/restart and multi-connector concurrency with real `DatabasePollingCDC
 ### Before Commit
 
 ```bash
-# Run all tests to ensure nothing is broken
-docker-compose up -d
+# Run all tests (unit + integration + coverage gate) to ensure nothing is broken
+docker compose up -d
 ./gradlew clean check
-docker-compose down
+docker compose down
 ```
 
 ### Specific Module Testing
@@ -153,21 +171,21 @@ docker-compose down
 ./gradlew :core:test
 
 # Test specific module (integration tests)
-docker-compose up -d
-./gradlew :core:integrationTest
-docker-compose down
+docker compose up -d
+./gradlew :registry:integrationTest
+docker compose down
 ```
 
 ### Specific Test Class
 
 ```bash
-# Run specific unit test class
-./gradlew :core:test --tests "MessageTest"
+# Run specific unit test class (MessageTest lives in the :mq module)
+./gradlew :mq:test --tests "MessageTest"
 
-# Run specific integration test
-docker-compose up -d
-./gradlew :core:integrationTest --tests "RedisRegistryIntegrationExample"
-docker-compose down
+# Run specific integration test (RedisRegistryIntegrationExample lives in :registry)
+docker compose up -d
+./gradlew :registry:integrationTest --tests "RedisRegistryIntegrationExample"
+docker compose down
 ```
 
 ### Test with Debug Output
@@ -185,88 +203,73 @@ docker-compose down
 
 ## CI/CD Integration
 
-### GitHub Actions Example
+CI runs on GitHub Actions (`.github/workflows/ci.yml`, workflow name `CI`):
 
-```yaml
-name: Tests
-on: [push, pull_request]
+1. `actions/checkout@v6` with `fetch-depth: 0` (axion-release needs tags)
+2. `actions/setup-java@v5`, Temurin 17, Gradle cache
+3. `docker compose -f docker-compose.test.yml up -d`, then wait until all 4 services are healthy (timeout 180s)
+4. `./gradlew clean check jacocoRootReport --warning-mode=all` with `REDIS_URL`, `MYSQL_URL`, `POSTGRES_URL`, `ELASTICSEARCH_URL` pointed at localhost
+5. Upload `build/reports/jacoco/jacocoRootReport/jacocoRootReport.xml` to Codecov (`codecov-action@v5`, `fail_ci_if_error: false`)
+6. Tear down with `docker compose -f docker-compose.test.yml down -v`
 
-jobs:
-  unit-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-java@v3
-        with:
-          java-version: '11'
-      - name: Run unit tests
-        run: ./gradlew test --parallel
-
-  integration-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-java@v3
-        with:
-          java-version: '11'
-      - name: Start Redis
-        run: docker-compose up -d
-      - name: Run integration tests
-        run: ./gradlew integrationTest
-      - name: Stop Redis
-        run: docker-compose down
-```
+Publishing to Maven Central happens in the same workflow when a release is published, a `v*` tag is pushed, or the workflow is dispatched with a version. See `docs/GitHub-Actions.md` for details.
 
 ## Test Module Structure
 
 ```
 streaming/
-├── core/
+├── registry/
 │   └── src/test/java/
 │       ├── *Test.java                    # Unit tests
-│       └── *IntegrationExample.java      # Integration tests (@Tag("integration"))
+│       └── RedisRegistryIntegrationExample.java   # Integration tests (@Tag("integration"))
 ├── aggregation/
 │   └── src/test/java/
 │       ├── *Test.java                    # Unit tests
-│       └── *IntegrationExample.java      # Integration tests (@Tag("integration"))
+│       └── AggregationIntegrationExample.java     # Integration tests (@Tag("integration"))
 └── docker-compose.yml                    # Test infrastructure
 ```
 
+Unit and integration tests share `src/test/java`; the `integrationTest` source set reuses it and selects by tag.
+
 ## Test Coverage
 
-Run tests with coverage reports (requires JaCoCo plugin):
+Run the aggregated coverage report (JaCoCo, configured in the root `build.gradle`):
 
 ```bash
-./gradlew test jacocoTestReport
+./gradlew test jacocoRootReport
 
-# View report
-open build/reports/jacoco/test/html/index.html
+# Aggregate HTML report
+open build/reports/jacoco/jacocoRootReport/html/index.html
+
+# Per-module report (example)
+open core/build/reports/jacoco/test/html/index.html
 ```
+
+`./gradlew check` additionally enforces the aggregate coverage verification
+(`jacocoRootCoverageVerification`): INSTRUCTION covered ratio ≥ 0.99 across all published
+modules, excluding `**/kafka/**`, `MySQLBinlogCDCConnector*`, and
+`PostgreSQLLogicalReplicationCDCConnector*` (these require external brokers/databases to execute).
 
 ## Troubleshooting
 
 ### Tests Fail with "Connection refused"
 
-**Problem**: Integration tests can't connect to Redis.
-
-**Solution**:
+Integration tests can't connect to Redis. Check:
 ```bash
 # Make sure Redis is running
-docker-compose ps
+docker compose ps
 
-# Check Redis health
+# Check Redis health (container name from the compose files)
 docker exec streaming-redis-test redis-cli ping
 # Should return: PONG
 
 # Restart Redis if needed
-docker-compose restart redis
+docker compose restart redis
 ```
 
 ### Unit Tests Run Integration Tests
 
-**Problem**: Integration tests run during `./gradlew test`.
-
-**Solution**: Make sure integration test classes have `@Tag("integration")` annotation:
+Integration tests run during `./gradlew test`. Make sure integration test classes have the `@Tag("integration")` annotation:
 ```java
 @Tag("integration")
 public class MyIntegrationTest {
@@ -274,13 +277,14 @@ public class MyIntegrationTest {
 }
 ```
 
+`./gradlew build` runs `check`, which includes `integrationTest` — if you only want unit
+tests without Redis, run `./gradlew test`.
+
 ### Gradle Wrapper Issues
 
-**Problem**: `./gradlew` command fails.
+`./gradlew` fails. Regenerate the wrapper (the checked-in wrapper is Gradle 8.5):
 
-**Solution**:
 ```bash
-# Regenerate wrapper
 gradle wrapper --gradle-version 8.5
 
 # Make executable
@@ -289,31 +293,32 @@ chmod +x gradlew
 
 ## Best Practices
 
-1. **Keep unit tests fast** - Mock external dependencies
-2. **Make integration tests reliable** - Use docker-compose for consistent environment
-3. **Clean up after integration tests** - Stop containers when done
-4. **Run unit tests frequently** - They're fast and don't need setup
-5. **Run integration tests before commits** - Catch integration issues early
-6. **Use tags consistently** - All integration tests should have `@Tag("integration")`
+1. Keep unit tests fast - mock external dependencies
+2. Make integration tests reliable - use docker compose for a consistent environment
+3. Clean up after integration tests - stop containers when done
+4. Run unit tests frequently - they're fast and need no setup
+5. Run integration tests before commits - catch integration issues early
+6. Use tags consistently - all integration tests should have `@Tag("integration")`
+7. Do not depend on Redis in unit tests - the `test` task must stay Redis-free
 
 ## Module-Specific Notes
 
-### Core Module
-- Contains registry and MQ integration tests
-- Requires Redis for integration tests
-- Most critical for integration testing
+### Registry / MQ Modules
+- The registry (`:registry`) and MQ (`:mq`) integration tests are the most Redis-heavy; start the minimal Redis before running them
+- `RedisRegistryIntegrationExample` (`:registry`) exercises registration + discovery against a real Redis
 
 ### Aggregation Module
 - Tests PV counter and Top-K analyzer
-- Integration tests verify Redis sorted set operations
+- Integration tests (e.g. `AggregationIntegrationExample`, `AnalyticsIntegrationTest`) verify Redis sorted set operations
 
 ### CDC Module
-- Integration tests require external databases (disabled by default)
-- Use `@Disabled` annotation for tests requiring complex setup
+- Lifecycle/concurrency integration legs run on an embedded H2 database (no external services)
+- MySQL/PostgreSQL connector tests skip via JUnit assumptions when `MYSQL_URL` / `POSTGRES_URL` are unset
+- The Redis MQ bridge leg skips automatically when no Redis is reachable
 
 ### Sink/Source Modules
-- File-based tests don't require Redis
-- Some integration tests may need additional services
+- File-based tests (`FileSinkTest`, `FileSourceTest`) don't require Redis
+- Kafka sink/source integration tests require a Kafka broker; Redis sink/source integration tests use `REDIS_URL`
 
 ## Further Reading
 

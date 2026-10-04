@@ -1,30 +1,54 @@
 # 本地集成使用指南
 
-## 已发布到本地 Maven 仓库
+## 发布到本地 Maven 仓库
 
-所有模块已成功发布到本地 Maven 仓库 (`~/.m2/repository`)：
+在仓库根目录执行以下命令，将所有可发布模块（`examples` 除外）发布到本地 Maven 仓库 (`~/.m2/repository`)：
+
+```bash
+./gradlew publishToMavenLocal
+```
+
+发布后的坐标格式为 `io.github.cuihairu.redis-streaming:<模块名>:<版本>`（`group` 见根 `build.gradle`，版本默认取自 Git tag，当前版本 0.2.0）。仓库共 20 个 Gradle 模块（见 `settings.gradle`），其中 `examples` 不参与发布（根 `build.gradle` 显式排除）：
 
 ```
 io.github.cuihairu.redis-streaming:
-  - core:0.1.0
-  - config:0.1.0
-  - registry:0.1.0
-  - spring-boot-starter:0.1.0
-  ... (其他模块)
+  - core:0.2.0        # 核心 API（DataStream / State / Checkpoint / Window 等抽象）
+  - runtime:0.2.0     # 运行时引擎（Redis 驱动 + 内存实现）
+  - mq:0.2.0          # Redis Streams 消息队列（消费组 / 重试 / DLQ）
+  - registry:0.2.0    # 服务注册与发现（心跳 / metadata 过滤）
+  - config:0.2.0      # 配置中心（版本化 / 历史 / 监听）
+  - state:0.2.0       # Redis 状态原语（Value/Map/List/Set）
+  - checkpoint:0.2.0  # Checkpoint 协调与存储
+  - watermark:0.2.0   # Watermark 策略与生成器
+  - window:0.2.0      # 窗口（assigner / trigger）
+  - aggregation:0.2.0 # 窗口聚合（PV/UV/TopK/分位数）
+  - table:0.2.0       # KTable（内存 + Redis 实现）
+  - join:0.2.0        # 时间窗口流流 Join
+  - cdc:0.2.0         # CDC 连接器（MySQL binlog / PostgreSQL 逻辑复制 / 轮询）
+  - sink:0.2.0        # 输出连接器（Kafka / Redis Stream/Hash/List 等）
+  - source:0.2.0      # 输入连接器（Kafka / HTTP / Redis List/Stream 等）
+  - reliability:0.2.0 # 重试 / DLQ / 去重 / 限流
+  - cep:0.2.0         # 复杂事件处理
+  - metrics:0.2.0     # 指标与 Prometheus 导出
+  - spring-boot-starter:0.2.0  # Spring Boot 自动装配与注解
+  - examples          # 可运行示例（不发布，仅模块依赖）
 ```
+
+> 各模块构建脚本引用统一版本目录 `gradle/libs.versions.toml`（当前 Redisson 4.7.0、Jackson 2.17.0、Lombok 1.18.34、Spring Boot 3.2.0）。
 
 ## 在其他项目中使用
 
 ### 1. Spring Boot 项目集成（推荐）
 
-#### **build.gradle**
+#### build.gradle
 ```gradle
 dependencies {
     // 引入 Spring Boot Starter（会自动引入必需的依赖）
-    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.1.0'
+    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
 
     // 可选：使用官方 Redisson Starter 支持集群/哨兵模式（生产环境推荐）
-    // implementation 'org.redisson:redisson-spring-boot-starter:3.29.0'
+    // 版本应与本仓库依赖的 Redisson 对齐（gradle/libs.versions.toml 当前 redisson = 4.7.0）
+    // implementation 'org.redisson:redisson-spring-boot-starter:4.7.0'
 }
 
 repositories {
@@ -33,12 +57,12 @@ repositories {
 }
 ```
 
-#### **Redis 配置方式**
+#### Redis 配置方式
 
 ##### 方式1: 使用内置简化配置（开发/测试环境）
 适合快速开发，仅支持单机模式：
 
-**application.yml**
+application.yml
 ```yaml
 redis-streaming:
   redis:
@@ -52,24 +76,41 @@ redis-streaming:
 ```
 
 ##### 方式2: 使用官方 Redisson Starter（生产环境推荐）
-支持集群、哨兵、SSL等完整功能：
+支持集群、哨兵、SSL：
 
-**build.gradle**
+build.gradle
 ```gradle
 dependencies {
-    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.1.0'
-    implementation 'org.redisson:redisson-spring-boot-starter:3.29.0'
+    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
+    // 版本与 gradle/libs.versions.toml 中的 redisson 保持一致（当前 4.7.0）
+    implementation 'org.redisson:redisson-spring-boot-starter:4.7.0'
 }
 ```
 
-**application.yml**
+redisson.yaml（Redisson 官方配置，支持集群、哨兵等；示例为集群模式）
+```yaml
+clusterServersConfig:
+  nodeAddresses:
+    - redis://127.0.0.1:7000
+    - redis://127.0.0.1:7001
+    - redis://127.0.0.1:7002
+
+# 或哨兵模式
+# sentinelServersConfig:
+#   masterName: mymaster
+#   sentinelAddresses:
+#     - redis://127.0.0.1:26379
+#     - redis://127.0.0.1:26380
+```
+
+application.yml
 ```yaml
 # Redis Streaming 业务配置
 redis-streaming:
   registry:
     enabled: true
-    heartbeat-interval: 5
-    heartbeat-timeout: 15
+    heartbeat-interval: 30    # 秒
+    heartbeat-timeout: 90     # 秒
 
   discovery:
     enabled: true
@@ -79,37 +120,42 @@ redis-streaming:
     enabled: true
     default-group: DEFAULT_GROUP
 
-# Redisson 官方配置（支持集群、哨兵等）
+# Redisson 官方 Starter 配置（键名以 redisson-spring-boot-starter 自身文档为准）
 spring:
   redis:
     redisson:
-      config: |
-        # 单机模式
-        singleServerConfig:
-          address: redis://127.0.0.1:6379
-          password: your-password
-          database: 0
-          connectionPoolSize: 64
-          connectionMinimumIdleSize: 10
-
-        # 或集群模式
-        # clusterServersConfig:
-        #   nodeAddresses:
-        #     - redis://127.0.0.1:7000
-        #     - redis://127.0.0.1:7001
-        #     - redis://127.0.0.1:7002
-
-        # 或哨兵模式
-        # sentinelServersConfig:
-        #   masterName: mymaster
-        #   sentinelAddresses:
-        #     - redis://127.0.0.1:26379
-        #     - redis://127.0.0.1:26380
+      file: classpath:redisson.yaml
 ```
 
-> **注意**: 当同时存在 `redisson-spring-boot-starter` 时，框架会自动使用官方 Starter 创建的 `RedissonClient`，忽略 `redis-streaming.redis.*` 配置。
+完整集群/哨兵示例见 [docs/Deployment.md](docs/Deployment.md)。
 
-#### **Application.java**
+> 注意：本 starter 通过 `@ConditionalOnMissingBean` 创建兜底的 `RedissonClient`。当项目已提供 `RedissonClient`（如由 `redisson-spring-boot-starter` 创建）时会跳过，`redis-streaming.redis.*` 配置随之不生效。
+
+#### 配置键与默认值
+
+以下默认值取自 `spring-boot-starter` 的 `RedisStreamingProperties`（装配条件取自各 `RedisStreaming*AutoConfiguration` 的 `@ConditionalOnProperty`）：
+
+| 键 | 默认值 | 说明 |
+|---|---|---|
+| `redis-streaming.redis.address` | `redis://127.0.0.1:6379` | 单机地址（仅内置简化配置生效） |
+| `redis-streaming.redis.password` | 空 | 密码；`null` 或空串都不会发送 `AUTH` |
+| `redis-streaming.redis.database` | `0` | 数据库序号 |
+| `redis-streaming.redis.timeout` | `3000` | 命令超时（ms） |
+| `redis-streaming.redis.connect-timeout` | `3000` | 连接超时（ms） |
+| `redis-streaming.redis.connection-pool-size` | `64` | 连接池大小 |
+| `redis-streaming.redis.connection-minimum-idle-size` | `10` | 最小空闲连接数 |
+| `redis-streaming.registry.enabled` | `true` | 注册中心自动装配 |
+| `redis-streaming.registry.heartbeat-interval` | `30` | 心跳间隔（秒） |
+| `redis-streaming.registry.heartbeat-timeout` | `90` | 心跳超时（秒） |
+| `redis-streaming.discovery.enabled` | `true` | 服务发现自动装配 |
+| `redis-streaming.discovery.healthy-only` | `true` | 发现时只返回健康实例 |
+| `redis-streaming.config.enabled` | `true` | 配置中心自动装配 |
+| `redis-streaming.config.default-group` | `DEFAULT_GROUP` | 默认配置组 |
+| `redis-streaming.config.history-size` | `10` | 配置历史版本保留数 |
+| `redis-streaming.mq.enabled` | `true` | MQ 自动装配 |
+| `redis-streaming.ratelimit.enabled` | `false` | 限流自动装配（需显式开启） |
+
+#### Application.java
 ```java
 import io.github.cuihairu.redis.streaming.registry.ServiceInstance;
 import io.github.cuihairu.redis.streaming.registry.ServiceChangeAction;
@@ -163,7 +209,6 @@ public class Application {
 
 ```java
 import io.github.cuihairu.redis.streaming.registry.*;
-import io.github.cuihairu.redis.streaming.starter.service.AutoServiceRegistration;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -177,17 +222,17 @@ public class MyService {
     private NamingService namingService;
 
     public void registerService() {
-        // 创建服务实例
-        ServiceInstance instance = ServiceInstance.builder()
+        // 创建服务实例（DefaultServiceInstance 提供 builder 实现）
+        ServiceInstance instance = DefaultServiceInstance.builder()
                 .serviceName("my-service")
                 .instanceId("my-service-192.168.1.10:8080")
                 .host("192.168.1.10")
                 .port(8080)
-                .protocol(Protocol.HTTP)
+                .protocol(StandardProtocol.HTTP)
                 .enabled(true)
                 .healthy(true)
-                .weight(1.0)
-                .ephemeral(true)  // 临时实例，停止心跳后自动删除
+                .weight(1)
+                .ephemeral(true)  // 临时实例，依赖客户端心跳，超时后自动移除
                 .metadata(buildMetadata())
                 .build();
 
@@ -195,8 +240,8 @@ public class MyService {
         namingService.register(instance);
     }
 
-    private Map<String, Object> buildMetadata() {
-        Map<String, Object> metadata = new HashMap<>();
+    private Map<String, String> buildMetadata() {
+        Map<String, String> metadata = new HashMap<>();
         metadata.put("version", "1.0.0");
         metadata.put("region", "us-east-1");
         metadata.put("zone", "zone-a");
@@ -204,6 +249,8 @@ public class MyService {
     }
 }
 ```
+
+> `metadata` 类型为 `Map<String, String>`（见 `DefaultServiceInstance`）；`weight` 为 `int`；协议取枚举 `StandardProtocol`（`Protocol` 本身是接口）。
 
 ### 3. 服务发现示例
 
@@ -280,7 +327,7 @@ public class MetadataFilteringExample {
     }
 
     /**
-     * 智能负载均衡场景
+     * 按权重和负载筛选实例
      */
     public ServiceInstance selectBestInstance(String serviceName) {
         // 优先选择高权重、低负载的实例
@@ -304,7 +351,7 @@ public class MetadataFilteringExample {
 }
 ```
 
-**支持的比较运算符：**
+支持的比较运算符：
 - `==` 或不带符号 - 等于（默认）
 - `!=` - 不等于
 - `>` - 大于
@@ -312,7 +359,9 @@ public class MetadataFilteringExample {
 - `<` - 小于
 - `<=` - 小于等于
 
-**详细文档：** 参考 [Metadata 过滤查询指南](registry/METADATA_FILTERING_GUIDE.md)
+过滤针对实例 `metadata`（`Map<String, String>`）中已存在的键：两边都能转成数字时按数值比较，否则按字典序比较（实现见 `registry` 模块的 `GET_INSTANCES_BY_METADATA_SCRIPT` Lua 脚本）。因此上例中的 `weight`、`cpu_usage` 需要作为键写入实例 metadata 才能参与过滤。
+
+详细文档见 [Registry 文档](docs/Registry.md)
 
 ### 5. 配置中心使用
 
@@ -403,13 +452,13 @@ public class ConfigCenterExample {
 }
 ```
 
-**配置中心特性：**
-- [配置版本化：自动保存历史版本]
-- [变更通知：实时推送配置变更]
-- [历史记录：查询配置的历史版本]
-- [热加载：监听器自动触发配置更新]
+配置中心特性：
+- 配置版本化：自动保存历史版本（`history-size` 控制保留数，默认 10）
+- 变更通知：监听器回调收到新内容（`addListener`）
+- 历史记录：`getConfigHistory(dataId, group, size)` 查询最近 N 个版本
+- 热加载：监听器在配置变更时触发
 
-**详细文档：** 参考 [配置中心文档](config/README.md)
+详细文档见 [配置中心文档](config/README.md) 与 [docs/config.md](docs/config.md)
 
 ### 6. 传统方式监听服务变更
 
@@ -419,7 +468,7 @@ import io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListene
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.PostConstruct;
+import jakarta.annotation.PostConstruct;
 import java.util.List;
 
 @Component
@@ -485,10 +534,10 @@ void method5(List<ServiceInstance> allInstances)
     services = {"user-service"},
     actions = {"added", "removed"}  // 忽略 updated
 )
-
-// 监听所有服务（不推荐，性能影响）
-@ServiceChangeListener  // services 为空表示监听所有
 ```
+
+- `actions` 默认值为 `{"added", "removed", "updated"}`（见注解定义），不指定即接收全部动作。
+- `services` 必须显式指定：当前实现不支持全局监听，`services` 为空时 `ServiceChangeListenerProcessor` 只打印 warn 日志（"Global service listener not fully supported yet"），不会注册任何订阅。
 
 ## 完整示例项目
 
@@ -516,10 +565,10 @@ repositories {
 }
 
 dependencies {
-    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.1.0'
+    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
     implementation 'org.springframework.boot:spring-boot-starter-web'
-    compileOnly 'org.projectlombok:lombok:1.18.30'
-    annotationProcessor 'org.projectlombok:lombok:1.18.30'
+    compileOnly 'org.projectlombok:lombok:1.18.34'
+    annotationProcessor 'org.projectlombok:lombok:1.18.34'
 }
 EOF
 
@@ -575,23 +624,23 @@ EOF
 
 ## 启动测试
 
-1. **启动 Redis**
+1. 启动 Redis
 ```bash
 docker run -d -p 6379:6379 redis:latest
 ```
 
-2. **运行你的应用**
+2. 运行你的应用
 ```bash
 ./gradlew bootRun
 ```
 
-3. **查看日志**
-应该能看到：
+3. 查看日志
+应该能看到（日志文本对应 `RedisStreamingAutoConfiguration`、`RedisStreamingRegistryAutoConfiguration`、`ServiceChangeListenerProcessor` 中的实际输出）：
 ```
-Initializing RedissonClient with address: redis://127.0.0.1:6379
+Initializing RedissonClient with address: redis://127.0.0.1:6379 (Simple single-server mode)
 Initializing NamingService with heartbeat interval: 5s
 Initializing ServiceChangeListenerProcessor for @ServiceChangeListener annotation
-Registered service change listener: onServiceChange on bean: DemoApplication for service: test-service, actions: all
+Registered service change listener: onServiceChange on bean: DemoApplication for service: test-service, actions: [added, removed, updated]
 ```
 
 ## 常见问题
@@ -600,7 +649,11 @@ Registered service change listener: onServiceChange on bean: DemoApplication for
 A: 确保 `repositories` 中包含 `mavenLocal()`
 
 ### Q: @ServiceChangeListener 不生效？
-A: 检查是否添加了 `@EnableRedisStreaming` 注解
+A: 依次检查：
+1. starter 依赖已引入（自动装配通过 `META-INF/spring/...AutoConfiguration.imports` 注册，无需注解；`@EnableRedisStreaming` 只是 `@Import(RedisStreamingAutoConfiguration.class)` 的别名，可选）
+2. 监听方法所在的类是 Spring Bean（`@Component`/`@Service` 等）
+3. `services` 已显式指定（为空不会注册订阅，见上文说明）
+4. `redis-streaming.registry.enabled` 未被关闭（默认 `true`）
 
 ### Q: Redis 连接失败？
 A: 检查 Redis 是否启动，地址配置是否正确
@@ -609,11 +662,10 @@ A: 检查 Redis 是否启动，地址配置是否正确
 
 - [Spring Boot Starter 使用指南](docs/spring-boot-starter-guide.md)
 - [服务注册发现文档](registry/README.md)
-- [Metadata 过滤查询指南](registry/METADATA_FILTERING_GUIDE.md) 🆕
+- [Registry 文档（含 Metadata 过滤）](docs/Registry.md)
 - [配置管理文档](config/README.md)
 
 ---
 
-**版本**: 0.1.0
-**最后更新**: 2025-01-12
-**新增**: Metadata 比较运算符过滤、配置中心示例
+版本：0.2.0
+最后更新：2026-10-05

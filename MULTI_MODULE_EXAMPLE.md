@@ -58,8 +58,8 @@ subprojects {
 
     ext {
         springBootVersion = '3.2.0'
-        redisStreamingVersion = '0.1.0'
-        lombokVersion = '1.18.30'
+        redisStreamingVersion = '0.2.0'
+        lombokVersion = '1.18.34'
     }
 }
 ```
@@ -83,7 +83,7 @@ dependencies {
     compileOnly "org.projectlombok:lombok:${lombokVersion}"
     annotationProcessor "org.projectlombok:lombok:${lombokVersion}"
 
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.15.0'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.0'
 }
 ```
 
@@ -155,7 +155,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.web.bind.annotation.*;
 
-import javax.annotation.PostConstruct;
+import jakarta.annotation.PostConstruct;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -175,22 +175,22 @@ public class UserServiceApplication {
 
     @PostConstruct
     public void registerService() {
-        // 自动注册当前服务
-        ServiceInstance instance = ServiceInstance.builder()
+        // 注册当前服务实例
+        ServiceInstance instance = DefaultServiceInstance.builder()
                 .serviceName("user-service")
                 .instanceId("user-service-localhost:8081")
                 .host("localhost")
                 .port(8081)
-                .protocol(Protocol.HTTP)
+                .protocol(StandardProtocol.HTTP)
                 .enabled(true)
                 .healthy(true)
-                .weight(1.0)
+                .weight(1)
                 .ephemeral(true)
                 .metadata(buildMetadata())
                 .build();
 
         namingService.register(instance);
-        log.info("✅ User Service 注册成功");
+        log.info("User Service 注册成功");
     }
 
     /**
@@ -200,7 +200,7 @@ public class UserServiceApplication {
     public void onDependencyServiceChange(String serviceName,
                                          String action,
                                          ServiceInstance instance) {
-        log.info("🔔 依赖服务变更通知:");
+        log.info("依赖服务变更通知:");
         log.info("   服务: {}", serviceName);
         log.info("   动作: {}", action);
         log.info("   实例: {}:{}", instance.getHost(), instance.getPort());
@@ -224,8 +224,8 @@ public class UserServiceApplication {
         return response;
     }
 
-    private Map<String, Object> buildMetadata() {
-        Map<String, Object> metadata = new HashMap<>();
+    private Map<String, String> buildMetadata() {
+        Map<String, String> metadata = new HashMap<>();
         metadata.put("version", "1.0.0");
         metadata.put("team", "user-team");
         return metadata;
@@ -277,7 +277,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.web.bind.annotation.*;
 
-import javax.annotation.PostConstruct;
+import jakarta.annotation.PostConstruct;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -296,21 +296,21 @@ public class OrderServiceApplication {
 
     @PostConstruct
     public void registerService() {
-        ServiceInstance instance = ServiceInstance.builder()
+        ServiceInstance instance = DefaultServiceInstance.builder()
                 .serviceName("order-service")
                 .instanceId("order-service-localhost:8082")
                 .host("localhost")
                 .port(8082)
-                .protocol(Protocol.HTTP)
+                .protocol(StandardProtocol.HTTP)
                 .enabled(true)
                 .healthy(true)
-                .weight(1.0)
+                .weight(1)
                 .ephemeral(true)
                 .metadata(buildMetadata())
                 .build();
 
         namingService.register(instance);
-        log.info("✅ Order Service 注册成功");
+        log.info("Order Service 注册成功");
     }
 
     /**
@@ -318,7 +318,7 @@ public class OrderServiceApplication {
      */
     @ServiceChangeListener(services = {"user-service", "payment-service"})
     public void onServiceChange(String serviceName, ServiceInstance instance) {
-        log.info("🔔 服务变更: {} - {}", serviceName, instance.getInstanceId());
+        log.info("服务变更: {} - {}", serviceName, instance.getInstanceId());
     }
 
     @GetMapping("/api/orders/{id}")
@@ -329,8 +329,8 @@ public class OrderServiceApplication {
         return response;
     }
 
-    private Map<String, Object> buildMetadata() {
-        Map<String, Object> metadata = new HashMap<>();
+    private Map<String, String> buildMetadata() {
+        Map<String, String> metadata = new HashMap<>();
         metadata.put("version", "1.0.0");
         metadata.put("team", "order-team");
         return metadata;
@@ -368,17 +368,16 @@ docker run -d -p 6379:6379 redis:latest
 ### 2. 启动各个服务
 
 ```bash
+# 在项目根目录执行（gradlew 位于根目录，多模块任务用冒号路径）
+
 # 终端 1 - User Service
-cd user-service
-./gradlew bootRun
+./gradlew :user-service:bootRun
 
 # 终端 2 - Order Service
-cd order-service
-./gradlew bootRun
+./gradlew :order-service:bootRun
 
 # 终端 3 - Payment Service (如果有)
-cd payment-service
-./gradlew bootRun
+./gradlew :payment-service:bootRun
 ```
 
 ### 3. 测试服务发现
@@ -398,30 +397,32 @@ curl http://localhost:8081/api/users/123
 
 ### 4. 观察日志
 
-**User Service 启动时：**
+User Service 启动时：
 ```
-✅ User Service 注册成功
-Registered service change listener: onDependencyServiceChange for service: order-service
+User Service 注册成功
+Registered service change listener: onDependencyServiceChange on bean: UserServiceApplication for service: order-service, actions: [added, removed, updated]
+Registered service change listener: onDependencyServiceChange on bean: UserServiceApplication for service: payment-service, actions: [added, removed, updated]
 ```
+> 日志格式来自 `ServiceChangeListenerProcessor`；`services` 中列出的每个服务各打印一行。
 
-**Order Service 启动时：**
+Order Service 启动时：
 ```
-✅ Order Service 注册成功
+Order Service 注册成功
 
 # User Service 会收到通知：
-🔔 依赖服务变更通知:
+依赖服务变更通知:
    服务: order-service
    动作: added
    实例: localhost:8082
 ```
 
-## 关键要点总结
+## 关键要点
 
 ### 依赖添加原则
 
-1. **只在应用启动模块添加** `spring-boot-starter`
-2. **公共模块不需要添加**（除非定义抽象接口）
-3. **每个微服务独立配置**
+1. 只在应用启动模块添加 `spring-boot-starter`
+2. 公共模块不需要添加（除非定义抽象接口）
+3. 每个微服务独立配置
 
 ### 配置原则
 
@@ -431,26 +432,25 @@ Registered service change listener: onDependencyServiceChange for service: order
 
 ### 最佳实践
 
-1. **服务注册**：在 `@PostConstruct` 中注册
-2. **服务发现**：通过依赖注入 `NamingService`
-3. **变更监听**：使用 `@ServiceChangeListener` 注解
-4. **版本管理**：在根 `build.gradle` 统一管理版本号
+1. 服务注册：在 `@PostConstruct` 中注册
+2. 服务发现：通过依赖注入 `NamingService`
+3. 变更监听：使用 `@ServiceChangeListener` 注解
+4. 版本管理：在根 `build.gradle` 统一管理版本号
 
 ## 常见问题
 
 ### Q1: common 模块需要添加依赖吗？
-**A**: 不需要，除非你想在 common 中定义抽象接口
+A: 不需要，除非你想在 common 中定义抽象接口
 
 ### Q2: 每个服务都要配置 Redis 地址吗？
-**A**: 是的，每个服务独立配置（也可以通过配置中心统一管理）
+A: 是的，每个服务独立配置（也可以通过配置中心统一管理）
 
 ### Q3: 服务名称会冲突吗？
-**A**: 不会，只要确保每个服务的 `serviceName` 唯一即可
+A: 不会，只要确保每个服务的 `serviceName` 唯一即可
 
 ### Q4: 可以部分服务使用吗？
-**A**: 可以！只在需要服务注册/发现的服务中添加依赖
+A: 可以，只在需要服务注册/发现的服务中添加依赖
 
 ---
 
-**完整示例代码**: 参考 `examples/` 目录
-**更多文档**: 查看 `INTEGRATION_GUIDE.md`
+完整示例代码在 `examples/` 目录，更多文档见 `INTEGRATION_GUIDE.md`。
