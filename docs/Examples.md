@@ -1,15 +1,34 @@
 # Examples
 
-Module: `examples/`
+模块：`examples/`
 
-Example usages and demos.
+可运行示例与最小样例，覆盖 mq / registry / aggregation / streaming / state / checkpoint / window / ratelimit / springboot 等子模块。
 
-## Scope
-- 实战示例、演示脚本与最小可运行样例
+## 运行方式
+```bash
+# 依赖（默认连接 redis://127.0.0.1:6379）
+docker compose up -d redis
 
-## Run
-- 参考根目录 `RUNNING_EXAMPLES.md`
-- 推荐从 `examples/src/main/java/io/github/cuihairu/redis/streaming/examples` 下的示例入口开始
+# 默认入口：registry.ServiceRegistryExample
+./gradlew :examples:run
 
-## References
-- RUNNING_EXAMPLES.md
+# 指定入口
+./gradlew :examples:run -PmainClass=io.github.cuihairu.redis.streaming.examples.mq.MessageQueueExample
+```
+（`examples/build.gradle` 的 `application.mainClass` 由 `-PmainClass` 覆盖。）
+
+## 可用入口（`examples/src/main/java/io/github/cuihairu/redis/streaming/examples`）
+- `registry.ServiceRegistryExample`（默认）
+- `registry.CustomPrefixExample`
+- `mq.MessageQueueExample`
+- `aggregation.StreamAggregationExample`
+- `streaming.ComprehensiveStreamingExample`
+- `state.StateExample`
+- `checkpoint.CheckpointExample`
+- `window.WindowExample`
+- `ratelimit.RateLimitExample`
+- `springboot.StarterExampleApplication`（Spring Boot Starter 示例，配置见 `examples/src/main/resources/application.yml`）
+
+## 参考
+- 根目录 `RUNNING_EXAMPLES.md`（完整步骤与环境变量）
+- 该模块不参与发布（根 `build.gradle` 对 `examples` 跳过 maven-publish 插件）

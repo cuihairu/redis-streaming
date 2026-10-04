@@ -12,7 +12,7 @@
 
 </div>
 
-一个基于 Redis 的现代化流处理框架，提供完整的流数据处理、状态管理、窗口聚合、CDC、可靠性保证等企业级功能。
+一个基于 Redis 的流处理框架，覆盖流数据处理、状态管理、窗口聚合、CDC、可靠性保证等模块。
 
 ## 核心特性
 
@@ -20,7 +20,7 @@
 
 ### 已实现功能
 - **📡 消息队列 (MQ)** - 基于 Redis Streams 的完整消息队列，支持消费者组、死信队列
-- **🔍 服务注册发现 (Registry)** - 完整的服务注册与发现，支持多协议健康检查 (HTTP/TCP/WebSocket)，**支持 metadata 比较运算符过滤**
+- **🔍 服务注册发现 (Registry)** - 服务注册与发现，多协议健康检查（HTTP/HTTPS/TCP/UDP/WebSocket/KCP/gRPC/Dubbo），**支持 metadata 比较运算符过滤**
 - **⚙️ 配置中心 (Config)** - 基于 Redis 的分布式配置管理，支持配置版本化、变更通知、历史记录
 - **💾 状态管理 (State)** - Redis 支持的分布式状态存储，支持 ValueState、MapState、ListState、SetState
 - **✅ 检查点机制 (Checkpoint)** - 分布式检查点协调，支持故障恢复
@@ -56,7 +56,7 @@
 - 连接器抽象（StreamSource, StreamSink）
 - 工具类（InstanceIdGenerator, SystemUtils）
 
-**关键类**: `DataStream.java`, `KeyedStream.java`, `State.java` (24 个文件)
+**关键类**: `DataStream.java`, `KeyedStream.java`, `State.java` (27 个文件)
 
 #### **runtime** - 流处理运行时引擎
 统一流处理运行时执行引擎。
@@ -66,7 +66,7 @@
 **说明**: `runtime` 同时提供：
 - Redis runtime：`RedisStreamExecutionEnvironment`（Redis Streams 消费组驱动，Redis keyed state，stop-the-world checkpoint（实验），watermark/window/timer）
 - In-memory runtime：`StreamExecutionEnvironment`（主要用于 tests/examples）
-详见 `docs/`（VuePress）与 `runtime/README.md`。
+详见 `docs/`（VitePress）与 `runtime/README.md`。
 
 **Event-time Watermark 示例**（从元素中提取事件时间）：
 ```java
@@ -100,7 +100,7 @@ env.fromElements(new Event(10, "a"), new Event(20, "b"))
 - 消息重试机制
 - 作为流处理的数据管道
 
-**关键类**: `RedisMessageProducer.java`, `RedisMessageConsumer.java`, `DeadLetterQueueManager.java` (9 个文件)
+**关键类**: `MessageQueueFactory.java`, `MessageProducer.java`, `MessageConsumer.java`, `DeadLetterQueueManager.java` (62 个文件，含 admin/broker/dlq/lease/partition/retry 等子包)
 
 Retention 与 ACK 删除策略（简述）
 - 默认通过“保留 + 裁剪”控制内存：
@@ -122,12 +122,12 @@ Retention 与 ACK 删除策略（简述）
 **职责：**
 - 服务注册与注销（心跳机制、Lua 脚本优化）
 - 服务发现与订阅（Redis Pub/Sub 实时通知）
-- 多协议健康检查（HTTP、HTTPS、TCP、WebSocket、gRPC、自定义）
+- 多协议健康检查（`StandardProtocol` 枚举：HTTP/HTTPS/TCP/UDP/WS/WSS/KCP/GRPC/GRPCS/DUBBO/DUBBO2，可自定义 `Protocol`）
 - **Metadata 过滤查询**（支持比较运算符：`>`, `>=`, `<`, `<=`, `!=`, `==`）
 - 负载均衡支持（基于权重、CPU、延迟等 metadata）
 - 临时/永久实例管理
 
-**关键类**: `RedisNamingService.java`, `RedisServiceProvider.java`, `RedisServiceConsumer.java`, `RegistryLuaScriptExecutor.java` (25 个文件)
+**关键类**: `RedisNamingService.java`, `RedisServiceProvider.java`, `RedisServiceConsumer.java`, `RegistryLuaScriptExecutor.java` (68 个文件)
 
 **Metadata 过滤示例**:
 ```java
@@ -154,7 +154,7 @@ List<ServiceInstance> instances =
 - 配置监听器（自动更新、热加载）
 - 配置历史查询（保留最近 N 个版本）
 
-**关键类**: `RedisConfigService.java`, `ConfigManager.java`, `ConfigChangeListener.java` (10 个文件)
+**关键类**: `RedisConfigService.java`, `ConfigManager.java`, `ConfigChangeListener.java` (12 个文件)
 
 **配置管理示例**:
 ```java
@@ -185,7 +185,7 @@ List<ConfigHistory> history = configService.getConfigHistory("app.properties", "
 - SetState - 集合状态（Redis Set）
 - 状态持久化和恢复
 
-**关键类**: `RedisStateBackend.java`, `RedisValueState.java`, `RedisMapState.java` (7 个文件)
+**关键类**: `RedisStateBackend.java`, `RedisValueState.java`, `RedisMapState.java` (6 个文件)
 
 #### **checkpoint** - 检查点机制
 分布式检查点协调和存储，提供容错保证。
@@ -198,7 +198,7 @@ List<ConfigHistory> history = configService.getConfigHistory("app.properties", "
 - 故障恢复（从检查点恢复）
 - 检查点存储（Redis 持久化）
 
-**关键类**: `RedisCheckpointCoordinator.java` (197行), `RedisCheckpointStorage.java`, `DefaultCheckpoint.java` (5 个文件)
+**关键类**: `RedisCheckpointCoordinator.java`, `RedisCheckpointStorage.java`, `DefaultCheckpoint.java` (4 个文件)
 
 #### **watermark** - 水位线机制
 事件时间处理，处理乱序数据。
@@ -218,7 +218,7 @@ List<ConfigHistory> history = configService.getConfigHistory("app.properties", "
 #### **window** - 窗口操作
 各种窗口类型和触发器，支持基于时间和计数的窗口。
 
-**实现状态**: ✅ 完成 - 窗口分配器 + 触发器（runtime 当前仅使用分配器）
+**实现状态**: ✅ 完成 - 窗口分配器 + 触发器（in-memory runtime 经 `WindowAssigner.getDefaultTrigger()` 逐元素驱动；Redis runtime 窗口算子同样接入默认触发器）
 
 **职责：**
 - 滚动窗口（Tumbling）
@@ -240,7 +240,7 @@ List<ConfigHistory> history = configService.getConfigHistory("app.properties", "
 - 分位数计算
 - 窗口聚合（滚动窗口、滑动窗口）
 
-**关键类**: `WindowAggregator.java` (177行), `PVCounter.java`, `TopKAnalyzer.java`, `SumFunction.java` (12 个文件)
+**关键类**: `WindowAggregator.java`, `PVCounter.java`, `TopKAnalyzer.java`, `SumFunction.java` (14 个文件)
 
 #### **table** - 流表二元性
 KTable 和 KStream，支持流表互转和表操作。
@@ -266,7 +266,7 @@ KTable 和 KStream，支持流表互转和表操作。
 - 状态缓冲（Redis 存储）
 - Join 窗口管理
 
-**关键类**: `StreamJoiner.java` (187行), `JoinConfig.java`, `JoinWindow.java` (6 个文件)
+**关键类**: `StreamJoiner.java`, `JoinConfig.java`, `JoinWindow.java` (6 个文件)
 
 #### **cdc** - 变更数据捕获
 从数据库捕获变更事件，支持多种数据源。
@@ -280,7 +280,7 @@ KTable 和 KStream，支持流表互转和表操作。
 - 变更事件路由和转换
 - 健康监控和指标
 
-**关键类**: `MySQLBinlogCDCConnector.java` (315行), `PostgreSQLLogicalReplicationCDCConnector.java`, `CDCManager.java` (13 个文件)
+**关键类**: `MySQLBinlogCDCConnector.java`, `PostgreSQLLogicalReplicationCDCConnector.java`, `CDCManager.java` (18 个文件)
 
 #### **sink** - 数据输出连接器
 多种数据汇连接器。
@@ -393,7 +393,7 @@ Spring Boot 自动配置和集成。
 
 - Java 17+
 - Redis 6.0+
-- Gradle 7.0+
+- Gradle 8.5+（或直接用仓库自带 wrapper `./gradlew`）
 
 ### 2. 添加依赖
 
@@ -574,15 +574,15 @@ BigDecimal total = aggregator.getAggregatedResult(window, "product-123", "SUM", 
 #### CDC 数据捕获
 ```java
 import io.github.cuihairu.redis.streaming.cdc.*;
+import io.github.cuihairu.redis.streaming.cdc.impl.MySQLBinlogCDCConnector;
 
-// 配置 MySQL Binlog CDC
-CDCConfiguration config = CDCConfigurationBuilder.builder()
-    .host("localhost")
-    .port(3306)
-    .database("ecommerce")
+// 配置 MySQL Binlog CDC（静态工厂按连接器类型给默认值）
+CDCConfiguration config = CDCConfigurationBuilder.forMySQLBinlog("order_cdc")
     .username("cdc_user")
     .password("password")
-    .includeTables("orders", "products")
+    .mysqlHostname("localhost")
+    .mysqlPort(3306)
+    .tables("orders,products")
     .build();
 
 // 创建 CDC 连接器
@@ -619,9 +619,9 @@ List<ChangeEvent> events = connector.poll();
 
 ### 模块完成情况总览
 
-**已完成**: 20/20 模块（100.0%）✅
-**部分完成**: 0/20 模块（0.0%）🚧
-**未开始**: 0/20 模块（0.0%）
+**已完成**: 20/20 模块
+**部分完成**: 0/20 模块
+**未开始**: 0/20 模块
 
 ---
 
@@ -690,11 +690,11 @@ List<ChangeEvent> events = connector.poll();
 ### 下一步优先级
 
 #### 高优先级（可选增强）
-1. **Runtime（下一阶段）** - 多实例协调/HA/控制面（leader election + fencing token、作业接管、动态伸缩等）
+1. **Runtime 控制面补全** - 多实例动态伸缩/控制面（leader election + fencing token 与作业 HA 接管已实现，见 `runtime` 模块 `RedisLeaderElector`）
 2. **Exactly-once（跨系统）** - 2PC / Outbox-WAL（可选路线，见 `docs/exactly-once.md`）
 
 #### 中优先级（功能增强）
-2. **企业级连接器扩展**
+1. **连接器扩展**
    - Elasticsearch Sink
    - HBase Sink
    - IoT Device Source
@@ -708,16 +708,16 @@ List<ChangeEvent> events = connector.poll();
 - [测试指南](TESTING.md) - 单元测试 / 集成测试
 
 ### 设计文档
-- [架构设计](docs/ARCHITECTURE.md) - 整体架构设计
+- [架构设计](docs/Architecture.md) - 整体架构设计
 - [项目总结](PROJECT_SUMMARY.md) - 详细功能说明
 
 ### 部署运维
-- [部署指南](docs/DEPLOYMENT.md) - 生产环境部署
-- [性能优化](docs/PERFORMANCE.md) - 性能调优指南
+- [部署指南](docs/Deployment.md) - 生产环境部署
+- [性能优化](docs/Performance.md) - 性能调优指南
 
 ### 开发指南
 - [开发文档](CLAUDE.md) - 开发者指南
-- [文档中心](docs/README.md) - 文档站点与索引（VuePress）
+- [文档中心](docs/README.md) - 文档站点与索引（VitePress）
 
 ## 贡献
 
@@ -741,15 +741,15 @@ List<ChangeEvent> events = connector.poll();
 ---
 
 **当前版本**: 0.2.0（最新发布版本）
-**最后更新**: 2026-01-01
-**完成度**: 20/20 模块完成（100.0%）
+**最后更新**: 2026-10-04
+**完成度**: 20/20 模块完成
 
 ### 版本说明
 
 **0.2.0** - Runtime 企业级能力完成（单进程）+ 文档站上线
 - [Redis runtime：并行度/背压、watermark/window、端到端 checkpoint（含 sink 协调与恢复）]
 - [Redis-only 原子提交 sink（Lua：写 sink + XACK + commit frontier），并提供 Exactly-once 路线说明（幂等/2PC/outbox）]
-- [文档迁移至 `docs/`，VuePress + GitHub Pages（Actions）自动构建发布]
+- [文档迁移至 `docs/`，VitePress + GitHub Pages（Actions）自动构建发布]
 
 **0.1.1** - 修复与质量增强
 - [Registry/MQ/可靠性等模块若干稳定性修复]

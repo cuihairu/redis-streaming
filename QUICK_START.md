@@ -13,7 +13,7 @@
 ### 系统要求
 - Java 17 或更高版本
 - Redis 6.0 或更高版本
-- Gradle 7.0 或更高版本 (可选，使用 Gradle Wrapper)
+- Gradle 8.5 或更高版本（推荐直接用仓库自带 wrapper `./gradlew`）
 
 ### 安装 Redis
 
@@ -43,13 +43,13 @@ redis-cli ping
 ```gradle
 dependencies {
     // 方式1: 使用 Spring Boot Starter (推荐)
-    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.1.1'
+    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
 
     // 方式2: 按需添加模块
-    implementation 'io.github.cuihairu.redis-streaming:mq:0.1.1'
-    implementation 'io.github.cuihairu.redis-streaming:registry:0.1.1'
-    implementation 'io.github.cuihairu.redis-streaming:aggregation:0.1.1'
-    implementation 'io.github.cuihairu.redis-streaming:cep:0.1.1'
+    implementation 'io.github.cuihairu.redis-streaming:mq:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:registry:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:aggregation:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:cep:0.2.0'
 }
 ```
 
@@ -225,9 +225,9 @@ PatternSequence<LoginEvent> pattern = PatternSequence.<LoginEvent>begin()
 PatternSequenceMatcher<LoginEvent> matcher =
     new PatternSequenceMatcher<>(pattern);
 
-// 处理事件
+// 处理事件（CompleteMatch 是 PatternSequenceMatcher 的嵌套类）
 for (LoginEvent event : events) {
-    List<CompleteMatch<LoginEvent>> matches =
+    List<PatternSequenceMatcher.CompleteMatch<LoginEvent>> matches =
         matcher.process(event, event.getTimestamp());
 
     if (!matches.isEmpty()) {
@@ -304,15 +304,15 @@ try (PrometheusExporter exporter = new PrometheusExporter(9090)) {
 
 ```java
 import io.github.cuihairu.redis.streaming.cdc.*;
+import io.github.cuihairu.redis.streaming.cdc.impl.MySQLBinlogCDCConnector;
 
-// 配置 MySQL Binlog CDC
-CDCConfiguration config = CDCConfigurationBuilder.builder()
-    .host("localhost")
-    .port(3306)
-    .database("mydb")
+// 配置 MySQL Binlog CDC（静态工厂按连接器类型给默认值）
+CDCConfiguration config = CDCConfigurationBuilder.forMySQLBinlog("user_cdc")
     .username("cdc_user")
     .password("password")
-    .includeTables("users", "orders")
+    .mysqlHostname("localhost")
+    .mysqlPort(3306)
+    .tables("users,orders")
     .build();
 
 // 创建 CDC 连接器
@@ -362,7 +362,8 @@ public class RedisManager {
 **推荐**: 使用 RetryExecutor 处理瞬时故障
 
 ```java
-import io.github.cuihairu.redis.streaming.reliability.retry.*;
+import io.github.cuihairu.redis.streaming.reliability.RetryPolicy;
+import io.github.cuihairu.redis.streaming.reliability.RetryExecutor;
 
 RetryPolicy policy = RetryPolicy.builder()
     .maxAttempts(3)
@@ -372,10 +373,10 @@ RetryPolicy policy = RetryPolicy.builder()
 
 RetryExecutor executor = new RetryExecutor(policy);
 
+// execute(RunnableWithException) 的 lambda 需无返回值，且本身声明 throws Exception
 executor.execute(() -> {
     // 可能失败的操作
     sendToExternalAPI(data);
-    return null;
 });
 ```
 
@@ -424,17 +425,18 @@ config.useSingleServer()
 **推荐**: 启用 Prometheus 监控
 
 ```java
+import io.github.cuihairu.redis.streaming.metrics.MetricTimer;
+
 // 在应用启动时
 PrometheusExporter exporter = new PrometheusExporter(9090);
 PrometheusMetricCollector metrics = new PrometheusMetricCollector("myapp");
 
 // 在关键路径记录指标
 metrics.incrementCounter("business_operations");
-Timer timer = metrics.startTimer();
-try {
+
+// 计时：MetricTimer.stop()/close() 会把耗时写入 collector（只记一次）
+try (MetricTimer timer = MetricTimer.start("operation_duration", metrics)) {
     // 业务逻辑
-} finally {
-    metrics.recordTimer("operation_duration", timer);
 }
 ```
 
@@ -498,10 +500,10 @@ try {
 
 ## 获取帮助
 
-- [文档: [README.md](README.md)]
-- [问题反馈: [GitHub Issues](https://github.com/cuihairu/redis-streaming/issues)]
-- [讨论: [GitHub Discussions](https://github.com/cuihairu/redis-streaming/discussions)]
-- [邮件: chuihairu@gmail.com]
+- [文档](README.md)
+- [问题反馈 (GitHub Issues)](https://github.com/cuihairu/redis-streaming/issues)
+- [讨论 (GitHub Discussions)](https://github.com/cuihairu/redis-streaming/discussions)
+- 邮件: chuihairu@gmail.com
 
 ---
 

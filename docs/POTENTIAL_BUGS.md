@@ -367,7 +367,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **触发**：`DeadLetterHandler.handle` 抛异常，或 RETRY 重放失败（ok=false）。两种情况都把 id 留在消费者组 PEL。
 - **影响**：静默丢消息——DLQ 条目永远不会被重读（`neverDelivered()` 只读从未投递的），全类无 `listPending`/`claim`（主消费者 `RedisMessageConsumer.processPendingMessages` 有，此处没有），条目永久 pending。
 - **审计置信度**：高
-- **验证与修复**：无需整体重构即可闭环——镜像主消费者 processPendingMessages 的既有惯例做局部修复：消费循环每 topic 限频（默认 5s，`mq.dlq.test.pendingSweepMs` 可调）跑 pending sweep，`listPending` 找出 idle 超阈值（默认 300s 与 MqOptions.claimIdleMs 一致，`mq.dlq.test.claimIdleMs` 可调）的条目，`claim` 后走与实时投递完全相同的处置（处置块原样抽取为 `processEntry` 共用：SUCCESS/FAIL ack、RETRY 重放成功才 ack、handler 抛异常留 PEL 下轮 sweep 再试——无限重试与主消费者语义一致）。条目历史上有两种写入 codec：经错误句柄 claim 会抛解码异常，回退另一句柄（与既有读取路径同款 dance）。失败期间条目始终留在 DLQ 流本身（XACK 只清 PEL），可人工处置，无静默丢弃。MQ-04（DLQ 删除/回收策略）仍是独立专项，不受本条影响。
+- **验证与修复**：无需整体重构即可补齐回收路径——镜像主消费者 processPendingMessages 的既有惯例做局部修复：消费循环每 topic 限频（默认 5s，`mq.dlq.test.pendingSweepMs` 可调）跑 pending sweep，`listPending` 找出 idle 超阈值（默认 300s 与 MqOptions.claimIdleMs 一致，`mq.dlq.test.claimIdleMs` 可调）的条目，`claim` 后走与实时投递完全相同的处置（处置块原样抽取为 `processEntry` 共用：SUCCESS/FAIL ack、RETRY 重放成功才 ack、handler 抛异常留 PEL 下轮 sweep 再试——无限重试与主消费者语义一致）。条目历史上有两种写入 codec：经错误句柄 claim 会抛解码异常，回退另一句柄（与既有读取路径同款 dance）。失败期间条目始终留在 DLQ 流本身（XACK 只清 PEL），可人工处置，无静默丢弃。MQ-04（DLQ 删除/回收策略）仍是独立专项，不受本条影响。
 - **回归测试**：`DlqPendingReclaimIntegrationTest`（@Tag("integration")，真实 Redis，3 用例：handler 持续抛异常被 idle claim 反复重试且条目不丢（留 PEL + 留流）、瞬时失败后重投递 SUCCESS 最终 ack、RETRY 重放首败后经 sweep 重试至成功才 ack）。测试只用修复前公共 API，可直接对旧代码编译——旧代码 3/3 失败：`got 1`（投递一次后 PEL 永久滞留）、pending 卡 1、`replays=1`，精确对应本条三个失败路径。
 
 ### MQ-02 DlqConsumerAdapter 的 RETRY 重放两次 XADD：业务主题收到重复消息 [已修复]
@@ -695,4 +695,4 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 ### race 检测说明
 
-Java 生态无 `go test -race` 的直接等价物。等效手段：全量测试套件（含 `@Tag("integration")` 的真实 Redis 集成测试）+ 本轮对并发敏感路径的定向并发测试（join 并发、会话窗口合并、租约原子性、熔断窗口），以及审计中对内存可见性/原子性的逐点分析（B-16/B-19/B-25/B-26/CDC-M2/MQ-08 等条目）。
+Java 工具链中没有 `go test -race` 的直接等价物。等效手段：全量测试套件（含 `@Tag("integration")` 的真实 Redis 集成测试）+ 本轮对并发敏感路径的定向并发测试（join 并发、会话窗口合并、租约原子性、熔断窗口），以及审计中对内存可见性/原子性的逐点分析（B-16/B-19/B-25/B-26/CDC-M2/MQ-08 等条目）。

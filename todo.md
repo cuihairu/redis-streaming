@@ -513,7 +513,7 @@ void testRedisIntegration() {
 - [ ] InMemory 引擎支持无界源与增量窗口(现为"先跑完 source 物化成 List"的批式模型,无限源会 OOM;`InMemoryKeyedStream.window` 丢弃 watermarkState/coordinator,累加器不可快照)
 - [x] Redis 引擎接入 core `WatermarkGenerator`:`DataStream.assignTimestampsAndWatermarks(gen)` 现为真实算子(ctx.raiseWatermark 单调推进水位线),集成测试证明用户生成器能越过配置的 10s outOfOrderness 启发式提前触发窗口;`(TimestampAssigner, gen)` 重载仍未接入(需要 runner 改事件时间传播模型,归入 B2)
 - [x] 让 `WindowAssigner.getDefaultTrigger`/window 模块 Trigger 真正被调用(原死接口):Redis 引擎窗口算子按 (partition,key,window) 桶持触发器实例,`onElement`(FIRE 提前发射保留状态/FIRE_AND_PURGE 发射并清桶/PURGE 丢弃)与 `onEventTime`(CONTINUE 推迟关闭/PURGE 静默丢弃)均已接入执行路径,默认 `EventTimeTrigger` 行为与接入前逐点等价(等价用例钉住);`onProcessingTime` 仍未接(两引擎均无 processing-time 窗口定时器,与 docs/watermark.md 触发时机描述一致)。单测 `RedisWindowedStreamTriggerTest`(5 用例)、集成测试 `RedisWindowedStreamTriggerIntegrationTest`(窗口未关时 FIRE 提前发射端到端成立)
-- [ ] runtime 用 state 模块实现替换自研 `RedisKeyedStateStore`(消除两套 keyed state);评估移除 `WatermarkState` 与 watermark 模块的第三份水位线逻辑
+- [ ] runtime 用 state 模块实现替换自行开发 `RedisKeyedStateStore`(消除两套 keyed state);评估移除 `WatermarkState` 与 watermark 模块的第三份水位线逻辑
 - [x] 补 runtime 窗口/水位线测试:`RedisRuntimeWindowedStreamIntegrationTest`(6 用例覆盖五个窗口算子 + 用户生成器)、`RedisPipelineRunnerWatermarkTest` 增 raiseWatermark 用例;`@Tag("integration")` 文件 runtime 现 2 个(其余测试项继续见上文覆盖率清单)
 
 ### C. 孤岛模块接入或降级

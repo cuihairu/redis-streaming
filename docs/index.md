@@ -36,20 +36,22 @@ features:
 
 ## 模块索引
 
-**核心层**
-- [Core](/Core) · [Runtime](/runtime) · [State](/state) · [Checkpoint](/checkpoint)
+模块清单与 `settings.gradle` 一致，共 20 个 Gradle 模块。
 
-**流处理**
-- [Window](/window) · [Watermark](/watermark) · [Aggregation](/Aggregation)
+**核心抽象层（Tier 1）**
+- [Core](/Core) · [Runtime](/runtime)
 
-**数据操作**
-- [Table](/Table) · [Join](/Join) · [CDC](/CDC) · [Source & Sink](/source-sink)
+**基础设施层（Tier 2）**
+- [MQ](/MQ) · [Registry](/Registry) · [Config](/config) · [State](/state) · [Checkpoint](/checkpoint) · [Watermark](/watermark)
 
-**基础设施**
-- [Config](/config) · [Registry](/Registry) · [MQ](/MQ)
+**特性层（Tier 3）**
+- [Window](/window) · [Aggregation](/Aggregation) · [Table](/Table) · [Join](/Join) · [CDC](/CDC) · [Source & Sink](/source-sink)（`source`、`sink` 两个模块由该页合并介绍）
 
-**可靠性**
-- [Reliability](/reliability) · [Metrics](/Metrics) · [Exactly-Once](/exactly-once)
+**高级特性层（Tier 4）**
+- [Reliability](/reliability) · [CEP](/CEP)
 
-**集成**
-- [Spring Boot Starter](/Spring-Boot-Starter) · [Examples](/Examples)
+**集成层（Tier 5）**
+- [Metrics](/Metrics) · [Spring Boot Starter](/Spring-Boot-Starter) · [Examples](/Examples)
+
+**设计与运维**
+- [架构总览](/Architecture) · [Exactly-Once 语义](/exactly-once) · [故障排查](/troubleshooting) · [测试指南](/Testing)
