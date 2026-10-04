@@ -1,8 +1,8 @@
 # Quick Start (EN)
 
-This page helps you build, test, and try the framework in minutes. For full details, see:
-- Root docs: QUICK_START.md, RUNNING_EXAMPLES.md, TESTING.md
-- Spring Boot Starter: Spring-Boot-Starter-en.md
+This page covers building, testing, and running the examples. Full details:
+- Root docs: [QUICK_START.md](https://github.com/cuihairu/redis-streaming/blob/main/QUICK_START.md), [RUNNING_EXAMPLES.md](https://github.com/cuihairu/redis-streaming/blob/main/RUNNING_EXAMPLES.md), [TESTING.md](https://github.com/cuihairu/redis-streaming/blob/main/TESTING.md)
+- Spring Boot Starter: [Spring-Boot-Starter-en.md](Spring-Boot-Starter-en.md)
 
 ## 1) Prerequisites
 - Java 17+
@@ -28,7 +28,7 @@ docker-compose -f docker-compose.minimal.yml up -d
 docker-compose -f docker-compose.minimal.yml down
 ```
 
-Tips
+### Tips
 - Integration tests are tagged with `@Tag("integration")` and are separated from unit tests.
 - You can run a single test class:
   ```bash
@@ -36,7 +36,7 @@ Tips
   ```
 
 ## 4) Run Examples
-See RUNNING_EXAMPLES.md for end-to-end demos. Typical steps:
+See [RUNNING_EXAMPLES.md](https://github.com/cuihairu/redis-streaming/blob/main/RUNNING_EXAMPLES.md) for end-to-end demos. Typical steps:
 ```bash
 # 1) start dependencies
 docker-compose up -d
@@ -48,7 +48,7 @@ docker-compose up -d
 ## 5) Spring Boot Integration (Minimal)
 Gradle dependency:
 ```gradle
-implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.1.0'
+implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
 ```
 
 Enable in your app:
@@ -70,9 +70,9 @@ redis-streaming:
     enabled: true
 ```
 
-Expose metrics (optional): see Spring-Boot-Starter-en.md for Actuator/Prometheus setup.
+Expose metrics (optional): see [Spring-Boot-Starter-en.md](Spring-Boot-Starter-en.md) for Actuator/Prometheus setup.
 
 ## 6) Troubleshooting
 - Ensure Java 17 is used: `java -version`
 - If integration tests hang, check Redis is running (ping `redis-cli PING`)
-- For CI/CD setup, see docs/github-actions.md
+- For CI/CD setup, see [GitHub-Actions.md](../GitHub-Actions.md)

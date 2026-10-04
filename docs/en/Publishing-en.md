@@ -1,5 +1,4 @@
 # Publishing (EN)
 
-Publishing to Maven Central via Central Portal:
-- docs: docs/maven-publish.md
-- Project guide: ../PUBLISHING.md
+Publishing to Maven Central via the Central Portal:
+- Publishing steps: [maven-publish.md](../maven-publish.md) (Chinese)

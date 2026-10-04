@@ -26,5 +26,4 @@ public void onChange(String svc, String action, ServiceInstance inst, List<Servi
 ```
 
 ## References
-- docs: docs/redis-registry-usage.md
-- design: Registry-Design-en.md
+- Design: [Registry-Design-en.md](Registry-Design-en.md)

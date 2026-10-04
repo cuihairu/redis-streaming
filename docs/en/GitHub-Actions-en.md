@@ -1,4 +1,3 @@
 # GitHub Actions (EN)
 
-See complete workflow documentation:
-- docs: docs/github-actions.md
+Workflow details: [GitHub-Actions.md](../GitHub-Actions.md) (Chinese).

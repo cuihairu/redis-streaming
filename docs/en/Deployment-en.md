@@ -1,15 +1,15 @@
 # Deployment (EN)
 
-This page outlines a minimal production setup. For full steps, see docs/DEPLOYMENT.md.
+This page outlines a minimal production setup. For full steps and the default-value tables, see [Deployment.md](../Deployment.md) (Chinese).
 
 ## 1) Runtime Requirements
 - Java 17+
 - Redis 6+ (cluster/sentinel recommended for HA)
 
 ## 2) Redisson Configuration (recommended)
-Use redisson-spring-boot-starter to integrate cluster/sentinel:
+Use redisson-spring-boot-starter to integrate cluster/sentinel; keep its version aligned with the Redisson version in `gradle/libs.versions.toml` (currently 4.7.0):
 ```gradle
-implementation 'org.redisson:redisson-spring-boot-starter:3.29.0'
+implementation 'org.redisson:redisson-spring-boot-starter:4.7.0'
 ```
 
 Cluster example (redisson-cluster.yaml):
@@ -24,8 +24,9 @@ clusterServersConfig:
 application.yml:
 ```yaml
 spring:
-  redisson:
-    file: classpath:redisson-cluster.yaml
+  redis:
+    redisson:
+      file: classpath:redisson-cluster.yaml
 ```
 
 ## 3) Observability

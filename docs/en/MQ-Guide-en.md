@@ -23,9 +23,8 @@ consumer.start();
 - Replay via Admin/Service, back to original partition
 
 ## 4) Admin Ops (Examples)
-- List topics, size, replayAll, delete, clear（see Admin interface in MQ/Starter）
+- List topics, size, `replayAll`, delete, clear (see the admin interfaces in the MQ module and the Spring Boot starter)
 
 ## References
-- design: MQ-Design-en.md
-- broker interaction: docs/redis-mq-broker-interaction.md
-- partitioning: docs/redis-mq-partitioning.md
+- Design and partitioning: [MQ-Design-en.md](MQ-Design-en.md)
+- Broker interaction: [MQ-Broker-Interaction-en.md](MQ-Broker-Interaction-en.md)
