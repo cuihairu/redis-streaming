@@ -44,7 +44,7 @@ The project provides these test tasks (see root `build.gradle`):
 
 - `test` runs unit tests only (excludes `@Tag("integration")`)
 - `integrationTest` runs integration tests only (includes `@Tag("integration")`); registered per module and serialized across modules via a shared Gradle build service (`maxParallelUsages = 1`) because integration tests share one Redis
-- `check` runs unit tests, integration tests, and the aggregate coverage gate (`jacocoRootCoverageVerification`, INSTRUCTION covered ratio ≥ 0.99; connector classes that cannot run without Kafka/MySQL binlog/PostgreSQL replication are excluded from the gate)
+- `check` runs unit tests, integration tests, and the coverage gate (`jacocoRootCoverageVerification`: unit-test execution data only, INSTRUCTION ≥ 0.95 and CLASS ≥ 0.99; connector classes that cannot run without Kafka/MySQL binlog/PostgreSQL replication are excluded from the gate)
 - `jacocoRootReport` produces the aggregated JaCoCo report (XML at `build/reports/jacoco/jacocoRootReport/jacocoRootReport.xml`)
 
 All `Test` tasks run with `maxHeapSize = 1536m` (the `:mq:test` suite OOMs with the 512m default).
@@ -245,10 +245,13 @@ open build/reports/jacoco/jacocoRootReport/html/index.html
 open core/build/reports/jacoco/test/html/index.html
 ```
 
-`./gradlew check` additionally enforces the aggregate coverage verification
-(`jacocoRootCoverageVerification`): INSTRUCTION covered ratio ≥ 0.99 across all published
+`./gradlew check` additionally enforces the coverage verification
+(`jacocoRootCoverageVerification`): computed from unit-test execution data only
+(`jacoco/test.exec`) — INSTRUCTION ≥ 0.95 and CLASS ≥ 0.99 across all published
 modules, excluding `**/kafka/**`, `MySQLBinlogCDCConnector*`, and
 `PostgreSQLLogicalReplicationCDCConnector*` (these require external brokers/databases to execute).
+The unit-only basis is deterministic; the unit+integration union is reported separately via
+`jacocoRootReport` and uploaded to Codecov.
 
 ## Troubleshooting
 

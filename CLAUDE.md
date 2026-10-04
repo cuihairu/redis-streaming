@@ -345,7 +345,7 @@ java -version
 ```
 
 ### Test Coverage Goals
-- Enforced today: aggregate INSTRUCTION ≥ 0.99 (`jacocoRootCoverageVerification`; excludes kafka and the MySQL binlog / PostgreSQL logical replication connector wrappers, which cannot run without those services); module-level targets below are aspirational.
+- Enforced today: unit-only deterministic gate (`jacocoRootCoverageVerification` reads `jacoco/test.exec` only): INSTRUCTION ≥ 0.95 AND CLASS ≥ 0.99 (excludes kafka and the MySQL binlog / PostgreSQL logical replication connector wrappers, which cannot run without those services). A previous aggregate (unit+integration) gate at 0.99 was timing-dependent and flipped between 0.98 and 0.99+ on identical code; the union is still reported via `jacocoRootReport` to Codecov. Module-level targets below are aspirational.
 - **Core module (registry + mq)**: 80%+ (critical infrastructure)
 - **Business modules**: 70%+
 - **Integration tests**: Cover main workflows and edge cases

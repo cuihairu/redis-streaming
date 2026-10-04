@@ -11,7 +11,7 @@ This page summarizes how to run unit/integration tests locally and in CI. See th
 
 Notes
 - Unit tests must not require Redis.
-- Coverage gate (JaCoCo): `jacocoRootCoverageVerification` requires aggregate INSTRUCTION coverage ≥ 0.99 (connector classes that need external services, such as `**/kafka/**` and the MySQL binlog/PostgreSQL logical replication connectors, are excluded). `./gradlew jacocoRootReport` produces the aggregate report.
+- Coverage gate (JaCoCo): `jacocoRootCoverageVerification` consumes unit-test execution data only (`jacoco/test.exec`) with two rules: INSTRUCTION ≥ 0.95 and CLASS ≥ 0.99 (connector classes that need external services, such as `**/kafka/**` and the MySQL binlog/PostgreSQL logical replication connectors, are excluded). The unit-only basis is deterministic: a gate over the unit+integration union is timing-dependent — the same tree produced both 0.98 and 0.99+ on CI — so the gate pins the deterministic floor while `./gradlew jacocoRootReport` still reports the union (uploaded to Codecov).
 
 ## 2) Integration Tests (require Redis)
 ```bash
