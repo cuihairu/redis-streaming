@@ -540,5 +540,5 @@ void testRedisIntegration() {
 - [x] examples 新增 `springboot.StarterExampleApplication` + 注释版 `application.yml`(registry/discovery/config/mq/ratelimit 全键样例)。**首次真实启动 starter 暴露并修复 4 个潜伏 bug**:logback 1.5.13 与 Spring Boot 3.2 不兼容(`LoggerContext.getConfigurationLock` 移除,降到 1.4.14)、默认空密码仍发送 AUTH 导致连接失败(改为仅非空才 set)、`MqHealthIndicator` bean 在无 actuator 时使配置类内省失败(下沉到类级 `@ConditionalOnClass` 嵌套配置)、5 个 micrometer collector/installer bean 缺 `@ConditionalOnBean(MeterRegistry/collector)` 守卫。示例已在本地 Redis 端到端跑通(注册/配置/MQ 全通)
 - [x] `StreamSource` 生命周期与 StreamSink 对称补齐:`open()/close()` 默认方法,InMemory 引擎 addSource 已接线(source.open → run → finally close)
 - [ ] `SourceContext.getCheckpointLock` 真实接入(in-memory 引擎返回的 `new Object()` 无任何 `synchronized` 使用者;Redis 引擎尚无 SourceContext 调用路径。需与检查点屏障协议一并设计)
-- [ ] 发布说明记录 Redisson 4.7.0 升级与 API 迁移(README/docs 已同步版本号)
+- [x] 发布说明记录 Redisson 4.7.0 升级与 API 迁移(README/docs 已同步版本号;CHANGELOG [Unreleased] 已含该条目,2026-10-05 另补齐 2PC sink/outbox/leader 选举/状态治理/可观测等未记录特性条目)
 - [ ] 覆盖率:延续上文"优先级 1-4"清单(15 条已全部收口,余 sink/source kafka 集成腿挂起待 broker);门禁现行为单测确定性口径 INSTRUCTION ≥ 0.95 且 CLASS ≥ 0.99(2026-10-05 起,见"成功标准"注),上调档视实测覆盖而定
