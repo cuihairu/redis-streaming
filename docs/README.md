@@ -1,6 +1,6 @@
 # Redis Streaming
 
-基于 Redis 的流处理框架，提供实时数据处理能力。
+基于 Redis 的 Java 17 流处理框架。
 
 ## 文档导航
 
@@ -13,7 +13,6 @@
 - [核心 API](Core.md) - 流处理核心接口
 - [运行时环境](runtime.md) - Runtime 模块详解
 - [API 参考](API.md) - 模块 API 索引
-- [设计文档](Design.md) - 整体设计说明
 
 ### 模块文档
 
@@ -53,10 +52,6 @@
 - [Registry 设计](Registry-Design.md) - Registry 模块设计
 - [Registry 指南](Registry-Guide.md) - Registry 使用指南
 - [Exactly-Once](exactly-once.md) - 精确一次语义
-- [Redis MQ 设计](redis-mq-design.md) - 基于 Redis Streams 的 MQ 设计细节
-- [Redis MQ 分区](redis-mq-partitioning.md) - 分区与租约
-- [Redis MQ Broker 交互](redis-mq-broker-interaction.md) - Broker 交互细节
-- [Redis Registry 用法](redis-registry-usage.md) - Redis 注册中心使用
 - [保留与 ACK 策略](retention-and-ack-policy.md) - 流保留与 ack 删除策略
 
 ### 运维指南

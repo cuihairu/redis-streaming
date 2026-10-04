@@ -6,20 +6,20 @@
 
 ## 现状（当前实现能力）
 
-Redis runtime 当前提供的是 “at-least-once + 更强对齐”的一致性基础：
+Redis runtime 当前提供的是 at-least-once 加更强对齐的一致性基础：
 
-- **处理语义**：默认 `SUCCESS` 后 ACK（at-least-once）。
-- **端到端 checkpoint（实验）**：`deferAckUntilCheckpoint=true` 时，消息处理成功后不 ACK，直到 checkpoint 完成后再统一 ACK；checkpoint 元数据包含 `sinkCommitted`，恢复时会跳过未提交的 checkpoint。
-- **sink 钩子（实验）**：`CheckpointAwareSink` 支持 `onCheckpointStart/onCheckpointComplete/onCheckpointAbort/onCheckpointRestore`，用于将 side effects 延迟到 checkpoint 完成点。
-- **sink 去重（best-effort）**：`sinkDeduplicationEnabled=true` 基于 `x-original-message-id` 做“运行时去重”，降低重放/重试导致的重复写入概率，但不构成严格 exactly-once 保证。
+- 默认 `SUCCESS` 后 ACK（at-least-once）。
+- 端到端 checkpoint（实验）：`deferAckUntilCheckpoint=true` 时，消息处理成功后不 ACK，直到 checkpoint 完成后再统一 ACK；checkpoint 元数据包含 `sinkCommitted`（快照 meta 字段 + `runtime:sinkCommitted:{checkpointId}` marker），恢复时以最近的 `sinkCommitted=true` checkpoint 为基线，未提交的 checkpoint 不作为恢复点。唯一例外：最新的「已 store 未 commit」的两阶段 epoch（存有事务句柄、未被 `markTxnEpochAborted` 丢弃、也未被更新的已提交 checkpoint 取代）会连同句柄一起恢复，用 `recoverAndCommit` 补偿（见 `restoreFromLatestCheckpointOrNull` / `getLatestInDoubtTwoPhaseCheckpoint`）。
+- sink 钩子（实验）：`CheckpointAwareSink` 支持 `onCheckpointStart/onCheckpointComplete/onCheckpointAbort/onCheckpointRestore`，用于将 side effects 延迟到 checkpoint 完成点。
+- sink 去重（best-effort）：`sinkDeduplicationEnabled=true` 基于 `x-original-message-id` 做“运行时去重”，降低重放/重试导致的重复写入概率，但不构成严格 exactly-once 保证。
 
-这些能力使得“**checkpoint = (state + offsets) 的一致恢复点**”更可信，但仍未提供严格的 exactly-once side effects（因为 side effects 可能在 checkpoint 前/后非原子发生）。
+这让 checkpoint 成为 (state + offsets) 的一致恢复点，可信度高于裸 at-least-once；但 side effects 可能在 checkpoint 前后非原子发生，严格的 exactly-once side effects 仍未达到。
 
 ## 约束与难点（为什么 exactly-once 很难）
 
-1. **跨系统原子性不可得**：要 exactly-once，必须把“写 sink + 提交 source offset（或 ACK）”做成一个不可分割的原子动作；当 sink 在 Redis 之外（JDBC/Kafka/HTTP）时，天然跨系统。
-2. **Redis Streams ACK 与外部事务不绑定**：Redis 的 `XACK` 无法与外部系统事务同一个事务域提交。
-3. **故障窗口**：常见的“最难”窗口是：
+1. 跨系统原子性不可得：要 exactly-once，必须把“写 sink + 提交 source offset（或 ACK）”做成一个不可分割的原子动作；当 sink 在 Redis 之外（JDBC/Kafka/HTTP）时，天然跨系统。
+2. Redis Streams ACK 与外部事务不绑定：Redis 的 `XACK` 无法与外部系统事务同一个事务域提交。
+3. 故障窗口：常见的“最难”窗口是：
    - checkpoint 已写入（state+offsets）但 sink commit 失败/未执行；
    - sink commit 已执行但 ACK 未执行；
    - ACK 已执行但 sink commit 未执行（这是必须避免的）。
@@ -30,82 +30,56 @@ Redis runtime 当前提供的是 “at-least-once + 更强对齐”的一致性�
 
 ### 方案 A：幂等 sink（推荐作为 v1 基线）
 
-**思路**：把“去重/幂等”下沉到 sink 的目标存储，通过唯一键/幂等写接口确保重复写入不会产生重复效果。
+把“去重/幂等”下沉到 sink 的目标存储，通过唯一键/幂等写接口确保重复写入不会产生重复效果。
 
-- **幂等键**：使用稳定的 event-id（理想），或 `mq.Message.id`/`x-original-message-id`（次选），或业务主键（最常用）。
-- **实现方式示例**：
-  - JDBC：`INSERT ... ON CONFLICT DO NOTHING` / `INSERT IGNORE` / 唯一索引 + upsert
-  - Redis：Lua “check-and-set” 或 `SETNX`/`HSETNX` + TTL
-  - Kafka：幂等 producer（注意：这保证的是 producer 侧幂等，不等价于端到端 exactly-once）
+幂等键优先用稳定的 event-id，其次 `mq.Message.id`/`x-original-message-id`，实践中最常用的是业务主键。落到实现上：
 
-**与当前 runtime 的配合**：
-- 继续使用 `deferAckUntilCheckpoint=true`（让 ACK 对齐到 checkpoint 完成点）。
-- `CheckpointAwareSink` 将 side effects 延迟到 `onCheckpointComplete` 触发。
-- `sinkDeduplicationEnabled` 可保留作为“运行时层面的额外保险”，但不能替代真正的幂等 sink。
+- JDBC：`INSERT ... ON CONFLICT DO NOTHING` / `INSERT IGNORE` / 唯一索引 + upsert
+- Redis：Lua “check-and-set” 或 `SETNX`/`HSETNX` + TTL
+- Kafka：幂等 producer（只保证 producer 侧幂等，不等价于端到端 exactly-once）
 
-**优点**：实现成本低，适配面广；可在不改动 runtime 核心协议的情况下逐步落地。  
-**缺点**：exactly-once 依赖外部存储的幂等能力；对业务建模有要求（必须有唯一键）。
+配合现有 runtime 的三处开关：`deferAckUntilCheckpoint=true` 让 ACK 对齐到 checkpoint 完成点；`CheckpointAwareSink` 把 side effects 延迟到 `onCheckpointComplete` 触发；`sinkDeduplicationEnabled` 可留作运行时层面的额外保险，但它替代不了真正的幂等 sink。
+
+实现成本低、适配面广，不改 runtime 核心协议也能逐步落地；代价是 exactly-once 依赖外部存储的幂等能力，业务建模上必须有唯一键。
 
 ### 方案 B：Two-Phase Commit Sink（2PC，推荐作为 v2）
 
-**思路**：提供类似 Flink 的两阶段提交 sink，将 checkpoint 作为事务边界：
+提供类似 Flink 的两阶段提交 sink，将 checkpoint 作为事务边界：
 
-1) `beginTransaction(checkpointId)`：开始一个 sink 事务（或“可提交但不可见”的写入会话）  
-2) `preCommit()`：把本次 checkpoint 之前的 side effects 准备好（flush 到事务/缓冲区）  
-3) **写 checkpoint（state+offsets+txn-handle）**：将事务句柄持久化进 checkpoint  
-4) `commit()`：checkpoint 成功后提交 sink 事务；再将 checkpoint 标记 `sinkCommitted=true`；最后 ACK/推进 offsets
+1) `beginTxn()`：开始一个 sink 事务（或“可提交但不可见”的写入会话）  
+2) `preCommit(txn)`：把本次 checkpoint 之前的 side effects 准备好（flush 到事务/缓冲区）  
+3) 写 checkpoint（state+offsets+txn 句柄）：将事务句柄持久化进 checkpoint  
+4) `commit(txn)`：checkpoint 成功后提交 sink 事务；再将 checkpoint 标记 `sinkCommitted=true`；最后 ACK/推进 offsets
 
-**需要的新 API（建议）**：
-- 在 `core` 定义 `TwoPhaseCommitSink<T, Txn>`（或类似命名），核心方法：
-  - `Txn beginTransaction(long checkpointId)`
-  - `void invoke(T value, Txn txn)`
-  - `void preCommit(Txn txn)`
-  - `void commit(Txn txn)`
-  - `void abort(Txn txn)`
-  - `Txn recoverAndCommit(Txn serializedTxn)` / `Txn recoverAndAbort(...)`（恢复与补偿）
-- Txn 需要可序列化（写入 checkpoint state snapshot）。
+API 已落地：`core` 定义 `TwoPhaseCommitSink<T, Txn extends Serializable>`，完整签名与提案差异见下方 As-built。
 
-**恢复语义（关键）**：
-- 恢复时读取最近的 `sinkCommitted=true` checkpoint：
-  - 若存在“已写 checkpoint 但未 commit”的事务句柄：调用 `recoverAndCommit`（或 `abort`，取决于语义）来完成补偿。
-  - 确保不会出现“ACK 已推进但 sink 未提交”的状态。
+恢复语义是关键。恢复时依据 checkpoint 里的 `sinkCommitted` marker 判断：marker 存在说明句柄已提交过，跳过；marker 缺失（store 后 commit 前崩溃）则对留存句柄执行 `recoverAndCommit` 补偿。ACK 排在 `markSinkCommitted` 之后，不会出现“ACK 已推进但 sink 未提交”的状态。
 
-**优点**：在支持事务的 sink 上可获得严格 exactly-once side effects。  
-**缺点**：实现复杂；每个 sink 都要实现事务协议；外部系统不支持事务时无法使用。
+在支持事务的 sink 上可以拿到严格的 exactly-once side effects；代价是实现复杂，每个 sink 都要实现事务协议，外部系统不支持事务时用不了。
 
-**As-built（2026-09-28 落地，与上述提案的差异以此为准）**：
+As-built 以 2026-09-28 的落地实现为准，与上述提案的差异如下：
 
-- **API**（`core/.../api/stream/TwoPhaseCommitSink.java`）：`Txn beginTxn()`（无 checkpointId 参数，由运行时在 epoch 首条消息前**惰性开启**，commit/abort 后自动开新 epoch）、`invoke(T value, Txn txn)`、`preCommit(Txn)`、`commit(Txn)`、`abort(Txn)`（默认委托 `recoverAndAbort`）、`Txn recoverAndCommit(Txn)` / `Txn recoverAndAbort(Txn)`。`Txn extends Serializable`。单参 `invoke(T)` 被桥接为 fail-fast（2PC sink 不允许直写）。
-- **句柄持久化**：`TwoPhaseCommitCoordinator`（runtime）以 Java 序列化 + Base64 编码句柄，存储无关（内存/Redis checkpoint 皆可放）；checkpoint 快照键 `runtime:txns`，键 `"runnerIndex:sinkIndex"`，空 map 不写键。
-- **运行时序**：`prepareCommit → storeCheckpoint(handle) → commit → markSinkCommitted → ack`；空 epoch 也 preCommit（句柄总是落 checkpoint）。
-- **commit 抛错不予 abort 补偿**：句柄已落 checkpoint，丢弃会丢数据——epoch 保持未决，恢复路径从存储句柄重放 `recoverAndCommit`（幂等）。仅 preCommit 失败或 store 失败走 `abort`。
-- **恢复补偿**：restore 后按 runner 索引回放——`sinkCommitted` marker 存在→句柄已过期跳过；marker 缺失（store 后 commit 前崩溃）→逐个 `recoverAndCommit`；补偿失败仅记日志不阻断启动。
-- **参考实现**：`RedisOutboxSink<T>`（方案 C 的 outbox 即以 2PC API 驱动：preCommit 逐条 XADD、commit 翻 epoch 状态 COMMITTED）。注意其投递语义为 at-least-once，端到端 exactly-once 需目标端按稳定 record id 幂等（方案 C 折中口径）。
-- **测试**：`TwoPhaseCommitSinkTest`（6）、`TwoPhaseCommitCoordinatorTest`（9）、`RedisPipelineRunnerTwoPhaseCommitTest`（5）、`TwoPhaseCommitFaultInjectionTest`（11，含 store 后 commit 前崩溃/commit 抛错/store 失败注入）、`TwoPhaseCommitRecoveryCompensationTest`（4）；v2.5 侧 sink/dispatcher/fault 28 例。集成测试（真 Redis 故障注入与恢复）挂起，依赖 Redis 环境的集成条目。
+- API（`core/.../api/stream/TwoPhaseCommitSink.java`）：`Txn beginTxn()`（无 checkpointId 参数，由运行时在 epoch 首条消息前**惰性开启**，commit/abort 后自动开新 epoch）、`invoke(T value, Txn txn)`、`preCommit(Txn)`、`commit(Txn)`、`abort(Txn)`（默认委托 `recoverAndAbort`）、`Txn recoverAndCommit(Txn)` / `Txn recoverAndAbort(Txn)`。`Txn extends Serializable`。单参 `invoke(T)` 被桥接为 fail-fast（2PC sink 不允许直写）。
+- 句柄持久化：`TwoPhaseCommitCoordinator`（runtime）以 Java 序列化 + Base64 编码句柄，存储无关（内存/Redis checkpoint 皆可放）；checkpoint 快照键 `runtime:txns`，键 `"runnerIndex:sinkIndex"`，空 map 不写键。
+- 运行时序固定为 `prepareCommit → storeCheckpoint(handle) → commit → markSinkCommitted → ack`；空 epoch 也 preCommit（句柄总是落 checkpoint）。
+- commit 抛错不予 abort 补偿：句柄已落 checkpoint，丢弃会丢数据——epoch 保持未决，恢复路径从存储句柄重放 `recoverAndCommit`（幂等）。仅 preCommit 失败或 store 失败走 `abort`。
+- 恢复补偿：restore 后按 runner 索引回放——`sinkCommitted` marker 存在→句柄已过期跳过；marker 缺失（store 后 commit 前崩溃）→逐个 `recoverAndCommit`；补偿失败仅记日志不阻断启动。
+- 参考实现是 `RedisOutboxSink<T>`（方案 C 的 outbox 即以 2PC API 驱动：preCommit 逐条 XADD、commit 翻 epoch 状态 COMMITTED）。其投递语义为 at-least-once，端到端 exactly-once 需目标端按稳定 record id 幂等（方案 C 折中口径）。
+- 测试：`TwoPhaseCommitSinkTest`（6）、`TwoPhaseCommitCoordinatorTest`（9）、`RedisPipelineRunnerTwoPhaseCommitTest`（5）、`TwoPhaseCommitFaultInjectionTest`（11，含 store 后 commit 前崩溃/commit 抛错/store 失败注入）、`TwoPhaseCommitRecoveryCompensationTest`（4）；v2.5 侧 sink/dispatcher/fault 28 例。以上均为 Mock/单元级测试；真 Redis 故障注入与恢复的集成测试尚未提供。
 
 ### 方案 C：Outbox / WAL（推荐作为 v2.5 或特定场景）
 
-**思路**：把 side effects 写入一个“可恢复的 outbox”（例如 Redis Stream/Hash/表），outbox 写入与 checkpoint 同域（Redis 内部），然后由异步 dispatcher 把 outbox 投递到外部系统。
+把 side effects 写入一个“可恢复的 outbox”（例如 Redis Stream/Hash/表），outbox 写入与 checkpoint 同域（Redis 内部），然后由异步 dispatcher 把 outbox 投递到外部系统。
 
-- **优势**：把“外部投递”变成可重试的后处理；checkpoint 只需要保证 outbox 记录不丢不重。
-- **要求**：dispatcher 必须具备幂等投递能力（通常仍需要外部幂等或投递去重表）。
-- **代价**：增加延迟与存储；系统变成“最终一致”。
+外部投递由此变成可重试的后处理，checkpoint 只需要保证 outbox 记录不丢不重。前提是 dispatcher 必须具备幂等投递能力（通常仍需要外部幂等或投递去重表）；代价是增加延迟与存储，系统变成“最终一致”。
 
 ### 方案 D：Redis 内部 exactly-once（单 Redis 实例/同槽位键）
 
-**思路**：若 sink 也落在 Redis 中（并且 keys 可保证同一 Redis 实例/同 hash slot），可用 Lua 将：
+若 sink 也落在 Redis 中（并且 keys 可保证同一 Redis 实例/同 hash slot），可以把写 sink（如 HSET/SET/Stream add）、更新 commit frontier（offset）、执行 `XACK` 三步打包成一个 Lua 脚本原子执行，获得“Redis 视角”的 exactly-once。
 
-- 写 sink（如 HSET/SET/Stream add）
-- 更新 commit frontier（offset）
-- 执行 `XACK`
+限制有两条：Redis Cluster 下跨 slot key 无法在同一个 Lua 脚本原子执行（除非使用 hash tags 强制同槽位）；这类 exactly-once 仅在“sink 也在 Redis 内”时才成立。
 
-打包成一个 Lua 脚本原子执行，获得“Redis 视角”的 exactly-once。
-
-**限制**：
-- Redis Cluster 下跨 slot key 无法在同一个 Lua 脚本原子执行（除非使用 hash tags 强制同槽位）。
-- 这类 exactly-once 仅在“sink 也在 Redis 内”时才成立。
-- 进一步增强（与 checkpoint 对齐）：可以将 sink side effects 延迟到 checkpoint 完成点，并在 checkpoint complete 之后统一提交（例如 `RedisCheckpointedIdempotentListSink` 这种 “commit-on-checkpoint” 模式）。
-- Redis-only 原子提交（单 Lua）：可以在 checkpoint complete 时用 Lua 将 “写入 sink + XACK + 推进 commit frontier” 打包成单脚本原子执行（参考：`RedisAtomicCheckpointListSink` + `RedisExactlyOnceRecord`）。
+与 checkpoint 对齐的增强做法有两种。一是把 sink side effects 延迟到 checkpoint 完成点、checkpoint complete 之后统一提交，例如 `RedisCheckpointedIdempotentListSink` 这种 “commit-on-checkpoint” 模式；二是在 checkpoint complete 时用单条 Lua 把 “写入 sink + XACK + 推进 commit frontier” 打包成一次原子执行（`RedisAtomicCheckpointListSink` + `RedisExactlyOnceRecord`）。
 
 ## 推荐落地路线（分阶段）
 
@@ -117,14 +91,11 @@ Redis runtime 当前提供的是 “at-least-once + 更强对齐”的一致性�
   - 参考实现：`core` 提供 `IdempotentRecord<T>`，`runtime` 提供 `RedisIdempotentListSink<T>`（Lua 原子去重 + RPUSH）。
   - 注意：在 Redis Cluster 下，Lua 脚本要求所有 KEYS 在同一 hash slot；建议对 dedup key 与 sink key 使用相同 hash tag（如 `xxx:{job}:seen`、`xxx:{job}:list`）。
 
-### v2：Two-Phase Commit Sink（严格 exactly-once）
+### v2：Two-Phase Commit Sink（已落地，见方案 B 的 As-built）
 
-- 引入 `TwoPhaseCommitSink` API，并在 Redis runtime checkpoint 流程中实现：
-  - `begin -> invoke -> preCommit -> storeCheckpoint(txnHandle) -> commit -> mark sinkCommitted -> ack`
-- 增加恢复补偿：读取 checkpoint 中的 txnHandle 并 `recoverAndCommit`。
-- 增加故障注入集成测试：
-  - 在 `onCheckpointComplete/commit` 抛异常
-  - 在 “checkpoint 已写入但 commit 未执行” 的窗口重启，验证不会丢/不会重复效果
+- `core` 的 `TwoPhaseCommitSink<T, Txn>` 与 runtime 的 `TwoPhaseCommitCoordinator` 按 `beginTxn -> invoke -> preCommit -> storeCheckpoint(txn 句柄) -> commit -> markSinkCommitted -> ack` 运行。
+- 恢复补偿已实现：restore 后按留存句柄回放 `recoverAndCommit`。
+- 故障注入覆盖：`TwoPhaseCommitFaultInjectionTest`（11 例，含 commit 抛错、store 后 commit 前崩溃、store 失败）、`TwoPhaseCommitRecoveryCompensationTest`（4 例）；真 Redis 重启恢复的集成测试尚未提供。
 
 ### v3：扩展到更多 sink（JDBC/Kafka/HTTP）
 
@@ -132,10 +103,10 @@ Redis runtime 当前提供的是 “at-least-once + 更强对齐”的一致性�
 - Kafka：如果 sink 是 Kafka，需要与 Kafka producer transactions 结合；但“source=Redis Streams”时仍是跨系统边界，通常仍需 outbox/2PC 或业务幂等。
 - HTTP：通常只能做“幂等请求 + 重试 + 去重 token”，很难做严格 exactly-once。
 
-## 与当前配置/运维的关系（重要）
+## 与当前配置/运维的关系
 
 - `deferAckUntilCheckpoint=true` 时，消息会在 Redis Streams pending list 中停留更久：
-  - `mq.claimIdleMs` 必须大于 checkpoint 周期（interval + drain），否则 pending 可能被 claim 导致重复处理。
+  - `mq.claimIdleMs`（`MqOptions.claimIdleMs`，默认 `300000` 即 5 分钟；Builder 把 ≤0 钳为 1）必须大于 checkpoint 周期（interval + drain），否则 pending 可能被 claim 导致重复处理。Redis runtime 启动时校验该关系，不满足则打 warn 日志（`RedisStreamExecutionEnvironment` 中 `interval + drain >= claimIdleMs` 的分支）。
 - exactly-once 的工程落地需要：
   - 明确 checkpoint 周期与故障恢复策略
   - 明确 sink 幂等键的生命周期（TTL、存储成本、回收）

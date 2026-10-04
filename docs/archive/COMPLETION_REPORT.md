@@ -3,9 +3,9 @@
 This report summarizes the current implementation status of each Gradle submodule and the overall test/quality posture.
 
 ## Scope
-- **Unit tests**: run with `./gradlew test` (excludes `@Tag("integration")`)
-- **Integration tests**: run with `docker-compose up -d && ./gradlew integrationTest && docker-compose down`
-- **Coverage**: `./gradlew jacocoRootReport` → `build/reports/jacoco/jacocoRootReport/html/index.html`
+- Unit tests: run with `./gradlew test` (excludes `@Tag("integration")`)
+- Integration tests: run with `docker-compose up -d && ./gradlew integrationTest && docker-compose down`
+- Coverage: `./gradlew jacocoRootReport` → `build/reports/jacoco/jacocoRootReport/html/index.html`
 
 ## Module Status (20 modules)
 

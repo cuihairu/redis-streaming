@@ -1,22 +1,21 @@
 # Registry - 服务注册与发现
 
-基于 Redis 的分布式服务注册与发现模块，支持多协议健康检查和智能 Metadata 过滤。
+基于 Redis 的分布式服务注册与发现模块，支持多协议健康检查与 metadata/metrics 过滤。
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/cuihairu/redis-streaming)
-[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/cuihairu/redis-streaming)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/cuihairu/redis-streaming)
 
 ## 核心特性
 
-### 已实现功能
-
-- **服务注册与注销** - 基于 Redis Hash 的服务实例管理
-- **心跳机制** - Redis Sorted Set + Lua 脚本优化的高效心跳
-- **服务发现** - 实时服务实例查询，支持健康过滤
-- **多协议健康检查** - HTTP/HTTPS/TCP/WebSocket/gRPC/自定义协议
-- **服务变更通知** - Redis Pub/Sub 实时推送服务状态变更
-- **Metadata 智能过滤** - 🆕 支持比较运算符（`>`, `>=`, `<`, `<=`, `!=`, `==`）
-- **临时/永久实例** - 支持临时实例（自动过期）和永久实例管理
-- **负载均衡支持** - 基于权重、CPU、延迟等 Metadata 的智能路由
+- 服务注册与注销基于 Redis Hash，注册/注销走 Lua 原子脚本
+- 心跳用 ZSet + 实例 Hash，按 metadata/metrics 分级更新（Lua 脚本原子执行）
+- 临时/永久实例：`ephemeral=true`（默认）心跳超时清理并带滑动 TTL；`ephemeral=false` 只标记 unhealthy 不删除
+- 服务发现支持健康过滤的实时实例查询
+- metadata/metrics 过滤在服务端 Lua 完成，支持比较运算符（`>`, `>=`, `<`, `<=`, `!=`, `==`）
+- 多协议健康检查覆盖 HTTP/HTTPS（GET /health）、TCP/UDP、WS/WSS，其他协议走 TCP 连通性，`CustomHealthChecker` 可自定义
+- 服务变更经 Redis Pub/Sub 推送 `ADDED`/`REMOVED`/`UPDATED`/`CURRENT`/`HEALTH_RECOVERY`/`HEALTH_FAILURE`
+- 客户端负载均衡提供加权轮询、加权随机、一致性哈希、按权重+地域+指标评分
+- 调用封装：`ClientSelector` 过滤降级回退、`ClientInvoker` 熔断+重试+指标上报
 
 ## 快速开始
 
@@ -24,7 +23,7 @@
 
 ```gradle
 dependencies {
-    implementation 'io.github.cuihairu.redis-streaming:registry:0.1.0'
+    implementation 'io.github.cuihairu.redis-streaming:registry:0.2.0'
 }
 ```
 
@@ -32,83 +31,82 @@ dependencies {
 
 ```java
 import io.github.cuihairu.redis.streaming.registry.*;
+import io.github.cuihairu.redis.streaming.registry.impl.RedisNamingService;
 import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
 
-// 配置 Redis
 Config config = new Config();
 config.useSingleServer().setAddress("redis://127.0.0.1:6379");
 RedissonClient redissonClient = Redisson.create(config);
 
-// 创建 NamingService
+// 自定义键前缀时传入 NamingServiceConfig("myapp")，默认前缀 redis_streaming_registry
 NamingService namingService = new RedisNamingService(redissonClient);
-namingService.start();
+namingService.start();   // 未 start 时 register/discover 抛 IllegalStateException
 ```
 
 ### 3. 注册服务实例
 
 ```java
-// 准备 metadata
 Map<String, String> metadata = new HashMap<>();
 metadata.put("version", "1.0.0");
 metadata.put("region", "us-east-1");
-metadata.put("zone", "zone-a");
 metadata.put("weight", "100");
-metadata.put("cpu_usage", "45");
 
-// 创建服务实例
 ServiceInstance instance = DefaultServiceInstance.builder()
     .serviceName("order-service")
     .instanceId("order-service-001")
     .host("192.168.1.100")
     .port(8080)
     .protocol(StandardProtocol.HTTP)
+    .weight(100)
     .metadata(metadata)
     .build();
 
-// 注册实例
 namingService.register(instance);
 ```
 
+注意：`serviceName` 与 `instanceId` 不能包含 `:`（注册前会被 `RegistryKeys.validateAndSanitizeXxx` 校验，含 `:` 抛异常）。
+
 ### 4. 服务发现
 
-#### 4.1 基础查询
-
 ```java
-// 获取所有实例
+// 所有实例（心跳窗口内）
 List<ServiceInstance> allInstances = namingService.getAllInstances("order-service");
 
-// 获取健康实例
+// 健康实例
 List<ServiceInstance> healthyInstances = namingService.getHealthyInstances("order-service");
-```
 
-#### 4.2 Metadata 过滤（精确匹配）
-
-```java
+// metadata 过滤（等值）
 Map<String, String> filters = new HashMap<>();
 filters.put("version", "1.0.0");
 filters.put("region", "us-east-1");
-
 List<ServiceInstance> filtered = namingService.getInstancesByMetadata("order-service", filters);
+
+// metadata 过滤（比较运算符）
+Map<String, String> cmp = new HashMap<>();
+cmp.put("weight:>=", "80");            // weight >= 80
+cmp.put("cpu_usage:<", "70");          // cpu_usage < 70
+cmp.put("region", "us-east-1");        // 等值
+cmp.put("status:!=", "maintenance");
+List<ServiceInstance> filteredInstances =
+    namingService.getHealthyInstancesByMetadata("order-service", cmp);
 ```
 
-#### 4.3 Metadata 过滤（比较运算符）
+### 5. 监听服务变更
 
 ```java
-// 高级过滤：使用比较运算符
-Map<String, String> filters = new HashMap<>();
-filters.put("weight:>=", "80");           // 权重 >= 80
-filters.put("cpu_usage:<", "70");         // CPU使用率 < 70%
-filters.put("region", "us-east-1");       // 精确匹配
-filters.put("status:!=", "maintenance");  // 排除维护状态
+namingService.subscribe("order-service", (serviceName, action, instance, allInstances) -> {
+    System.out.println(action + " - " + instance.getInstanceId());
+    System.out.println("current instances: " + allInstances.size());
+});
+```
 
-List<ServiceInstance> filteredInstances =
-    namingService.getInstancesByMetadata("order-service", filters);
+`action` 是 `ServiceChangeAction` 枚举（`toString()` 返回小写值）。Spring Boot 下也可用 `@ServiceChangeListener` 注解，见 [docs/Registry-Guide.md](../docs/Registry-Guide.md)。
 
-## ⚖️ 客户端负载均衡（新）
+## 客户端负载均衡
 
-推荐做法：先服务端过滤缩小候选集，然后在客户端根据 metadata/metrics 做“选优”。
+推荐做法：先用服务端过滤缩小候选集，再在客户端按 metadata/metrics 选优。
 
 ### 1) 构建过滤条件（可选）
 
@@ -125,7 +123,9 @@ Map<String, String> mt = FilterBuilder.create()
   .metricLte("latency", 50)
   .buildMetrics();
 
-List<ServiceInstance> candidates = namingService.getHealthyInstancesByFilters("order-service", md, mt);
+// getHealthyInstancesByFilters 定义在 RedisNamingService 上
+RedisNamingService impl = (RedisNamingService) namingService;
+List<ServiceInstance> candidates = impl.getHealthyInstancesByFilters("order-service", md, mt);
 ```
 
 ### 2) 选择策略
@@ -133,51 +133,46 @@ List<ServiceInstance> candidates = namingService.getHealthyInstancesByFilters("o
 ```java
 import io.github.cuihairu.redis.streaming.registry.loadbalancer.*;
 
-// 加权轮询（平滑）：权重来自 metadata.weight 或实例 weight
+// 加权轮询（平滑）：权重优先取 metadata.weight（能解析为整数时），否则取 instance weight
 LoadBalancer wrr = new WeightedRoundRobinLoadBalancer();
 ServiceInstance chosen1 = wrr.choose("order-service", candidates, Map.of());
 
-// 一致性哈希：按用户ID等做粘滞路由
+// 一致性哈希：context 需带 "hashKey"，缺失时回退第一个实例；默认 128 虚拟节点
 LoadBalancer ch = new ConsistentHashLoadBalancer(128);
 ServiceInstance chosen2 = ch.choose("order-service", candidates, Map.of("hashKey", userId));
 
-// 评分选优（按权重×地域偏好×CPU/延迟等指标）
+// 评分选优：权重 × 地域偏好 × CPU/延迟等指标，硬阈值超限直接剔除
 LoadBalancerConfig cfg = new LoadBalancerConfig();
-cfg.setPreferredRegion("us-east-1");
+cfg.setPreferredRegion("us-east-1");   // 命中 metadata.region 时分数乘 regionBoost（默认 1.1）
 cfg.setCpuWeight(1.0);
 cfg.setLatencyWeight(1.0);
 
-// 需要从 Redis Hash 拉取 metrics（本地短缓存）
-MetricsProvider mp = new RedisMetricsProvider(redissonClient, serviceConsumer.getConfig());
+// 从实例 Hash 的 metrics JSON 读指标（本地 500ms 缓存）
+MetricsProvider mp = new RedisMetricsProvider(redissonClient, new ServiceConsumerConfig());
 LoadBalancer scored = new ScoredLoadBalancer(cfg, mp);
 ServiceInstance chosen3 = scored.choose("order-service", candidates, Map.of());
 ```
 
-也可以一步到位：
+一步到位：
 
 ```java
-ServiceInstance chosen = ((RedisNamingService)namingService)
-  .chooseHealthyInstanceByFilters("order-service", md, mt, scored, Map.of());
+ServiceInstance chosen = impl.chooseHealthyInstanceByFilters("order-service", md, mt, scored, Map.of());
 ```
 
-提示：如果过滤结果为空，可以回退到放宽条件或全量健康实例再做负载均衡。
+过滤结果为空时可回退到放宽条件或全量健康实例再做负载均衡。
 
 ### ClientSelector 一站式选择（含降级回退）
 
 ```java
 import io.github.cuihairu.redis.streaming.registry.client.*;
-import io.github.cuihairu.redis.streaming.registry.loadbalancer.*;
 
 ClientSelector selector = new ClientSelector(namingService, new ClientSelectorConfig());
 
-// 严格过滤 (metadata+metrics) 失败 -> 自动回退：去除 metrics 过滤 -> 去除 metadata 过滤 -> 使用全量健康实例
+// 严格过滤 (metadata+metrics) 无候选时依次回退：
+// 去掉 metrics 过滤 -> 去掉 metadata 过滤 -> 全量健康实例；仍无候选返回 null
+// 顺序与开关由 ClientSelectorConfig 的三个 fallback* 开关控制，默认全开
 ServiceInstance picked = selector.select(
-  "order-service",
-  md, mt,
-  new WeightedRoundRobinLoadBalancer(),
-  Map.of()
-);
-```
+  "order-service", md, mt, new WeightedRoundRobinLoadBalancer(), Map.of());
 ```
 
 ## 客户端调用封装（熔断 + 重试 + 指标上报）
@@ -185,67 +180,52 @@ ServiceInstance picked = selector.select(
 ```java
 import io.github.cuihairu.redis.streaming.registry.client.*;
 import io.github.cuihairu.redis.streaming.registry.client.metrics.RedisClientMetricsReporter;
-import io.github.cuihairu.redis.streaming.registry.loadbalancer.*;
 
-// 1) 选择策略与重试
-LoadBalancer lb = new ScoredLoadBalancer(new LoadBalancerConfig(), new RedisMetricsProvider(redissonClient, serviceConsumer.getConfig()));
+ServiceConsumerConfig consumerConfig = new ServiceConsumerConfig();
+LoadBalancer lb = new ScoredLoadBalancer(new LoadBalancerConfig(),
+        new RedisMetricsProvider(redissonClient, consumerConfig));
 RetryPolicy retry = new RetryPolicy(3, 20, 2.0, 200, 20);
-RedisClientMetricsReporter reporter = new RedisClientMetricsReporter(redissonClient, serviceConsumer.getConfig());
+RedisClientMetricsReporter reporter = new RedisClientMetricsReporter(redissonClient, consumerConfig);
 
 ClientInvoker invoker = new ClientInvoker(namingService, lb, retry, reporter);
 
-// 2) 发起调用（示例：用 ServiceInstance 信息拼接 URL 发 HTTP 请求）
-Map<String,String> md = Map.of("region","us-east-1");
-Map<String,String> mt = Map.of("cpu:<","80");
+Map<String, String> md = Map.of("region", "us-east-1");
+Map<String, String> mt = Map.of("cpu:<", "80");
 String body = invoker.invoke("order-service", md, mt, Map.of(), ins -> {
-  String url = ins.getScheme()+"://"+ins.getHost()+":"+ins.getPort()+"/api/orders";
-  // do HTTP call (略)；抛异常会触发重试/熔断
-  return "ok";
+    String url = ins.getScheme() + "://" + ins.getHost() + ":" + ins.getPort() + "/api/orders";
+    // 发起 HTTP 调用；抛异常会触发重试与熔断计数
+    return "ok";
 });
 ```
 
-说明：
-- 重试：指数回退 + 抖动；失败会进行下一次选择；每次调用都会记录 clientInflight/clientLatencyMs/clientErrorRate。
-- 熔断：单实例级别的 CB；失败率超阈值则打开一段时间，自动半开探测。
+- 重试：指数回退 + 抖动，失败后重新选择实例；`RetryPolicy` 传 null 时 `ClientInvoker` 默认 `(3, 10, 2.0, 200, 10)`
+- 熔断：每个 `serviceName:instanceId` 一个 `CircuitBreaker`（窗口 20 次、失败率阈值 0.5、打开 5 秒、半开 1 次探测），打开期间直接跳过该实例
+- 指标上报：实例 Hash `metrics` JSON 中的 `clientInflight` / `clientLatencyMs` / `clientErrorRate`，与服务端心跳写入的指标合并、互不覆盖
 
 ### 观测接口
 
 ```java
-// 获取 ClientInvoker 指标快照（total + per service）
+// ClientInvoker 计数快照（total + per service）
+// 键：attempts, successes, failures, retries, cbOpenSkips
 Map<String, Map<String, Long>> stats = invoker.getMetricsSnapshot();
-// keys: attempts, successes, failures, retries, cbOpenSkips
 ```
 
 ## 生产建议配置
 
 - 目标与阈值
-  - ScoredLoadBalancer 建议设置 `targetLatencyMs`（如 50~100ms）
-  - 硬阈值（超出即剔除）：`maxCpuPercent`、`maxLatencyMs`、`maxMemoryPercent`、`maxInflight`、`maxQueue`、`maxErrorRatePercent`
-  - 示例：`maxCpuPercent=80`、`maxLatencyMs=200`、`maxErrorRatePercent=5`
+  - `ScoredLoadBalancer` 建议按业务设置 `targetLatencyMs`（如 50~100ms）
+  - 硬阈值（超出即剔除，默认 -1 关闭）：`maxCpuPercent`、`maxLatencyMs`、`maxMemoryPercent`、`maxInflight`、`maxQueue`、`maxErrorRatePercent`，例如 `maxCpuPercent=80`、`maxLatencyMs=200`、`maxErrorRatePercent=5`
 
 - 地域与分区偏好
-  - `preferredRegion` / `preferredZone` 配合 `regionBoost`/`zoneBoost`（如 1.1/1.05）
-  - metadata 中维护 `region`/`zone`，与部署拓扑一致
+  - `preferredRegion` / `preferredZone` 配合 `regionBoost`（默认 1.1）/ `zoneBoost`（默认 1.05）
+  - 需要在实例 metadata 中维护 `region` / `zone`
 
-- 指标选择
-  - metrics JSON 中建议提供：`cpu`（0..100）/`latency`（ms）/`memory`（0..100）/`inflight`（当前并发）/`queue`（排队长度）/`errorRate`（0..100），以及可选 `rxBytes`/`txBytes`（网络字节累计）
-  - 根据业务场景启用权重：`cpuWeight`、`latencyWeight`、`memoryWeight`、`inflightWeight`、`queueWeight`、`errorRateWeight`
+- metrics 键名对齐
+  - `ScoredLoadBalancer` 默认读 `cpu`、`latency`、`memory`、`inflight`、`queue`、`errorRate`，可用 `setCpuKey(...)` 等修改
+  - 内置采集器产出的是 `processCpuLoad`（0~1）、`heap_usagePercent`、`threadCount`、`rxBytes`/`txBytes` 等键；客户端上报写 `clientInflight`/`clientLatencyMs`/`clientErrorRate`。二者与 LB 默认键不一致，需用 `setXxxKey` 对齐或由业务方补充同键名指标
 
 - 回退策略
-  - 使用 `ClientSelector` 统一“严格过滤 → 放宽 → 全量健康”，保证在高峰/抖动时平滑退化
-
-- 观测与告警
-  - 建议在业务侧打点记录：候选数量、被阈值剔除数量、最终选择实例与得分、回退发生次数
-  - 对于频繁回退或大规模剔除，第一时间告警（可能是容量不足或异常扩容）
-
-### 5. 监听服务变更
-
-```java
-namingService.subscribe("order-service", (serviceName, action, instance, allInstances) -> {
-    System.out.println("Service changed: " + action + " - " + instance.getInstanceId());
-    System.out.println("Current healthy instances: " + allInstances.size());
-});
-```
+  - 用 `ClientSelector` 统一「严格过滤 → 放宽 → 全量健康」，保证高峰/抖动时平滑退化
 
 ## Metadata 比较运算符
 
@@ -262,131 +242,61 @@ namingService.subscribe("order-service", (serviceName, action, instance, allInst
 
 ### 比较规则
 
-框架会智能识别 metadata 值的类型并选择合适的比较方式：
-
-#### 1. 数值比较（推荐）
-
-当 metadata 值可以转换为数字时，使用数值比较：
+过滤在服务端 Lua 执行，先尝试把两侧转为数字做数值比较；任一侧无法转数字时回退字典序比较：
 
 ```java
-// ✅ 正确：数值比较
-filters.put("weight:>", "10");
-// 内部处理：tonumber("15") > tonumber("10")  → 15 > 10 = true ✅
-// 实例 weight="15" 会被匹配
+// 数值比较
+filters.put("weight:>", "10");     // weight="15" -> 15 > 10，匹配
+filters.put("price:<=", "99.99");  // "89.99" <= "99.99"，匹配
 
-// ✅ 正确：浮点数比较
-filters.put("price:<=", "99.99");
-// 内部处理：tonumber("89.99") <= tonumber("99.99")  → 89.99 <= 99.99 = true ✅
+// 字典序比较（谨慎）
+filters.put("zone:>", "zone-a");   // "zone-b" > "zone-a"，按字典序匹配
 
-// ✅ 正确：负数比较
-filters.put("temperature:>", "0");
-// 内部处理：tonumber("10") > tonumber("0")  → 10 > 0 = true ✅
+// 版本号陷阱：非纯数字串走字典序
+filters.put("version:>", "1.10.0"); // "1.2.0" > "1.10.0" 为 false
 ```
 
-#### 2. 字符串比较（字典序）
-
-当无法转换为数字时，使用字典序比较：
+### 应用场景
 
 ```java
-// ⚠️ 谨慎：字典序比较
-filters.put("zone:>", "zone-a");
-// 内部处理："zone-b" > "zone-a"  → true ✅ (字典序)
-
-// ❌ 陷阱：数字字符串如果不是纯数字
-filters.put("version:>", "1.10.0");
-// "1.2.0" > "1.10.0"  → false ❌ (字典序: "1.2" < "1.1")
-```
-
-### 实际应用场景
-
-#### 场景 1: 智能负载均衡
-
-```java
-// 只路由到高权重、低负载的实例
+// 场景 1：只路由到高权重、低负载的实例；无结果时放宽条件
 Map<String, String> filters = new HashMap<>();
-filters.put("weight:>=", "80");          // 权重 >= 80
-filters.put("cpu_usage:<", "70");        // CPU < 70%
-filters.put("latency:<=", "100");        // 延迟 <= 100ms
-filters.put("region", "us-east-1");      // 同区域
-
+filters.put("weight:>=", "80");
+filters.put("cpu_usage:<", "70");
 List<ServiceInstance> instances =
     namingService.getHealthyInstancesByMetadata("order-service", filters);
-
 if (instances.isEmpty()) {
-    // Fallback：放宽条件
     filters.clear();
     filters.put("cpu_usage:<", "80");
-    filters.put("region", "us-east-1");
     instances = namingService.getHealthyInstancesByMetadata("order-service", filters);
 }
-```
 
-#### 场景 2: 金丝雀发布
-
-```java
-// 10% 流量路由到新版本 v2.0.0
+// 场景 2：按版本分流（等值匹配，不要用范围运算符比较版本号）
 Map<String, String> newVersion = Map.of("version", "2.0.0");
-
-// 90% 流量路由到稳定版本 v1.0.0
-Map<String, String> stableVersion = Map.of("version", "1.0.0");
-
-// 根据随机数决定路由
-if (Math.random() < 0.1) {
-    // 10% 流量
-    instances = namingService.getHealthyInstancesByMetadata("order-service", newVersion);
-} else {
-    // 90% 流量
-    instances = namingService.getHealthyInstancesByMetadata("order-service", stableVersion);
-}
+List<ServiceInstance> canary =
+    namingService.getHealthyInstancesByMetadata("order-service", newVersion);
 ```
-
-#### 场景 3: 性能导向选择
-
-```java
-// 选择低延迟、低 CPU 使用率的实例
-Map<String, String> filters = new HashMap<>();
-filters.put("latency:<", "50");        // 延迟 < 50ms
-filters.put("cpu_usage:<", "70");      // CPU使用率 < 70%
-filters.put("memory_usage:<", "80");   // 内存使用率 < 80%
-filters.put("region", "us-east-1");    // 同区域
-
-List<ServiceInstance> performantInstances =
-    namingService.getHealthyInstancesByMetadata("compute-service", filters);
-```
-
-## 完整文档
-
-更多详细信息请参考：
-
-- **[Metadata 过滤查询指南](METADATA_FILTERING_GUIDE.md)** - 完整的比较运算符使用指南
-- **[集成指南](../INTEGRATION_GUIDE.md)** - Spring Boot 集成和使用示例
-- **[API 文档](../docs/API.md)** - 完整的 API 参考
 
 ## 架构设计
 
 ### 三级存储结构
 
-1. **服务索引层** - `streaming:registry:services` (Set)
-   - 存储所有已注册的服务名称
+前缀默认 `redis_streaming_registry`（`registry.BaseRedisConfig.DEFAULT_KEY_PREFIX`），键模板见 `keys.RegistryKeys`：
 
-2. **心跳层** - `streaming:registry:service:{serviceName}:heartbeats` (Sorted Set)
-   - Key: 实例 ID
-   - Score: 最后心跳时间戳
-   - 用于快速判断实例是否活跃
+1. 服务索引层 `{prefix}:services`（Set）：存储所有已注册的服务名
+2. 心跳层 `{prefix}:services:{serviceName}:heartbeats`（ZSet）：score=最后心跳时间戳、member=instanceId
+3. 实例详情层 `{prefix}:services:{serviceName}:instance:{instanceId}`（Hash）：字段含 host/port/protocol/enabled/healthy/weight/ephemeral/metadata(JSON)/metrics(JSON)/registrationTime/lastHeartbeatTime 等
 
-3. **实例详情层** - `streaming:registry:service:{serviceName}:instance:{instanceId}` (Hash)
-   - 存储完整的实例信息（host, port, metadata 等）
+另有通知通道 `{prefix}:services:{serviceName}:changes`（Pub/Sub）。
 
-### Lua 脚本优化
+### Lua 脚本
 
-- **心跳更新** - 原子化心跳更新和实例数据刷新
-- **Metadata 过滤** - 服务端过滤，减少网络传输
-- **SHA-1 缓存** - Redisson 自动脚本缓存，提升性能
+注册、注销、心跳更新、过期清理、活跃实例查询、metadata/metrics 过滤均由 `lua.RegistryLuaScriptExecutor` 中的 Lua 脚本原子执行（Redisson `RScript`）。
 
 ## 测试
 
 ```bash
-# 运行单元测试
+# 运行单元测试（无需 Redis）
 ./gradlew :registry:test
 
 # 运行集成测试（需要 Redis）
@@ -394,44 +304,31 @@ docker-compose up -d
 ./gradlew :registry:integrationTest
 ```
 
-测试覆盖率：
-- 单元测试：27 个测试用例
-- 集成测试：14 个比较运算符测试用例
-- 覆盖率：85%+
+当前规模（统计自源码）：
+- 单元测试：1271 个 `@Test` 方法（`registry/src/test` 下 grep 统计）
+- 比较运算符专项：`ComparisonOperatorTest` 15 个用例
+- 覆盖率：`./gradlew :registry:jacocoTestReport` 生成的最近一份报告为行覆盖 97.5%、分支覆盖 89.8%（仅单元测试口径）
 
 ## 注意事项
 
-### 运算符相关
-
-1. **AND 逻辑** - 所有 metadata 过滤条件必须同时满足（AND 关系）
-2. **精确匹配** - 等于运算符（默认或 `==`）必须完全匹配
-3. **大小写敏感** - metadata 的 key 和 value 都是大小写敏感的
-4. **不存在的字段** - 如果实例没有某个 metadata 字段，该实例不会被匹配
-
-### 比较规则相关
-
-5. **数值优先** - 框架优先尝试数值比较，失败则使用字符串比较
-6. **字典序陷阱** - 字符串大小比较使用字典序，可能不符合预期
-   - [安全：数值型 metadata（weight, cpu, age 等）]
-   - [谨慎：字符串大小比较（zone:> 等）]
-   - [避免：版本号比较（请使用精确匹配或版本标签）]
-
-### 性能相关
-
-7. **空过滤** - 传入空 Map 或 null 等同于调用 `discover()`
-8. **过滤复杂度** - O(N) 遍历所有活跃实例，N 为实例数量
-9. **客户端缓存** - 对于不常变化的查询，建议客户端缓存结果
-10. **Fallback 策略** - 过滤无结果时，提供降级方案（放宽条件或使用全量）
+1. `start()` 之后才能 `register`/`discover`，否则抛 `IllegalStateException`
+2. 心跳由调用方驱动，模块不内置心跳定时器；临时实例需调用方按间隔调用 `sendHeartbeat`（Spring Boot starter 默认 30 秒）
+3. 所有过滤条件同时满足（AND）；字段不存在的实例不会被匹配
+4. metadata 的 key 与 value 均区分大小写
+5. 比较先数值后字典序；版本号请用等值匹配
+6. 传空 Map 等价于返回全部活跃实例；过滤遍历为 O(活跃实例数)
+7. service name / instance ID 中的 `:`、空白字符会被清洗为 `_`/`-`；含 `:` 的 instance ID 在注册时抛异常
+8. 不常变化的过滤查询建议在客户端缓存结果
 
 ## 相关链接
 
-- [主项目文档](../README.md)
-- [Metadata 过滤指南](METADATA_FILTERING_GUIDE.md)
-- [集成指南](../INTEGRATION_GUIDE.md)
+- [模块文档 docs/Registry.md](../docs/Registry.md)
+- [使用指南 docs/Registry-Guide.md](../docs/Registry-Guide.md)
+- [设计文档 docs/Registry-Design.md](../docs/Registry-Design.md)
+- [主项目 README](../README.md)
+- [集成指南 INTEGRATION_GUIDE.md](../INTEGRATION_GUIDE.md)
 - [问题反馈](https://github.com/cuihairu/redis-streaming/issues)
 
 ---
 
-**版本**: 0.1.0
-**最后更新**: 2025-01-12
-**新增功能**: 支持 Metadata 比较运算符（`>`, `>=`, `<`, `<=`, `!=`, `==`）
+版本 0.2.0，最后更新 2026-10-04

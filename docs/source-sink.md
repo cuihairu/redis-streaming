@@ -3,8 +3,8 @@
 模块目录:`source/`、`sink/`。各 7 个主源码类。
 
 两类契约(见 [Core.md](Core.md)):
-- **流式契约** `core` 的 `StreamSource`(`run(SourceContext)` + `cancel()`,含默认 `open()/close()` 生命周期)与 `StreamSink`(`invoke(T)`,同含默认生命周期)——由内存 runtime `StreamExecutionEnvironment.addSource(...)` / `DataStream.addSink(...)` 驱动;
-- **回调式 `AutoCloseable`**:自带轮询线程/消费者循环,不经运行时,`try-with-resources` 或 `close()` 收尾。
+- 流式契约 `core` 的 `StreamSource`(`run(SourceContext)` + `cancel()`,含默认 `open()/close()` 生命周期)与 `StreamSink`(`invoke(T)`,同含默认生命周期)——由内存 runtime `StreamExecutionEnvironment.addSource(...)` / `DataStream.addSink(...)` 驱动;
+- 回调式 `AutoCloseable`:自带轮询线程/消费者循环,不经运行时,`try-with-resources` 或 `close()` 收尾。
 
 ## Sources(source 模块,7 个)
 
@@ -33,7 +33,7 @@ new RedisStreamSource<>(redissonClient, "events", "my-group", "consumer-1",
 
 行为:
 - `run()` 启动时创建消费者组(不存在时),使用显式 `0-0` 起始 id 而非 `StreamMessageId.MIN` 的 `-`(后者要求 Redis ≥ 7.0,见 CHANGELOG);组已存在则跳过。
-- `run()` 为**有界排空**:连续 `maxIdlePolls` 次空读后返回,适配拉式引擎(内存 runtime 的 `addSource` 即如此驱动,立即执行并缓存记录)。
+- `run()` 为有界排空:连续 `maxIdlePolls` 次空读后返回,适配拉式引擎(内存 runtime 的 `addSource` 即如此驱动,立即执行并缓存记录)。
 - 条目 `collectWithTimestamp`(时间戳取 entry id 的 ms 部分)后立即 `XACK`;缺 `value` 字段的条目打 warn 并跳过、同样 `XACK`。
 - 参数校验:`batchCount >= 1`、`maxIdlePolls >= 1`,否则抛 `IllegalArgumentException`。
 - getter:`getStreamName()`、`getConsumerGroup()`。

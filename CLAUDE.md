@@ -73,12 +73,12 @@ This is a Java 17 streaming processing framework built around Redis Streams and 
 - **examples**: Runnable examples and usage patterns
 
 ### Key Dependencies
-- **Redisson 3.29.0**: Redis client for distributed operations and connection pooling
+- **Redisson 4.7.0**: Redis client for distributed operations and connection pooling
 - **Jackson 2.17.0**: JSON serialization/deserialization
 - **Lombok 1.18.34**: Code generation for POJOs
 - **JUnit Jupiter 5.9.2**: Testing framework
 - **Mockito 4.6.1**: Mocking framework for unit tests
-- **SLF4J 1.7.36**: Logging abstraction
+- **Logback 1.4.14**: Logging implementation (SLF4J API)
 
 ## Architecture Patterns
 
@@ -86,7 +86,7 @@ This is a Java 17 streaming processing framework built around Redis Streams and 
 All modules leverage Redis data structures:
 - **Streams**: For message queuing with consumer groups and dead letter queues
 - **Hash + Pub/Sub**: For service registry with heartbeat monitoring and instance metadata
-- **Sorted Set/TimeSeries**: For time-based aggregation and monitoring
+- **Sorted Set**: For time-based aggregation (TopK, rankings) and monitoring
 - **List/Stream**: For log collection and forwarding
 
 ### Service Registry Architecture
@@ -345,7 +345,7 @@ java -version
 ```
 
 ### Test Coverage Goals
-- Enforced today: 70% aggregate gate (`jacocoRootCoverageVerification`, measured ~82%); module-level targets below are aspirational.
+- Enforced today: aggregate INSTRUCTION ≥ 0.99 (`jacocoRootCoverageVerification`; excludes kafka and the MySQL binlog / PostgreSQL logical replication connector wrappers, which cannot run without those services); module-level targets below are aspirational.
 - **Core module (registry + mq)**: 80%+ (critical infrastructure)
 - **Business modules**: 70%+
 - **Integration tests**: Cover main workflows and edge cases

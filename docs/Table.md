@@ -111,5 +111,5 @@ regionCounts.getTableName();     // 形如 "users:groupBy:count:<millis>-<uuid>"
 
 ## References
 
-- [Design](Design.md)
+- [Architecture](Architecture.md)
 - [Join](Join.md) - 流-流连接（与本模块的 KTable 表连接是两套 API）

@@ -142,5 +142,5 @@ StreamJoiner<String, Integer, String, String> joiner =
 
 ## References
 
-- [Design](Design.md)
+- [Architecture](Architecture.md)
 - [Table](Table.md) - KTable 表连接（`KTable.join`/`leftJoin`，与本模块是两套独立 API）

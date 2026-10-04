@@ -169,5 +169,5 @@ q.close();
 
 ## References
 
-- [Design](Design.md)
+- [Architecture](Architecture.md)
 - [window](window.md)

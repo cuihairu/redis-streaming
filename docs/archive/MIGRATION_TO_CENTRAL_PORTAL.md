@@ -12,7 +12,7 @@
 开发者 → s01.oss.sonatype.org (OSSRH) → 手动 Close/Release → Maven Central
 ```
 
-**特点**:
+特点:
 - [需要在 JIRA 注册账号]
 - [使用 Nexus 界面手动操作]
 - [需要手动 Close 和 Release]
@@ -24,7 +24,7 @@
 开发者 → central.sonatype.com (Portal) → 自动验证 → 一键 Publish → Maven Central
 ```
 
-**特点**:
+特点:
 - [使用 GitHub 账号登录]
 - [现代化 Web 界面]
 - [自动验证,一键发布]
@@ -63,14 +63,14 @@
 
 编辑 `~/.gradle/gradle.properties`:
 
-**删除旧配置**:
+删除旧配置:
 ```properties
 # ❌ 删除这些
 ossrhUsername=...
 ossrhPassword=...
 ```
 
-**添加新配置**:
+添加新配置:
 ```properties
 # ✅ 添加这些（注意：Central Portal 使用 password 字段传递 User Token）
 centralPortalUsername=YOUR_USERNAME_FROM_TOKEN_PAGE
@@ -111,11 +111,11 @@ repositories {
 
 在 GitHub 仓库设置中:
 
-**删除旧 Secrets**:
+删除旧 Secrets:
 - [`OSSRH_USERNAME`]
 - [`OSSRH_PASSWORD`]
 
-**添加新 Secrets**:
+添加新 Secrets:
 - [`CENTRAL_PORTAL_USERNAME`（用户名）]
 - [`CENTRAL_PORTAL_TOKEN`（User Token；在工作流中映射为 PASSWORD）]
 
@@ -171,7 +171,7 @@ env:
 4. 状态为 **VALIDATED** 后,点击 **Publish** 按钮
 5. 等待同步到 Maven Central (10-30 分钟)
 
-**简化点**:
+简化点:
 - [不再需要 Close 操作]
 - [自动验证,更快]
 - [界面更友好]
@@ -237,7 +237,7 @@ A: 命名空间迁移后立即可以发布,无需等待。
 
 如果迁移后遇到问题:
 
-1. **保留旧配置备份**:
+1. 保留旧配置备份:
    ```bash
    cp ~/.gradle/gradle.properties ~/.gradle/gradle.properties.backup
    ```
@@ -246,7 +246,7 @@ A: 命名空间迁移后立即可以发布,无需等待。
    - 恢复 `ossrhUsername` 和 `ossrhPassword`
    - 恢复 `build.gradle` 中的旧 URL
 
-3. **联系支持**:
+3. 联系支持:
    - Central Portal: https://central.sonatype.com/support
    - GitHub Issues: https://github.com/sonatype/central-portal/issues
 
@@ -266,11 +266,11 @@ A: 命名空间迁移后立即可以发布,无需等待。
 
 ## 参考资料
 
-- **官方迁移指南**: https://central.sonatype.org/pages/ossrh-eol/
-- **Central Portal 文档**: https://central.sonatype.org/
-- **命名空间迁移**: https://central.sonatype.org/register/central-portal/
-- **API 文档**: https://central.sonatype.org/publish/publish-portal-api/
+- 官方迁移指南: https://central.sonatype.org/pages/ossrh-eol/
+- Central Portal 文档: https://central.sonatype.org/
+- 命名空间迁移: https://central.sonatype.org/register/central-portal/
+- API 文档: https://central.sonatype.org/publish/publish-portal-api/
 
 ---
 
-**迁移完成后**,你的项目将使用更现代、更简单的发布流程! 🎉
+迁移完成后,发布走 central.sonatype.com 的自动验证与一键 Publish,不再手动 Close/Release。

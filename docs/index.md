@@ -4,7 +4,7 @@ layout: home
 hero:
   name: Redis Streaming
   text: 基于 Redis 的流处理框架
-  tagline: 高性能、可扩展的实时数据处理解决方案
+  tagline: DataStream API、状态、窗口与 Exactly-Once 语义，20 个 Gradle 模块
   actions:
     - theme: brand
       text: 快速开始
@@ -31,7 +31,7 @@ features:
     details: Exactly-Once 语义、Reliability 组件、Metrics 监控
   - icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><path d="M12 21c0-6.5 3-12.5 8.5-15.5-1 8.5-4.2 13-8.5 15.5z"/><path d="M12 21C12 14.5 9 8.5 3.5 5.5 4.5 14 7.7 18.5 12 21z"/><path d="M12 21v-4"/></svg>'
     title: Spring Boot
-    details: 开箱即用的 Spring Boot Starter 集成
+    details: Spring Boot Starter 自动配置与注解
 ---
 
 ## 模块索引

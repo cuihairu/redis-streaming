@@ -1,131 +1,152 @@
-# Streaming Runtime Module
+# Runtime 模块
 
-## Overview
+## 职责
 
-This module provides a simple, in-memory runtime implementation of the Streaming API defined in the `core` module.
+实现 `core` 模块定义的流处理 API(`DataStream` / `KeyedStream` / `WindowedStream`),提供两套彼此独立的执行引擎:
 
-## Current Status
+| 引擎 | 入口类 | 定位 |
+|---|---|---|
+| 内存引擎 | `io.github.cuihairu.redis.streaming.runtime.StreamExecutionEnvironment` | 测试/示例:单线程、拉模型(Iterator)、仅支持有界数据 |
+| Redis 引擎 | `io.github.cuihairu.redis.streaming.runtime.redis.RedisStreamExecutionEnvironment` | 可运行作业:Redis Streams 消费组驱动,状态/检查点存 Redis |
 
-**Status**: Minimal in-memory runtime available (single-threaded)
+两套引擎尚未统一(架构债见仓库根 `todo.md`「B. 双执行引擎统一」)。完整能力矩阵与配置参考见 `docs/runtime.md`。
 
-The runtime module provides a small, pull-based in-memory implementation intended for tests/examples:
+源码结构:
 
-- `StreamExecutionEnvironment`: `fromElements`, `fromCollection`, `addSource`
-- `DataStream`: `map`, `filter`, `flatMap`, `keyBy`, `addSink`, `print`
-- `DataStream`: watermarks via `assignTimestampsAndWatermarks(...)` (record timestamps or event-time timestamps via `TimestampAssigner`)
-- `KeyedStream`: `process` (timers + watermark-aware event-time), `reduce`, `sum`, `getState` (keyed `ValueState`)
-- `WindowedStream`: `reduce`, `aggregate`, `apply`, `sum`, `count`
-- `Checkpointing`: `enableCheckpointing()` provides an in-memory `CheckpointCoordinator` that snapshots/restores keyed state during a run
+- `runtime/.../runtime`:`StreamExecutionEnvironment`(内存引擎入口)
+- `runtime/.../runtime/internal`:内存引擎实现(`InMemoryDataStream`/`InMemoryKeyedStream`/`InMemoryWindowedStream`/`InMemoryCheckpointCoordinator` 等)
+- `runtime/.../runtime/redis`:`RedisStreamExecutionEnvironment`、`RedisRuntimeConfig`、`RedisJobClient`、`RedisRuntimeHeaders`、`KeyedStateHotKeyException`
+- `runtime/.../runtime/redis/internal`:管道执行(`RedisStreamBuilder`/`RedisPipeline(Definition)`/`RedisPipelineRunner`/`RedisOperatorNode`)、状态(`RedisKeyedStateStore`)、检查点(`RedisRuntimeCheckpointManager`)、选主(`RedisLeaderElector`)
+- `runtime/.../runtime/redis/sink`:exactly-once 相关 sink(`RedisIdempotentListSink`/`RedisCheckpointedIdempotentListSink`/`RedisAtomicCheckpointListSink`/`RedisOutboxSink`/`RedisOutboxDispatcher`)
+- `runtime/.../runtime/redis/metrics`:`RedisRuntimeMetrics` + `RedisRuntimeMetricsCollector`
 
-Notes about semantics (in-memory runtime):
-- Single-threaded, pull-based execution.
-- Window results are produced after the upstream iterator is fully consumed (batch-style evaluation).
-- Window triggers from `WindowAssigner.Trigger` are not used by the in-memory runtime (windows are evaluated once at the end).
-- Timestamps:
-  - `fromElements/fromCollection`: assigns deterministic synthetic timestamps `0..N-1`
-  - `addSource`: preserves `collectWithTimestamp(...)` timestamps; `collect(...)` uses an increasing fallback timestamp
-  - `assignTimestampsAndWatermarks(timestampAssigner, ...)`: rewrites record timestamps to event-time timestamps (used by window assignment)
+## 内存引擎
 
-## Why a Separate Runtime Module?
+对外接口(`StreamExecutionEnvironment`):
 
-The `core` module defines the Stream Processing API interfaces, while `runtime` provides an actual execution engine. This separation:
+- `static getExecutionEnvironment()`
+- `enableCheckpointing()` / `getCheckpointCoordinator()`:开启后 `InMemoryCheckpointCoordinator` 会同步快照 keyed state(`triggerCheckpoint()` / `restoreFromCheckpoint(id)` / `getLatestCheckpoint()`)
+- `fromCollection(Collection)` / `fromElements(...)` / `addSource(StreamSource)`
 
-1. **Avoids Circular Dependencies**: The `core` module is depended on by `state`, `watermark`, and `window` modules. If runtime code were in `core`, it would create circular dependencies.
+算子与语义:
 
-2. **Modular Design**: Users can use just the API definitions from `core` without pulling in the full runtime implementation.
-
-3. **Alternative Runtimes**: In the future, different runtime implementations could be provided (e.g., distributed runtime, optimized runtime).
-
-## Alternative: Use Existing Modules Directly
-
-While the unified streaming runtime is under development, you can use the individual modules directly:
-
-- **MQ Module**: For message queue operations
-- **State Module**: For state management
-- **Window + Aggregation**: For windowed computations
-- **CEP Module**: For complex event processing
-
-See the `examples` module for usage patterns.
-
-## Planned Features
-
-- [x] Core operator abstractions
-- [x] Pull-based execution model (in-memory)
-- [x] Basic keyed state (in-memory `ValueState`)
-- [x] Window assignment (batch-style evaluation)
-- [x] Watermark handling (event-time + idle/active)
-- [x] Checkpointing integration (in-memory)
-- [ ] Parallel execution
-
-## Redis Runtime (Experimental)
-
-This module also contains an experimental Redis-backed runtime that composes existing modules
-(`mq/state/...`) into a runnable job driven by Redis Streams consumer groups:
-
-- Entry point: `io.github.cuihairu.redis.streaming.runtime.redis.RedisStreamExecutionEnvironment`
-- Source: `fromMqTopic(topic, consumerGroup)` (produces raw `mq.Message`)
-- Source (with per-subscription overrides): `fromMqTopic(topic, consumerGroup, SubscriptionOptions)`
-- Source (with stable id): `fromMqTopicWithId(sourceId, topic, consumerGroup, SubscriptionOptions)`
-- Supported operators (current): `map`, `filter`, `flatMap`, `keyBy`, `process`, `reduce`, `sum`, `addSink`, `print`
-- Keyed state: Redis-backed `ValueState` via `KeyedStream.getState(...)`
-- Delivery semantics: at-least-once (ack on successful end-to-end processing)
-- Consumer name: `jobName-jobInstanceId-{n}`; set `jobInstanceId` in `RedisRuntimeConfig` to keep it stable across restarts.
-- Error diagnostics: on handler exceptions, runtime annotates message headers (`x-runtime-*`) so retries/DLQ carry root-cause context.
-- State TTL: configure `RedisRuntimeConfig.stateTtl(...)` to apply expiry to Redis state keys (best-effort, per state hash).
-- State size sampling: configure `RedisRuntimeConfig.stateSizeReportEveryNStateWrites(n)` to periodically record Redis state hash sizes (fields) via runtime metrics.
-- State sharding: configure `RedisRuntimeConfig.keyedStateShardCount(n)` to shard keyed state hashes by key hash (default 1, disabled).
-- Hot-key warning: configure `RedisRuntimeConfig.keyedStateHotKeyFieldsWarnThreshold(n)` (fields per hash) to emit rate-limited warnings and metrics when keyed state grows too large.
-- State schema/versioning: set `schemaVersion` on `StateDescriptor` (e.g. `new StateDescriptor<>("cnt", Integer.class, 0, 2)`), and configure `RedisRuntimeConfig.stateSchemaMismatchPolicy(FAIL/CLEAR/IGNORE)` to handle incompatible state upgrades.
-- Sink deduplication (best-effort): configure `RedisRuntimeConfig.sinkDeduplicationEnabled(true)` to skip re-invoking sinks for the same logical message on retries/replays (uses `x-original-message-id` when present).
-- Consumer group restore: configure `RedisRuntimeConfig.restoreConsumerGroupFromCommitFrontier(true)` so a missing group is recreated from MQ commit frontier (acked ids), avoiding full replay after accidental group deletion.
-- Checkpointing (experimental): configure `RedisRuntimeConfig.checkpointInterval(...)` to periodically snapshot offsets + keyed state into Redis (stop-the-world via consumer pause/drain), and `RedisRuntimeConfig.restoreFromLatestCheckpoint(true)` to restore on startup.
-- Manual checkpointing (experimental): call `RedisJobClient.triggerCheckpointNow()` to force a stop-the-world checkpoint.
-- Job control (experimental): call `RedisJobClient.pause()/resume()` to pause/resume consumption, and `RedisJobClient.inFlight()` for a best-effort in-flight count.
-- End-to-end checkpoint (experimental): enable `RedisRuntimeConfig.deferAckUntilCheckpoint(true)` to defer MQ ACK until checkpoint completion, and optionally implement `CheckpointAwareSink` to commit buffered side effects on `onCheckpointComplete(...)`.
-- Redis-only atomic sink (experimental): use `RedisAtomicCheckpointListSink` + `RedisExactlyOnceRecord` with `deferAckUntilCheckpoint(true)` and `ackDeferredMessagesOnCheckpoint(false)` to atomically (Lua) commit sink + XACK + advance commit frontier.
-- Parallelism (experimental): set `RedisRuntimeConfig.pipelineParallelism(n)` to start N consumer subtasks per pipeline; partitions are deterministically pinned by `partitionId % n`.
-- Backpressure (MQ): set `MqOptions.maxInFlight(n)` to cap concurrent in-flight message handling per consumer instance.
-- Partition leasing cap (MQ): set `MqOptions.maxLeasedPartitionsPerConsumer(n)` to avoid acquiring more partition leases than a consumer can actively run (defaults to `workerThreads`).
-
-Limitations (current):
-- Windowed execution is not supported by Redis runtime yet.
-- Exactly-once is not implemented yet; see `docs/exactly-once.md` for the roadmap and recommended sink patterns.
-- State schema evolution is "best-effort": runtime can enforce/clear/ignore mismatches but does not perform data migrations.
-
-## Quick Example
+- `DataStream`:`map`/`filter`/`flatMap`/`keyBy`/`addSink`/`print()`/`print(String)`;`assignTimestampsAndWatermarks` 的单参数与 `(TimestampAssigner, generator)` 两个重载都支持;`fromElements/fromCollection` 赋合成时间戳 `0..N-1`,`addSource` 保留 `collectWithTimestamp` 的时间戳
+- `KeyedStream`:`map`/`process(KeyedProcessFunction)`/`window`/`reduce`/`sum`/`getState(StateDescriptor)`;`process` 支持 processing-time 与 event-time 定时器(processing-time 以记录时间戳推进,输入耗尽统一冲刷)
+- `WindowedStream`:`reduce`/`aggregate`/`apply`/`sum`/`count`;每个 (key, window) 桶独享 `WindowAssigner.getDefaultTrigger()` 返回的 trigger,`onElement` 处理 `FIRE/FIRE_AND_PURGE/PURGE/CONTINUE`,输入耗尽时水位线视为 +∞ 并对剩余桶补一次 `onEventTime` 后冲刷;`onProcessingTime` 不会被调用;session 窗口支持合并相交桶
+- 终止操作触发执行:`addSink` 生命周期 `open → invoke×N → finally close`;`print(prefix)` 经 slf4j 输出;没有 `execute()`
+- 限制:单线程、无并行、无取消;`addSource` 全量缓存在内存(无限流源会 OOM);`sum` 对非 `Number` 抛 `UnsupportedOperationException`
 
 ```java
 var env = StreamExecutionEnvironment.getExecutionEnvironment();
-env.fromElements("a b", "c")
-    .flatMap(line -> Arrays.asList(line.split(" ")))
-    .keyBy(w -> w)
-    .reduce((x, y) -> x)
-    .print("word=");
+List<String> out = new ArrayList<>();
+env.fromElements("a b", "c", "d e")
+        .flatMap(line -> Arrays.asList(line.split(" ")))
+        .filter(word -> !"c".equals(word))
+        .map(String::toUpperCase)
+        .addSink(out::add);
 ```
 
-## Implementation Notes
+## Redis 引擎
 
-The runtime implementation faces several challenges:
+入口:`io.github.cuihairu.redis.streaming.runtime.redis.RedisStreamExecutionEnvironment`。
 
-1. **Watermark API Complexity**: The WatermarkGenerator interface requires WatermarkOutput callbacks, which need careful integration with the execution model.
+- 源:`fromMqTopic(topic, consumerGroup)` / `fromMqTopic(topic, consumerGroup, SubscriptionOptions)` / `fromMqTopicWithId(sourceId, topic, consumerGroup[, SubscriptionOptions])`,源 = Redis Stream 消费组,产出原始 `mq.Message`
+- 算子:`map` / `filter` / `flatMap` / `keyBy` / `process` / `window(...).reduce/aggregate/apply/sum/count` / `assignTimestampsAndWatermarks(WatermarkGenerator)` / `addSink` / `print`
+- 状态:`KeyedStream.getState(StateDescriptor)` → Redis `ValueState`(`value/update/clear`),支持 TTL、分片、schema 版本、热键策略
+- 启动:`RedisJobClient executeAsync()`;每个环境仅可调用一次,且至少要注册一条管道(即至少一个 `addSink`)
+- 作业句柄 `RedisJobClient`:`cancel()`(与 `close()` 等价)、`awaitTermination(Duration)`、`triggerCheckpointNow()`、`getLatestCheckpoint()`、`pause()`/`resume()`/`inFlight()`、`diagnostics()`
+- 投递语义基线:at-least-once;消费者名 `jobName-jobInstanceId-{n}`,用 `RedisRuntimeConfig.jobInstanceId(...)` 固定实例 id 可保持重启后名称稳定
+- 错误诊断:处理异常时向消息头写 `x-runtime-job`/`x-runtime-group`/`x-runtime-error-type`/`x-runtime-error-message`(`RedisRuntimeHeaders`),重试与死信携带根因上下文
 
-2. **Generic Type Inference**: Java's type system and Lombok's code generation can conflict in complex generic hierarchies.
+### 配置项(RedisRuntimeConfig.builder(),默认值取自源码)
 
-3. **Window Semantics**: Proper window triggering requires watermark coordination across parallel streams.
+| Builder 方法 | 类型 | 默认值 |
+|---|---|---|
+| `jobName` | String | `redis-streaming-job` |
+| `jobInstanceId` | String | 本机 hostname(回退 `local`) |
+| `stateKeyPrefix` | String | `streaming:runtime` |
+| `stateTtl` | Duration | `ZERO`(不设 TTL) |
+| `stateSizeReportEveryNStateWrites` | int | `0`(关闭) |
+| `keyedStateShardCount` | int | `1`(不分片) |
+| `keyedStateHotKeyFieldsWarnThreshold` | long | `0`(关闭) |
+| `keyedStateHotKeyWarnInterval` | Duration | `1min` |
+| `keyedStateHotKeyPolicy` | `LOG_ONLY/THROTTLE/FAIL_FAST` | `LOG_ONLY` |
+| `keyedStateHotKeyThrottleMaxMs` | long | `200` |
+| `stateSchemaEvolutionEnabled` | boolean | `true` |
+| `stateSchemaMismatchPolicy` | `FAIL/CLEAR/IGNORE` | `FAIL` |
+| `restoreConsumerGroupFromCommitFrontier` | boolean | `true` |
+| `sinkDeduplicationEnabled` | boolean | `false` |
+| `sinkDeduplicationTtl` | Duration | `7` 天 |
+| `sinkDedupKeyPrefix` | String | `streaming:runtime:sinkDedup:` |
+| `deferAckUntilCheckpoint` | boolean | `false` |
+| `ackDeferredMessagesOnCheckpoint` | boolean | `true` |
+| `pipelineParallelism` | int | `1`(分区按 `partitionId % n == subtask` 分配) |
+| `timerThreads` | int | `1` |
+| `checkpointThreads` | int | `1` |
+| `eventTimeTimerMaxSize` | int | `100000`(`0` 不限) |
+| `watermarkOutOfOrderness` | Duration | `ZERO` |
+| `windowAllowedLateness` | Duration | `ZERO` |
+| `windowMaxFiresPerRecord` | int | `256` |
+| `mdcEnabled` | boolean | `false` |
+| `mdcSampleRate` | double | `1.0` |
+| `checkpointInterval` | Duration | `ZERO`(关闭;调度下限 50ms) |
+| `restoreFromLatestCheckpoint` | boolean | `false` |
+| `checkpointKeyPrefix` | String | `streaming:runtime:checkpoint:` |
+| `checkpointsToKeep` | int | `5`(`0` 关闭清扫) |
+| `checkpointDrainTimeout` | Duration | `30s` |
+| `mqOptions` | `MqOptions` | `MqOptions.builder().build()` |
+| `processingErrorResult` | `RETRY/DEAD_LETTER/FAIL` | `RETRY` |
+| `leaderElectionEnabled` | boolean | `false` |
+| `leaderLeaseTtl` | Duration | `30s` |
+| `leaderRenewInterval` | Duration | `10s`(须 < leaseTtl) |
 
-Given these complexities, the initial focus is on getting individual modules working correctly. A complete streaming runtime similar to Apache Flink's is a significant undertaking requiring thousands of lines of carefully designed code.
+其余可调项在底层 `mq` 模块:`MqOptions.maxInFlight(...)` 限制单消费者在途消息数,`MqOptions.maxLeasedPartitionsPerConsumer(...)` 限制单消费者可持有的分区租约数(默认 `0` = 跟随 `workerThreads`)。
 
-## Recommendation
+### 高可用与检查点
 
-For production use cases:
-- Use individual modules (mq, state, aggregation, cep) directly
-- For complex stream processing, consider Apache Flink or similar mature frameworks
-- This framework excels at lightweight, Redis-backed streaming operations
+- `leaderElectionEnabled(true)`:`RedisLeaderElector` 以 Redis 租约(`SET NX PX` + compare-and-expire 续约)选出 leader,只有 leader 运行周期检查点调度;丢失租约立即停调度,follower 按 `leaderRenewInterval` 尝试接管,接管时换新 fencing token 并对齐检查点计数。恢复只采纳 token 为历史最大值的检查点,旧 leader 的残留写入不会被采纳。
+- 检查点快照:`runtime:meta`(含 fencingToken/sinkCommitted)+ `runtime:offsets`(各分区 commit frontier)+ `runtime:state` + `runtime:stateSchema` + 可选 `runtime:txns`(两阶段提交句柄);恢复重建消费组到快照 offset、回放状态与 `onCheckpointRestore`,并在"存句柄未提交"时按句柄执行 `recoverAndCommit` 补偿。
+- `deferAckUntilCheckpoint(true)`:消息保持 pending 至检查点完成;`RedisAtomicCheckpointListSink` + `RedisExactlyOnceRecord` 配合 `ackDeferredMessagesOnCheckpoint(false)` 可由单条 Lua 原子完成去重写入 + `XACK` + 推进 commit frontier。
+- Outbox:`RedisOutboxSink`(实现 `TwoPhaseCommitSink`,epoch 原子提交)+ `RedisOutboxDispatcher`(异步投递,失败重试,超限进 `<outboxKey>:dlq`);投递 at-least-once,端到端 exactly-once 依赖目标端按 record id 幂等,见 `docs/exactly-once.md`。
 
-## Future Work
+### 示例
 
-The runtime engine will be implemented incrementally:
+```java
+RedisRuntimeConfig config = RedisRuntimeConfig.builder()
+        .jobName("rt-job")
+        .stateKeyPrefix("streaming:runtime")
+        .watermarkOutOfOrderness(Duration.ofSeconds(5))
+        .build();
 
-**Phase 1** (Current): API definitions in `core`
-**Phase 2** (Planned): Simple in-memory runtime for testing
-**Phase 3** (Future): Production-grade runtime with full feature support
+RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(redissonClient, config);
+DataStream<String> base = env.fromMqTopic("orders", "cg-orders").map(m -> (String) m.getPayload());
+KeyedStream<String, String> keyed = base.keyBy(v -> v);
+ValueState<Integer> cnt = keyed.getState(new StateDescriptor<>("cnt", Integer.class, 0));
+keyed.<String>process((key, value, ctx, out) -> {
+            int c = (cnt.value() == null ? 0 : cnt.value()) + 1;
+            cnt.update(c);
+            out.collect(key + ":" + c);
+        })
+        .addSink(v -> { /* ... */ });
+
+try (RedisJobClient job = env.executeAsync()) {
+    // job.triggerCheckpointNow() / job.pause() / job.resume() / job.diagnostics()
+}
+```
+
+窗口示例与完整语义(事件时间、水位线、触发器、迟到、检查点保留清扫)见 `docs/runtime.md`。
+
+## 指标
+
+`RedisRuntimeMetrics`(静态单例,默认 Noop)覆盖作业/管道生命周期、处理成败与时延、检查点触发/完成/失败与分段耗时、keyed state 读写/延迟/大小采样/热键、窗口触发与迟到、水位线、事件时间定时器队列大小;Spring Boot Starter 负责桥接到 Micrometer(`redis_streaming_runtime_*`)。
+
+## 限制
+
+- Redis 引擎不支持 `fromCollection/fromElements/addSource`(仅 MQ 源),也不支持 `assignTimestampsAndWatermarks(TimestampAssigner, generator)` 重载(默认实现抛 `UnsupportedOperationException`)
+- 窗口不响应 `Trigger.onProcessingTime`(没有 processing-time 窗口定时器)
+- `stateSchemaMismatchPolicy` 只做校验/清除/忽略,不迁移数据
+- 两套引擎未统一,算子语义差异按本文与 `docs/runtime.md` 为准
+
+## 相关文档
+
+`docs/runtime.md`(完整能力矩阵与配置参考)· `docs/checkpoint.md` · `docs/watermark.md` · `docs/exactly-once.md` · `docs/Spring-Boot-Starter.md`

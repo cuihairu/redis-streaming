@@ -174,7 +174,7 @@ int getRunningConnectorCount();
 
 轮询连接器的固定行为：Hikari 池参数为 `maximumPoolSize=10`、`minimumIdle=2`、`connectionTimeout=30000`、`idleTimeout=600000`、`maxLifetime=1800000`（不可配置）；每轮每表最多 1000 个批次（防水位不推进时空转）；事件类型只能是 `INSERT`（轮询无法区分更新）；行 key 优先取 `id`、其次 `pk`，否则非空值按 `_` 拼接。
 
-## Polling 语义（重要）
+## Polling 语义
 
 ### 调度轮询 vs 拉取
 - `pollingIntervalMs > 0`（默认 1000）时，后台调度器周期性排空批次：**仅在注册了 `CDCEventListener` 时**才把事件交付到 `onEvents(connectorName, events)`；未注册监听器时调度器不排空，批次留给 `poll()` 拉取——两条路径都不会丢事件。
@@ -191,9 +191,9 @@ int getRunningConnectorCount();
 
 ## 断连与重连（CDC-H3）
 
-- **MySQL binlog**：注册 `BinaryLogClient` 生命周期监听；意外断连时健康转 `UNHEALTHY`、回调 `onConnectorError`，在独立单线程（守护线程 `mysql-binlog-reconnect-<name>`）里按 `reconnect.backoff.initial.ms` 起步、逐次翻倍、上限 `reconnect.backoff.max.ms` 重试 `connect(connectTimeoutMs)`，从当前水位续读（断连窗口重放）。`poll()` 里若发现 client 未连接且无重连循环，也会触发同一条恢复路径。
-- **PostgreSQL**：读 WAL 失败时拆掉死流与连接，`poll()` 按 `reconnect.backoff.ms` 限速重建连接+流，从 `lastReceivedLSN` 续读；若 slot 在服务端已丢失或被标记 `lost`（PG14+），则**停止重连**并保持 `UNHEALTHY`（提示重建 slot 后 `resetToPosition` 恢复），避免静默跳过已丢弃的 WAL。
-- **轮询**：无远程流可断；连接池不可用时 `isDataSourceAvailable()` 返回 false，错误经 `onConnectorError` 上报。
+- MySQL binlog：注册 `BinaryLogClient` 生命周期监听；意外断连时健康转 `UNHEALTHY`、回调 `onConnectorError`，在独立单线程（守护线程 `mysql-binlog-reconnect-<name>`）里按 `reconnect.backoff.initial.ms` 起步、逐次翻倍、上限 `reconnect.backoff.max.ms` 重试 `connect(connectTimeoutMs)`，从当前水位续读（断连窗口重放）。`poll()` 里若发现 client 未连接且无重连循环，也会触发同一条恢复路径。
+- PostgreSQL：读 WAL 失败时拆掉死流与连接，`poll()` 按 `reconnect.backoff.ms` 限速重建连接+流，从 `lastReceivedLSN` 续读；若 slot 在服务端已丢失或被标记 `lost`（PG14+），则停止重连并保持 `UNHEALTHY`（提示重建 slot 后 `resetToPosition` 恢复），避免静默跳过已丢弃的 WAL。
+- 轮询：无远程流可断；连接池不可用时 `isDataSourceAvailable()` 返回 false，错误经 `onConnectorError` 上报。
 
 ## 背压与有界队列（CDC-M1）
 

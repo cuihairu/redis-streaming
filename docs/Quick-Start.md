@@ -1,6 +1,6 @@
 # 快速开始
 
-本页带你快速构建、测试并运行示例；完整细节请参阅根目录文档：
+本页覆盖构建、测试与示例运行；完整细节见根目录文档：
 - [QUICK_START.md](https://github.com/cuihairu/redis-streaming/blob/main/QUICK_START.md)、[RUNNING_EXAMPLES.md](https://github.com/cuihairu/redis-streaming/blob/main/RUNNING_EXAMPLES.md)、[TESTING.md](https://github.com/cuihairu/redis-streaming/blob/main/TESTING.md)
 - Spring Boot 入门：[Spring-Boot-Starter](/Spring-Boot-Starter) 与 [spring-boot-starter-guide](/spring-boot-starter-guide)
 
@@ -49,10 +49,10 @@ docker compose up -d
 ```
 可用的示例入口见 [Examples](/Examples)。
 
-## 5) Spring Boot 集成（极简）
-Gradle 依赖（版本随最新发布标签，当前 v0.2.3）：
+## 5) Spring Boot 集成（最小配置）
+Gradle 依赖（当前 0.2.0）：
 ```gradle
-implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.3'
+implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
 ```
 
 在应用中启用：

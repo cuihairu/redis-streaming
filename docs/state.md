@@ -1,413 +1,245 @@
 # State 模块
 
+模块目录:`state/`
+
 ## 概述
 
-State 模块提供基于 Redis 的分布式状态管理后端，实现流处理框架中的状态持久化。支持值状态、列表状态、映射状态和集合状态，为有状态流处理提供可靠的数据存储。
+State 模块提供状态后端接口 `StateBackend` 及其 Redis 实现 `RedisStateBackend`,把 core 定义的四类状态接口落到 Redis 上。键为 `{keyPrefix}{状态名}`(默认前缀 `state:`),同一 Redis、同一前缀下的多个客户端共享同一份状态。
 
-## 核心功能
+模块结构:
 
-### 1. 状态类型
-
-- **ValueState**: 单值状态，存储单个值
-- **ListState**: 列表状态，存储元素列表
-- **MapState**: 映射状态，存储键值对集合
-- **SetState**: 集合状态，存储不重复元素集合
-
-### 2. 状态特性
-
-- **持久化**: 所有状态持久化到 Redis
-- **分布式**: 支持多节点共享状态
-- **类型安全**: 支持泛型，保持类型安全
-- **自动序列化**: 自动处理对象的序列化和反序列化
-
-### 3. 生命周期管理
-
-- **创建**: 通过 StateBackend 创建状态实例
-- **更新**: 支持状态的增删改查操作
-- **清理**: 支持状态的清空和删除
-- **关闭**: 释放资源
+- `state.backend`:`StateBackend`(接口)
+- `state.redis`:`RedisStateBackend`、`RedisValueState`、`RedisListState`、`RedisMapState`、`RedisSetState`
 
 ## 核心接口
 
 ### StateBackend
 
-状态后端接口，负责创建和管理各种类型的状态。
+状态后端接口,负责创建各类状态实例(`io.github.cuihairu.redis.streaming.state.backend.StateBackend`):
 
 ```java
 public interface StateBackend {
-    // 创建值状态
     <T> ValueState<T> createValueState(StateDescriptor<T> descriptor);
-
-    // 创建映射状态
     <K, V> MapState<K, V> createMapState(String name, Class<K> keyType, Class<V> valueType);
-
-    // 创建列表状态
     <T> ListState<T> createListState(StateDescriptor<T> descriptor);
-
-    // 创建集合状态
     <T> SetState<T> createSetState(StateDescriptor<T> descriptor);
-
-    // 关闭状态后端
     void close();
 }
 ```
 
-### ValueState
+注意:接口方法均不抛受检异常;`RedisStateBackend.close()` 是空实现(`RedissonClient` 生命周期由外部管理)。
 
-值状态接口，存储单个值。
+### 状态接口(core 模块 `api.state`)
 
 ```java
+public interface State extends Serializable {
+    void clear();
+}
+
 public interface ValueState<T> extends State {
-    // 获取值
-    T get() throws IOException;
-
-    // 更新值
-    void update(T value) throws IOException;
-
-    // 清空值
-    void clear() throws IOException;
+    T value();               // 无值返回 null
+    void update(T value);
 }
-```
 
-### ListState
-
-列表状态接口，存储有序元素列表。
-
-```java
 public interface ListState<T> extends State {
-    // 获取所有元素
-    List<T> get() throws IOException;
-
-    // 添加元素
-    void add(T value) throws IOException;
-
-    // 添加所有元素
-    void addAll(List<T> values) throws IOException;
-
-    // 更新列表
-    void update(List<T> values) throws IOException;
-
-    // 清空列表
-    void clear() throws IOException;
+    void add(T value);                       // 追加到列表尾部(RPUSH 语义)
+    Iterable<T> get();
+    void update(Iterable<T> values);         // 整体替换
+    void addAll(Iterable<T> values);
 }
-```
 
-### MapState
-
-映射状态接口，存储键值对集合。
-
-```java
 public interface MapState<K, V> extends State {
-    // 获取值
-    V get(K key) throws IOException;
+    V get(K key);                            // 不存在返回 null
+    void put(K key, V value);
+    void remove(K key);
+    boolean contains(K key);
+    Iterable<Map.Entry<K, V>> entries();
+    Iterable<K> keys();
+    Iterable<V> values();
+    boolean isEmpty();
+}
 
-    // 添加所有元素
-    void putAll(Map<K, V> map) throws IOException;
-
-    // 更新值
-    void put(K key, V value) throws IOException;
-
-    // 删除值
-    void remove(K key) throws IOException;
-
-    // 获取所有条目
-    List<Map.Entry<K, V>> entries() throws IOException;
-
-    // 检查是否为空
-    boolean isEmpty() throws IOException;
-
-    // 清空映射
-    void clear() throws IOException;
+public interface SetState<T> extends State {
+    boolean add(T value);                    // 返回是否为新增
+    boolean remove(T value);                 // 返回是否发生了删除
+    boolean contains(T value);
+    Iterable<T> get();
+    boolean isEmpty();
+    int size();
 }
 ```
 
-### SetState
+### StateDescriptor
 
-集合状态接口，存储不重复元素集合。
+状态描述符,定义状态名与类型(`io.github.cuihairu.redis.streaming.api.state.StateDescriptor`):
 
 ```java
-public interface SetState<T> extends State {
-    // 获取所有元素
-    List<T> get() throws IOException;
+public class StateDescriptor<T> implements Serializable {
+    public StateDescriptor(String name, Class<T> type);
+    public StateDescriptor(String name, Class<T> type, T defaultValue);
+    public StateDescriptor(String name, Class<T> type, T defaultValue, int schemaVersion);
 
-    // 添加元素
-    void add(T value) throws IOException;
-
-    // 添加所有元素
-    void addAll(List<T> values) throws IOException;
-
-    // 检查包含
-    boolean contains(T value) throws IOException;
-
-    // 移除元素
-    void remove(T value) throws IOException;
-
-    // 清空集合
-    void clear() throws IOException;
+    public String getName();
+    public Class<T> getType();
+    public T getDefaultValue();
+    public int getSchemaVersion();           // 默认 1,构造时按 Math.max(1, n) 截断
 }
 ```
 
-## 使用方式
+`MapState` 不走 `StateDescriptor`:`createMapState(name, keyType, valueType)` 直接以名字与键值类型创建。
+
+## 配置项
+
+| 项 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `RedisStateBackend` 构造参数 `keyPrefix` | `String` | `"state:"` | 状态键前缀,实际键 = `keyPrefix + 状态名` |
+| `StateDescriptor.schemaVersion` | `int` | `1` | 状态演进版本号。state 模块的 `RedisStateBackend` 不读取它、不参与键名;runtime 的 `RedisKeyedStateStore` 用 `type.getName() + "\|" + schemaVersion` 做状态 schema 校验(不符时按 `RedisRuntimeConfig.stateSchemaMismatchPolicy` 处理,默认 `FAIL`,可选 `CLEAR`/`IGNORE`) |
+| 各实现类构造参数 `key` | `String` | — | 实现类也可直接构造,如 `new RedisValueState<>(redisson, key, type)` |
+
+`RedisStateBackend` 还提供 `getRedisson()` / `getKeyPrefix()`;四个 Redis 状态实现均提供 `getKey()`。
+
+## 用法示例
 
 ### 1. 创建 StateBackend
 
 ```java
 import io.github.cuihairu.redis.streaming.state.redis.RedisStateBackend;
+import io.github.cuihairu.redis.streaming.state.backend.StateBackend;
+import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
+import org.redisson.config.Config;
 
-// 创建 Redis 状态后端
-RedissonClient redissonClient = Redisson.create();
-StateBackend stateBackend = new RedisStateBackend(redissonClient);
+Config config = new Config();
+config.useSingleServer().setAddress("redis://127.0.0.1:6379"); // 可用 REDIS_URL 覆盖
+RedissonClient redisson = Redisson.create(config);
+
+// 默认前缀 "state:"
+StateBackend stateBackend = new RedisStateBackend(redisson);
+// 或自定义前缀(examples 模块 StateExample 用 "example:state:")
+StateBackend backend = new RedisStateBackend(redisson, "example:state:");
 ```
 
-### 2. 使用 ValueState
+### 2. ValueState
 
 ```java
-import io.github.cuihairu.redis.streaming.api.state.ValueState;
-import io.github.cuihairu.redis.streaming.api.state.StateDescriptor;
+StateDescriptor<Integer> descriptor = new StateDescriptor<>("session-counter", Integer.class);
+ValueState<Integer> counter = stateBackend.createValueState(descriptor);
 
-// 创建值状态
-StateDescriptor<Long> descriptor = new StateDescriptor<>(
-    "counter",
-    Long.class,
-    0L  // 初始值
-);
-ValueState<Long> counterState = stateBackend.createValueState(descriptor);
-
-// 更新值
-counterState.update(100L);
-
-// 获取值
-Long value = counterState.get();
-System.out.println("Counter: " + value);
-
-// 清空值
-counterState.clear();
+Integer count = counter.value();      // 首次为 null
+if (count == null) count = 0;
+counter.update(count + 1);
+counter.clear();                      // 删除该键
 ```
 
-### 3. 使用 ListState
+### 3. ListState
 
 ```java
-import io.github.cuihairu.redis.streaming.api.state.ListState;
+import java.util.Arrays;
+import java.util.List;
 
-// 创建列表状态
-StateDescriptor<String> descriptor = new StateDescriptor<>(
-    "events",
-    String.class
-);
-ListState<String> eventList = stateBackend.createListState(descriptor);
+StateDescriptor<String> descriptor = new StateDescriptor<>("activity-log", String.class);
+ListState<String> activityLog = stateBackend.createListState(descriptor);
 
-// 添加元素
-eventList.add("event1");
-eventList.add("event2");
-
-// 批量添加
-eventList.addAll(Arrays.asList("event3", "event4"));
-
-// 获取所有元素
-List<String> events = eventList.get();
-System.out.println("Events: " + events);
-
-// 更新列表
-eventList.update(Arrays.asList("new-event1", "new-event2"));
+activityLog.add("login");             // RPUSH 追加
+activityLog.addAll(Arrays.asList("view_product", "checkout"));
+for (String activity : activityLog.get()) { /* Iterable 遍历 */ }
+activityLog.update(List.of("reset")); // 整体替换(原子批处理,见下文)
+activityLog.clear();
 ```
 
-### 4. 使用 MapState
+### 4. MapState
 
 ```java
-import io.github.cuihairu.redis.streaming.api.state.MapState;
+MapState<String, String> preferences =
+        stateBackend.createMapState("user-preferences", String.class, String.class);
 
-// 创建映射状态
-MapState<String, Integer> countMap = stateBackend.createMapState(
-    "word-count",
-    String.class,
-    Integer.class
-);
-
-// 添加键值对
-countMap.put("hello", 1);
-countMap.put("world", 2);
-
-// 批量添加
-Map<String, Integer> batch = new HashMap<>();
-batch.put("foo", 3);
-batch.put("bar", 4);
-countMap.putAll(batch);
-
-// 获取值
-Integer count = countMap.get("hello");
-System.out.println("'hello' count: " + count);
-
-// 获取所有条目
-List<Map.Entry<String, Integer>> entries = countMap.entries();
-entries.forEach(entry -> {
-    System.out.println(entry.getKey() + ": " + entry.getValue());
-});
-
-// 删除键
-countMap.remove("world");
+preferences.put("theme", "dark");
+preferences.get("theme");             // "dark"
+preferences.contains("theme");        // true
+preferences.entries().forEach(e -> System.out.println(e.getKey() + "=" + e.getValue()));
+preferences.keys();
+preferences.values();
+preferences.isEmpty();
+preferences.remove("theme");
+preferences.clear();
 ```
 
-### 5. 使用 SetState
+### 5. SetState
 
 ```java
-import io.github.cuihairu.redis.streaming.api.state.SetState;
+StateDescriptor<String> descriptor = new StateDescriptor<>("unique-visitors", String.class);
+SetState<String> visitors = stateBackend.createSetState(descriptor);
 
-// 创建集合状态
-StateDescriptor<String> descriptor = new StateDescriptor<>(
-    "unique-users",
-    String.class
-);
-SetState<String> userSet = stateBackend.createSetState(descriptor);
-
-// 添加元素
-userSet.add("user1");
-userSet.add("user2");
-
-// 批量添加
-userSet.addAll(Arrays.asList("user3", "user4"));
-
-// 检查包含
-boolean exists = userSet.contains("user1");
-System.out.println("user1 exists: " + exists);
-
-// 获取所有元素
-List<String> users = userSet.get();
-System.out.println("Users: " + users);
-
-// 移除元素
-userSet.remove("user2");
+boolean isNew = visitors.add("user1");   // 首次 true,重复 add 返回 false
+visitors.contains("user1");              // true
+visitors.size();
+for (String user : visitors.get()) { /* Iterable 遍历 */ }
+visitors.remove("user1");
+visitors.clear();
 ```
 
-### 6. 在 KeyedStream 中使用状态
+### 6. 在 KeyedStream 中使用状态(runtime 内存引擎)
+
+状态访问入口是 `KeyedStream.getState(StateDescriptor)`,而不是 `KeyedProcessFunction.Context`(后者只有时间/定时器方法):
 
 ```java
+import java.util.ArrayList;
+import java.util.List;
 import io.github.cuihairu.redis.streaming.runtime.StreamExecutionEnvironment;
+import io.github.cuihairu.redis.streaming.api.stream.KeyedStream;
 import io.github.cuihairu.redis.streaming.api.state.StateDescriptor;
+import io.github.cuihairu.redis.streaming.api.state.ValueState;
 
 StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-env.fromElements("hello", "world", "hello", "world")
-    .keyBy(word -> word)
-    .process((key, value, ctx, out) -> {
-        // 获取状态
-        StateDescriptor<Long> descriptor = new StateDescriptor<>(
-            "word-count",
-            Long.class,
-            0L
-        );
-        ValueState<Long> countState = ctx.getState(descriptor);
+StateDescriptor<Integer> descriptor = new StateDescriptor<>("count", Integer.class, 0);
+KeyedStream<String, String> keyed = env.fromElements("a", "b", "a").keyBy(v -> v);
+ValueState<Integer> count = keyed.getState(descriptor);
 
-        // 读取并更新状态
-        Long current = countState.value();
-        Long next = current == null ? 1L : current + 1;
-        countState.update(next);
-
-        out.collect(key + ": " + next);
-    });
+List<String> out = new ArrayList<>();
+keyed.<String>process((key, value, ctx, collector) -> {
+            int next = count.value() + 1;
+            count.update(next);
+            collector.collect(key + ":" + next);
+        })
+        .addSink(out::add);
+// 结果:a:1, b:1, a:2(runtime 测试 StreamExecutionEnvironmentTest 同款用法)
 ```
 
-## StateDescriptor
-
-状态描述符，定义状态的元数据。
-
-```java
-public class StateDescriptor<T> {
-    private String name;          // 状态名称
-    private Class<T> type;         // 状态类型
-    private T defaultValue;        // 默认值
-
-    public StateDescriptor(String name, Class<T> type, T defaultValue) {
-        this.name = name;
-        this.type = type;
-        this.defaultValue = defaultValue;
-    }
-
-    // Getters
-    public String getName() { return name; }
-    public Class<T> getType() { return type; }
-    public T getDefaultValue() { return defaultValue; }
-}
-```
+Redis 引擎的键控状态由 runtime 自带的 `RedisKeyedStateStore` 管理(键前缀见 `RedisRuntimeConfig.stateKeyPrefix`,默认 `streaming:runtime`),不经过本模块的 `RedisStateBackend`,详见 [runtime.md](runtime.md)。
 
 ## Redis 数据结构
 
-状态后端使用以下 Redis 数据结构：
+键 = `keyPrefix + 状态名`,例如默认前缀下 `state:session-counter`,自定义前缀 `example:state:` 下 `example:state:activity-log`:
 
-### ValueState
-
-- **Key**: `state:{jobId}:{operatorId}:{key}:{stateName}`
-- **Type**: String
-- **Value**: 序列化的状态值
-
-### ListState
-
-- **Key**: `state:{jobId}:{operatorId}:{key}:{stateName}`
-- **Type**: List
-- **Elements**: 序列化的元素列表
-
-### MapState
-
-- **Key**: `state:{jobId}:{operatorId}:{key}:{stateName}`
-- **Type**: Hash
-- **Fields**: 序列化的键
-- **Values**: 序列化的值
-
-### SetState
-
-- **Key**: `state:{jobId}:{operatorId}:{key}:{stateName}`
-- **Type**: Set
-- **Members**: 序列化的元素
+| 状态 | Redisson API | Redis 类型 | 写路径 |
+|---|---|---|---|
+| `RedisValueState` | `RBucket.set/get/delete` | String(bucket) | `update` = SET,`clear` = DEL |
+| `RedisListState` | `RList` | List | `add` = RPUSH;`addAll` = `RBatch`(REDIS_WRITE_ATOMIC)一次 `addAllAsync`;`update` = 同一批处理内 `DEL` + `addAllAsync`(原子替换,中途断连不会留下半写状态) |
+| `RedisMapState` | `RMap` | Hash | `put` = HSET,`get` = HGET,`remove` = HDEL,`clear` = 清空该键内容 |
+| `RedisSetState` | `RSet` | Set | `add` = SADD,`remove` = SREM,`clear` = 清空该键内容 |
 
 ## 设计说明
 
-### 1. 状态键设计
+### 序列化
 
-状态键采用层次化设计，支持多租户和多实例：
+- 值的编解码由 `RedissonClient` 配置的 codec 决定,state 模块自身不设置 codec、不感知具体格式(`RedisStateBackendTest` 用 mock 客户端即可验证逻辑;集成测试用 `Redisson.create(config)` 默认配置)。
+- `State extends Serializable`;存入的值需要能被所选 codec 序列化。
 
-```
-state:{jobId}:{operatorId}:{key}:{stateName}
-```
+### 并发与原子性
 
-- `jobId`: 作业ID
-- `operatorId`: 算子ID
-- `key`: 键控流的键
-- `stateName`: 状态名称
-
-### 2. 序列化
-
-状态使用 JSON 进行序列化：
-
-- 优点: 可读性好，易于调试
-- 缺点: 性能略低于二进制序列化
-- 适用场景: 状态数据不大，性能要求不极端
-
-### 3. 并发控制
-
-状态操作使用 Redis 的原子操作保证一致性：
-
-- ValueState: 使用 SET 命令
-- ListState: 使用 LPUSH/RPUSH 命令
-- MapState: 使用 HSET/HGET 命令
-- SetState: 使用 SADD 命令
+- 单键读写直接使用 Redisson 对应结构的原子命令(SET/GET、RPUSH、HSET/HGET、SADD/SREM)。
+- `RedisListState.update/addAll` 通过 `redisson.createBatch(BatchOptions.defaults().executionMode(REDIS_WRITE_ATOMIC))` 保证多步写入的原子性。
 
 ## 注意事项
 
-1. **状态大小**: 单个状态不宜过大，建议控制在 10MB 以内
-2. **序列化**: 状态对象必须可序列化
-3. **空值处理**: get() 操作返回 null 表示状态不存在
-4. **异常处理**: 状态操作可能抛出 IOException
-5. **资源清理**: 使用完毕后应调用 close() 释放资源
-
-## 性能优化
-
-1. **批量操作**: 使用 addAll/putAll 等批量操作减少网络往返
-2. **本地缓存**: 在高频访问场景考虑引入本地缓存
-3. **Pipeline**: 使用 Redis Pipeline 批量执行命令
-4. **连接池**: 合理配置 Redisson 连接池大小
+1. `value()` / `get()` 无值返回 null,不存在"抛异常表示缺失"的路径;接口方法不抛受检异常。
+2. `RedisStateBackend.close()` 为空实现,Redisson 客户端由调用方负责关闭。
+3. `ListState.get()` 返回快照副本(`ArrayList` 拷贝),`SetState.get()` 返回 `HashSet` 拷贝;`MapState.entries()/keys()/values()` 直接透传 Redisson 视图。
+4. 键由前缀+状态名决定:多个作业若共用同一 Redis 与前缀,会读写同一份状态,用 `keyPrefix` 区分。
 
 ## 相关文档
 
-- [Checkpoint 模块](Checkpoint.md) - 检查点与状态恢复
-- [Runtime 模块](Runtime.md) - 运行时环境
-- [Core API](Core.md) - 核心接口定义
+- [Checkpoint 模块](checkpoint.md) - 检查点与状态恢复
+- [Runtime 模块](runtime.md) - 运行时环境
+- [Core API](Core.md) - 状态接口定义
