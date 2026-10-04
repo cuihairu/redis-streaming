@@ -5,16 +5,22 @@ import io.github.cuihairu.redis.streaming.mq.MessageProducer;
 import io.github.cuihairu.redis.streaming.mq.MessageQueueFactory;
 import io.github.cuihairu.redis.streaming.mq.control.PausableMessageConsumer;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
+import io.github.cuihairu.redis.streaming.mq.dlq.DlqKeys;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
 
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -30,6 +36,27 @@ class ConsumerChaosScenarioIntegrationTest {
         Config cfg = new Config();
         cfg.useSingleServer().setAddress(System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379"));
         return Redisson.create(cfg);
+    }
+
+    /** Dump DLQ stream entries as {@code entryId{field=value,...}} lines, or null when absent/empty. */
+    private static String dumpDlq(RedissonClient redis, String dlqKey) {
+        try {
+            Map<org.redisson.api.stream.StreamMessageId, Map<Object, Object>> entries =
+                    redis.getStream(dlqKey)
+                         .range(20, org.redisson.api.stream.StreamMessageId.MIN, org.redisson.api.stream.StreamMessageId.MAX);
+            if (entries == null || entries.isEmpty()) {
+                return null;
+            }
+            StringBuilder sb = new StringBuilder();
+            entries.forEach((id, fields) -> {
+                sb.append(id).append('{');
+                fields.forEach((k, v) -> sb.append(k).append('=').append(v).append(", "));
+                sb.append("} ");
+            });
+            return sb.toString();
+        } catch (Exception e) {
+            return "read-failed: " + e;
+        }
     }
 
     @Test
@@ -48,13 +75,24 @@ class ConsumerChaosScenarioIntegrationTest {
                 .build();
         io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.configure(
                 options.getKeyPrefix(), options.getStreamKeyPrefix());
+        DlqKeys.configure(options.getStreamKeyPrefix());
+        // Deliveries seen per payload. Keyed by payload, not Message.getId(): the
+        // consumer-side id is the stream entry id of the current delivery and is
+        // regenerated on every requeue, so it cannot identify a message across
+        // redeliveries. The handler only returns RETRY on a payload's first delivery;
+        // an unbounded retry roll would let a message burn through retryMaxAttempts
+        // and dead-letter, i.e. the test would fail by construction (a dead-lettered
+        // message never reaches "done") rather than by message loss.
+        Map<String, AtomicInteger> deliveries = new ConcurrentHashMap<>();
         CopyOnWriteArrayList<String> done = new CopyOnWriteArrayList<>();
         try {
             MessageQueueFactory mq = new MessageQueueFactory(redis, options);
             RedisMessageConsumer c1 = (RedisMessageConsumer) mq.createConsumer("chaos-c1-" + uid);
             c1.subscribe(topic, "g", m -> {
-                int roll = ThreadLocalRandom.current().nextInt(4);
-                if (roll == 0) {
+                boolean firstDelivery = deliveries
+                        .computeIfAbsent(String.valueOf(m.getPayload()), k -> new AtomicInteger())
+                        .incrementAndGet() == 1;
+                if (firstDelivery && ThreadLocalRandom.current().nextInt(4) == 0) {
                     return MessageHandleResult.RETRY;
                 }
                 done.add(String.valueOf(m.getPayload()));
@@ -80,11 +118,24 @@ class ConsumerChaosScenarioIntegrationTest {
             Thread.sleep(400);
             ((PausableMessageConsumer) c1).resume();
 
+            // Wait on the distinct-payload count: at-least-once delivery allows
+            // duplicates (e.g. a lease-expiry claim of a slow in-flight message),
+            // so the raw list size can legitimately exceed the number of messages.
             long deadline = System.currentTimeMillis() + 30_000;
-            while (done.size() < 12 && System.currentTimeMillis() < deadline) {
+            Set<String> processed = new HashSet<>(done);
+            while (processed.size() < 12 && System.currentTimeMillis() < deadline) {
                 Thread.sleep(200);
+                processed = new HashSet<>(done);
             }
-            assertEquals(12, done.size(), "all payloads should eventually be processed; got " + done.size());
+            // DLQ first: with retries bounded above nothing may dead-letter, and any
+            // entry here would also explain a missing payload, so dump it for attribution.
+            String dlqDump = dumpDlq(redis, DlqKeys.dlq(topic));
+            assertNull(dlqDump,
+                    "no message should end up in the DLQ under bounded retries; entries=" + dlqDump);
+            assertEquals(12, processed.size(),
+                    "all payloads should eventually be processed; got " + processed.size()
+                    + " distinct of " + done.size() + " deliveries: " + processed
+                    + "; deliveries-per-payload=" + deliveries);
 
             // unsubscribe mid-processing then stop/close both
             c1.unsubscribe(topic);

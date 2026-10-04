@@ -141,6 +141,13 @@ subprojects {
         testClassesDirs = sourceSets.integrationTest.output.classesDirs
         classpath = sourceSets.integrationTest.runtimeClasspath
 
+        // Gradle 9 fails a Test task that has test sources but executes zero tests
+        // (test_task_fail_on_no_test_executed). Modules without any @Tag("integration")
+        // test (e.g. examples) skip the task instead of executing nothing.
+        enabled = sourceSets.integrationTest.java.srcDirs.findAll { it.exists() }.any { dir ->
+            fileTree(dir).matching { include '**/*.java' }.files.any { it.text.contains('@Tag("integration")') }
+        }
+
         description = 'Runs integration tests (requires Redis to be running)'
         group = 'verification'
 
