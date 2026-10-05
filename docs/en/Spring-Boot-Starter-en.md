@@ -449,7 +449,7 @@ public class OrderEventConsumer {
 }
 ```
 
-`MessageHandleResult` is `SUCCESS` / `RETRY` / `FAIL`. `MessageConsumer` also exposes `pause()`/`resume()`/`isRunning()`. For windowed/exactly-once pipelines use the runtime entry point `RedisStreamExecutionEnvironment.fromMqTopic(...)` instead of raw subscriptions (see [runtime.md](../runtime.md)).
+`MessageHandleResult` is `SUCCESS` / `RETRY` / `FAIL` / `DEAD_LETTER`. `MessageConsumer` also exposes `pause()`/`resume()`/`isRunning()`. For windowed/exactly-once pipelines use the runtime entry point `RedisStreamExecutionEnvironment.fromMqTopic(...)` instead of raw subscriptions (see the Chinese [runtime.md](../runtime.md)).
 
 Example MQ tuning (values below are illustrative — defaults for every key are listed under Configuration Reference; the prefix is `redis-streaming.mq`, older pages that show `streaming.mq` are out of date):
 

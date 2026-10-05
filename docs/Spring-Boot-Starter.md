@@ -425,7 +425,7 @@ public class InventoryService {
 }
 ```
 
-`MessageHandleResult` 取值 `SUCCESS`/`RETRY`/`FAIL`;`subscribe()` 只登记处理器,真正拉取从 `start()` 开始。需要窗口/精确语义的流水线用运行时入口 `RedisStreamExecutionEnvironment.fromMqTopic(...)`,见 [runtime.md](runtime.md)。
+`MessageHandleResult` 取值 `SUCCESS`/`RETRY`/`FAIL`/`DEAD_LETTER`;`subscribe()` 只登记处理器,真正拉取从 `start()` 开始。需要窗口/精确语义的流水线用运行时入口 `RedisStreamExecutionEnvironment.fromMqTopic(...)`,见 [runtime.md](runtime.md)。
 
 ## 注意事项
 
