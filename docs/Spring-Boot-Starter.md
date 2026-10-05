@@ -189,10 +189,250 @@ public class ConfigWatch {
 | `RateLimitMicrometerCollector` | `redis_streaming_rl_allowed_total`/`rl_denied_total` |
 | `ClientInvokerMetricsBinder` | `client.invoker.total.{attempts,successes,failures,retries,cbOpenSkips}` |
 
+经 Spring Boot actuator 导出时，自行引入任一 Micrometer registry 实现（版本交给 Boot BOM 管理），例如：
+
+```gradle
+implementation 'org.springframework.boot:spring-boot-starter-actuator'
+runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+```
+
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+```
+
+之后抓取 `/actuator/prometheus` 即可拿到上表 `redis_streaming_*` 指标（MQ 指标带 `topic`/`partition`/`consumer` 等 tag）。不走 actuator 的另一条路是 metrics 模块的 `PrometheusExporter`/`PrometheusMetricCollector`（基于 `io.prometheus:simpleclient`，在该模块是 `compileOnly`），见 [Metrics.md](Metrics.md)。
+
 ## 后台与健康组件
 
 - `StreamRetentionHousekeeper`:按 `mq.trim-interval-sec` 周期执行 `XTRIM`(长度上限 `retention-max-len-per-partition`,可选 `retention-ms` 时长截断),同时清理 DLQ 与过期 commit frontier;`AutoCloseable`,上下文关闭时停止。
 - `MqHealthIndicator`:调用 `MessageQueueAdmin.listAllTopics()`,成功为 `UP` 并带 `topics` 数量,异常为 `DOWN` 并携带原因。
+
+## Redisson 集成与部署模式
+
+starter 复用应用里已有的 `RedissonClient`,只有在没有时才创建简化单机客户端。
+
+- 集群/哨兵/SSL 建议走 `redisson-spring-boot-starter`(例如 `implementation 'org.redisson:redisson-spring-boot-starter:4.7.0'`,与 `gradle/libs.versions.toml` 中的 Redisson 版本一致),用 `spring.redis.redisson.file` 指向 YAML。
+
+集群(redisson-cluster.yaml):
+
+```yaml
+clusterServersConfig:
+  nodeAddresses: ["redis://10.0.0.1:6379", "redis://10.0.0.2:6379"]
+  password: your_pwd
+  scanInterval: 2000
+  connectTimeout: 10000
+  timeout: 3000
+```
+
+```yaml
+spring:
+  redis:
+    redisson:
+      file: classpath:redisson-cluster.yaml
+```
+
+哨兵(redisson-sentinel.yaml):
+
+```yaml
+sentinelServersConfig:
+  masterName: mymaster
+  sentinelAddresses: ["redis://10.0.0.1:26379", "redis://10.0.0.2:26379"]
+  password: your_pwd
+  database: 0
+  checkSentinelsList: true
+```
+
+```yaml
+spring:
+  redis:
+    redisson:
+      file: classpath:redisson-sentinel.yaml
+```
+
+引入 redisson-spring-boot-starter 后,`redis-streaming.redis.*` 可以不再配置——starter 探测到外部 `RedissonClient` 会跳过内部单机客户端。
+
+## Codec 与 Lua 注意
+
+registry/MQ 的 Lua 脚本以字符串/JSON 读写这些键空间:
+
+- registry:`{prefix}:services`(Set)、`{prefix}:services:{service}:heartbeats`(ZSet)、`{prefix}:services:{service}:instance:{id}`(Hash)
+- MQ 重试:`streaming:mq:retry:{topic}`(ZSet)、`streaming:mq:retry:item:{topic}:{uuid}`(Hash);重试锁键是字面常量 `streaming:mq:retry:lock:{topic}`,不随 `key-prefix` 变化
+
+约定:
+
+- 这些键用 `StringCodec` 访问,值保持字符串/JSON;用对象型 codec(如 Kryo)读字符串回复(SMEMBERS/HGET)可能反序列化失败。
+- 自己的键用 Kryo/JSON 没问题,只要 Lua 脚本不碰它们。
+- 最省事的做法:Redisson 配置里全局 `codec: !<org.redisson.codec.StringCodec>`。
+
+## 典型用例
+
+### 服务注册与发现
+
+```java
+// 服务提供方
+@SpringBootApplication
+@EnableRedisStreaming
+public class UserServiceProvider {
+    // registry.auto-register=true 时启动即注册 user-service
+}
+
+// API 网关
+@SpringBootApplication
+@EnableRedisStreaming
+public class ApiGateway {
+
+    @Autowired
+    private ServiceDiscovery discovery;
+
+    @RequestMapping("/api/users/**")
+    public ResponseEntity<?> proxyToUserService(HttpServletRequest request) {
+        List<ServiceInstance> instances = discovery.discoverHealthy("user-service");
+        ServiceInstance instance = loadBalance(instances); // 自行选择实例
+        return forwardRequest(instance, request);
+    }
+}
+```
+
+手动注册外部服务(`NamingService` 同时实现 `ServiceRegistry`/`ServiceDiscovery`,两个视角都可注入):
+
+```java
+@Service
+public class UserService {
+
+    @Autowired
+    private ServiceRegistry serviceRegistry;
+
+    @Autowired
+    private ServiceDiscovery serviceDiscovery;
+
+    public void registerExternalService() {
+        ServiceInstance instance = DefaultServiceInstance.builder()
+                .serviceName("external-api")
+                .instanceId("api-1")
+                .host("api.example.com")
+                .port(443)
+                .protocol(StandardProtocol.HTTPS)
+                .weight(3)
+                .build();
+        serviceRegistry.register(instance);
+    }
+
+    public List<ServiceInstance> findPaymentServices() {
+        return serviceDiscovery.discoverHealthy("payment-service");
+    }
+}
+```
+
+### 配置发布
+
+```java
+@Service
+public class ConfigPublisher {
+
+    @Autowired
+    private ConfigService configService;
+
+    public void publishDatabaseConfig() {
+        String config = """
+            {
+              "host": "db.example.com",
+              "port": 3306,
+              "database": "production",
+              "maxConnections": 200
+            }
+            """;
+        configService.publishConfig("database.config", "production", config);
+    }
+}
+```
+
+配置监听见「注入示例」——`@ConfigChangeListener` 在 starter 内没有处理器,要直接调 `ConfigService.addListener`。
+
+### 服务变更监听
+
+```java
+@Component
+public class ServiceListener {
+
+    @ServiceChangeListener(services = {"payment-service", "order-service"})
+    public void onServiceChange(String serviceName, String action,
+                                ServiceInstance instance,
+                                List<ServiceInstance> allInstances) {
+        if ("payment-service".equals(serviceName)) {
+            updatePaymentServiceCache(allInstances);
+        }
+    }
+}
+```
+
+支持的方法签名见「注解与组件」。
+
+### 事件驱动
+
+```java
+// 订单服务——生产者
+@Service
+public class OrderService {
+    @Autowired
+    private MessageQueueFactory mq;
+
+    public void createOrder(Order order) {
+        orderRepository.save(order);
+        mq.createProducer().send("order_created", String.valueOf(order.getId()), order);
+    }
+}
+
+// 支付服务——同一 topic 上自己的消费组
+@Component
+public class PaymentService {
+    @Autowired
+    private MessageQueueFactory mq;
+
+    @PostConstruct
+    public void subscribe() {
+        MessageConsumer consumer = mq.createConsumer("payment-svc");
+        consumer.subscribe("order_created", "payment", message -> {
+            processPayment(message.getPayload());
+            return MessageHandleResult.SUCCESS;
+        });
+        consumer.start();
+    }
+}
+
+// 库存服务——另一个独立消费组
+@Component
+public class InventoryService {
+    @Autowired
+    private MessageQueueFactory mq;
+
+    @PostConstruct
+    public void subscribe() {
+        MessageConsumer consumer = mq.createConsumer("inventory-svc");
+        consumer.subscribe("order_created", "inventory", message -> {
+            reserveStock(message.getPayload());
+            return MessageHandleResult.SUCCESS;
+        });
+        consumer.start();
+    }
+}
+```
+
+`MessageHandleResult` 取值 `SUCCESS`/`RETRY`/`FAIL`;`subscribe()` 只登记处理器,真正拉取从 `start()` 开始。需要窗口/精确语义的流水线用运行时入口 `RedisStreamExecutionEnvironment.fromMqTopic(...)`,见 [runtime.md](runtime.md)。
+
+## 注意事项
+
+1. 启动前 Redis 必须可达;生产负载按需调大连接池。
+2. 自动探测的 IP 在部分网络环境下会取错,必要时显式设置 `instance.host`。
+3. 关闭时应用会注销服务并关闭连接。
+4. 心跳间隔建议保持 30 秒及以上。
 
 ## 常见问题
 
@@ -202,6 +442,7 @@ public class ConfigWatch {
 - 限流不生效:`ratelimit.enabled` 默认 `false`,需显式开启;`leaky-bucket` 仅有内存后端。
 - 自动注册不生效:`AutoServiceRegistration` 不在自动装配 imports 内,需要组件扫描覆盖它所在的包或手动注册(见「注解与组件」)。
 - jdbc broker 没生效:`mq.broker.type=jdbc` 但没有 `DataSource` Bean 时会回退 `redis` 并打印告警。
+- 多环境配置:按 Spring profile 拆 `application-dev.yml`/`application-prod.yml`,各自的 `redis-streaming.*` 段互不影响。
 
 ## 相关文档
 
