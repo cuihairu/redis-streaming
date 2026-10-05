@@ -6,180 +6,96 @@
 
 ## Overview
 
-Redis-based service registration and discovery. The design borrows from Nacos; storage and change notification are built on Redis data structures. Configuration-center capability lives in the separate config module (see the Chinese [config.md](../config.md)).
+A Redis-based service registration and discovery module. Key structures and operations follow the current implementation under `registry/src/main/java`. Configuration-center capability lives in the separate `config` module (see the Chinese [config.md](../config.md)).
 
 ## Core Roles
 
 ### 1. Service Provider
 
-Responsibilities:
-- Service Registration: Register service instance info to Redis on startup
-- Heartbeat Maintenance: Send periodic heartbeats to keep instance active
-- Graceful Shutdown: Deregister service instance on shutdown
+Implementation class `RedisServiceProvider` (implements both `ServiceProvider` and `ServiceRegistry`):
 
-Redis operations:
-```redis
-# Service index - Set structure, holds all registered service names
-SADD {prefix}:services "{serviceName}"
-
-# Service instance info - Hash structure
-HSET {prefix}:services:{serviceName}:instance:{instanceId} "host" "192.168.1.100"
-HSET {prefix}:services:{serviceName}:instance:{instanceId} "port" "8080"
-HSET {prefix}:services:{serviceName}:instance:{instanceId} "healthy" "true"
-
-# Heartbeat timestamps - Sorted Set structure (score = timestamp, member = instanceId)
-ZADD {prefix}:services:{serviceName}:heartbeats {timestamp} "{instanceId}"
-```
+- Service registration: writes the instance Hash, adds the heartbeat ZSet entry and the service-index Set entry — all atomically via Lua scripts
+- Heartbeat handling: each heartbeat writes whatever `HeartbeatStateManager` decides (timestamp / metrics / metadata)
+- Expired-instance cleanup: a background daemon pool removes heartbeats-expired temporary instances
+- Graceful shutdown: `deregister` deletes atomically and broadcasts `REMOVED`
 
 ### 2. Service Consumer
 
-Responsibilities:
-- Service Discovery: Query available service instance list
-- Service Subscription: Listen for service change notifications
-- Load Balancing: Select target instance from instance list
+Implementation class `RedisServiceConsumer` (implements `ServiceConsumer` and `ServiceDiscovery`):
 
-Redis operations:
-```redis
-# Service index - list all registered service names
-SMEMBERS {prefix}:services
+- Service discovery: takes active instance IDs from the heartbeat window, then reads each instance Hash to assemble `ServiceInstance`
+- Change subscription: subscribes to the `RTopic` channel `{prefix}:services:{serviceName}:changes`
+- Metadata/metrics filtering: pushed down to Lua for server-side filtering
+- Optional health probing: with `enableHealthCheck=true`, probes by protocol and reports `HEALTH_RECOVERY` / `HEALTH_FAILURE` on flips
 
-# Instance details - read the Hash of one instance
-HGETALL {prefix}:services:{serviceName}:instance:{instanceId}
+`RedisNamingService` aggregates Provider and Consumer and implements `NamingService`, `ServiceRegistry`, and `ServiceDiscovery` at once.
 
-# Service change notifications - Pub/Sub channel
-SUBSCRIBE {prefix}:services:{serviceName}:changes
-```
+### 3. Admin
 
-### 3. Registry Center
+`admin.RegistryAdminService`: lists services, inspects instance details (including metrics), aggregates metrics, reports overall registry health, and can trigger expired-instance cleanup manually.
 
-Responsibilities:
-- Instance Management: Maintain complete lifecycle of service instances
-- Health Checking: Actively detect service instance health status
-- Change Notification: Push service changes to subscribers
-- Data Cleanup: Automatically clean expired and unhealthy instances
+## Interface Design
 
-## Core Interface Design
-
-### ServiceProvider Interface
+The four interfaces are two views of the same operations; `NamingService` extends all of them:
 
 ```java
+// Business-role view
 public interface ServiceProvider {
-    // Service registration
     void register(ServiceInstance instance);
-
-    // Service deregistration
     void deregister(ServiceInstance instance);
-
-    // Send heartbeat
     void sendHeartbeat(ServiceInstance instance);
-
-    // Batch heartbeat (performance optimization)
     void batchSendHeartbeats(List<ServiceInstance> instances);
-
-    // Lifecycle management
     void start();
     void stop();
     boolean isRunning();
 }
-```
 
-### ServiceConsumer Interface
-
-```java
 public interface ServiceConsumer {
-    // Service discovery
     List<ServiceInstance> getAllInstances(String serviceName);
-
-    // Healthy instance discovery
     List<ServiceInstance> getHealthyInstances(String serviceName);
-
-    // Service subscription
+    List<ServiceInstance> getInstances(String serviceName, boolean healthy);
+    List<ServiceInstance> getInstancesByMetadata(String serviceName, Map<String, String> metadataFilters);
+    List<ServiceInstance> getHealthyInstancesByMetadata(String serviceName, Map<String, String> metadataFilters);
     void subscribe(String serviceName, ServiceChangeListener listener);
-
-    // Unsubscribe
     void unsubscribe(String serviceName, ServiceChangeListener listener);
-
-    // Lifecycle management
     void start();
     void stop();
     boolean isRunning();
 }
-```
 
-### NamingService Interface
+// Technical-operation view
+public interface ServiceRegistry {
+    void register(ServiceInstance instance);
+    void deregister(ServiceInstance instance);
+    void heartbeat(ServiceInstance instance);             // alias of sendHeartbeat
+    void batchHeartbeat(List<ServiceInstance> instances); // alias of batchSendHeartbeats
+    void start();
+    void stop();
+    boolean isRunning();
+}
 
-ServiceProvider and ServiceConsumer combined in a single entry point:
+public interface ServiceDiscovery {
+    List<ServiceInstance> discover(String serviceName);
+    List<ServiceInstance> discoverHealthy(String serviceName);
+    List<ServiceInstance> discoverByMetadata(String serviceName, Map<String, String> metadataFilters);
+    List<ServiceInstance> discoverHealthyByMetadata(String serviceName, Map<String, String> metadataFilters);
+    void subscribe(String serviceName, ServiceChangeListener listener);
+    void unsubscribe(String serviceName, ServiceChangeListener listener);
+    void start();
+    void stop();
+    boolean isRunning();
+}
 
-```java
-public interface NamingService extends ServiceProvider, ServiceConsumer {
+public interface NamingService extends ServiceProvider, ServiceConsumer, ServiceRegistry, ServiceDiscovery {
+    default List<ServiceInstance> getHealthyInstances(String serviceName); // alias of getInstances(name, true)
+    List<ServiceInstance> getInstancesByMetadata(String serviceName, Map<String, String> metadataFilters);
+    List<ServiceInstance> getHealthyInstancesByMetadata(String serviceName, Map<String, String> metadataFilters);
 }
 ```
 
-## Key Implementation Details
+Beyond the interfaces, `RedisNamingService` adds: `getInstancesByFilters(name, metadataFilters, metricsFilters)`, `getHealthyInstancesByFilters(...)`, `chooseHealthyInstance(name, lb, context)`, `chooseHealthyInstanceByFilters(name, md, mt, lb, context)`, and `getConfig()`.
 
-### Heartbeat Mechanism
-
-```java
-@Scheduled(fixedDelay = 30000) // 30-second heartbeat interval
-public void sendHeartbeat() {
-    RScoredSortedSet<String> heartbeatSet = redisson.getScoredSortedSet(heartbeatKey);
-    heartbeatSet.add(System.currentTimeMillis(), instanceId);
-}
-
-@Scheduled(fixedDelay = 60000) // Check expired instances every 60 seconds
-public void removeExpiredInstances() {
-    long expiredTime = System.currentTimeMillis() - 90000; // 90 seconds without heartbeat
-    Collection<String> expiredInstances = heartbeatSet.valueRange(0, expiredTime);
-
-    if (!expiredInstances.isEmpty()) {
-        // Batch cleanup expired instances
-        cleanupExpiredInstances(serviceName, expiredInstances);
-        // Notify service changes
-        notifyServiceChange(serviceName, "removed", expiredInstances);
-    }
-}
-```
-
-### Metadata and Metrics Storage
-
-Stored as JSON strings:
-
-```redis
-# Metadata (static business tags)
-HSET instance_key "metadata" "{\"version\":\"1.0.0\",\"region\":\"us-east\"}"
-
-# Metrics (dynamic monitoring data)
-HSET instance_key "metrics" "{\"cpu\":45.5,\"memory\":2048,\"qps\":1000}"
-```
-
-### Lua Script Optimization
-
-Heartbeat update script (supports separate metadata and metrics updates):
-```lua
--- Multi-mode heartbeat update
-local update_mode = ARGV[3]  -- "heartbeat_only" | "metrics_update" | "metadata_update" | "full_update"
-
--- Always update heartbeat timestamp
-redis.call('ZADD', heartbeat_key, heartbeat_time, instance_id)
-
--- Update different fields based on mode
-if update_mode == 'metrics_update' then
-    redis.call('HSET', instance_key, 'metrics', metrics_json)
-end
-```
-
-Filter query script (supports metadata and metrics filtering):
-```lua
--- Support both metadata and metrics filtering
-local metadata_match = check_filters(metadata_json, metadata_filters)
-local metrics_match = check_filters(metrics_json, metrics_filters)
-
-if metadata_match and metrics_match then
-    table.insert(matched_instances, instance_id)
-end
-```
-
-## Redis Key Prefix Configuration
+## Redis Key Structure (three-level storage)
 
 Key templates are generated by `keys.RegistryKeys`; the default prefix is `redis_streaming_registry` (`registry.BaseRedisConfig.DEFAULT_KEY_PREFIX`):
 
@@ -190,18 +106,56 @@ Key templates are generated by `keys.RegistryKeys`; the default prefix is `redis
 {prefix}:services:{serviceName}:changes                  # Pub/Sub: service change notification channel
 ```
 
-### Configuration Example
-```java
-// Use the default prefix (redis_streaming_registry)
-NamingServiceConfig config = new NamingServiceConfig();
+Instance Hash fields (`InstanceEntryCodec.buildInstanceData`): `host`, `port`, `protocol`, `enabled`, `healthy`, `weight`, `ephemeral`, `registrationTime`, `lastHeartbeatTime`, `lastMetadataUpdate`, `metadata` (JSON string), `metrics` (JSON string — client and server metrics merged on write), `lastMetricsUpdate` (written when a heartbeat carries metrics).
 
-// Use a custom prefix
-NamingServiceConfig config = new NamingServiceConfig("myapp");
-```
+`RegistryKeys` also sanitizes and validates names: `:`, spaces, tabs and newlines in service names / instance IDs are replaced with `_` or `-` (`sanitizeServiceName` / `sanitizeInstanceId`); registration and deregistration go through `validateAndSanitizeXxx`, and an instance ID containing `:` throws `IllegalArgumentException`.
 
-## Protocol Support
+## Heartbeat Mechanism
 
-Supports health checks for multiple protocols:
+Heartbeats are not scheduled by the framework in the background — the caller triggers `sendHeartbeat` / `batchSendHeartbeats` (the spring-boot-starter `AutoServiceRegistration` does so every 30 seconds by default).
+
+Each heartbeat first goes through `HeartbeatStateManager`, which combines `HeartbeatConfig` into an `UpdateDecision`:
+
+| Decision | Lua update_mode | Written content |
+|---|---|---|
+| `HEARTBEAT_ONLY` | `heartbeat_only` | heartbeat timestamp (ZSet score + Hash `lastHeartbeatTime`) |
+| `METRICS_UPDATE` | `metrics_update` | timestamp + metrics JSON (merged into existing metrics; the other key is not cleared) |
+| `METADATA_UPDATE` | `metadata_update` | timestamp + metadata JSON |
+| `FULL_UPDATE` | `full_update` | timestamp + metadata + metrics |
+| `NO_UPDATE` | — | skipped entirely |
+
+Decision basis (`HeartbeatConfig` defaults): if the last metrics update is younger than `metricsInterval` (60s), only the timestamp is sent; metrics changes crossing `changeThresholds` (heap memory 10%, process CPU 0.20, disk usage 5%, thread count 100, any health change) update immediately; `forceMetricsUpdateThreshold` (20) consecutive `heartbeat_only` beats force a metrics refresh; metadata change detection is off by default (`enableMetadataChangeDetection=false`).
+
+Every heartbeat of a temporary instance slides the instance Hash TTL forward (TTL = `heartbeatTimeoutSeconds`, default 90 seconds); persistent instances carry no TTL.
+
+Any update other than `heartbeat_only` broadcasts one `UPDATED` event.
+
+## Expired-Instance Cleanup
+
+`RedisServiceProvider.start()` starts a daemon thread pool that runs `cleanupExpiredInstances` — first after 60 seconds, then every 30 seconds:
+
+- For every service in the index it runs the `CLEANUP_EXPIRED_INSTANCES_WITH_SNAPSHOTS` Lua script: among instances with `heartbeat_time < now - timeout`, those with `ephemeral=true` (or a missing field) are removed from the ZSet and their Hash deleted; persistent instances (`ephemeral=false`) only get `healthy` set to `false` and are never deleted
+- When a service's heartbeat ZSet becomes empty after cleanup, the service is atomically removed from the service-index Set (a `ZCARD` check + `SREM` inside the Lua)
+- Removing a temporary instance broadcasts `REMOVED` from the snapshot; once a persistent instance is marked unhealthy, a client's active heartbeat restores `healthy` to `true`
+
+## Metadata / Metrics Filtering
+
+Filtering happens inside the Lua executed by `RegistryLuaScriptExecutor.executeGetInstancesByFilters`:
+
+- Candidate set = active instances within the heartbeat window (`ZRANGEBYSCORE heartbeats (now-timeout, +inf`)
+- Filter keys parse into `field` + operator (`==` `!=` `>` `>=` `<` `<=`; no suffix means `==`); the `metadata` and `metrics` JSON documents are matched independently, all conditions ANDed
+- Comparison tries `tonumber` numeric comparison first and falls back to lexicographic string comparison when either side is non-numeric; a missing field never matches
+- An empty filter set is equivalent to "return all active instances"
+
+## Change Notification
+
+Changes are broadcast over the Redis Pub/Sub channel `{prefix}:services:{serviceName}:changes` with an `event.ServiceChangeEvent` payload (`serviceName`, `action`, `instanceId`, `timestamp`, `instance` snapshot). Actions are defined by `ServiceChangeAction`:
+
+- `ADDED` / `REMOVED` / `UPDATED`: registration, deregistration, attribute updates (including non-timestamp-only heartbeats)
+- `CURRENT`: current-state notification delivered on subscription
+- `HEALTH_RECOVERY` / `HEALTH_FAILURE`: consumer-side health-probe verdict flips (requires `enableHealthCheck=true`)
+
+## Protocols & Health Checks
 
 | Protocol | Checker | Method |
 |----------|---------|--------|
@@ -211,7 +165,25 @@ Supports health checks for multiple protocols:
 | Everything else (GRPC/GRPCS, DUBBO, etc.) | `StandardHealthChecker` default branch | TCP connectivity test — there is no dedicated gRPC health-check implementation |
 | Custom | extend `CustomHealthChecker` | TCP connectivity first (3s timeout), then the subclass `doCheck` |
 
-Timeout defaults to 5000ms (normalised for values ≤ 0). `StandardProtocol` enum values: HTTP, HTTPS, TCP, UDP, WS, WSS, KCP, GRPC, GRPCS, DUBBO, DUBBO2 — the enum declares the protocol; health checking for the non-listed protocols uses the default TCP connectivity path above.
+The default timeout is 5000ms (no-arg constructors of the checkers); values ≤ 0 are normalized to 5000ms. `HealthCheckManager` schedules all instance probes on a shared daemon pool and reports a result only when the status flips.
+
+`StandardProtocol` enum values: HTTP, HTTPS, TCP, UDP, WS, WSS, KCP, GRPC, GRPCS, DUBBO, DUBBO2. `MessagingProtocol` holds the four Redis-related values only: `REDIS_STREAM`, `REDIS_STREAM_TLS`, `REDIS_PUBSUB`, `REDIS_PUBSUB_TLS`.
+
+## Configuration
+
+| Config class | Key fields (defaults) |
+|---|---|
+| `BaseRedisConfig` (registry) | keyPrefix=`redis_streaming_registry`, enableKeyPrefix=true |
+| `NamingServiceConfig` | enableHealthCheck=false, healthCheckInterval=30 (SECONDS), healthCheckTimeout=5000ms, enableAdminService=true |
+| `ServiceProviderConfig` | heartbeatTimeoutSeconds=90 |
+| `ServiceConsumerConfig` | enableHealthCheck=false, healthCheckInterval=30, healthCheckTimeout=5000, heartbeatTimeoutSeconds=90, enableAdminService=true |
+| `HeartbeatConfig` | heartbeatInterval=3s, metricsInterval=60s, enableMetadataChangeDetection=false, metadataUpdateIntervalSeconds=600, forceMetricsUpdateThreshold=20, forceUpdateOnHealthChange=true, forceUpdateOnStartup=true |
+| `MetricsConfig` | enabledMetrics=[memory,cpu,application], defaultCollectionInterval=1min, collectionTimeout=5s, immediateUpdateOnSignificantChange=true |
+| `LoadBalancerConfig` | cpuWeight=1.0, latencyWeight=1.0, targetLatencyMs=50.0, regionBoost=1.1, zoneBoost=1.05, remaining weights default 0, hard thresholds default -1 (disabled) |
+| `ClientSelectorConfig` | enableFallback and the three per-step switches all default true |
+| `RetryPolicy` | no default constructor; `ClientInvoker` uses (3, 10ms, 2.0, 200ms, 10ms) internally |
+
+Lua script cache: `RegistryLuaScriptExecutor` runs the scripts (register, deregister, heartbeat update, expired cleanup, active-instance query, filtered query) through the Redisson `RScript` API.
 
 ---
 
