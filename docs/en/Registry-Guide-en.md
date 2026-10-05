@@ -142,7 +142,7 @@ public class PaymentChangeHandler {
 }
 ```
 
-Annotation attributes: `services()` defaults to an empty array; `actions()` defaults to `{"added", "removed", "updated}` — health/current events are only delivered when listed explicitly. The processor accepts four parameter combinations: `(serviceName, action, instance, allInstances)`, `(action, instance)`, `(instance)`, where `action` may be either `ServiceChangeAction` or `String`.
+Annotation attributes: `services()` defaults to an empty array; `actions()` defaults to `{"added", "removed", "updated"}` — health/current events are only delivered when listed explicitly. The processor accepts four parameter combinations: `(serviceName, action, instance, allInstances)`, `(action, instance)`, `(instance)`, where `action` may be either `ServiceChangeAction` or `String`.
 
 ## 4) Metadata / metrics filtering
 

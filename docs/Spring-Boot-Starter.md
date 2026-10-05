@@ -17,10 +17,41 @@ implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
 - 标准 Boot 应用:starter 在 classpath 即自动装配(注册入口是 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`,目前只列了 `RedisStreamingAutoConfiguration`,由它 `@Import` 各功能域配置);
 - 或在配置类/启动类上显式标注 `@EnableRedisStreaming`(`@Import(RedisStreamingAutoConfiguration.class)` 的别名注解)。
 
+```java
+@SpringBootApplication
+@EnableRedisStreaming
+public class Application {
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
+}
+```
+
 ### 3. 配置文件(前缀固定为 `redis-streaming`,不是 `streaming`)
 
 完整可运行样例:`examples/src/main/resources/application.yml`
 启动示例:`./gradlew :examples:run -PmainClass=io.github.cuihairu.redis.streaming.examples.springboot.StarterExampleApplication`
+
+```yaml
+redis-streaming:
+  redis:
+    address: redis://127.0.0.1:6379
+    database: 0
+  registry:
+    enabled: true
+    auto-register: true
+    instance:
+      service-name: ${spring.application.name}
+      port: ${server.port}
+  discovery:
+    enabled: true
+
+spring:
+  application:
+    name: user-service
+server:
+  port: 8080
+```
 
 ## 自动配置结构
 
@@ -55,6 +86,7 @@ implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
 ## 配置项参考(键名+类型+默认值,取自 `RedisStreamingProperties`)
 
 ### `redis-streaming.redis.*`(单机兜底 Redisson)
+
 | 键 | 类型 | 默认 |
 |---|---|---|
 | `address` | String | `redis://127.0.0.1:6379` |
@@ -66,6 +98,7 @@ implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
 | `connection-minimum-idle-size` | int | `10` |
 
 ### `redis-streaming.registry.*`
+
 `enabled`(boolean,`true`)、`heartbeat-interval`(int 秒,`30`)、`heartbeat-timeout`(int 秒,`90`)、`auto-register`(boolean,`true`)、`instance.*`:
 
 | 键 | 类型 | 默认 |
@@ -83,18 +116,23 @@ implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
 `metrics.*`(provider 指标):`enabled`(`Set<String>`,默认 `memory,cpu,application,disk,network`)、`intervals`(`Map<String,Duration>`,`{}`)、`default-interval`(Duration,`PT1M`)、`immediate-update-on-significant-change`(boolean,`true`)、`timeout`(Duration,`PT5S`)。
 
 ### `redis-streaming.discovery.*`
+
 `enabled`(boolean,`true`)、`healthy-only`(boolean,`true`)、`cache-time`(int 秒,`30`)。
 
 ### `redis-streaming.config.*`
+
 `enabled`(boolean,`true`)、`default-group`(String,`DEFAULT_GROUP`)、`refresh-interval`(int 秒,`30`)、`auto-refresh`(boolean,`true`)、`history-size`(int,`10`)、`key-prefix`(String,`redis_streaming`)、`enable-key-prefix`(boolean,`true`)。
 
 ### `redis-streaming.load-balancer.*`
+
 `strategy`(String,`scored`;可选 `scored|wrr|weighted-random|consistent-hash`)、`preferred-region`(String)、`preferred-zone`(String)、`cpu-weight`(double,`1.0`)、`latency-weight`(double,`1.0`)、`memory-weight`(double,`0.0`)、`inflight-weight`(double,`0.0`)、`queue-weight`(double,`0.0`)、`error-rate-weight`(double,`0.0`)、`target-latency-ms`(double,`50.0`)、`max-cpu-percent`/`max-latency-ms`/`max-memory-percent`/`max-inflight`/`max-queue`/`max-error-rate-percent`(double,`-1` = 不限,仅 `scored` 使用)。
 
 ### `redis-streaming.invoker.*`
+
 `max-attempts`(int,`3`)、`initial-delay-ms`(long,`20`)、`backoff-factor`(double,`2.0`)、`max-delay-ms`(long,`200`)、`jitter-ms`(long,`20`)。
 
 ### `redis-streaming.mq.*`(扁平键,对应 `MqProperties`)
+
 | 键 | 类型 | 默认 |
 |---|---|---|
 | `enabled` | boolean | `true` |
@@ -136,6 +174,7 @@ implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
 | `broker.jdbc.url` / `username` / `password` | String | `null`(提供 `DataSource` Bean 时忽略) |
 
 ### `redis-streaming.ratelimit.*`
+
 `enabled`(boolean,`false`)、`backend`(`memory|redis`,默认 `memory`)、`window-ms`(long,`1000`)、`limit`(int,`100`)、`key-prefix`(String,`streaming:rl`)、`default-name`(String,`default`),以及命名策略集合 `policies.<名称>.*`:`algorithm`(`sliding|token-bucket|leaky-bucket`,默认 `sliding`)、`backend`(`memory|redis`,默认 `memory`)、`window-ms`(long,`1000`)、`limit`(int,`100`)、`capacity`(double,`100.0`)、`rate-per-second`(double,`100.0`)、`key-prefix`(String,`streaming:rl`)。
 
 组装规则:`policies` 为空时用顶层键构建单个默认限流器;非空时逐个构建,并保证 `default-name` 存在。算法与后端对应 `InMemory/Redis SlidingWindow`、`InMemory/Redis TokenBucket`、`InMemory LeakyBucket`——`leaky-bucket` 只有内存实现;请求 `redis` 后端但没有 `RedissonClient` 时回退内存实现并告警;未知算法回退 sliding。
@@ -283,22 +322,17 @@ registry/MQ 的 Lua 脚本以字符串/JSON 读写这些键空间:
 public class UserServiceProvider {
     // registry.auto-register=true 时启动即注册 user-service
 }
+```
 
-// API 网关
-@SpringBootApplication
-@EnableRedisStreaming
-public class ApiGateway {
-
-    @Autowired
-    private ServiceDiscovery discovery;
-
-    @RequestMapping("/api/users/**")
-    public ResponseEntity<?> proxyToUserService(HttpServletRequest request) {
-        List<ServiceInstance> instances = discovery.discoverHealthy("user-service");
-        ServiceInstance instance = loadBalance(instances); // 自行选择实例
-        return forwardRequest(instance, request);
-    }
-}
+```yaml
+redis-streaming:
+  registry:
+    auto-register: true
+    instance:
+      service-name: user-service
+      weight: 2
+      metadata:
+        version: 2.0.0
 ```
 
 手动注册外部服务(`NamingService` 同时实现 `ServiceRegistry`/`ServiceDiscovery`,两个视角都可注入):
@@ -354,8 +388,6 @@ public class ConfigPublisher {
 }
 ```
 
-配置监听见「注入示例」——`@ConfigChangeListener` 在 starter 内没有处理器,要直接调 `ConfigService.addListener`。
-
 ### 服务变更监听
 
 ```java
@@ -389,7 +421,9 @@ public class OrderService {
         mq.createProducer().send("order_created", String.valueOf(order.getId()), order);
     }
 }
+```
 
+```java
 // 支付服务——同一 topic 上自己的消费组
 @Component
 public class PaymentService {
@@ -400,13 +434,25 @@ public class PaymentService {
     public void subscribe() {
         MessageConsumer consumer = mq.createConsumer("payment-svc");
         consumer.subscribe("order_created", "payment", message -> {
-            processPayment(message.getPayload());
-            return MessageHandleResult.SUCCESS;
+            try {
+                processPayment(message.getPayload());
+                return MessageHandleResult.SUCCESS;
+            } catch (Exception e) {
+                log.error("Failed to process order", e);
+                return MessageHandleResult.RETRY;
+            }
         });
         consumer.start();
     }
-}
 
+    @PreDestroy
+    public void stop() {
+        consumer.stop();
+    }
+}
+```
+
+```java
 // 库存服务——另一个独立消费组
 @Component
 public class InventoryService {
@@ -422,10 +468,29 @@ public class InventoryService {
         });
         consumer.start();
     }
+
+    @PreDestroy
+    public void stop() {
+        consumer.stop();
+    }
 }
 ```
 
 `MessageHandleResult` 取值 `SUCCESS`/`RETRY`/`FAIL`/`DEAD_LETTER`;`subscribe()` 只登记处理器,真正拉取从 `start()` 开始。需要窗口/精确语义的流水线用运行时入口 `RedisStreamExecutionEnvironment.fromMqTopic(...)`,见 [runtime.md](runtime.md)。
+
+MQ 调优示例(下面值仅作示意——所有键的默认值见「配置项参考」,前缀为 `redis-streaming.mq`,历史文档中的 `streaming.mq` 已废弃):
+
+```yaml
+redis-streaming:
+  mq:
+    enabled: true
+    default-partition-count: 4
+    worker-threads: 16
+    consumer-batch-count: 32
+    consumer-poll-timeout-ms: 500
+    max-in-flight: 1024
+    claim-idle-ms: 300000
+```
 
 ## 注意事项
 
@@ -436,13 +501,50 @@ public class InventoryService {
 
 ## 常见问题
 
-- 与 redisson-spring-boot-starter 共存:对方提供 `RedissonClient` 时本 starter 的兜底客户端自动让位(`@ConditionalOnMissingBean`);对方配置前缀以其版本为准,与 `redis-streaming.redis.*` 无关。
-- redis-streaming 与 spring.data 混淆:本 starter 只读 `redis-streaming.*`;历史文档中的 `streaming.*` 前缀均已废弃。
-- actuator 缺失报 HealthIndicator 错:`MqHealthIndicator` 由类级 `@ConditionalOnClass(HealthIndicator)` 守卫,不引 actuator 时该嵌套配置不会被加载。
-- 限流不生效:`ratelimit.enabled` 默认 `false`,需显式开启;`leaky-bucket` 仅有内存后端。
-- 自动注册不生效:`AutoServiceRegistration` 不在自动装配 imports 内,需要组件扫描覆盖它所在的包或手动注册(见「注解与组件」)。
-- jdbc broker 没生效:`mq.broker.type=jdbc` 但没有 `DataSource` Bean 时会回退 `redis` 并打印告警。
-- 多环境配置:按 Spring profile 拆 `application-dev.yml`/`application-prod.yml`,各自的 `redis-streaming.*` 段互不影响。
+**Q: 如何禁用自动注册?**
+```yaml
+redis-streaming:
+  registry:
+    auto-register: false
+```
+
+**Q: 如何使用自己的 RedissonClient?**
+```java
+@Bean
+@Primary
+public RedissonClient customRedissonClient() {
+    // return your custom RedissonClient
+}
+```
+starter 的兜底客户端会让位(`@ConditionalOnMissingBean`);若用 redisson-spring-boot-starter 提供客户端,其配置前缀以其版本为准,与 `redis-streaming.redis.*` 无关。
+
+**Q: 为什么 `redis-streaming` 配置不生效?**
+starter 只读 `redis-streaming.*`;历史文档中的 `streaming.*` 前缀均已废弃,`spring.data.redis` 属于 Spring Data,非本 starter。
+
+**Q: 必须引入 actuator 吗?**
+不需要。`MqHealthIndicator` 由类级 `@ConditionalOnClass(HealthIndicator)` 守卫,不引 actuator 时该嵌套配置不会被加载,`HealthIndicator` 缺失也不会导致启动失败。所有 Micrometer collector/binder Bean 同理。
+
+**Q: 为什么限流不生效?**
+`ratelimit.enabled` 默认 `false`,需显式开启;`leaky-bucket` 仅有内存后端。
+
+**Q: 为什么自动注册不生效?**
+`AutoServiceRegistration` 不在自动装配 imports 内,需要组件扫描覆盖它所在的包或手动注册(见「注解与组件」)。
+
+**Q: 为什么 jdbc broker 没生效?**
+`mq.broker.type=jdbc` 但没有 `DataSource` Bean 时会回退 `redis` 并打印告警。
+
+**Q: 多环境配置?**
+```yaml
+# application-dev.yml
+redis-streaming:
+  redis:
+    address: redis://dev-redis:6379
+
+# application-prod.yml
+redis-streaming:
+  redis:
+    address: redis://prod-redis:6379
+```
 
 ## 相关文档
 

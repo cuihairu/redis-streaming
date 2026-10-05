@@ -520,22 +520,17 @@ public class DatabaseConfigListener {
 public class UserServiceProvider {
     // auto-registers user-service on startup (registry.auto-register=true)
 }
+```
 
-// API gateway
-@SpringBootApplication
-@EnableRedisStreaming
-public class ApiGateway {
-
-    @Autowired
-    private ServiceDiscovery discovery;
-
-    @RequestMapping("/api/users/**")
-    public ResponseEntity<?> proxyToUserService(HttpServletRequest request) {
-        List<ServiceInstance> instances = discovery.discoverHealthy("user-service");
-        ServiceInstance instance = loadBalance(instances); // your own selection logic
-        return forwardRequest(instance, request);
-    }
-}
+```yaml
+redis-streaming:
+  registry:
+    auto-register: true
+    instance:
+      service-name: user-service
+      weight: 2
+      metadata:
+        version: 2.0.0
 ```
 
 ### Event-Driven Architecture
@@ -552,7 +547,9 @@ public class OrderService {
         mq.createProducer().send("order_created", String.valueOf(order.getId()), order);
     }
 }
+```
 
+```java
 // Payment service — its own consumer group on the same topic
 @Component
 public class PaymentService {
@@ -569,7 +566,9 @@ public class PaymentService {
         consumer.start();
     }
 }
+```
 
+```java
 // Inventory service — another independent consumer group
 @Component
 public class InventoryService {
