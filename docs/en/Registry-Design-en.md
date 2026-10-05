@@ -203,12 +203,15 @@ NamingServiceConfig config = new NamingServiceConfig("myapp");
 
 Supports health checks for multiple protocols:
 
-| Protocol | Health Check Method |
-|----------|---------------------|
-| HTTP/HTTPS | HTTP GET request |
-| TCP | TCP connection test |
-| gRPC | gRPC health check protocol |
-| WebSocket | WebSocket connection test |
+| Protocol | Checker | Method |
+|----------|---------|--------|
+| HTTP / HTTPS | `HttpHealthChecker` | GET `{uri}/health`; 2xx-3xx counts as healthy, request errors fall back to TCP connectivity |
+| TCP / UDP | `TcpHealthChecker` | Socket connection test |
+| WS / WSS | `WebSocketHealthChecker` | TCP connectivity test |
+| Everything else (GRPC/GRPCS, DUBBO, etc.) | `StandardHealthChecker` default branch | TCP connectivity test — there is no dedicated gRPC health-check implementation |
+| Custom | extend `CustomHealthChecker` | TCP connectivity first (3s timeout), then the subclass `doCheck` |
+
+Timeout defaults to 5000ms (normalised for values ≤ 0). `StandardProtocol` enum values: HTTP, HTTPS, TCP, UDP, WS, WSS, KCP, GRPC, GRPCS, DUBBO, DUBBO2 — the enum declares the protocol; health checking for the non-listed protocols uses the default TCP connectivity path above.
 
 ---
 
