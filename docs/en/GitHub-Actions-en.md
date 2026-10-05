@@ -15,11 +15,11 @@ This project uses GitHub Actions for CI/CD. Workflow files are in `.github/workf
 
 ```yaml
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-&#123;&#123; github.ref &#125;&#125;
   cancel-in-progress: true
 ```
 
-Where `${{ github.ref }}` is the branch/tag reference for the push/PR; older runs on the same ref are cancelled.
+Where `&#123;&#123; github.ref &#125;&#125;` is the branch/tag reference for the push/PR; older runs on the same ref are cancelled.
 
 - **Steps**:
   1. `actions/checkout@v6` (`fetch-depth: 0` for axion-release tag reading)
