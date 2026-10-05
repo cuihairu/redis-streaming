@@ -138,6 +138,12 @@ flowchart LR
 - Time: `retentionMs`, `dlqRetentionMs` and period `trimIntervalSec` consumed by spring-boot-starter's `StreamRetentionHousekeeper` background task (`XTRIM MAXLEN ~` / `XTRIM MINID ~`); mq module itself does not use these for trimming (`retentionMs` only serves as payload TTL ceiling).
 - DLQ length override `dlqRetentionMaxLen` (default 0=disabled) also only consumed by starter housekeeper.
 
+## Relation to Kafka
+
+- Semantic correspondence: partitions / exclusive consumption within a group / rebalance / lag aggregation; the coordination mechanism is replaced by Redis keys + `XPENDING+XCLAIM`.
+- Advantages: no external coordinator required; easy to deploy.
+- Limitations: leases are eventually consistent; Redis memory and network overhead.
+
 ## Sequences
 
 ### Produce
@@ -191,6 +197,38 @@ sequenceDiagram
 ```
 
 ## Redis Commands vs Kafka
+
+The core Redis commands the implementation actually uses, mapped to Kafka features (Redisson already wraps the raw commands; the underlying commands are listed here for comparison and troubleshooting):
+
+- Produce (Kafka Producer → send to a partition)
+  - `XADD stream:topic:{t}:p:{i} * field value …`: appends a message and returns an id of the form `timestamp-seq`; with retention enabled it becomes `XADD ... MAXLEN = N`.
+  - Kafka mapping: producer sends to a Topic Partition (Kafka assigns the offset; Redis generates the id from the stream).
+
+- Consume and consumer groups (Kafka Consumer/Group → fetch/commit)
+  - `XGROUP CREATE <stream> <group> 0-0 MKSTREAM` (both `subscribe` and the Broker read path make this idempotent via Lua, swallowing `BUSYGROUP`).
+  - `XREADGROUP GROUP <g> <c> COUNT n BLOCK ms STREAMS <stream> >`: reads undelivered entries; corresponds to the Kafka fetch.
+  - `XACK <stream> <group> <id ...>`: acknowledges and removes from the PEL; corresponds to commit.
+  - `XPENDING <stream> <group>` (Redisson `listPending`): lists unacked entries (idle, delivery count); Kafka has no direct equivalent and infers it from offsets/monitoring.
+
+- Failure recovery and rebalance (Kafka Rebalance/Coordinator → partition exclusivity and orphan takeover)
+  - `SET key value NX EX ttl`: acquires the partition lease; renew/release runs Lua that compares the owner id before `PEXPIRE`/`DEL`.
+  - `XCLAIM <stream> <group> <consumer> <min-idle-time> <id>`: claims pending entries past the idle timeout (the implementation combines `listPending + claim`; `XAUTOCLAIM` is not used).
+  - Kafka mapping: the group coordinator assigns partitions and heartbeats keep the session alive; after rebalance, unacked messages are taken over.
+
+- Delayed retry (Kafka retry topics/backoff → Redis delay bucket + Lua mover)
+  - `ZADD streaming:mq:retry:{t} <dueAtMs> <itemKey>`: enqueues into the bucket by due time.
+  - `HSET streaming:mq:retry:item:{t}:{uuid} topic ... partitionId ... payload ... key ... headers ... retryCount ... maxRetries ... originalMessageId ...`: multi-field string envelope (payload/headers JSON-encoded; a null payload omits the field).
+  - `EVAL <lua>`: under lock, atomically executes `ZRANGEBYSCORE` for due items → `XADD` back to the partition → `ZREM` → `DEL` Hash.
+  - Kafka mapping: retry topic buckets by delay, then re-sends to the main topic.
+
+- Dead letters (Kafka DLQ → Redis DLQ stream)
+  - `XADD stream:topic:{t}:dlq * ...` with fields `originalTopic / partitionId / originalMessageId / retryCount / maxRetries / timestamp / failedAt / headers / payload`.
+  - Replay: read with `XRANGE <dlq> <id> <id>`, then `XADD` back to the original partition by `partitionId` (or `x-force-partition-id`); replay does not auto-`XDEL` DLQ entries.
+
+- Topic governance (Kafka topic management/retention/delete → Redis management)
+  - `XINFO STREAM / XINFO GROUPS` (Redisson `getInfo`/`listGroups`): stream and group stats.
+  - `XTRIM MAXLEN = N` (write path, exact) / `XTRIM MAXLEN ~ N`, `XTRIM MINID <id>` (periodic, starter housekeeper) / paged `XDEL` (`trimQueueByAge`, hard-cap fallback).
+  - `DEL <key ...>`: `deleteTopic` removes partition streams/DLQ/meta etc. (destructive — data loss).
 
 | Redis Command | Kafka Mapping |
 |---|---|
