@@ -1,57 +1,71 @@
 # Quick Start (EN)
 
-This page covers building, testing, and running the examples. Full details:
+[中文](../Quick-Start.md) | [English](Quick-Start-en.md)
+
+---
+
+This page covers build, test, and example execution. For full details see:
 - Root docs: [QUICK_START.md](https://github.com/cuihairu/redis-streaming/blob/main/QUICK_START.md), [RUNNING_EXAMPLES.md](https://github.com/cuihairu/redis-streaming/blob/main/RUNNING_EXAMPLES.md), [TESTING.md](https://github.com/cuihairu/redis-streaming/blob/main/TESTING.md)
-- Spring Boot Starter: [Spring-Boot-Starter-en.md](Spring-Boot-Starter-en.md)
+- Spring Boot: [Spring-Boot-Starter](../Spring-Boot-Starter.md) and [spring-boot-starter-guide](../spring-boot-starter-guide.md)
 
 ## 1) Prerequisites
-- Java 17+
-- Docker (for running Redis in integration tests and examples)
-- Gradle Wrapper (provided)
+
+- Java 17+ (build script pins `options.release = 17`)
+- Docker (for integration tests/examples Redis; repo scripts use `docker compose` V2)
+- Gradle Wrapper (bundled, Gradle 8.5)
 
 ## 2) Build & Unit Tests
+
 ```bash
-./gradlew clean build     # builds all modules and runs unit tests
-# or only unit tests
+./gradlew build     # builds all modules; build depends on check, runs unit + integration tests
+# unit tests only (no integration tests, no Redis needed)
 ./gradlew test
 ```
 
-## 3) Integration Tests (require Redis)
-```bash
-# start minimal Redis
-docker-compose -f docker-compose.minimal.yml up -d
+Note: `build`/`check` execute `integrationTest` (requires Redis). Without Redis, run step 3 first or just `./gradlew test`.
 
-# run integration tests only
+## 3) Integration Tests (require Redis)
+
+```bash
+# Start minimal Redis (docker-compose.minimal.yml, redis:7-alpine)
+docker compose -f docker-compose.minimal.yml up -d
+
+# Run integration tests only
 ./gradlew integrationTest
 
-# stop containers
-docker-compose -f docker-compose.minimal.yml down
+# Stop containers
+docker compose -f docker-compose.minimal.yml down
 ```
 
-### Tips
-- Integration tests are tagged with `@Tag("integration")` and are separated from unit tests.
-- You can run a single test class:
+Tips
+- Integration tests are tagged `@Tag("integration")`; `test` task excludes them by default.
+- Run a single test class:
   ```bash
   ./gradlew :reliability:integrationTest --tests "RedisSlidingWindowRateLimiterIntegrationExample"
   ```
+- Integration tests connect to `REDIS_URL` (default `redis://127.0.0.1:6379`).
 
 ## 4) Run Examples
-See [RUNNING_EXAMPLES.md](https://github.com/cuihairu/redis-streaming/blob/main/RUNNING_EXAMPLES.md) for end-to-end demos. Typical steps:
+
+See root RUNNING_EXAMPLES.md; typical steps:
 ```bash
 # 1) start dependencies
-docker-compose up -d
+docker compose up -d
 
-# 2) run one example (replace with the one you need)
-./gradlew :examples:run --args='mq-basic'
+# 2) run an example (specify entry via -PmainClass, default is registry.ServiceRegistryExample)
+./gradlew :examples:run -PmainClass=io.github.cuihairu.redis.streaming.examples.mq.MessageQueueExample
 ```
 
+Available example entry points in [Examples](../Examples.md).
+
 ## 5) Spring Boot Integration (Minimal)
-Gradle dependency:
+
+Gradle dependency (current 0.2.0):
 ```gradle
 implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
 ```
 
-Enable in your app:
+Enable in app:
 ```java
 @SpringBootApplication
 @EnableRedisStreaming
@@ -60,19 +74,27 @@ public class Application {
 }
 ```
 
-application.yml (minimal):
+Minimal `application.yml`:
 ```yaml
 spring:
   application:
     name: demo
 redis-streaming:
+  redis:
+    address: redis://127.0.0.1:6379   # default, can omit
   mq:
-    enabled: true
+    enabled: true                      # true by default (matchIfMissing)
 ```
 
-Expose metrics (optional): see [Spring-Boot-Starter-en.md](Spring-Boot-Starter-en.md) for Actuator/Prometheus setup.
+Metrics (optional): see [Metrics](../Metrics.md) for Actuator/Prometheus setup.
 
 ## 6) Troubleshooting
-- Ensure Java 17 is used: `java -version`
-- If integration tests hang, check Redis is running (ping `redis-cli PING`)
-- For CI/CD setup, see [GitHub-Actions.md](../GitHub-Actions.md)
+
+- Verify Java 17: `java -version`
+- Integration tests fail/hang: check Redis is running (`redis-cli PING` should return PONG)
+- CI/CD reference: [GitHub Actions](../GitHub-Actions.md)
+
+---
+
+**Version**: 0.2.0
+**Last Updated**: 2026-10-05

@@ -1,38 +1,40 @@
 # Testing (EN)
 
-This page summarizes how to run unit/integration tests locally and in CI. See the root [TESTING.md](https://github.com/cuihairu/redis-streaming/blob/main/TESTING.md) for full details.
+[中文](../Testing.md) | [English](Testing-en.md)
+
+---
 
 ## 1) Unit Tests
-```bash
-./gradlew test                  # run unit tests in all modules
-./gradlew :core:test            # run a single module
-./gradlew :core:test --tests "ClassNameTest"   # a single test class
-```
 
-Notes
-- Unit tests must not require Redis.
-- Coverage gate (JaCoCo): `jacocoRootCoverageVerification` consumes unit-test execution data only (`jacoco/test.exec`) with two rules: INSTRUCTION ≥ 0.95 and CLASS ≥ 0.99 (connector classes that need external services, such as `**/kafka/**` and the MySQL binlog/PostgreSQL logical replication connectors, are excluded). The unit-only basis is deterministic: a gate over the unit+integration union is timing-dependent — the same tree produced both 0.98 and 0.99+ on CI — so the gate pins the deterministic floor while `./gradlew jacocoRootReport` still reports the union (uploaded to Codecov).
+```bash
+./gradlew test
+```
+- No external dependencies (Mockito for mocking).
+- Default `test` task excludes `@Tag("integration")` tests.
 
 ## 2) Integration Tests (require Redis)
-```bash
-# start Redis (minimal)
-docker-compose -f docker-compose.minimal.yml up -d
 
-# run integration tests only
+```bash
+# Start Redis (minimal)
+docker compose -f docker-compose.minimal.yml up -d
+
+# Run integration tests only
 ./gradlew integrationTest
 
-# stop containers
-docker-compose -f docker-compose.minimal.yml down
+# Stop containers
+docker compose -f docker-compose.minimal.yml down
 ```
 
-Notes
-- Integration tests are tagged with `@Tag("integration")` and are excluded from `test`.
-- Run one class:
-  ```bash
-  ./gradlew :reliability:integrationTest --tests "RedisTokenBucketRateLimiterIntegrationExample"
-  ```
+All integration tests tagged `@Tag("integration")`, connect to `REDIS_URL` (default `redis://127.0.0.1:6379`).
 
 ## 3) CI Tips
-- Ensure Java 17 in runners (`java -version`).
-- Prefer using Docker Compose files in repository for dependent services.
-- For flaky Redis timing, allow short waits or retries in ITs; see [GitHub-Actions.md](../GitHub-Actions.md).
+
+- `./gradlew clean check` runs unit + integration + coverage gate.
+- Coverage gate: `jacocoRootCoverageVerification` (unit-test deterministic gate: INSTRUCTION ≥ 0.95 AND CLASS ≥ 0.99).
+- Coverage report (unit+integration union): `./gradlew jacocoRootReport` (uploads to Codecov).
+- CI uses `docker-compose.test.yml` (Redis, MySQL, PostgreSQL, Elasticsearch) for full matrix.
+
+---
+
+**Version**: 0.2.0
+**Last Updated**: 2026-10-05
