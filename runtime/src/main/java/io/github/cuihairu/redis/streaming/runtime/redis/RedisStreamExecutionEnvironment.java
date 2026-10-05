@@ -1010,6 +1010,15 @@ public final class RedisStreamExecutionEnvironment {
                 } catch (Exception e) {
                     log.error("Two-phase preCommit failed (jobName={}, checkpointId={})", config.getJobName(), checkpointId, e);
                     abortTwoPhaseQuietly(runners, checkpointManager, twoPhaseEpochs);
+                    // The aborted epoch's side effects were discarded, so the records it
+                    // consumed must come back through pending-entry reclaim. Drop the
+                    // deferred tracking without acking: keeping the ids would let the NEXT
+                    // successful checkpoint claim them via its offsets override and ackAll
+                    // even though no committed epoch holds their data — silent loss. Leaving
+                    // them pending keeps the frontier honest until they are reprocessed.
+                    if (config.isDeferAckUntilCheckpoint()) {
+                        deferredAcks.clear();
+                    }
                     for (RedisPipelineRunner<?> rr : runners) {
                         rr.onCheckpointAbort(checkpointId, e);
                     }
@@ -1037,6 +1046,13 @@ public final class RedisStreamExecutionEnvironment {
             if (cp == null) {
                 // nothing was stored: the pre-committed transactions must never become visible
                 abortTwoPhaseQuietly(runners, checkpointManager, twoPhaseEpochs);
+                // same rationale as the preCommit-failure path above: the aborted epoch's
+                // records must come back via redelivery, so stop tracking them as deferred —
+                // otherwise the next successful checkpoint acks and advances the frontier
+                // over records whose side effects this abort just discarded
+                if (config.isDeferAckUntilCheckpoint()) {
+                    deferredAcks.clear();
+                }
                 for (RedisPipelineRunner<?> r : runners) {
                     r.onCheckpointAbort(checkpointId, null);
                 }
