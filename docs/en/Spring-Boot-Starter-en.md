@@ -324,13 +324,18 @@ Guidelines:
 - Kryo/JSON codecs are fine for your own keys as long as no Lua script touches them.
 - Simplest: set a global `codec: !<org.redisson.codec.StringCodec>` in the Redisson config.
 
-## Feature Modules
+## 典型用例
 
-### Service Registration & Discovery
+### 服务注册与发现
 
-#### Auto Registration
-
-Registers on startup with no extra code:
+```java
+// 服务提供方
+@SpringBootApplication
+@EnableRedisStreaming
+public class UserServiceProvider {
+    // registry.auto-register=true 时启动即注册 user-service
+}
+```
 
 ```yaml
 redis-streaming:
@@ -343,11 +348,7 @@ redis-streaming:
         version: 2.0.0
 ```
 
-See "Annotations & Components" for the component-scan requirement and the instance resolution rules.
-
-#### Manual Operations
-
-`NamingService` extends `ServiceRegistry` and `ServiceDiscovery`, and the starter exposes it as a bean, so either view can be injected:
+手动注册外部服务(`NamingService` 同时实现 `ServiceRegistry`/`ServiceDiscovery`,两个视角都可注入):
 
 ```java
 @Service
@@ -377,101 +378,7 @@ public class UserService {
 }
 ```
 
-#### Service Change Listener
-
-```java
-@Component
-public class ServiceListener {
-
-    @ServiceChangeListener(services = {"payment-service", "order-service"})
-    public void onServiceChange(String serviceName, String action,
-                                ServiceInstance instance,
-                                List<ServiceInstance> allInstances) {
-        log.info("Service {} changed: {} - {}",
-                serviceName, action, instance.getInstanceId());
-
-        if ("payment-service".equals(serviceName)) {
-            updatePaymentServiceCache(allInstances);
-        }
-    }
-}
-```
-
-### Message Queue
-
-Producers and consumers are created from the `MessageQueueFactory` bean (the starter exposes no ready-made producer/consumer beans):
-
-```java
-@Service
-public class OrderService {
-
-    @Autowired
-    private MessageQueueFactory mq;
-
-    public void createOrder(Order order) {
-        orderRepository.save(order);
-
-        // CompletableFuture<String> send(String topic, String key, Object payload)
-        mq.createProducer().send("order_events", order.getId(), order);
-    }
-}
-```
-
-```java
-@Component
-public class OrderEventConsumer {
-
-    private final MessageConsumer consumer;
-
-    @Autowired
-    public OrderEventConsumer(MessageQueueFactory mq) {
-        this.consumer = mq.createConsumer("order-events");
-        consumer.subscribe("order_events", "payment_group", message -> {
-            try {
-                processOrder(message.getPayload());
-                return MessageHandleResult.SUCCESS; // acks
-            } catch (Exception e) {
-                log.error("Failed to process order", e);
-                return MessageHandleResult.RETRY; // redelivery with backoff
-            }
-        });
-    }
-
-    @PostConstruct
-    public void start() {
-        consumer.start(); // subscribe() only registers; polling starts here
-    }
-
-    @PreDestroy
-    public void stop() {
-        consumer.stop();
-    }
-}
-```
-
-`MessageHandleResult` is `SUCCESS` / `RETRY` / `FAIL` / `DEAD_LETTER`. `MessageConsumer` also exposes `pause()`/`resume()`/`isRunning()`. For windowed/exactly-once pipelines use the runtime entry point `RedisStreamExecutionEnvironment.fromMqTopic(...)` instead of raw subscriptions (see the Chinese [runtime.md](../runtime.md)).
-
-Example MQ tuning (values below are illustrative — defaults for every key are listed under Configuration Reference; the prefix is `redis-streaming.mq`, older pages that show `streaming.mq` are out of date):
-
-```yaml
-redis-streaming:
-  mq:
-    enabled: true
-    default-partition-count: 4
-    worker-threads: 16
-    consumer-batch-count: 32
-    consumer-poll-timeout-ms: 500
-    max-in-flight: 1024
-    claim-idle-ms: 300000
-```
-
-- Beans: `MessageQueueFactory`, `MessageQueueAdmin`, `DeadLetterQueueManager`, DLQ replay pieces
-- Metrics: Micrometer meters with tags including `topic`/`partition`/`consumer` plus aggregate gauges
-- Health: `MqHealthIndicator` (topic count)
-
-### Configuration Management
-
-#### Publish Config
+### 配置发布
 
 ```java
 @Service
@@ -494,49 +401,29 @@ public class ConfigPublisher {
 }
 ```
 
-#### Config Listener
-
-`@ConfigChangeListener` has no processor in the starter, so register the listener programmatically:
+### 服务变更监听
 
 ```java
 @Component
-public class DatabaseConfigListener {
+public class ServiceListener {
 
-    public DatabaseConfigListener(ConfigService configService) {
-        configService.addListener("database.config", "production",
-                (dataId, group, content, version) -> reloadDatabaseConnection(content));
+    @ServiceChangeListener(services = {"payment-service", "order-service"})
+    public void onServiceChange(String serviceName, String action,
+                                ServiceInstance instance,
+                                List<ServiceInstance> allInstances) {
+        if ("payment-service".equals(serviceName)) {
+            updatePaymentServiceCache(allInstances);
+        }
     }
 }
 ```
 
-## Use Cases
+支持的方法签名见「注解与组件」。
 
-### Microservice Registration & Discovery
-
-```java
-// Service provider
-@SpringBootApplication
-@EnableRedisStreaming
-public class UserServiceProvider {
-    // auto-registers user-service on startup (registry.auto-register=true)
-}
-```
-
-```yaml
-redis-streaming:
-  registry:
-    auto-register: true
-    instance:
-      service-name: user-service
-      weight: 2
-      metadata:
-        version: 2.0.0
-```
-
-### Event-Driven Architecture
+### 事件驱动
 
 ```java
-// Order service — one producer per topic
+// 订单服务——生产者
 @Service
 public class OrderService {
     @Autowired
@@ -550,7 +437,7 @@ public class OrderService {
 ```
 
 ```java
-// Payment service — its own consumer group on the same topic
+// 支付服务——同一 topic 上自己的消费组
 @Component
 public class PaymentService {
     @Autowired
@@ -560,16 +447,26 @@ public class PaymentService {
     public void subscribe() {
         MessageConsumer consumer = mq.createConsumer("payment-svc");
         consumer.subscribe("order_created", "payment", message -> {
-            processPayment(message.getPayload());
-            return MessageHandleResult.SUCCESS;
+            try {
+                processPayment(message.getPayload());
+                return MessageHandleResult.SUCCESS;
+            } catch (Exception e) {
+                log.error("Failed to process order", e);
+                return MessageHandleResult.RETRY;
+            }
         });
         consumer.start();
+    }
+
+    @PreDestroy
+    public void stop() {
+        consumer.stop();
     }
 }
 ```
 
 ```java
-// Inventory service — another independent consumer group
+// 库存服务——另一个独立消费组
 @Component
 public class InventoryService {
     @Autowired
@@ -584,7 +481,28 @@ public class InventoryService {
         });
         consumer.start();
     }
+
+    @PreDestroy
+    public void stop() {
+        consumer.stop();
+    }
 }
+```
+
+`MessageHandleResult` 取值 `SUCCESS`/`RETRY`/`FAIL`/`DEAD_LETTER`;`subscribe()` 只登记处理器,真正拉取从 `start()` 开始。需要窗口/精确语义的流水线用运行时入口 `RedisStreamExecutionEnvironment.fromMqTopic(...)`,见 [runtime.md](runtime.md)。
+
+MQ 调优示例(下面值仅作示意——所有键的默认值见「配置项参考」,前缀为 `redis-streaming.mq`,历史文档中的 `streaming.mq` 已废弃):
+
+```yaml
+redis-streaming:
+  mq:
+    enabled: true
+    default-partition-count: 4
+    worker-threads: 16
+    consumer-batch-count: 32
+    consumer-poll-timeout-ms: 500
+    max-in-flight: 1024
+    claim-idle-ms: 300000
 ```
 
 ## Notes
