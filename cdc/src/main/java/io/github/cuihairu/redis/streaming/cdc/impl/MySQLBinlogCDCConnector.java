@@ -37,7 +37,8 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
     // while the connector runs.
     private final java.util.concurrent.BlockingQueue<ChangeEvent> eventQueue;
     private final AtomicLong binlogPosition = new AtomicLong(0);
-    private String binlogFilename;
+    // CDC-L7: written by the event thread (handleRotateEvent) and read by reconnect/commit paths
+    private volatile String binlogFilename;
     private final Map<Long, TableMapEventData> tableMapEvents = new HashMap<>();
     private final Map<Long, List<String>> tableColumnsById = new HashMap<>();
     private TableFilter tableFilter;
@@ -231,8 +232,8 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
     @Override
     protected void doCommit(String position) throws Exception {
         // For MySQL binlog, position is in format "filename:position"
-        if (position != null && position.contains(":")) {
-            String[] parts = position.split(":");
+        String[] parts = parseBinlogPosition(position);
+        if (parts != null) {
             this.binlogFilename = parts[0];
             this.binlogPosition.set(Long.parseLong(parts[1]));
         }
@@ -240,22 +241,53 @@ public class MySQLBinlogCDCConnector extends AbstractCDCConnector {
 
     @Override
     protected void doResetToPosition(String position) throws Exception {
-        if (binaryLogClient != null && binaryLogClient.isConnected()) {
-            binaryLogClient.disconnect();
-        }
-
-        // Parse position
-        if (position != null && position.contains(":")) {
-            String[] parts = position.split(":");
+        // Parse position first: a malformed position must fail without disturbing a
+        // running stream (the old code disconnected before validating)
+        String[] parts = parseBinlogPosition(position);
+        if (parts != null) {
             this.binlogFilename = parts[0];
             this.binlogPosition.set(Long.parseLong(parts[1]));
+        }
 
+        // CDC-L5: reset before start() has no client to reconnect — the recorded fields
+        // above are honored by doStart(), instead of crashing with a NullPointerException
+        if (binaryLogClient == null) {
+            return;
+        }
+        if (binaryLogClient.isConnected()) {
+            binaryLogClient.disconnect();
+        }
+        if (parts != null) {
             // Reconnect from new position — with the configured timeout, mirroring the start
             // path: the no-arg connect() blocks the caller for the lifetime of the stream
             this.binaryLogClient.setBinlogFilename(binlogFilename);
             this.binaryLogClient.setBinlogPosition(binlogPosition.get());
             this.binaryLogClient.connect(connectTimeoutMs);
         }
+    }
+
+    /**
+     * CDC-L5: validates the {@code "filename:offset"} form up front. The old
+     * {@code split(":") + parts[1]} crashed with a bare ArrayIndexOutOfBoundsException on a
+     * trailing colon and silently ignored positions without one; both now surface as a
+     * clear IllegalArgumentException, and the offset must be numeric.
+     */
+    private static String[] parseBinlogPosition(String position) {
+        if (position == null || position.isEmpty()) {
+            return null;
+        }
+        String[] parts = position.split(":", 2);
+        if (parts.length < 2 || parts[0].isEmpty() || parts[1].isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Malformed MySQL binlog position \"" + position + "\", expected \"filename:offset\"");
+        }
+        try {
+            Long.parseLong(parts[1]);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(
+                    "Malformed MySQL binlog position \"" + position + "\", expected \"filename:offset\"", e);
+        }
+        return parts;
     }
 
     /**

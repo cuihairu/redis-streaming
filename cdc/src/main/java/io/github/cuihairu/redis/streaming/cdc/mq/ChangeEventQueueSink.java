@@ -10,7 +10,9 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Bridge that forwards CDC {@link ChangeEvent}s onto a redis-streaming MQ topic.
@@ -52,7 +54,19 @@ public class ChangeEventQueueSink implements StreamSink<ChangeEvent> {
             return;
         }
         Map<String, Object> payload = toPayload(event);
-        producer.send(topic, event.getKey(), payload).get(sendTimeoutSeconds, TimeUnit.SECONDS);
+        CompletableFuture<String> sendFuture = producer.send(topic, event.getKey(), payload);
+        try {
+            sendFuture.get(sendTimeoutSeconds, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            // CDC-L6: the send may still complete late — cancel it so a caller retrying
+            // invoke() cannot deliver the same event twice
+            sendFuture.cancel(true);
+            throw e;
+        } catch (InterruptedException e) {
+            sendFuture.cancel(true);
+            Thread.currentThread().interrupt(); // CDC-L6: the flag is consumed by get(); restore it
+            throw e;
+        }
     }
 
     static Map<String, Object> toPayload(ChangeEvent event) {

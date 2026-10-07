@@ -129,8 +129,9 @@ public abstract class AbstractCDCConnector implements CDCConnector {
             return events != null ? events : List.of();
 
         } catch (Exception e) {
-            CDCMetrics currentMetrics = metrics.get();
-            metrics.set(currentMetrics.withError());
+            // CDC-L3: updateAndGet applies the delta atomically; the old get()/set() pair
+            // could drop a concurrent update between the read and the write
+            metrics.updateAndGet(current -> current.withError());
             updateHealthStatus(CDCHealthStatus.degraded("Error during polling: " + e.getMessage()));
             notifyEvent(listener -> listener.onConnectorError(getName(), e));
             log.error("Error polling change events from connector: {}", getName(), e);
@@ -144,8 +145,7 @@ public abstract class AbstractCDCConnector implements CDCConnector {
             doCommit(position);
             this.currentPosition = position;
 
-            CDCMetrics currentMetrics = metrics.get();
-            metrics.set(currentMetrics.withPosition(position).withCommit());
+            metrics.updateAndGet(current -> current.withPosition(position).withCommit());
 
             notifyEvent(listener -> listener.onPositionCommitted(getName(), position));
             log.debug("Committed position: {} for connector: {}", position, getName());
@@ -306,8 +306,8 @@ public abstract class AbstractCDCConnector implements CDCConnector {
             }
         }
 
-        CDCMetrics currentMetrics = metrics.get();
-        metrics.set(currentMetrics.withEventCounts(inserts, updates, deletes, schemaChanges));
+        final long ins = inserts, upd = updates, del = deletes, sch = schemaChanges;
+        metrics.updateAndGet(current -> current.withEventCounts(ins, upd, del, sch));
     }
 
     /**

@@ -98,9 +98,11 @@ class MySQLBinlogCDCConnectorTest {
     @Test
     void testResetToPositionBeforeStart() {
         MySQLBinlogCDCConnector c = new MySQLBinlogCDCConnector(configuration);
-        // binaryLogClient is null, will throw RuntimeException wrapping NPE
-        Exception e = assertThrows(Exception.class, () -> c.resetToPosition("mysql-bin.000001:123"));
-        assertTrue(e.getCause() instanceof NullPointerException);
+        // CDC-L5: before start() the position is recorded (doStart honors it) — the old
+        // code threw a RuntimeException wrapping a NullPointerException here
+        assertDoesNotThrow(() -> c.resetToPosition("mysql-bin.000001:123"));
+        assertEquals("mysql-bin.000001", c.getBinlogFilename());
+        assertEquals(123, c.getBinlogPosition());
     }
 
     @Test
@@ -287,7 +289,11 @@ class MySQLBinlogCDCConnectorTest {
     @Test
     void testCommitWithPositionWithoutColon() {
         MySQLBinlogCDCConnector c = new MySQLBinlogCDCConnector(configuration);
-        assertDoesNotThrow(() -> c.commit("mysql-bin.000001"));
+        // CDC-L5: the old code silently ignored a colon-less position, so callers
+        // believed the offset was checkpointed when nothing was committed
+        Exception e = assertThrows(Exception.class, () -> c.commit("mysql-bin.000001"));
+        assertTrue(e.getCause() instanceof IllegalArgumentException);
+        assertTrue(e.getCause().getMessage().contains("filename:offset"));
     }
 
     @Test
@@ -295,17 +301,18 @@ class MySQLBinlogCDCConnectorTest {
         MySQLBinlogCDCConnector c = new MySQLBinlogCDCConnector(configuration);
         // Invalid number after colon - commit() wraps doCommit exception in RuntimeException
         Exception e = assertThrows(Exception.class, () -> c.commit("mysql-bin.000001:invalid"));
-        assertTrue(e.getCause() instanceof NumberFormatException);
+        assertTrue(e.getCause() instanceof IllegalArgumentException);
+        assertTrue(e.getCause().getMessage().contains("filename:offset"));
     }
 
     @Test
     void testCommitWithMultipleColons() {
         MySQLBinlogCDCConnector c = new MySQLBinlogCDCConnector(configuration);
-        // split(":") will return all parts, but we only use first two
-        // "123:456" will be parsed as 123 (ignoring :456)
-        c.commit("mysql-bin.000001:123:456");
-        assertEquals("mysql-bin.000001", c.getBinlogFilename());
-        assertEquals(123, c.getBinlogPosition());
+        // CDC-L5: the old split(":") truncated "f:123:456" to offset 123, silently
+        // dropping ":456"; the non-numeric remainder is now rejected up front
+        Exception e = assertThrows(Exception.class, () -> c.commit("mysql-bin.000001:123:456"));
+        assertTrue(e.getCause() instanceof IllegalArgumentException);
+        assertTrue(e.getCause().getMessage().contains("filename:offset"));
     }
 
     // ===== Reset Position Tests =====
@@ -313,9 +320,11 @@ class MySQLBinlogCDCConnectorTest {
     @Test
     void testResetToPositionWithValidPosition() {
         MySQLBinlogCDCConnector c = new MySQLBinlogCDCConnector(configuration);
-        // This will fail because binaryLogClient is null
-        Exception e = assertThrows(Exception.class, () -> c.resetToPosition("mysql-bin.000001:1000"));
-        assertTrue(e.getCause() instanceof NullPointerException);
+        // CDC-L5: reset before start() records the position for doStart() to honor
+        // instead of crashing on the null binaryLogClient
+        assertDoesNotThrow(() -> c.resetToPosition("mysql-bin.000001:1000"));
+        assertEquals("mysql-bin.000001", c.getBinlogFilename());
+        assertEquals(1000, c.getBinlogPosition());
     }
 
     @Test

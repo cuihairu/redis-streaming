@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.io.Serializable;
 import java.time.Instant;
 import java.util.Map;
 
@@ -13,7 +14,9 @@ import java.util.Map;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class ChangeEvent {
+public class ChangeEvent implements Serializable {
+
+    private static final long serialVersionUID = 1L;
 
     public enum EventType {
         INSERT,
