@@ -829,7 +829,36 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
             }
 
             private String windowMember(String keyField, long start, long end) {
-                return (keyField == null ? "" : keyField) + D + start + D + end;
+                // RT-L7: the key field is escaped under an "e:" marker so a key containing
+                // the D separator cannot shift the start/end fields in parseWindow. Unmarked
+                // members are legacy state (keys without D parsed fine before) and are kept
+                // as-is instead of being run through the unescaper.
+                return "e:" + escapeMemberKey(keyField == null ? "" : keyField) + D + start + D + end;
+            }
+
+            private static String escapeMemberKey(String keyField) {
+                return keyField.replace("\\", "\\\\").replace(D, "\\1");
+            }
+
+            private static String unescapeMemberKey(String encoded) {
+                if (!encoded.startsWith("e:")) {
+                    return encoded; // legacy member written before escaping existed
+                }
+                String s = encoded.substring(2);
+                if (s.indexOf('\\') < 0) {
+                    return s;
+                }
+                StringBuilder sb = new StringBuilder(s.length());
+                for (int i = 0; i < s.length(); i++) {
+                    char c = s.charAt(i);
+                    if (c == '\\' && i + 1 < s.length()) {
+                        char next = s.charAt(++i);
+                        sb.append(next == '1' ? D : next);
+                    } else {
+                        sb.append(c);
+                    }
+                }
+                return sb.toString();
             }
 
             private String windowDueKey(int partitionId, String stateName) {
@@ -898,7 +927,8 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                     if (parts.length == 3) {
                         long start = Long.parseLong(parts[1]);
                         long end = Long.parseLong(parts[2]);
-                        return new ParsedWindow(parts[0], start, end);
+                        // RT-L7: undo the windowMember key escaping
+                        return new ParsedWindow(unescapeMemberKey(parts[0]), start, end);
                     }
                 } catch (Exception ignore) {
                 }

@@ -655,12 +655,12 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **RT-L3** 分区数回退为 1 时，checkpoint/恢复/frontier 只覆盖分区 0（`TopicPartitionRegistry.java:48-61` 等）。
 - **RT-L4** 同 jobName 双进程 checkpoint id 撞车互相覆盖（`RedisRuntimeCheckpointManager.java:95-126`）。 [已修复：initNextId 构造快照 + 领导权接管时 refreshCheckpointIdFromStorage 重对齐计数器（单调 max，RedisRuntimeCheckpointManager.java:138-165）]
 - **RT-L5** `sinkCommittedMarker` 无 TTL 且 `checkpointsToKeep=0` 时清理禁用 → 无界增长（:177-185,552-556）。 [部分修复：marker 随 checkpoint 淘汰一并删除（cleanupOld :841-846）；`keep<=0` 仍整体禁用清理、marker 本身仍无 TTL]
-- **RT-L6** `listCheckpoints` 仅按时间戳排序，同毫秒 tie 时 getLatest 可能取旧（`RedisCheckpointStorage.java:76`）。
-- **RT-L7** 窗口 member 编码对含 `\u0001` 的字符串 key 解析错乱（`RedisStreamBuilder.java:371,779-823`）。
-- **RT-L8** `NumberAggregationUtils.add` long 溢出静默、BigInteger/BigDecimal 截断（`NumberAggregationUtils.java:29-32`）。
+- **RT-L6** `listCheckpoints` 仅按时间戳排序，同毫秒 tie 时 getLatest 可能取旧（`RedisCheckpointStorage.java:76`）。 [已修复：排序加单调 checkpointId 次级比较（时间同毫秒取新 id），Redis 扫描顺序不再决定恢复点]
+- **RT-L7** 窗口 member 编码对含 `\u0001` 的字符串 key 解析错乱（`RedisStreamBuilder.java:371,779-823`）。 [已修复：keyField 经 `e:` 标记 + `\`/分隔符转义（windowMember/parseWindow 对称），含 `\u0001` 的 key 不再挤位；无标记的存量 member 按原样解析保持兼容]
+- **RT-L8** `NumberAggregationUtils.add` long 溢出静默、BigInteger/BigDecimal 截断（`NumberAggregationUtils.java:29-32`）。 [已修复：整型相加改 `Math.addExact`（溢出抛 ArithmeticException 显式失败），BigInteger/BigDecimal 走精确算术不再截断到 long]
 - **RT-L9** `addSource` 无法停止不终止的 source（`StreamExecutionEnvironment.java:75-122`；`cancel()` 从不被调）。 [部分修复：SourceContext 提供 isStopped() 协作式停止协议（内存运行时）；不检查该标志的 source 仍无法中止，cancel() 仍不存在]
 - **RT-L10** `InstanceIdGenerator.generateLocalInstanceId` 忽略 serviceName 且 javadoc 与实现不符（core `InstanceIdGenerator.java:39-43`）。 [已修复（按文档化语义）：javadoc 现明示 "hostname:port" 与实现一致（:38）；serviceName 入参按文档即为不用]
-- **RT-L11** `StateDescriptor` 无校验：null type 时 `toString()` NPE、`RedisKeyedValueState.value()` 反序列化 NPE（core `StateDescriptor.java:19-32,57`）。
+- **RT-L11** `StateDescriptor` 无校验：null type 时 `toString()` NPE、`RedisKeyedValueState.value()` 反序列化 NPE（core `StateDescriptor.java:19-32,57`）。 [已修复：构造器 `requireNonNull(name/type)` 即刻失败（空名仍允许，既有契约），`toString()` 对 null type 防御性兜底；null type 的远端 NPE 面随之消除]
 
 ### runtime/core 审计确认无问题项
 
@@ -696,10 +696,10 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 ### 低危清单核销（2026-10-07 逐条对照活代码）
 
-上面的 CDC-L1~L9 / RT-L1~L11 两条紧凑清单已逐条对照当前代码核销并回标：10 条已修复（CDC-L1/L3/L4/L5/L6/L7/L8、RT-L4/L10 及 RT-L1 的主要危害面）、4 条部分修复（CDC-L9、RT-L2/L5/L9，残留半项见各条注记）、其余仍未修。当前存活的真实队列（全部 Low）：
+上面的 CDC-L1~L9 / RT-L1~L11 两条紧凑清单已逐条对照当前代码核销并回标：14 条已修复（CDC-L1/L3/L4/L5/L6/L7/L8、RT-L1 的主要危害面/L4/L6/L7/L8/L10/L11）、4 条部分修复（CDC-L9、RT-L2/L5/L9，残留半项见各条注记）、其余仍未修。当前存活的真实队列（全部 Low）：
 
 - CDC-L2 配置校验缺口（validate 仍只查 name）。
-- RT-L3 分区回退 1 只覆盖分区 0；RT-L6 listCheckpoints 同毫秒 tie 无次级排序；RT-L7 窗口 member `\u0001` 分隔符未转义；RT-L8 NumberAggregationUtils long 溢出静默；RT-L11 StateDescriptor 无 null 校验。
+- RT-L3 分区回退 1 只覆盖分区 0。
 - 半修残留：CDC-L9 的 CDCSource.connector 非 transient；RT-L2 的 `topic|group` 分隔符歧义；RT-L5 的 keep=0 禁清理。
 
 ### race 检测说明

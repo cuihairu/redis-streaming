@@ -121,8 +121,8 @@ class RedisWindowedStreamHelperUnitTest {
         Method windowMember = method(w, "windowMember", String.class, long.class, long.class);
 
         String member = (String) invoke(w, windowMember, "s:k", 100L, 200L);
-        assertEquals("s:k" + D + "100" + D + "200", member);
-        assertEquals(D + "5" + D + "10", invoke(w, windowMember, null, 5L, 10L));
+        assertEquals("e:s:k" + D + "100" + D + "200", member);
+        assertEquals("e:" + D + "5" + D + "10", invoke(w, windowMember, null, 5L, 10L));
 
         Object parsed = invoke(w, parseWindow, member);
         assertEquals("s:k", accessor(parsed, "keyField"));
@@ -142,6 +142,33 @@ class RedisWindowedStreamHelperUnitTest {
 
         Object nullMember = invoke(w, parseWindow, (Object) null);
         assertNull(accessor(nullMember, "keyField"));
+    }
+
+    @Test
+    void windowMemberEscapesSeparatorAndBackslashInKeys() throws Exception {
+        WindowedStream<Object, Object> w = windowed(cfg(b -> {}));
+        Method parseWindow = method(w, "parseWindow", String.class);
+        Method windowMember = method(w, "windowMember", String.class, long.class, long.class);
+
+        // RT-L7: a key containing the D separator must not shift the start/end fields
+        String member = (String) invoke(w, windowMember, "s:a" + D + "b", 1L, 2L);
+        Object parsed = invoke(w, parseWindow, member);
+        assertEquals("s:a" + D + "b", accessor(parsed, "keyField"));
+        assertEquals(1L, accessor(parsed, "start"));
+        assertEquals(2L, accessor(parsed, "end"));
+
+        // backslashes and literal escape sequences round-trip exactly
+        for (String tricky : new String[]{"s:back\\slash", "s:esc\\1ape", "s:\\\\", "e:colon-prefix"}) {
+            Object roundTripped = invoke(w, parseWindow,
+                    (String) invoke(w, windowMember, tricky, 3L, 4L));
+            assertEquals(tricky, accessor(roundTripped, "keyField"), "key " + tricky + " must round-trip");
+        }
+
+        // legacy members (written before escaping existed) keep parsing as-is
+        Object legacy = invoke(w, parseWindow, "s:old\\key" + D + "7" + D + "9");
+        assertEquals("s:old\\key", accessor(legacy, "keyField"));
+        assertEquals(7L, accessor(legacy, "start"));
+        assertEquals(9L, accessor(legacy, "end"));
     }
 
     @Test

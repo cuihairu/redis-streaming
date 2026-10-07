@@ -1,9 +1,14 @@
 package io.github.cuihairu.redis.streaming.api.state;
 
 import java.io.Serializable;
+import java.util.Objects;
 
 /**
  * StateDescriptor describes the configuration of a state.
+ *
+ * <p>RT-L11: {@code name} and {@code type} are validated at construction — a null type
+ * used to surface later as an NPE in {@code toString()} or in state (de)serialization
+ * far away from the mistake.</p>
  *
  * @param <T> The type of the state value
  */
@@ -25,8 +30,8 @@ public class StateDescriptor<T> implements Serializable {
     }
 
     public StateDescriptor(String name, Class<T> type, T defaultValue, int schemaVersion) {
-        this.name = name;
-        this.type = type;
+        this.name = Objects.requireNonNull(name, "name");
+        this.type = Objects.requireNonNull(type, "type");
         this.defaultValue = defaultValue;
         this.schemaVersion = Math.max(1, schemaVersion);
     }
@@ -54,7 +59,7 @@ public class StateDescriptor<T> implements Serializable {
     public String toString() {
         return "StateDescriptor{" +
                 "name='" + name + '\'' +
-                ", type=" + type.getSimpleName() +
+                ", type=" + (type == null ? "null" : type.getSimpleName()) +
                 ", schemaVersion=" + schemaVersion +
                 '}';
     }

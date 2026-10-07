@@ -40,7 +40,7 @@ import static org.mockito.Mockito.when;
 class RedisWindowedStreamLambdasGapTest {
 
     private static final String D = "\u0001";
-    private static final String MEMBER = "s:k" + D + "0" + D + "1000";
+    private static final String MEMBER = "e:s:k" + D + "0" + D + "1000";
 
     private RedissonClient redis;
     private final Map<String, String> backing = new HashMap<>();

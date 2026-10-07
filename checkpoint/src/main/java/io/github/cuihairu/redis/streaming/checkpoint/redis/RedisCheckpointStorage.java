@@ -81,8 +81,13 @@ public class RedisCheckpointStorage implements CheckpointStorage {
             }
         }
 
-        // Sort by timestamp descending (newest first)
-        checkpoints.sort((c1, c2) -> Long.compare(c2.getTimestamp(), c1.getTimestamp()));
+        // Sort by timestamp descending (newest first). RT-L6: timestamps tie within the
+        // same millisecond — the monotonic checkpoint id breaks ties deterministically,
+        // so getLatestCheckpoint cannot serve an older checkpoint scanned first.
+        checkpoints.sort((c1, c2) -> {
+            int byTime = Long.compare(c2.getTimestamp(), c1.getTimestamp());
+            return byTime != 0 ? byTime : Long.compare(c2.getCheckpointId(), c1.getCheckpointId());
+        });
 
         return checkpoints.stream()
                 .limit(limit)

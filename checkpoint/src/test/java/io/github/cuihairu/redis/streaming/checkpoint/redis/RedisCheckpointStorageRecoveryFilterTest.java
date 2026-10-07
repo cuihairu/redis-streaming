@@ -127,4 +127,29 @@ class RedisCheckpointStorageRecoveryFilterTest {
         // B-15: the full-keyspace KEYS scan must not be used anymore
         verify(keys, never()).getKeys();
     }
+
+    @Test
+    void sameMillisecondCheckpointsBreakTiesByCheckpointId() throws Exception {
+        // RT-L6: timestamps tie within the same millisecond — the checkpoint id decides,
+        // so the newer checkpoint cannot lose to an older one that Redis happened to
+        // scan first
+        RedissonClient redisson = mock(RedissonClient.class);
+        stubKeys(redisson, "p:", "p:7", "p:9");
+
+        DefaultCheckpoint c7 = new DefaultCheckpoint(7, 5000L);
+        c7.markCompleted();
+        DefaultCheckpoint c9 = new DefaultCheckpoint(9, 5000L); // same millisecond, newer id
+        c9.markCompleted();
+
+        RBucket<Checkpoint> b7 = bucket(c7);
+        RBucket<Checkpoint> b9 = bucket(c9);
+        when(redisson.<Checkpoint>getBucket("p:7")).thenReturn(b7);
+        when(redisson.<Checkpoint>getBucket("p:9")).thenReturn(b9);
+
+        RedisCheckpointStorage storage = new RedisCheckpointStorage(redisson, "p:");
+
+        Checkpoint latest = storage.getLatestCheckpoint();
+        assertEquals(9, latest.getCheckpointId(),
+                "same-millisecond ties must resolve to the newer checkpoint id");
+    }
 }

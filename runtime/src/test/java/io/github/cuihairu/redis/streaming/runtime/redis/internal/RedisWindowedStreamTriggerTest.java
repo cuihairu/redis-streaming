@@ -53,7 +53,7 @@ import static org.mockito.Mockito.when;
 class RedisWindowedStreamTriggerTest {
 
     private static final String D = "\u0001";
-    private static final String MEMBER = "s:k" + D + "0" + D + "1000";
+    private static final String MEMBER = "e:s:k" + D + "0" + D + "1000";
 
     private RedissonClient redis;
     private final Map<String, String> backing = new HashMap<>();
@@ -307,7 +307,7 @@ class RedisWindowedStreamTriggerTest {
             assertFalse(backing.containsKey(MEMBER), "PURGE must clear the window state");
             // the purged window must leave the due set; only record 9's own [1000,2000)
             // window may remain (it closes in the future)
-            assertEquals(Map.of(2000.0, "s:k" + D + "1000" + D + "2000"), dueBacking,
+            assertEquals(Map.of(2000.0, "e:s:k" + D + "1000" + D + "2000"), dueBacking,
                     "the purged window must leave the due set");
         } finally {
             runner.close();

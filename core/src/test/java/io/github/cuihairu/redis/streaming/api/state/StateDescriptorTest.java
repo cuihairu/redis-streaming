@@ -172,4 +172,18 @@ class StateDescriptorTest {
 
         assertEquals(0.0, descriptor.getDefaultValue());
     }
+
+    @Test
+    void nullNameIsRejected() {
+        assertThrows(NullPointerException.class, () -> new StateDescriptor<String>(null, String.class));
+    }
+
+    @Test
+    void nullTypeIsRejected() {
+        // RT-L11: a null type used to surface as a distant NPE in toString() or in
+        // state (de)serialization instead of failing here at construction
+        assertThrows(NullPointerException.class, () -> new StateDescriptor<String>("s", null));
+        assertThrows(NullPointerException.class, () -> new StateDescriptor<>("s", null, "d"));
+        assertThrows(NullPointerException.class, () -> new StateDescriptor<>("s", null, "d", 1));
+    }
 }
