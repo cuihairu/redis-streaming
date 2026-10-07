@@ -44,7 +44,8 @@ public class StateExample {
         }
     }
 
-    private static void demonstrateValueState(RedisStateBackend stateBackend) {
+    /** Returns the counter value reached by the demo (5 visits). */
+    static int demonstrateValueState(RedisStateBackend stateBackend) {
         log.info("=== ValueState Example: Session Counter ===");
 
         StateDescriptor<Integer> descriptor = new StateDescriptor<>("session-counter", Integer.class);
@@ -59,10 +60,13 @@ public class StateExample {
         }
 
         log.info("Total visits: {}", counter.value());
+        int visits = counter.value();
         counter.clear();
+        return visits;
     }
 
-    private static void demonstrateMapState(RedisStateBackend stateBackend) {
+    /** Returns the preference entries written by the demo. */
+    static java.util.Map<String, String> demonstrateMapState(RedisStateBackend stateBackend) {
         log.info("=== MapState Example: User Preferences ===");
 
         MapState<String, String> preferences = stateBackend.createMapState(
@@ -79,10 +83,14 @@ public class StateExample {
         preferences.entries().forEach(entry ->
                 log.info("  {} = {}", entry.getKey(), entry.getValue()));
 
+        java.util.Map<String, String> snapshot = new HashMap<>();
+        preferences.entries().forEach(e -> snapshot.put(e.getKey(), e.getValue()));
         preferences.clear();
+        return snapshot;
     }
 
-    private static void demonstrateListState(RedisStateBackend stateBackend) {
+    /** Returns the number of activities appended by the demo. */
+    static int demonstrateListState(RedisStateBackend stateBackend) {
         log.info("=== ListState Example: Activity Log ===");
 
         StateDescriptor<String> descriptor = new StateDescriptor<>("activity-log", String.class);
@@ -95,14 +103,18 @@ public class StateExample {
 
         log.info("User activity:");
         int index = 1;
+        int size = 0;
         for (String activity : activityLog.get()) {
             log.info("  {}. {}", index++, activity);
+            size++;
         }
 
         activityLog.clear();
+        return size;
     }
 
-    private static void demonstrateSetState(RedisStateBackend stateBackend) {
+    /** Returns the number of unique visitors tracked by the demo. */
+    static int demonstrateSetState(RedisStateBackend stateBackend) {
         log.info("=== SetState Example: Unique Visitors ===");
 
         StateDescriptor<String> descriptor = new StateDescriptor<>("unique-visitors", String.class);
@@ -120,10 +132,13 @@ public class StateExample {
         log.info("Unique visitors:");
         visitors.get().forEach(userId -> log.info("  - {}", userId));
 
+        int unique = visitors.size();
         visitors.clear();
+        return unique;
     }
 
-    private static void demonstrateStatefulWordCount(RedisStateBackend stateBackend) {
+    /** Returns the word counts accumulated by the demo. */
+    static java.util.Map<String, Long> demonstrateStatefulWordCount(RedisStateBackend stateBackend) {
         log.info("=== Stateful Processing Example: Word Count ===");
 
         MapState<String, Long> wordCounts = stateBackend.createMapState(
@@ -142,7 +157,10 @@ public class StateExample {
         wordCounts.entries().forEach(entry ->
                 log.info("  '{}': {}", entry.getKey(), entry.getValue()));
 
+        java.util.Map<String, Long> counts = new HashMap<>();
+        wordCounts.entries().forEach(e -> counts.put(e.getKey(), e.getValue()));
         wordCounts.clear();
+        return counts;
     }
 }
 

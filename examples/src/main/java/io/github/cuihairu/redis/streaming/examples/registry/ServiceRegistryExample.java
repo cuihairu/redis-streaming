@@ -8,8 +8,10 @@ import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -21,15 +23,37 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class ServiceRegistryExample {
 
+    private final String namePrefix;
+    private RedissonClient redissonClient;
+    private NamingService namingService;
+
+    public ServiceRegistryExample() {
+        this("examples-registry-");
+    }
+
+    /** Prefix for every service name, so tests can isolate runs from each other. */
+    ServiceRegistryExample(String namePrefix) {
+        this.namePrefix = namePrefix;
+    }
+
+    private String svc(String name) {
+        // colon-free: the registry sanitizes colons out of service names, and both
+        // registration and discovery must derive the exact same name
+        return namePrefix.replace(':', '-') + name;
+    }
+
+    /** Observable outcome of one demo run. */
+    record Summary(int discoveredUsers, int discoveredPayments,
+                   int healthyAfterFailure, int healthyAfterRecovery,
+                   int loadBalancedDistinctInstances) {
+    }
+
     public static void main(String[] args) throws Exception {
         ServiceRegistryExample example = new ServiceRegistryExample();
         example.runExample();
     }
 
-    private RedissonClient redissonClient;
-    private NamingService namingService;
-
-    public void runExample() throws Exception {
+    Summary runExample() throws Exception {
         log.info("Starting Service Registry Example");
 
         // 1. Setup Redis-based service registry and discovery
@@ -42,18 +66,20 @@ public class ServiceRegistryExample {
         startServices(services);
 
         // 4. Demonstrate service discovery and communication
-        demonstrateServiceDiscovery((ServiceDiscovery) namingService);
+        int[] discovery = demonstrateServiceDiscovery((ServiceDiscovery) namingService);
 
         // 5. Simulate service failures and recovery
-        simulateServiceFailures(services, (ServiceDiscovery) namingService);
+        int[] failure = simulateServiceFailures(services, (ServiceDiscovery) namingService);
 
         // 6. Demonstrate load balancing
-        demonstrateLoadBalancing((ServiceDiscovery) namingService);
+        int lbDistinct = demonstrateLoadBalancing((ServiceDiscovery) namingService);
 
         // Clean up
         stopServices(services);
         cleanup();
         log.info("Service Registry Example completed");
+
+        return new Summary(discovery[0], discovery[1], failure[0], failure[1], lbDistinct);
     }
 
     private void setupRedisClients() {
@@ -79,11 +105,11 @@ public class ServiceRegistryExample {
         };
 
         // Subscribe to all services we're interested in
-        namingService.subscribe("api-gateway", listener);
-        namingService.subscribe("user-service", listener);
-        namingService.subscribe("order-service", listener);
-        namingService.subscribe("payment-service", listener);
-        namingService.subscribe("notification-service", listener);
+        namingService.subscribe(svc("api-gateway"), listener);
+        namingService.subscribe(svc("user-service"), listener);
+        namingService.subscribe(svc("order-service"), listener);
+        namingService.subscribe(svc("payment-service"), listener);
+        namingService.subscribe(svc("notification-service"), listener);
     }
 
     private void cleanup() {
@@ -133,7 +159,7 @@ public class ServiceRegistryExample {
 
         // API Gateway
         MicroService apiGateway = new MicroService(
-                "api-gateway",
+                svc("api-gateway"),
                 "localhost",
                 8080,
                 StandardProtocol.HTTP,
@@ -147,7 +173,7 @@ public class ServiceRegistryExample {
 
         // User Service
         MicroService userService = new MicroService(
-                "user-service",
+                svc("user-service"),
                 "localhost",
                 8081,
                 StandardProtocol.HTTP,
@@ -161,7 +187,7 @@ public class ServiceRegistryExample {
 
         // Order Service
         MicroService orderService = new MicroService(
-                "order-service",
+                svc("order-service"),
                 "localhost",
                 8082,
                 StandardProtocol.HTTP,
@@ -175,7 +201,7 @@ public class ServiceRegistryExample {
 
         // Payment Service
         MicroService paymentService = new MicroService(
-                "payment-service",
+                svc("payment-service"),
                 "localhost",
                 8083,
                 StandardProtocol.HTTPS,
@@ -189,7 +215,7 @@ public class ServiceRegistryExample {
 
         // Notification Service
         MicroService notificationService = new MicroService(
-                "notification-service",
+                svc("notification-service"),
                 "localhost",
                 8084,
                 StandardProtocol.HTTP,
@@ -230,11 +256,11 @@ public class ServiceRegistryExample {
         Thread.sleep(2000); // Allow registration to complete
     }
 
-    private void demonstrateServiceDiscovery(ServiceDiscovery discovery) throws Exception {
+    int[] demonstrateServiceDiscovery(ServiceDiscovery discovery) throws Exception {
         log.info("=== Demonstrating Service Discovery ===");
 
         // Discover all services
-        List<ServiceInstance> userServices = discovery.discover("user-service");
+        List<ServiceInstance> userServices = discovery.discover(svc("user-service"));
         log.info("Discovered {} user service instances:", userServices.size());
         userServices.forEach(service ->
             log.info("  - {} at {}:{} (enabled: {})",
@@ -244,18 +270,20 @@ public class ServiceRegistryExample {
                 service.isEnabled())
         );
 
-        List<ServiceInstance> paymentServices = discovery.discover("payment-service");
+        List<ServiceInstance> paymentServices = discovery.discover(svc("payment-service"));
         log.info("Payment service instances: {}", paymentServices.size());
 
         Thread.sleep(1000);
+
+        return new int[]{userServices.size(), paymentServices.size()};
     }
 
-    private void simulateServiceFailures(List<MicroService> services, ServiceDiscovery discovery) throws Exception {
+    int[] simulateServiceFailures(List<MicroService> services, ServiceDiscovery discovery) throws Exception {
         log.info("=== Simulating Service Failures and Recovery ===");
 
         // Simulate payment service failure
         MicroService paymentService = services.stream()
-                .filter(s -> "payment-service".equals(s.getServiceName()))
+                .filter(s -> svc("payment-service").equals(s.getServiceName()))
                 .findFirst()
                 .orElseThrow();
 
@@ -266,8 +294,9 @@ public class ServiceRegistryExample {
         Thread.sleep(3000);
 
         // Check service status
-        List<ServiceInstance> healthyPaymentServices = discovery.discoverHealthy("payment-service");
+        List<ServiceInstance> healthyPaymentServices = discovery.discoverHealthy(svc("payment-service"));
         log.info("Healthy payment services after failure: {}", healthyPaymentServices.size());
+        int afterFailure = healthyPaymentServices.size();
 
         // Simulate recovery
         log.info("Simulating payment service recovery...");
@@ -276,16 +305,18 @@ public class ServiceRegistryExample {
         // Wait for health check to detect recovery
         Thread.sleep(3000);
 
-        healthyPaymentServices = discovery.discoverHealthy("payment-service");
+        healthyPaymentServices = discovery.discoverHealthy(svc("payment-service"));
         log.info("Healthy payment services after recovery: {}", healthyPaymentServices.size());
+
+        return new int[]{afterFailure, healthyPaymentServices.size()};
     }
 
-    private void demonstrateLoadBalancing(ServiceDiscovery discovery) throws Exception {
+    int demonstrateLoadBalancing(ServiceDiscovery discovery) throws Exception {
         log.info("=== Demonstrating Load Balancing ===");
 
         // Register multiple instances of the same service
         MicroService userService2 = new MicroService(
-                "user-service",
+                svc("user-service"),
                 "localhost",
                 8085,
                 StandardProtocol.HTTP,
@@ -294,7 +325,7 @@ public class ServiceRegistryExample {
         );
 
         MicroService userService3 = new MicroService(
-                "user-service",
+                svc("user-service"),
                 "localhost",
                 8086,
                 StandardProtocol.HTTP,
@@ -307,12 +338,14 @@ public class ServiceRegistryExample {
         Thread.sleep(2000);
 
         // Demonstrate load balancing selection
+        Set<Integer> selectedInstances = new HashSet<>();
         log.info("Demonstrating load balancing across user service instances:");
         for (int i = 0; i < 10; i++) {
-            List<ServiceInstance> instances = discovery.discoverHealthy("user-service");
+            List<ServiceInstance> instances = discovery.discoverHealthy(svc("user-service"));
             if (!instances.isEmpty()) {
                 // Simple round-robin selection
                 ServiceInstance selected = instances.get(i % instances.size());
+                selectedInstances.add(selected.getPort());
                 log.info("Request {}: Selected instance at {}:{} (instance: {})",
                     i + 1,
                     selected.getHost(),
@@ -325,6 +358,8 @@ public class ServiceRegistryExample {
         // Stop additional instances
         userService2.stop();
         userService3.stop();
+
+        return selectedInstances.size();
     }
 
     private void stopServices(List<MicroService> services) {

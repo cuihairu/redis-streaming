@@ -345,13 +345,15 @@
 
 以下包覆盖率为 0%，全部为 examples 模块示例代码，可选择性添加测试：
 
-- `io.github.cuihairu.redis.streaming.examples.mq` - 0%
-- `io.github.cuihairu.redis.streaming.examples.registry` - 0%
-- `io.github.cuihairu.redis.streaming.examples.streaming` - 0%
-- `io.github.cuihairu.redis.streaming.examples.state` - 0%
-- `io.github.cuihairu.redis.streaming.examples.aggregation` - 0%
-- `io.github.cuihairu.redis.streaming.examples.ratelimit` - 0%
+- `io.github.cuihairu.redis.streaming.examples.mq` - 0% → **94% 指令/95% 分支**
+- `io.github.cuihairu.redis.streaming.examples.registry` - 0% → **92%/62%**
+- `io.github.cuihairu.redis.streaming.examples.streaming` - 0% → **92%/77%**
+- `io.github.cuihairu.redis.streaming.examples.state` - 0% → **99%/100%**
+- `io.github.cuihairu.redis.streaming.examples.aggregation` - 0% → **96%/75%**
+- `io.github.cuihairu.redis.streaming.examples.ratelimit` - 0% → **94%/100%**
 - `io.github.cuihairu.redis.streaming.examples.springboot` - 0%（需 Spring Boot 上下文，由 starter 装配测试覆盖其配置类）
+
+**六个示例包脱离零位的打法（2026-10-07）**：沿用 WindowExample/CheckpointExample 先例——示例侧仅做可测试化（演示方法改包可见/返回可观测摘要/加 topic·服务名前缀构造器隔离长寿命 Redis 残留，语义不变），测试侧 reachability-gate（socket 探测 `REDIS_URL`，不可达即跳过；RateLimit 纯内存不设门）。新增 7 个测试类 10 用例：`RateLimitExampleTest`（限流断言用大窗口确定性数字）、`StateExampleTest`、`StreamAggregationExampleTest`、`MessageQueueExampleTest`、`ServiceRegistryExampleTest`（共享注册中心故用宽松断言）、`CustomPrefixExampleTest`、`ComprehensiveStreamingExampleTest`。examples 模块整体 0% → 93% 指令/83% 分支（examples 不计入 `jacocoRootCoverageVerification` 聚合门禁）。
 
 **原清单中的非示例条目已全部脱离零位（2026-10-05 新鲜实测，`:*:test` + 各模块 jacocoTestReport）：**
 

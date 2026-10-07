@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Slf4j
 public class ComprehensiveStreamingExample {
 
+    private final String topicPrefix;
     private final ObjectMapper objectMapper;
     private RedissonClient redissonClient;
     private NamingService namingService;
@@ -39,8 +40,24 @@ public class ComprehensiveStreamingExample {
     private final List<MessageProducer> producers = new ArrayList<>();
 
     public ComprehensiveStreamingExample() {
+        this("examples:streaming:");
+    }
+
+    /** Prefix for topics and service names, so tests can isolate runs from each other. */
+    ComprehensiveStreamingExample(String topicPrefix) {
+        this.topicPrefix = topicPrefix;
         this.objectMapper = new ObjectMapper();
         this.objectMapper.registerModule(new JavaTimeModule());
+    }
+
+    private String svc(String name) {
+        // colon-free: the registry sanitizes colons out of service names, and both
+        // registration and discovery must derive the exact same name
+        return topicPrefix.replace(':', '-') + name;
+    }
+
+    /** Observable outcome of one demo run. */
+    record Summary(int processed, int sinked, int discoveredProducers, int discoveredProcessors) {
     }
 
     public static void main(String[] args) throws Exception {
@@ -48,7 +65,7 @@ public class ComprehensiveStreamingExample {
         example.runExample();
     }
 
-    public void runExample() throws Exception {
+    public Summary runExample() throws Exception {
         log.info("=== Starting Comprehensive Streaming Example ===");
 
         try {
@@ -59,9 +76,10 @@ public class ComprehensiveStreamingExample {
             setupNamingService();
 
             // 3. Demonstrate the complete pipeline
-            demonstrateStreamingPipeline();
+            int[] pipeline = demonstrateStreamingPipeline();
 
             log.info("=== Comprehensive Streaming Example Completed ===");
+            return new Summary(pipeline[0], pipeline[1], pipeline[2], pipeline[3]);
 
         } finally {
             cleanup();
@@ -100,7 +118,7 @@ public class ComprehensiveStreamingExample {
 
         // Register event producer service
         ServiceInstance producerService = DefaultServiceInstance.builder()
-                .serviceName("event-producer")
+                .serviceName(svc("event-producer"))
                 .instanceId("producer-1")
                 .host("localhost")
                 .port(8080)
@@ -116,7 +134,7 @@ public class ComprehensiveStreamingExample {
 
         // Register event processor service
         ServiceInstance processorService = DefaultServiceInstance.builder()
-                .serviceName("event-processor")
+                .serviceName(svc("event-processor"))
                 .instanceId("processor-1")
                 .host("localhost")
                 .port(8081)
@@ -133,12 +151,12 @@ public class ComprehensiveStreamingExample {
         log.info("Services registered successfully");
     }
 
-    private void demonstrateStreamingPipeline() throws Exception {
+    int[] demonstrateStreamingPipeline() throws Exception {
         log.info("=== Demonstrating Streaming Pipeline ===");
 
         // Create topics
-        String rawEventsTopic = "raw-events";
-        String processedEventsTopic = "processed-events";
+        String rawEventsTopic = topicPrefix + "raw-events";
+        String processedEventsTopic = topicPrefix + "processed-events";
 
         // Setup producers and consumers
         MessageProducer rawProducer = mqFactory.createProducer();
@@ -235,16 +253,18 @@ public class ComprehensiveStreamingExample {
         log.info("Events sinked: {}", sinkCount.get());
 
         // Show service discovery in action
-        demonstrateServiceDiscovery();
+        int[] discoveryCounts = demonstrateServiceDiscovery();
+
+        return new int[]{processedCount.get(), sinkCount.get(), discoveryCounts[0], discoveryCounts[1]};
     }
 
-    private void demonstrateServiceDiscovery() {
+    int[] demonstrateServiceDiscovery() {
         log.info("=== Service Discovery ===");
 
-        List<ServiceInstance> producers = discovery.discover("event-producer");
+        List<ServiceInstance> producers = discovery.discover(svc("event-producer"));
         log.info("Found {} producer services", producers.size());
 
-        List<ServiceInstance> processors = discovery.discover("event-processor");
+        List<ServiceInstance> processors = discovery.discover(svc("event-processor"));
         log.info("Found {} processor services", processors.size());
 
         for (ServiceInstance instance : processors) {
@@ -254,6 +274,8 @@ public class ComprehensiveStreamingExample {
                     instance.getPort(),
                     instance.getMetadata());
         }
+
+        return new int[]{producers.size(), processors.size()};
     }
 
     private void cleanup() {

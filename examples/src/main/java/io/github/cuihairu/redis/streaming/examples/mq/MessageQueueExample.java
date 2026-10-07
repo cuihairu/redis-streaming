@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Slf4j
 public class MessageQueueExample {
 
+    private final String topicPrefix;
     private final ObjectMapper objectMapper;
     private RedissonClient redissonClient;
     private MessageQueueFactory factory;
@@ -31,9 +32,24 @@ public class MessageQueueExample {
     private final List<MessageProducer> activeProducers = new ArrayList<>();
 
     public MessageQueueExample() {
+        this("examples:mq:");
+    }
+
+    /** Prefix for every topic, so tests can isolate runs from each other. */
+    MessageQueueExample(String topicPrefix) {
+        this.topicPrefix = topicPrefix;
         // Configure ObjectMapper to handle Java 8 date/time types
         this.objectMapper = new ObjectMapper();
         this.objectMapper.registerModule(new JavaTimeModule());
+    }
+
+    /** Observable outcome of one demo run (per-section results). */
+    record Summary(boolean basicConsumed, boolean emailGroup, boolean smsGroup, boolean auditGroup,
+                   boolean errorsProcessed, long dlqSize, boolean batchComplete, boolean perfComplete) {
+    }
+
+    /** Outcome of the dead-letter-queue section. */
+    record DlqOutcome(boolean errorsProcessed, long dlqSize) {
     }
 
     public static void main(String[] args) throws Exception {
@@ -41,7 +57,7 @@ public class MessageQueueExample {
         example.runExample();
     }
 
-    public void runExample() throws Exception {
+    public Summary runExample() throws Exception {
         log.info("Starting Message Queue Example");
 
         try {
@@ -49,21 +65,23 @@ public class MessageQueueExample {
             setupMessageQueue();
 
             // 1. Demonstrate basic producer-consumer
-            demonstrateBasicProducerConsumer();
+            boolean basicConsumed = demonstrateBasicProducerConsumer();
 
             // 2. Demonstrate consumer groups
-            demonstrateConsumerGroups();
+            boolean[] groups = demonstrateConsumerGroups();
 
             // 3. Demonstrate dead letter queue
-            demonstrateDeadLetterQueue();
+            DlqOutcome dlq = demonstrateDeadLetterQueue();
 
             // 4. Demonstrate batch processing
-            demonstrateBatchProcessing();
+            boolean batchComplete = demonstrateBatchProcessing();
 
             // 5. Performance test
-            performanceTest();
+            boolean perfComplete = performanceTest();
 
             log.info("Message Queue Example completed");
+            return new Summary(basicConsumed, groups[0], groups[1], groups[2],
+                    dlq.errorsProcessed(), dlq.dlqSize(), batchComplete, perfComplete);
 
         } finally {
             cleanup();
@@ -85,10 +103,10 @@ public class MessageQueueExample {
         factory = new MessageQueueFactory(redissonClient);
     }
 
-    private void demonstrateBasicProducerConsumer() throws Exception {
+    boolean demonstrateBasicProducerConsumer() throws Exception {
         log.info("=== Demonstrating Basic Producer-Consumer ===");
 
-        String topic = "orders";
+        String topic = topicPrefix + "orders";
         MessageProducer producer = factory.createProducer();
         MessageConsumer consumer = factory.createConsumer("basic-consumer");
 
@@ -140,12 +158,13 @@ public class MessageQueueExample {
         log.info("Basic producer-consumer test completed. All consumed: {}", consumed);
 
         // Note: Resources will be cleaned up in cleanup() method
+        return consumed;
     }
 
-    private void demonstrateConsumerGroups() throws Exception {
+    boolean[] demonstrateConsumerGroups() throws Exception {
         log.info("=== Demonstrating Consumer Groups ===");
 
-        String topic = "notifications";
+        String topic = topicPrefix + "notifications";
         MessageProducer producer = factory.createProducer();
         activeProducers.add(producer);
 
@@ -198,12 +217,13 @@ public class MessageQueueExample {
             emailComplete, smsComplete, auditComplete);
 
         // Note: Resources will be cleaned up in cleanup() method
+        return new boolean[]{emailComplete, smsComplete, auditComplete};
     }
 
-    private void demonstrateDeadLetterQueue() throws Exception {
+    DlqOutcome demonstrateDeadLetterQueue() throws Exception {
         log.info("=== Demonstrating Dead Letter Queue ===");
 
-        String topic = "error-events";
+        String topic = topicPrefix + "error-events";
         MessageProducer producer = factory.createProducer();
         MessageConsumer consumer = factory.createConsumer("error-processor");
 
@@ -256,12 +276,13 @@ public class MessageQueueExample {
         log.info("Dead letter queue size for {}: {}", topic, dlqSize);
 
         // Note: Resources will be cleaned up in cleanup() method
+        return new DlqOutcome(errorsProcessed, dlqSize);
     }
 
-    private void demonstrateBatchProcessing() throws Exception {
+    boolean demonstrateBatchProcessing() throws Exception {
         log.info("=== Demonstrating Batch Processing ===");
 
-        String topic = "batch-events";
+        String topic = topicPrefix + "batch-events";
         MessageProducer producer = factory.createProducer();
         MessageConsumer consumer = factory.createConsumer("batch-processor");
 
@@ -319,12 +340,13 @@ public class MessageQueueExample {
             batchComplete, processedCount.get());
 
         // Note: Resources will be cleaned up in cleanup() method
+        return batchComplete;
     }
 
-    private void performanceTest() throws Exception {
+    boolean performanceTest() throws Exception {
         log.info("=== Performance Test ===");
 
-        String topic = "perf-events";
+        String topic = topicPrefix + "perf-events";
         MessageProducer producer = factory.createProducer();
         MessageConsumer consumer = factory.createConsumer("perf-consumer");
 
@@ -372,6 +394,7 @@ public class MessageQueueExample {
         log.info("Throughput: {} messages/second", (messageCount * 1000.0) / duration);
 
         // Note: Resources will be cleaned up in cleanup() method
+        return consumeComplete;
     }
 
     private MessageHandler createNotificationHandler(String type, CountDownLatch latch) {

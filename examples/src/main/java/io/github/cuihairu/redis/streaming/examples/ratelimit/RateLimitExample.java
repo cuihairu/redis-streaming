@@ -6,6 +6,10 @@ import io.github.cuihairu.redis.streaming.sink.print.PrintSink;
 /** Simple demo showing usage of different rate limiters with a sink decorator. */
 public class RateLimitExample {
     public static void main(String[] args) throws Exception {
+        run();
+    }
+
+    static void run() throws Exception {
         RateLimiter sliding = new InMemorySlidingWindowRateLimiter(1000, 5); // 5 req / sec
         RateLimiter token = new InMemoryTokenBucketRateLimiter(10, 5);       // burst 10, avg 5/s
         var sink = new PrintSink<String>("RL");

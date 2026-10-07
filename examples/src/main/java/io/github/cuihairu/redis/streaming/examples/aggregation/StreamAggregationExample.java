@@ -32,11 +32,23 @@ public class StreamAggregationExample {
 
     private final Random random = new Random();
 
+    /** Observable outcome of one demo run (values of the final snapshot). */
+    record Snapshot(long pageViews, double revenue, Map<String, Long> pageViewsByPage, java.util.List<String> topPages) {
+    }
+
     public static void main(String[] args) throws Exception {
         new StreamAggregationExample().run();
     }
 
-    public void run() {
+    public void run() throws Exception {
+        run(25_000, 200, "examples:aggregation");
+    }
+
+    /**
+     * Bounded variant of the demo used by tests: generates events for {@code durationMs}
+     * sleeping {@code sleepMs} between them, then returns the final snapshot.
+     */
+    Snapshot run(long durationMs, long sleepMs, String namespace) throws InterruptedException {
         String redisUrl = System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379");
 
         Config config = new Config();
@@ -48,7 +60,7 @@ public class StreamAggregationExample {
         RedissonClient redissonClient = Redisson.create(config);
 
         try {
-            WindowAggregator aggregator = new WindowAggregator(redissonClient, "examples:aggregation");
+            WindowAggregator aggregator = new WindowAggregator(redissonClient, namespace);
             registerFunctions(aggregator);
 
             TimeWindow sliding = SlidingWindow.ofSeconds(60, 10);
@@ -57,9 +69,9 @@ public class StreamAggregationExample {
             PVCounter pvCounter = aggregator.createPVCounter(Duration.ofMinutes(1));
             TopKAnalyzer topKAnalyzer = aggregator.createTopKAnalyzer(5, Duration.ofMinutes(1));
 
-            log.info("Generating events for ~25s (sliding={} tumbling={} redisUrl={})", sliding.getSize(), tumbling.getSize(), redisUrl);
+            log.info("Generating events for ~{}ms (sliding={} tumbling={} redisUrl={})", durationMs, sliding.getSize(), tumbling.getSize(), redisUrl);
 
-            long endAtMs = System.currentTimeMillis() + 25_000;
+            long endAtMs = System.currentTimeMillis() + durationMs;
             int i = 0;
             while (System.currentTimeMillis() < endAtMs) {
                 i++;
@@ -80,13 +92,14 @@ public class StreamAggregationExample {
                     printSnapshot(aggregator, sliding, tumbling, pvCounter, topKAnalyzer, ts);
                 }
 
-                Thread.sleep(200);
+                Thread.sleep(sleepMs);
             }
 
-            printSnapshot(aggregator, sliding, tumbling, pvCounter, topKAnalyzer, Instant.now());
+            Instant now = Instant.now();
+            printSnapshot(aggregator, sliding, tumbling, pvCounter, topKAnalyzer, now);
+            Snapshot snapshot = snapshotOf(aggregator, sliding, tumbling, pvCounter, topKAnalyzer, now);
             pvCounter.close();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            return snapshot;
         } finally {
             redissonClient.shutdown();
         }
@@ -117,6 +130,33 @@ public class StreamAggregationExample {
         log.info("snapshot ts={} pv(last60s)={} revenue(last30s)={} avgRespMs={} min/maxRespMs={}/{}",
                 ts, pv, revenue, avg, min, max);
 
+        log.info("pv(1m) by page: {}", pageViewsByPage(pvCounter));
+        log.info("top pages: {}", topKAnalyzer.getTopK("pages"));
+    }
+
+    /** Same observable values as the printed snapshot, returned for assertions. */
+    private Snapshot snapshotOf(
+            WindowAggregator aggregator,
+            TimeWindow sliding,
+            TimeWindow tumbling,
+            PVCounter pvCounter,
+            TopKAnalyzer topKAnalyzer,
+            Instant ts
+    ) {
+        Long pv = aggregator.getAggregatedResult(sliding, "page_view_events", "COUNT", ts);
+        // SUM may come back as BigDecimal depending on the accumulated values — read it as Number
+        Number revenue = aggregator.getAggregatedResult(tumbling, "transaction_amount", "SUM", ts);
+        return new Snapshot(
+                pv == null ? 0L : pv,
+                revenue == null ? 0.0 : revenue.doubleValue(),
+                pageViewsByPage(pvCounter),
+                topKAnalyzer.getTopK("pages").stream()
+                        .map(TopKAnalyzer.TopKItem::getItem)
+                        .toList()
+        );
+    }
+
+    private static Map<String, Long> pageViewsByPage(PVCounter pvCounter) {
         String[] pages = {"/home", "/products", "/cart", "/checkout", "/profile"};
         Map<String, Long> pvByPage = Map.of(
                 pages[0], pvCounter.getPageViewCount(pages[0]),
@@ -125,9 +165,7 @@ public class StreamAggregationExample {
                 pages[3], pvCounter.getPageViewCount(pages[3]),
                 pages[4], pvCounter.getPageViewCount(pages[4])
         );
-
-        log.info("pv(1m) by page: {}", pvByPage);
-        log.info("top pages: {}", topKAnalyzer.getTopK("pages"));
+        return pvByPage;
     }
 
     private String randomPage() {
