@@ -595,15 +595,15 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 ### 低（Low）
 
-- **CDC-L1** 列名解析器负缓存（`MySQLColumnNameResolver.java:45-52`）：瞬时失败被 `computeIfAbsent` 缓存为空列表，该表列名永久解析不出（col_0/col_1…）直到重启；`DriverManager.getConnection` 在 binlog 事件线程上执行（:61），每张未知表阻塞事件消费至超时。
+- **CDC-L1** 列名解析器负缓存（`MySQLColumnNameResolver.java:45-52`）：瞬时失败被 `computeIfAbsent` 缓存为空列表，该表列名永久解析不出（col_0/col_1…）直到重启；`DriverManager.getConnection` 在 binlog 事件线程上执行（:61），每张未知表阻塞事件消费至超时。 [已修复：cache 仅存成功非空解析（MySQLColumnNameResolver.java:45-50 注释），负缓存消除]
 - **CDC-L2** 配置校验缺口（`CDCConfigurationBuilder.java`）：`validate()`（:325-329）只查 name；`batchSize<=0` → doPoll 永不排空、队列无限增长；负 `pollingIntervalMs` 通过校验但在调度时抛 IAE；`(Boolean) properties.getOrDefault(...)`（:311,316）对字符串 "true" 抛 ClassCastException；PG `statusIntervalMs` `(int)` 截断（:203）；`CDCConnectorFactory.create`（:47）null 类型名抛 NPE 而非 IAE。
 - **CDC-L3** 指标 lost updates（`AbstractCDCConnector.java:109-110,124-125,273-274`）：`metrics.get()/set()` 无 CAS。
-- **CDC-L4** `CDCManager.addConnector` check-then-act（:30-34）：`containsKey` 后 `put` 可静默替换同名连接器，应 `putIfAbsent`。
+- **CDC-L4** `CDCManager.addConnector` check-then-act（:30-34）：`containsKey` 后 `put` 可静默替换同名连接器，应 `putIfAbsent`。 [已修复：CDCManager.java:34-36 已改 putIfAbsent（含注释）]
 - **CDC-L5** MySQL `doCommit`/`doResetToPosition` 边界（:117-121,131-139）：无 `parts.length` 检查 → 尾冒号位置 AIOOBE；`doResetToPosition` 在 start() 前调用对 `binaryLogClient` NPE。
 - **CDC-L6** `ChangeEventQueueSink.invoke`（:49-56）：TimeoutException 未取消在途发送 → 迟到完成在重试时重复事件；InterruptedException 清掉中断标志后传播。
-- **CDC-L7** 跨线程字段可见性：`AbstractCDCConnector.currentPosition`（:25）、`MySQLBinlogCDCConnector.binlogFilename`（:29）无 volatile。
-- **CDC-L8** 快照双重投递窗口（`DatabasePollingCDCConnector.java:313-321`）：整表扫描完才推进 lastPolledValues，扫描中途失败/停止重入队已扫过的行；带快照重启时重复触发 onSnapshotStarted（:202-207）。
-- **CDC-L9** 序列化：`CDCSource` 实现了 Serializable 但持有非 transient 的 `CDCConnector`（Hikari/BinaryLogClient 不可序列化）→ NotSerializableException；`ChangeEvent` 无 serialVersionUID。
+- **CDC-L7** 跨线程字段可见性：`AbstractCDCConnector.currentPosition`（:25）、`MySQLBinlogCDCConnector.binlogFilename`（:29）无 volatile。 [部分修复：currentPosition 已 volatile（AbstractCDCConnector.java:25），binlogFilename 仍无（MySQLBinlogCDCConnector.java:40）]
+- **CDC-L8** 快照双重投递窗口（`DatabasePollingCDCConnector.java:313-321`）：整表扫描完才推进 lastPolledValues，扫描中途失败/停止重入队已扫过的行；带快照重启时重复触发 onSnapshotStarted（:202-207）。 [已修复：CDC-M1 批次 emit-then-advance（:312-313 highWater 仅推进已入队行，:396-397）+ 水位跨 stop/start 存活（:131），中断轮次续扫不重投]
+- **CDC-L9** 序列化：`CDCSource` 实现了 Serializable 但持有非 transient 的 `CDCConnector`（Hikari/BinaryLogClient 不可序列化）→ NotSerializableException；`ChangeEvent` 无 serialVersionUID。 [部分修复：CDCSource 已有 serialVersionUID（:20），ChangeEvent 仍无；connector 字段非 transient 仍未改]
 
 ### cdc 审计确认无问题项
 
@@ -650,16 +650,16 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 ### 低（Low）
 
-- **RT-L1** sink commit 失败仍返回非 null Checkpoint（`RedisStreamExecutionEnvironment.java:727-737`），调用方无法区分。
-- **RT-L2** DeferredAcks key `topic|group` 分隔符歧义 + `ackAll` 用最后 poll 的 id 而非 max 推进 frontier（:805-887）；含 `|` 的 topic 使 ack 静默失败。
+- **RT-L1** sink commit 失败仍返回非 null Checkpoint（`RedisStreamExecutionEnvironment.java:727-737`），调用方无法区分。 [部分修复：2PC 重构后 commit 失败的 checkpoint 保持未标记且可经 recoverAndCommit 恢复，调用方可经 sinkCommittedMarker 区分（RedisStreamExecutionEnvironment.java:1076-1105 注释契约）；返回值仍非 null（该 checkpoint 确已持久化，属设计内）]
+- **RT-L2** DeferredAcks key `topic|group` 分隔符歧义 + `ackAll` 用最后 poll 的 id 而非 max 推进 frontier（:805-887）；含 `|` 的 topic 使 ack 静默失败。 [部分修复：frontier 已原子 Lua max-CAS 防回退（MQ-11，:1308-1318）；`split("\\|", 2)` 分隔符歧义仍在（:1287），maxId 仍取列表末值（依赖 poll 升序）]
 - **RT-L3** 分区数回退为 1 时，checkpoint/恢复/frontier 只覆盖分区 0（`TopicPartitionRegistry.java:48-61` 等）。
-- **RT-L4** 同 jobName 双进程 checkpoint id 撞车互相覆盖（`RedisRuntimeCheckpointManager.java:95-126`）。
-- **RT-L5** `sinkCommittedMarker` 无 TTL 且 `checkpointsToKeep=0` 时清理禁用 → 无界增长（:177-185,552-556）。
+- **RT-L4** 同 jobName 双进程 checkpoint id 撞车互相覆盖（`RedisRuntimeCheckpointManager.java:95-126`）。 [已修复：initNextId 构造快照 + 领导权接管时 refreshCheckpointIdFromStorage 重对齐计数器（单调 max，RedisRuntimeCheckpointManager.java:138-165）]
+- **RT-L5** `sinkCommittedMarker` 无 TTL 且 `checkpointsToKeep=0` 时清理禁用 → 无界增长（:177-185,552-556）。 [部分修复：marker 随 checkpoint 淘汰一并删除（cleanupOld :841-846）；`keep<=0` 仍整体禁用清理、marker 本身仍无 TTL]
 - **RT-L6** `listCheckpoints` 仅按时间戳排序，同毫秒 tie 时 getLatest 可能取旧（`RedisCheckpointStorage.java:76`）。
 - **RT-L7** 窗口 member 编码对含 `\u0001` 的字符串 key 解析错乱（`RedisStreamBuilder.java:371,779-823`）。
 - **RT-L8** `NumberAggregationUtils.add` long 溢出静默、BigInteger/BigDecimal 截断（`NumberAggregationUtils.java:29-32`）。
-- **RT-L9** `addSource` 无法停止不终止的 source（`StreamExecutionEnvironment.java:75-122`；`cancel()` 从不被调）。
-- **RT-L10** `InstanceIdGenerator.generateLocalInstanceId` 忽略 serviceName 且 javadoc 与实现不符（core `InstanceIdGenerator.java:39-43`）。
+- **RT-L9** `addSource` 无法停止不终止的 source（`StreamExecutionEnvironment.java:75-122`；`cancel()` 从不被调）。 [部分修复：SourceContext 提供 isStopped() 协作式停止协议（内存运行时）；不检查该标志的 source 仍无法中止，cancel() 仍不存在]
+- **RT-L10** `InstanceIdGenerator.generateLocalInstanceId` 忽略 serviceName 且 javadoc 与实现不符（core `InstanceIdGenerator.java:39-43`）。 [已修复（按文档化语义）：javadoc 现明示 "hostname:port" 与实现一致（:38）；serviceName 入参按文档即为不用]
 - **RT-L11** `StateDescriptor` 无校验：null type 时 `toString()` NPE、`RedisKeyedValueState.value()` 反序列化 NPE（core `StateDescriptor.java:19-32,57`）。
 
 ### runtime/core 审计确认无问题项
@@ -693,6 +693,14 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - 设计决策类：RT-H3（fire-and-purge 原子性，需两阶段提交）、B-06（配置通知重同步，涉及 API 契约）。
 - 风险可控/影响良性：MQ-11（frontier 回退方向安全）、RT-M3/M6/M7（文档化语义）、B-36（文档已声明测试用途）等。
 - 其余 ⏳ 条目为审计发现但本轮未逐条复现验证（范围限制），均已给出触发条件、位置与修复方向，可直接作为下轮输入。
+
+### 低危清单核销（2026-10-07 逐条对照活代码）
+
+上面的 CDC-L1~L9 / RT-L1~L11 两条紧凑清单已逐条对照当前代码核销并回标：6 条已修复（CDC-L1/L4/L8、RT-L4/L10 及 RT-L1 的主要危害面）、5 条部分修复（CDC-L7/L9、RT-L2/L5/L9，残留半项见各条注记）、其余仍未修。当前存活的真实队列（全部 Low）：
+
+- CDC-L2 配置校验缺口（validate 仍只查 name）；CDC-L3 metrics 非 CAS 读改写；CDC-L5 doCommit 无 parts.length 检查；CDC-L6 sink 超时不取消在途发送。
+- RT-L3 分区回退 1 只覆盖分区 0；RT-L6 listCheckpoints 同毫秒 tie 无次级排序；RT-L7 窗口 member `\u0001` 分隔符未转义；RT-L8 NumberAggregationUtils long 溢出静默；RT-L11 StateDescriptor 无 null 校验。
+- 半修残留：CDC-L7 的 binlogFilename 无 volatile；CDC-L9 的 ChangeEvent 无 serialVersionUID；RT-L2 的 `topic|group` 分隔符歧义；RT-L5 的 keep=0 禁清理。
 
 ### race 检测说明
 
