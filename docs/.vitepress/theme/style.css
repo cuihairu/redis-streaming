@@ -39,9 +39,7 @@
 
   --vp-c-divider: rgba(122, 78, 32, 0.12);
 
-  /* Hero & accent */
-  --vp-home-hero-name-color: transparent;
-  --vp-home-hero-name-background: linear-gradient(135deg, var(--bw-clay), var(--bw-forest));
+  /* Hero & accent：hero 名纯品牌色（2026-10 主题审核批：字体渐变全站禁用） */
   --vp-home-hero-image-background-image: radial-gradient(
     circle at 50% 40%,
     rgba(111, 127, 73, 0.18),
@@ -76,7 +74,6 @@
   --vp-c-brand-3: var(--bw-moss-light);
   --vp-c-brand-soft: rgba(154, 110, 58, 0.16);
 
-  --vp-home-hero-name-background: linear-gradient(135deg, var(--bw-clay-light), var(--bw-moss-light));
   --vp-home-hero-image-background-image: radial-gradient(
     circle at 50% 40%,
     rgba(111, 127, 73, 0.12),
@@ -374,3 +371,10 @@
   background: rgba(154, 110, 58, 0.3);
   color: #e8dcc8;
 }
+
+/* hero 名用纯品牌色,不用 VitePress 默认渐变名 */
+:root {
+  --vp-home-hero-name-color: var(--vp-c-brand-1);
+  --vp-home-hero-name-background: transparent;
+}
+
