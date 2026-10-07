@@ -3,12 +3,10 @@ package io.github.cuihairu.redis.streaming.table.impl;
 import io.github.cuihairu.redis.streaming.table.KGroupedTable;
 import io.github.cuihairu.redis.streaming.table.KTable;
 import io.github.cuihairu.redis.streaming.table.TableAggregator;
-import org.redisson.api.RedissonClient;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.UUID;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -126,21 +124,15 @@ public final class RedisKGroupedTable<KS, K, V> implements KGroupedTable<K, V> {
                                                       Class<K> inferredKeyClass,
                                                       Class<VR> inferredValueClass,
                                                       Map<K, VR> values) {
-        RedissonClient redissonClient = sourceTable.getRedissonClient();
-        // random suffix: two group-bys inside the same millisecond collided onto one hash
-        String newTableName = sourceTable.getTableName() + ":groupBy:" + opName + ":"
-                + System.currentTimeMillis() + "-" + UUID.randomUUID();
-
         @SuppressWarnings("unchecked")
         Class<K> keyCls = inferredKeyClass != null ? inferredKeyClass : (Class<K>) Object.class;
         @SuppressWarnings("unchecked")
         Class<VR> valCls = inferredValueClass != null ? inferredValueClass : (Class<VR>) Object.class;
 
-        RedisKTable<K, VR> result = new RedisKTable<>(redissonClient, newTableName, keyCls, valCls);
-        for (Map.Entry<K, VR> e : values.entrySet()) {
-            result.put(e.getKey(), e.getValue());
-        }
-        return result;
+        // random suffix (in newDerivedChild): two group-bys inside the same millisecond used
+        // to collide onto one hash; the child is registered in the source's lineage so its
+        // generation count stays bounded and delete() reclaims it (B-24)
+        return sourceTable.newDerivedChild("groupBy:" + opName, keyCls, valCls, values);
     }
 }
 

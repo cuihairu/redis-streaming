@@ -197,11 +197,12 @@
 - 验证与修复：两个 catch 块改为 null 安全：`otherTable != null ? otherTable.tableName : "in-memory table"`，日志保留两张表名且原始 joiner 异常作为 cause 正常包装为 `Join failed`/`Left join failed` 向上抛。
 - 回归测试：`RedisKTableJoinInMemoryPeerErrorTest`——旧代码复现：对 InMemoryKTable 对端 joiner 抛 `IllegalStateException("joiner bug")` 时，调用方收到 `Cannot read field "tableName" because "otherTable" is null` 的裸 NPE（cause 链全丢）；修复后收到 message=`Join failed`、cause=`IllegalStateException("joiner bug")` 的 RuntimeException；join/leftJoin 双路径 + 正常路径共 3 例。
 
-### B-24 RedisKTable 每次转换物化新 Redis hash 且永不删除 ⏳
+### B-24 RedisKTable 每次转换物化新 Redis hash 且永不删除 [已修复]
 - 位置：`table/.../impl/RedisKTable.java:155,184,213,248,294`；`RedisKGroupedTable.java:128`
 - 触发：每微批调用 `filter/mapValues/join/groupBy`。
 - 影响：`tableName + ":op:" + millis` 全量拷贝、无 TTL 无清理 → 长任务 Redis 内存无界增长、key 爆炸。
 - 审计置信度：高
+- 验证与修复：物化语义保留（整合测试钉死派生表为真实 Redis hash），治理生命周期——① 血缘登记：每个物化派生在源的 `<table>:__derived` hash 登记（child → `{"o":op,"t":millis}` JSON），先登记后填充，崩溃留下的是可回收代而非孤儿 hash；非血缘 JSON 的外来条目跳过不碰。② 代际保留：每 (源表, 操作) 只保留最新 `derivedRetention`（默认 8，`setDerivedTableRetention(≥1)` 可调，子表继承）代，超龄同操作派生连同其自身派生树级联删除，派生循环的 key 空间有界。③ 可选 TTL：`setDerivedTableTtl(Duration)` 给派生 hash 设过期（填充后设置——Redisson 对不存在的 key expire 无效；子表继承），微批重驱场景可用 Redis 原生过期兜底。④ 级联回收：`delete()` 递归删除本体 + 全部登记派生 + 各级血缘 hash（visited 集防环）；`clear()` 语义不变只清本体内容。五个物化路径（mapValues×2/filter/join/leftJoin）与 grouped 的 aggregate/count/reduce 统一走 `newDerivedChild(op, keyCls, valCls, content)`。回归：`RedisKTableLineageTest`（8 用例：保留上界、跨操作互不回收、delete 全树级联、子表只回收自己子树、外来条目跳过、grouped 登记与保留、TTL 继承、retention 非法值拒绝）+ `RedisKTableLineageIntegrationTest`（真实 Redis：12 轮派生 ≤ 保留数、delete 后 `name*` 全清、TTL 落地且不超配置值；旧代码前两者必红——key 数无界增长且 delete 残留派生）。
 
 ### B-25 订阅 check-then-act 竞态：重复 RTopic 监听器、回调翻倍、订阅泄漏 [已修复]
 - 位置：`registry/.../RedisServiceConsumer.java:244-257`；`config/.../RedisConfigService.java:204-223`
@@ -688,7 +689,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 ### 记为后续任务（未修复，原因见各条目）
 
-- **重构级**（需专项设计，非局部修复）：MQ-01/MQ-04（DLQ pending 回收与删除策略语义）、RT-H2（checkpoint 全库 SCAN）、B-20（完成匹配的有界化）、B-24（KTable 物化清理）。
+- **重构级**（需专项设计，非局部修复）：MQ-01/MQ-04（DLQ pending 回收与删除策略语义）、RT-H2（checkpoint 全库 SCAN）、B-20（完成匹配的有界化）——均已在此后专项修复；B-24（KTable 物化清理）经血缘登记+代际保留+级联删除修复（见上）。
 - 设计决策类：RT-H3（fire-and-purge 原子性，需两阶段提交）、B-06（配置通知重同步，涉及 API 契约）。
 - 风险可控/影响良性：MQ-11（frontier 回退方向安全）、RT-M3/M6/M7（文档化语义）、B-36（文档已声明测试用途）等。
 - 其余 ⏳ 条目为审计发现但本轮未逐条复现验证（范围限制），均已给出触发条件、位置与修复方向，可直接作为下轮输入。

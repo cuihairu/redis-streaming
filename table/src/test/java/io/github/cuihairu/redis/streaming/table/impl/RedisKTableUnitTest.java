@@ -115,11 +115,18 @@ class RedisKTableUnitTest {
         @SuppressWarnings("rawtypes")
         RMap map = mock(RMap.class);
         when(redissonClient.getMap(eq("t"), eq(StringCodec.INSTANCE))).thenReturn(map);
+        // delete() cascades through the lineage hash before removing the table itself
+        @SuppressWarnings("rawtypes")
+        RMap lineage = mock(RMap.class);
+        when(redissonClient.getMap(eq("t" + RedisKTable.DERIVED_LINEAGE_SUFFIX), eq(StringCodec.INSTANCE)))
+                .thenReturn(lineage);
+        when(lineage.readAllMap()).thenReturn(Map.of());
 
         RedisKTable<String, String> table = new RedisKTable<>(redissonClient, "t", String.class, String.class);
         table.delete();
 
         verify(map).delete();
+        verify(lineage).delete();
     }
 
     @Test
