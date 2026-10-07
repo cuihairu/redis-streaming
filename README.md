@@ -6,37 +6,67 @@
 
 [![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://www.oracle.com/java/)
 [![Redis](https://img.shields.io/badge/Redis-6.0+-red.svg)](https://redis.io/)
-[![Version](https://img.shields.io/badge/Version-0.2.0-blue.svg)](https://github.com/cuihairu/redis-streaming)
+[![Version](https://img.shields.io/badge/Version-0.2.4-blue.svg)](https://github.com/cuihairu/redis-streaming)
 [![codecov](https://codecov.io/gh/cuihairu/redis-streaming/branch/main/graph/badge.svg)](https://codecov.io/gh/cuihairu/redis-streaming)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 </div>
 
-基于 Redis 与 Redisson 构建的流处理框架，采用 Apache License 2.0，覆盖流数据处理、状态管理、窗口聚合、CDC、可靠性保证等模块。
+基于 Redis 与 Redisson 构建的**轻量级流处理运行时**（Apache License 2.0）：Redis Streams 既是消息管道，也是状态与检查点的底座——从消费、事件时间、窗口聚合到 checkpoint/故障恢复/HA 接管，由一套运行时托管完成。MQ、Registry、Config 等 Redis 基础设施能力作为配套模块一并提供。
+
+## 60 秒理解它是什么
+
+```java
+RedissonClient redis = Redisson.create(cfg);            // 普通 Redisson 客户端
+RedisRuntimeConfig rc = RedisRuntimeConfig.builder()
+        .jobName("order-analytics")
+        .build();
+RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(redis, rc);
+
+env.fromMqTopic("orders", "analytics")                  // topic + 消费组
+   .map(m -> (Integer) m.getPayload())
+   .keyBy(v -> v % 4)                                   // keyed 分区
+   .window(TumblingWindow.<Integer>ofMillis(60_000))    // 1 分钟滚动窗口
+   .reduce(Integer::sum)                                // 窗口内聚合
+   .addSink(sum -> System.out.println("window sum = " + sum));
+
+RedisJobClient job = env.executeAsync();                 // 消费/水位线/窗口/checkpoint 全托管
+job.triggerCheckpointNow();                              // 可选：手动触发 checkpoint
+```
+
+### 处理语义（Processing Guarantees）
+
+| 语义 | 路径 | 边界 |
+|---|---|---|
+| At-least-once | 默认 MQ 消费：处理后 ACK，失败重试/DLQ | 可能重复投递 |
+| Effectively-once（Redis 目标端） | checkpoint + defer-ack + 幂等/原子 sink（`RedisAtomicCheckpointListSink`、sink 去重、2PC） | 端到端去重，Redis 内闭环 |
+| Effectively-once\*（跨系统） | Outbox-WAL：`RedisOutboxSink` + 异步 Dispatcher | at-least-once 派发 + 目标端按记录 id 幂等；\* 取决于 sink 能力 |
+
+设计与边界详见 `docs/exactly-once.md`。
 
 ## 核心特性
 
 文档站（GitHub Pages）：https://cuihairu.github.io/redis-streaming/
 
 ### 已实现功能
+- 流处理运行时 (Runtime)：Redis-backed runtime（Redis Streams 消费组驱动，单进程并行/水位线/窗口/checkpoint/HA 接管）+ in-memory runtime（tests/examples）
 - 消息队列 (MQ)：基于 Redis Streams 的消息队列，支持消费者组、死信队列
 - 服务注册发现 (Registry)：服务注册与发现，多协议健康检查（HTTP/HTTPS/TCP/UDP/WebSocket/KCP/gRPC/Dubbo），支持 metadata 比较运算符过滤
 - 配置中心 (Config)：基于 Redis 的分布式配置管理，支持配置版本化、变更通知、历史记录
 - 状态管理 (State)：基于 Redis 的分布式状态存储，支持 ValueState、MapState、ListState、SetState
-- 检查点机制 (Checkpoint)：分布式检查点协调，支持故障恢复
+- 检查点机制 (Checkpoint)：分布式检查点协调，支持故障恢复；两阶段提交 sink 与 Outbox-WAL 跨系统投递
 - Watermark：WatermarkStrategy + 生成器（有序/乱序），可与 runtime 结合使用（event-time）
 - 窗口分配器 (Window)：滚动/滑动/会话窗口 + 触发器（Redis runtime 已支持基于 watermark 的窗口计算；复杂 trigger 语义可扩展）
 - 窗口聚合 (Aggregation)：基于时间窗口的实时聚合，支持 PV/UV、TopK、分位数计算
 - 流式 Join (Join)：时间窗口内的流-流 Join 操作
 - CDC 集成 (CDC)：MySQL Binlog、PostgreSQL 逻辑复制、数据库轮询
 - 可靠性保证 (Reliability)：重试机制、死信队列、Bloom Filter 去重、窗口去重
-- Sink 连接器 (Sink)：Kafka Sink、Redis Stream Sink、Redis Hash Sink
-- Source 连接器 (Source)：Kafka Source、HTTP API Source、Redis List Source
+- Sink 连接器 (Sink)：Kafka Sink、Redis Stream Sink（XADD）、Redis List/Hash Sink
+- Source 连接器 (Source)：Kafka Source、HTTP API Source、Redis List/Stream Source
 - Prometheus 监控 (Metrics)：Prometheus Exporter、指标收集器
 - Spring Boot 集成：自动配置和注解支持
 - 流表二元性 (Table)：内存版和 Redis 持久化版 KTable 已实现
 - CEP：复杂事件处理，支持 Kleene closure、高级模式操作
-- 流处理运行时 (Runtime)：Redis-backed runtime（Redis Streams，单进程并行/水位线/窗口/checkpoint）+ in-memory runtime（tests/examples）
 
 ## 模块架构
 
@@ -291,7 +321,8 @@ KTable 和 KStream，支持流表互转和表操作。
 - PrintSink - 控制台输出
 - FileSink - 文件输出
 - CollectionSink - 集合输出
-- RedisStreamSink - Redis List 输出
+- RedisStreamSink - Redis Stream 输出（XADD）
+- RedisListSink - Redis List 输出
 - RedisHashSink - Redis Hash 输出
 - KafkaSink - Kafka 输出
 
@@ -605,21 +636,32 @@ List<ChangeEvent> events = connector.poll();
 - Redisson 4.7.0：Redis 客户端，用于分布式操作
 - Jackson 2.17.0：JSON 序列化/反序列化
 - Lombok 1.18.34：代码生成，减少样板代码
-- SLF4J 1.7.36：日志抽象
+- SLF4J 2.0.17：日志抽象
 
 ### 测试框架
 - JUnit Jupiter 5.9.2：单元测试
 - Mockito 4.6.1：Mock 框架
 
 ### 构建工具
-- Gradle 7.0+：构建工具
+- Gradle 8.5+：构建工具（仓库自带 wrapper）
 - Java 17：编译目标版本
 
 ## 路线图
 
-### 模块完成情况总览
+### 成熟度总览
 
-20/20 个模块已完成，没有部分完成或未开始的模块。
+模块全部就位（20/20），但"模块完成 ≠ 框架完成"——按能力维度标注当前状态：
+
+| 能力 | 状态 |
+|---|---|
+| Stream API（DataStream / KeyedStream / WindowedStream） | ✅ |
+| Redis Runtime（单进程并行、事件时间、窗口、timer） | ✅ |
+| State / Checkpoint / 故障恢复 | ✅ |
+| 两阶段提交 sink + Outbox-WAL（跨系统投递路线） | ✅ |
+| HA：leader election + fencing token + 崩溃接管 | ✅ |
+| Watermark/Window 触发语义（空闲分区推进等） | 🚧 |
+| 多 worker 任务分片 / 动态伸缩 | 🚧 |
+| Benchmark（吞吐/延迟/恢复时间基线） | 🚧 |
 
 ---
 
@@ -687,9 +729,16 @@ List<ChangeEvent> events = connector.poll();
 
 ### 下一步优先级
 
-#### 高优先级（可选增强）
-1. Runtime 控制面补全：多实例动态伸缩/控制面（leader election + fencing token 与作业 HA 接管已实现，见 `runtime` 模块 `RedisLeaderElector`）
-2. Exactly-once（跨系统）：2PC / Outbox-WAL（可选路线，见 `docs/exactly-once.md`）
+#### 已交付（v0.2.3 / v0.2.4）
+- 两阶段提交端到端（`TwoPhaseCommitSink` + 恢复补偿 + 故障注入）与 Outbox-WAL 派发（`RedisOutboxSink` + Dispatcher），见 `docs/exactly-once.md`
+- Leader election（`RedisLeaderElector`：SET NX PX 租约 + Lua 续约/释放）+ fencing token + 崩溃接管（checkpoint id 从存储重对齐）
+- keyed state 热键治理（LOG_ONLY / THROTTLE / FAIL_FAST）、静态审计与低危审计队列清零
+
+#### 高优先级（Runtime 纵深）
+1. Runtime 语义补全：空闲分区水位推进、fire-and-purge 原子化、restore 原子性
+2. 多 worker 任务分片 / 动态伸缩（并行度变更、分区再均衡）
+3. `DeliveryGuarantee` 统一声明（AT_MOST_ONCE / AT_LEAST_ONCE / EFFECTIVELY_ONCE，各 sink 声明自身能力）
+4. Benchmark 基线：吞吐 / p50-p99 延迟 / 恢复时间 / checkpoint 耗时（1/2/4 worker 对比）
 
 #### 中优先级（功能增强）
 1. 连接器扩展
@@ -738,11 +787,26 @@ List<ChangeEvent> events = connector.poll();
 
 ---
 
-当前版本：0.2.0（最新发布版本）
-最后更新：2026-10-04
-完成度：20/20 个模块
+当前版本：0.2.4（最新发布版本）
+最后更新：2026-10-08
+完成度：20/20 个模块；动态伸缩与 Benchmark 进行中
 
 ### 版本说明
+
+0.2.4 - 审计低危收口 + 静默丢失窗口修复
+- [低危审计队列清零：CDC 配置校验/序列化、DeferredAcks 结构键、分区数回退链、sink 提交标记 TTL]
+- [关闭 2PC/defer-ack 两个静默丢失窗口：epoch 误认领与 checkpoint abort 后的 stale ack]
+- [KTable 派生键空间增长有界化（lineage + 代际保留）]
+
+0.2.3 - 可靠性与 HA 专项
+- [两阶段提交端到端（TwoPhaseCommitSink + 恢复补偿 + 故障注入）]
+- [Leader election + fencing token + 崩溃接管（checkpoint id 从存储重对齐）]
+- [Outbox/WAL 派发（RedisOutboxSink + Dispatcher）、keyed state 热键治理（LOG_ONLY/THROTTLE/FAIL_FAST）]
+
+0.2.2 - 加固与现代化
+- [静态审计 16 项缺陷修复（B-04..B-33）]
+- [Redisson 3.52.0→4.7.0、Gradle 版本目录集中管理、SLF4J 统一 2.0.17]
+- [新组件：CDCSource、ChangeEventQueueSink、RedisStreamSource；starter 解除 actuator/Micrometer 隐式依赖]
 
 0.2.0 - Runtime 能力完成（单进程）+ 文档站上线
 - [Redis runtime：并行度/背压、watermark/window、端到端 checkpoint（含 sink 协调与恢复）]
