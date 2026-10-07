@@ -1333,7 +1333,9 @@ class RedisRuntimeIntegrationTest {
         try (RedisJobClient job = env.executeAsync()) {
             producer.send(topic, "k1", "x").get(5, TimeUnit.SECONDS);
 
-            long deadline = System.currentTimeMillis() + 15000L;
+            // CI 2-core runners under full-suite load have starved the first wait past 15s
+            // (raise history: 5s -> 15s -> 90s). Assertions unchanged — only the wait grows.
+            long deadline = System.currentTimeMillis() + 90_000L;
             while (System.currentTimeMillis() < deadline) {
                 int size = client.getList(listKey, StringCodec.INSTANCE).size();
                 if (size >= 1) {
@@ -1345,14 +1347,30 @@ class RedisRuntimeIntegrationTest {
             assertEquals(1, client.getList(listKey, StringCodec.INSTANCE).size(),
                     "idempotent sink should write exactly once even if message is retried");
 
-            long pendingDeadline = System.currentTimeMillis() + 15000L;
+            // RETRY re-enqueues the next attempt BEFORE acking the original
+            // (RedisMessageConsumer.requeueOrDeadLetter), so pending transiently reads 0 in
+            // the gap between attempt 1's ack and attempt 2's delivery (backoff here is 0ms;
+            // the gap is one poll cycle). A single zero sample can land in that gap and a
+            // trailing fresh re-read then catches attempt 2's in-flight entry — flaked red
+            // in CI exactly so. Require a zero that survives a grace re-check and assert on
+            // that captured verdict instead of re-reading.
+            long pendingDeadline = System.currentTimeMillis() + 90_000L;
+            long settledPending = -1L;
             while (System.currentTimeMillis() < pendingDeadline) {
                 if (admin.getPendingCount(topic, group) <= 0) {
-                    break;
+                    Thread.sleep(300);
+                    if (admin.getPendingCount(topic, group) <= 0) {
+                        settledPending = 0L;
+                        break;
+                    }
                 }
                 Thread.sleep(100);
             }
-            assertEquals(0L, admin.getPendingCount(topic, group));
+            if (settledPending != 0L) {
+                settledPending = admin.getPendingCount(topic, group);
+            }
+            assertEquals(0L, settledPending,
+                    "retried message must be acked (not stuck pending) after the idempotent write");
         } finally {
             producer.close();
             client.shutdown();

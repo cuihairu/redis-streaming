@@ -83,18 +83,25 @@ class EventQueueBackpressureTest {
         assertTrue(producer.isAlive(), "producer must still be blocked while the queue is full");
         assertEquals(2, queue.size(), "a blocked producer must not have grown the queue");
 
-        // Consumer drains: the blocked producer completes and nothing is lost.
+        // Consumer drains: the blocked producer completes and nothing is lost. The batch
+        // BOUNDARY is timing-dependent — the drain's isEmpty check can race the unblocked
+        // producer's refill and sweep the third event into the same batch — so assert on
+        // the merged stream (no loss, FIFO order), not on where batches split. The
+        // producer's offer must return before its thread ends, so after join() all three
+        // events are in firstBatch or still queued for the follow-up poll.
         List<ChangeEvent> firstBatch = connector.poll();
         producer.join(TimeUnit.SECONDS.toMillis(5));
         assertFalse(producer.isAlive(), "draining must release the blocked producer");
         assertNull(failure.get(), () -> "producer must complete cleanly after drain: " + failure.get());
-        assertEquals(2, firstBatch.size());
+        assertTrue(firstBatch.size() >= 2, "drain must return the two pre-filled events, got=" + firstBatch.size());
         assertEquals("mysql-bin.000001:200", firstBatch.get(0).getPosition());
         assertEquals("mysql-bin.000001:300", firstBatch.get(1).getPosition());
 
-        List<ChangeEvent> secondBatch = connector.poll();
-        assertEquals(1, secondBatch.size());
-        assertEquals("mysql-bin.000001:400", secondBatch.get(0).getPosition());
+        List<ChangeEvent> all = new java.util.ArrayList<>(firstBatch);
+        all.addAll(connector.poll());
+        assertEquals(List.of("mysql-bin.000001:200", "mysql-bin.000001:300", "mysql-bin.000001:400"),
+                all.stream().map(ChangeEvent::getPosition).collect(java.util.stream.Collectors.toList()),
+                "drain must deliver every event exactly once, in order");
         assertEquals(400, connector.getBinlogPosition(),
                 "watermark only advances after every row of the event was enqueued");
     }

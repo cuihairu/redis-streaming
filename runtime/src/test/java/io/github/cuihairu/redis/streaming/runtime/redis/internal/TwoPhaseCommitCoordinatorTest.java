@@ -10,6 +10,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -40,6 +41,7 @@ class TwoPhaseCommitCoordinatorTest {
         Txn openTxn;
         final List<String> staged = new ArrayList<>();
         RuntimeException abortFailure;
+        RuntimeException commitFailure;
 
         @Override
         public Txn beginTxn() {
@@ -62,6 +64,9 @@ class TwoPhaseCommitCoordinatorTest {
 
         @Override
         public void commit(Txn txn) {
+            if (commitFailure != null) {
+                throw commitFailure;
+            }
             committed.addAll(staged);
             staged.clear();
             committedHandles.add(txn);
@@ -183,6 +188,76 @@ class TwoPhaseCommitCoordinatorTest {
         // abort is still primed to throw, the coordinator must not reach it again
         assertDoesNotThrow(coordinator::abort);
         assertTrue(sink.aborted.isEmpty());
+    }
+
+    /**
+     * The silent-loss pin: an element invoked between prepare and commit (a read that raced
+     * the paused window) must open the NEXT epoch — the prepared epoch's buffer snapshot was
+     * already flushed, and commit finalizes exactly that snapshot, so a late element joining
+     * it would be dropped while its input was acked as processed.
+     */
+    @Test
+    void invokeAfterPrepareOpensTheNextEpochInsteadOfJoiningTheFlushedOne() throws Exception {
+        FakeSink sink = new FakeSink();
+        TwoPhaseCommitCoordinator coordinator = new TwoPhaseCommitCoordinator(sink);
+        coordinator.invoke("a");
+        String handle = coordinator.prepareCommit();
+
+        coordinator.invoke("late");
+
+        Txn prepared = (Txn) TwoPhaseCommitCoordinator.decodeTxn(handle);
+        assertEquals(prepared.seq, ((Txn) sink.invokedHandles.get(0)).seq,
+                "the first element joined the prepared txn");
+        assertNotSame(sink.invokedHandles.get(0), sink.invokedHandles.get(1),
+                "an element after prepare must open a fresh transaction");
+        assertTrue(coordinator.hasOpenTxn(), "the late epoch is open until the next checkpoint");
+
+        coordinator.commit();
+        assertEquals(1, sink.committedHandles.size(), "commit finalizes exactly the prepared epoch");
+        assertEquals(prepared.seq, sink.committedHandles.get(0).seq);
+    }
+
+    @Test
+    void abortAfterPrepareDiscardsBothThePreparedEpochAndAnyLateEpoch() throws Exception {
+        FakeSink sink = new FakeSink();
+        TwoPhaseCommitCoordinator coordinator = new TwoPhaseCommitCoordinator(sink);
+        coordinator.invoke("a");
+        coordinator.prepareCommit();
+        coordinator.invoke("late");
+
+        coordinator.abort();
+
+        assertEquals(List.of(1L, 2L), sink.aborted, "both epochs are discarded");
+        assertTrue(sink.committed.isEmpty());
+        assertFalse(coordinator.hasOpenTxn());
+    }
+
+    @Test
+    void prepareAfterAFailedCommitFinalizesTheStaleEpochLate() throws Exception {
+        FakeSink sink = new FakeSink();
+        TwoPhaseCommitCoordinator coordinator = new TwoPhaseCommitCoordinator(sink);
+        coordinator.invoke("a");
+        String firstHandle = coordinator.prepareCommit();
+
+        sink.commitFailure = new RuntimeException("sink down");
+        assertThrows(RuntimeException.class, coordinator::commit);
+        assertTrue(coordinator.hasOpenTxn(), "the failed epoch stays prepared for retry or recovery");
+
+        sink.commitFailure = null;
+        coordinator.invoke("b");
+        String secondHandle = coordinator.prepareCommit();
+
+        assertEquals(1, sink.committedHandles.size(),
+                "prepare finalizes the stale epoch late (the fresh one awaits its own commit)");
+        assertEquals(1L, sink.committedHandles.get(0).seq,
+                "the finalized epoch is the one whose commit threw, not the fresh one");
+        assertEquals(1L, ((Txn) TwoPhaseCommitCoordinator.decodeTxn(firstHandle)).seq);
+        assertEquals(2L, ((Txn) TwoPhaseCommitCoordinator.decodeTxn(secondHandle)).seq,
+                "the fresh epoch's handle is what the new checkpoint stores");
+
+        coordinator.commit();
+        assertEquals(2, sink.committedHandles.size(), "the fresh epoch commits normally next");
+        assertEquals(2L, sink.committedHandles.get(1).seq);
     }
 
     @Test

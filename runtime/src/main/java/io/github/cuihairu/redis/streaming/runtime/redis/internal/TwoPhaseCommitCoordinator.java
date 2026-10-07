@@ -22,6 +22,14 @@ import java.util.Objects;
  *          \-> abort()      // checkpoint failed after preCommit
  * recovery: recoverAndCommit(handle) / recoverAndAbort(handle)</pre>
  *
+ * <p>Writes are routed to the NEXT epoch once {@link #prepareCommit()} has snapshotted the
+ * open one: elements that arrive between prepare and commit/abort (a read that raced the
+ * paused window, a drain timeout) must never join the epoch whose buffer was already
+ * flushed — {@code commit} finalizes exactly the prepared snapshot, so a late element would
+ * otherwise be silently dropped while its input was acked as processed. The epoch only
+ * stops accepting new elements at prepare; it stays {@linkplain #hasOpenTxn() open} until
+ * commit or abort finalizes it.</p>
+ *
  * <p>The handle encoding is deliberately storage-agnostic (Java serialization + Base64
  * string) so it can live in any checkpoint snapshot — in-memory or Redis-backed.</p>
  *
@@ -32,6 +40,8 @@ final class TwoPhaseCommitCoordinator {
 
     private final TwoPhaseCommitSink<Object, Serializable> sink;
     private Serializable openTxn;
+    /** The epoch {@link #prepareCommit()} snapshotted, awaiting {@link #commit()}/{@link #abort()}. */
+    private Serializable preparedTxn;
 
     TwoPhaseCommitCoordinator(TwoPhaseCommitSink<?, ?> sink) {
         this.sink = cast(Objects.requireNonNull(sink, "sink"));
@@ -49,38 +59,69 @@ final class TwoPhaseCommitCoordinator {
     /**
      * Phase 1: pre-commits the open transaction (empty epochs included, so the handle is
      * always checkpointed) and returns the encoded handle for the checkpoint snapshot.
-     * The transaction stays open until {@link #commit()} or {@link #abort()}.
+     * The epoch stops accepting elements — later {@link #invoke(Object)}s open a fresh
+     * transaction — but stays {@link #hasOpenTxn() open} until {@link #commit()} or
+     * {@link #abort()}.
      */
     String prepareCommit() throws Exception {
+        if (preparedTxn != null) {
+            // A previous checkpoint's commit phase threw and left its epoch prepared; the
+            // runtime kept that checkpoint unmarked instead of aborting (its handles are
+            // durably stored), so finalize it late — idempotent by contract, and exactly
+            // what recovery would replay from the stored handle anyway.
+            sink.commit(preparedTxn);
+            preparedTxn = null;
+        }
         ensureOpenTxn();
         sink.preCommit(openTxn);
-        return encodeTxn(openTxn);
+        preparedTxn = openTxn;
+        openTxn = null;
+        return encodeTxn(preparedTxn);
     }
 
     /**
-     * Phase 2: finalizes the open transaction after the runtime stored the checkpoint
-     * containing {@link #prepareCommit()}'s handle. No-op when no epoch is open.
+     * Phase 2: finalizes the transaction prepared by {@link #prepareCommit()} after the
+     * runtime stored the checkpoint containing its handle. No-op when no epoch is open.
+     * On a sink failure the epoch stays prepared: the handle is already durably stored, so
+     * the retried phase 2 (next checkpoint) or the recovery path finalizes it.
      */
     void commit() throws Exception {
-        if (openTxn == null) {
+        if (preparedTxn == null) {
             return;
         }
-        sink.commit(openTxn);
-        openTxn = null;
+        sink.commit(preparedTxn);
+        preparedTxn = null;
     }
 
     /**
-     * Discards the open transaction (checkpoint failed after preCommit). No-op when no epoch
-     * is open; the epoch is closed even if the sink's {@code abort} throws.
+     * Discards the prepared epoch and any transaction opened since (checkpoint failed after
+     * preCommit). No-op when no epoch is open; both epochs are closed even if the sink's
+     * {@code abort} throws.
      */
     void abort() throws Exception {
-        if (openTxn == null) {
-            return;
+        Exception failure = null;
+        if (preparedTxn != null) {
+            try {
+                sink.abort(preparedTxn);
+            } catch (Exception e) {
+                failure = e;
+            } finally {
+                preparedTxn = null;
+            }
         }
-        try {
-            sink.abort(openTxn);
-        } finally {
-            openTxn = null;
+        if (openTxn != null) {
+            try {
+                sink.abort(openTxn);
+            } catch (Exception e) {
+                if (failure == null) {
+                    failure = e;
+                }
+            } finally {
+                openTxn = null;
+            }
+        }
+        if (failure != null) {
+            throw failure;
         }
     }
 
@@ -100,7 +141,7 @@ final class TwoPhaseCommitCoordinator {
     }
 
     boolean hasOpenTxn() {
-        return openTxn != null;
+        return preparedTxn != null || openTxn != null;
     }
 
     private void ensureOpenTxn() throws Exception {

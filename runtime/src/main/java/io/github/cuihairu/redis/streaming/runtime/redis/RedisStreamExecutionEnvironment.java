@@ -958,7 +958,10 @@ public final class RedisStreamExecutionEnvironment {
             while (true) {
                 long total = 0;
                     for (MessageConsumer c : consumers) {
-                        total += ((PausableMessageConsumer) c).inFlight();
+                        // barrier view: handlers plus reads whose fetched messages have not
+                        // reached handler accounting yet — draining the handler count alone
+                        // let a fetched batch be invoked inside the paused window
+                        total += ((PausableMessageConsumer) c).inFlightBarrier();
                     }
                     if (total <= 0) {
                         break;
@@ -991,8 +994,13 @@ public final class RedisStreamExecutionEnvironment {
             }
 
             Map<String, Map<Integer, String>> offsetsOverride = null;
+            Map<String, Map<Integer, java.util.List<String>>> deferredAckSnapshot = null;
             if (config.isDeferAckUntilCheckpoint()) {
                 offsetsOverride = deferredAcks.snapshotOffsets();
+                // Freeze the ack set now: ids recorded after this point (a read that raced
+                // the paused window) belong to the NEXT epoch, so this checkpoint must not
+                // ack them on success — its commit only covers the prepared snapshot.
+                deferredAckSnapshot = deferredAcks.drainForAck();
             }
 
             // Two-phase-commit phase 1: pre-commit every 2PC sink and collect the encoded
@@ -1103,7 +1111,7 @@ public final class RedisStreamExecutionEnvironment {
 
             if (config.isDeferAckUntilCheckpoint()) {
                 if (config.isAckDeferredMessagesOnCheckpoint()) {
-                    deferredAcks.ackAll(redissonClient);
+                    deferredAcks.ackAll(redissonClient, deferredAckSnapshot);
                 } else {
                     deferredAcks.clear();
                 }
@@ -1237,21 +1245,53 @@ public final class RedisStreamExecutionEnvironment {
             byPipeline.clear();
         }
 
+        /**
+         * Removes and returns every id recorded so far, keyed "topic|group" -> partition ->
+         * ids. The checkpoint calls this once its two-phase epoch is prepared: anything
+         * recorded afterwards belongs to the NEXT epoch (its side effects are not committed
+         * by this checkpoint), so it must stay tracked for the next round instead of being
+         * acked by this one — acking it would orphan the record if the process died before
+         * its own epoch committed.
+         */
+        Map<String, Map<Integer, java.util.List<String>>> drainForAck() {
+            Map<String, Map<Integer, java.util.List<String>>> out = new HashMap<>();
+            for (Map.Entry<String, java.util.concurrent.ConcurrentHashMap<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>>> e : byPipeline.entrySet()) {
+                Map<Integer, java.util.List<String>> per = new HashMap<>();
+                for (Map.Entry<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>> pe : e.getValue().entrySet()) {
+                    java.util.List<String> ids = new java.util.ArrayList<>();
+                    String id;
+                    while ((id = pe.getValue().poll()) != null) {
+                        ids.add(id);
+                    }
+                    if (!ids.isEmpty()) {
+                        per.put(pe.getKey(), ids);
+                    }
+                }
+                if (!per.isEmpty()) {
+                    out.put(e.getKey(), per);
+                }
+            }
+            return out;
+        }
+
+        /** Convenience path: ack everything currently tracked (drain-and-ack). */
         void ackAll(RedissonClient redissonClient) {
-            if (redissonClient == null) {
+            ackAll(redissonClient, drainForAck());
+        }
+
+        void ackAll(RedissonClient redissonClient, Map<String, Map<Integer, java.util.List<String>>> snapshot) {
+            if (redissonClient == null || snapshot == null) {
                 return;
             }
-            for (Map.Entry<String, java.util.concurrent.ConcurrentHashMap<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>>> e : byPipeline.entrySet()) {
+            for (Map.Entry<String, Map<Integer, java.util.List<String>>> e : snapshot.entrySet()) {
                 String[] parts = e.getKey().split("\\|", 2);
                 String topic = parts.length > 0 ? parts[0] : "";
                 String group = parts.length > 1 ? parts[1] : "";
-                for (Map.Entry<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>> pe : e.getValue().entrySet()) {
+                for (Map.Entry<Integer, java.util.List<String>> pe : e.getValue().entrySet()) {
                     int pid = pe.getKey();
                     java.util.List<StreamMessageId> ids = new java.util.ArrayList<>();
                     String maxId = null;
-                    while (true) {
-                        String id = pe.getValue().poll();
-                        if (id == null) break;
+                    for (String id : pe.getValue()) {
                         ids.add(parseStreamId(id));
                         maxId = id;
                     }

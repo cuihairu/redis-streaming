@@ -45,6 +45,8 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final AtomicBoolean paused = new AtomicBoolean(false);
     private final AtomicLong inFlight = new AtomicLong(0);
+    /** Batches fetched from Redis whose per-message accounting has not started yet (barrier view). */
+    private final AtomicLong readsInFlight = new AtomicLong(0);
     private final Map<String, Subscription> subscriptions = new ConcurrentHashMap<>();
     private final Map<PartitionKey, PartitionWorker> workers = new ConcurrentHashMap<>();
     private final TopicPartitionRegistry partitionRegistry;
@@ -276,6 +278,11 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         return inFlight.get();
     }
 
+    @Override
+    public long inFlightBarrier() {
+        return inFlight.get() + readsInFlight.get();
+    }
+
     private void runPartitionWorker(PartitionWorker worker) {
         String topic = worker.topic;
         String group = worker.group;
@@ -297,24 +304,37 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                     }
                     int batch = worker.batchOverride != null ? worker.batchOverride : options.getConsumerBatchCount();
                     long to = worker.timeoutOverrideMs != null ? worker.timeoutOverrideMs : options.getConsumerPollTimeoutMs();
-                    if (broker != null) {
-                        java.util.List<BrokerRecord> records = broker.readGroup(topic, group, consumerName, partitionId, batch, to);
-                        for (BrokerRecord br : records) {
-                            processIncomingRecord(topic, group, partitionId, br.getId(), br.getData(), null, handler, true);
+                    // Checkpoint barrier: mark the read BEFORE it starts, not per message
+                    // after it. readGroup blocks up to the poll timeout and then hands back
+                    // messages that are already in this consumer's PEL; if the checkpoint
+                    // drain sampled inFlight==0 while the read was in flight, those messages
+                    // would be invoked DURING the paused window and race the two-phase-commit
+                    // phases (an element landing after its epoch's buffer snapshot is dropped
+                    // when the epoch is finalized). The read slot lives in readsInFlight so
+                    // the public inFlight() keeps its handler-only semantics.
+                    readsInFlight.incrementAndGet();
+                    try {
+                        if (broker != null) {
+                            java.util.List<BrokerRecord> records = broker.readGroup(topic, group, consumerName, partitionId, batch, to);
+                            for (BrokerRecord br : records) {
+                                processIncomingRecord(topic, group, partitionId, br.getId(), br.getData(), null, handler, true);
+                            }
+                        } else {
+                            String streamKey = StreamKeys.partitionStream(topic, partitionId);
+                            RStream<String, Object> stream = redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE);
+                            Map<StreamMessageId, Map<String, Object>> messages = stream.readGroup(
+                                    group,
+                                    consumerName,
+                                    StreamReadGroupArgs.neverDelivered()
+                                            .count(batch)
+                                            .timeout(Duration.ofMillis(to))
+                            );
+                            for (Map.Entry<StreamMessageId, Map<String, Object>> entry : messages.entrySet()) {
+                                processIncomingRecord(topic, group, partitionId, entry.getKey().toString(), entry.getValue(), stream, handler, false);
+                            }
                         }
-                    } else {
-                        String streamKey = StreamKeys.partitionStream(topic, partitionId);
-                        RStream<String, Object> stream = redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE);
-                        Map<StreamMessageId, Map<String, Object>> messages = stream.readGroup(
-                                group,
-                                consumerName,
-                                StreamReadGroupArgs.neverDelivered()
-                                        .count(batch)
-                                        .timeout(Duration.ofMillis(to))
-                        );
-                        for (Map.Entry<StreamMessageId, Map<String, Object>> entry : messages.entrySet()) {
-                            processIncomingRecord(topic, group, partitionId, entry.getKey().toString(), entry.getValue(), stream, handler, false);
-                        }
+                    } finally {
+                        readsInFlight.decrementAndGet();
                     }
 
                 } catch (Exception e) {
@@ -362,60 +382,69 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
             return;
         }
 
-        // Only for partitions we own
-        workers.forEach((pk, worker) -> {
-            try {
-                String streamKey = StreamKeys.partitionStream(pk.topic, pk.partitionId);
-                RStream<String, Object> stream = redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE);
+        // Only for partitions we own. The sweep holds one read slot across listPending +
+        // claim so the checkpoint barrier cannot pass while a claim is in flight — the
+        // paused check above predates those Redis roundtrips, so a claim issued just before
+        // pause() would otherwise be invoked inside the paused window and race the
+        // two-phase-commit phases. Per-message accounting still lands in inFlight.
+        readsInFlight.incrementAndGet();
+        try {
+            workers.forEach((pk, worker) -> {
+                try {
+                    String streamKey = StreamKeys.partitionStream(pk.topic, pk.partitionId);
+                    RStream<String, Object> stream = redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE);
 
-                @SuppressWarnings("deprecation")
-                List<PendingEntry> pendingEntries = stream.listPending(pk.group,
-                        StreamMessageId.MIN, StreamMessageId.MAX, options.getClaimBatchSize());
+                    @SuppressWarnings("deprecation")
+                    List<PendingEntry> pendingEntries = stream.listPending(pk.group,
+                            StreamMessageId.MIN, StreamMessageId.MAX, options.getClaimBatchSize());
 
-                for (PendingEntry pendingEntry : pendingEntries) {
-                    StreamMessageId messageId = pendingEntry.getId();
-                    if (pendingEntry.getIdleTime() > options.getClaimIdleMs()) {
-                        try {
-                            Map<StreamMessageId, Map<String, Object>> claimed = stream.claim(
-                                    pk.group, consumerName, options.getClaimIdleMs(), TimeUnit.MILLISECONDS, messageId);
-                            for (Map.Entry<StreamMessageId, Map<String, Object>> entry : claimed.entrySet()) {
-                                StreamMessageId claimedId = entry.getKey();
-                                Map<String, Object> data = entry.getValue();
-                                Message message;
-                                try {
-                                    message = StreamEntryCodec.parsePartitionEntry(pk.topic, claimedId.toString(), data, payloadLifecycleManager);
-                                } catch (RuntimeException ex) {
-                                    // Any parse failure (including malformed timestamp, corrupt payload, etc.)
-                                    // is treated as poison — send to DLQ and ACK original to avoid infinite
-                                    // re-claim loops (MQ-06). Payload-missing already handled by the same path.
-                                    handleMissingPayload(pk.topic, pk.group, pk.partitionId, claimedId.toString(), data, stream);
-                                    continue;
-                                }
-                                boolean permitAcquired = false;
-                                try {
-                                    permitAcquired = acquireInFlightPermit();
-                                    inFlight.incrementAndGet();
-                                    MessageHandleResult result = worker.handler.handle(message);
-                                    dispatchResult(message.getTopic(), pk.group, claimedId.toString(), pk.partitionId, message, result, data, stream);
-                                } catch (Exception e) {
-                                    log.error("Error reprocessing pending {} from {}", claimedId, streamKey, e);
-                                    requeueOrDeadLetter(stream, pk.group, claimedId.toString(), pk.partitionId, message, data);
-                                } finally {
-                                    inFlight.decrementAndGet();
-                                    if (permitAcquired) {
-                                        releaseInFlightPermit();
+                    for (PendingEntry pendingEntry : pendingEntries) {
+                        StreamMessageId messageId = pendingEntry.getId();
+                        if (pendingEntry.getIdleTime() > options.getClaimIdleMs()) {
+                            try {
+                                Map<StreamMessageId, Map<String, Object>> claimed = stream.claim(
+                                        pk.group, consumerName, options.getClaimIdleMs(), TimeUnit.MILLISECONDS, messageId);
+                                for (Map.Entry<StreamMessageId, Map<String, Object>> entry : claimed.entrySet()) {
+                                    StreamMessageId claimedId = entry.getKey();
+                                    Map<String, Object> data = entry.getValue();
+                                    Message message;
+                                    try {
+                                        message = StreamEntryCodec.parsePartitionEntry(pk.topic, claimedId.toString(), data, payloadLifecycleManager);
+                                    } catch (RuntimeException ex) {
+                                        // Any parse failure (including malformed timestamp, corrupt payload, etc.)
+                                        // is treated as poison — send to DLQ and ACK original to avoid infinite
+                                        // re-claim loops (MQ-06). Payload-missing already handled by the same path.
+                                        handleMissingPayload(pk.topic, pk.group, pk.partitionId, claimedId.toString(), data, stream);
+                                        continue;
+                                    }
+                                    boolean permitAcquired = false;
+                                    try {
+                                        permitAcquired = acquireInFlightPermit();
+                                        inFlight.incrementAndGet();
+                                        MessageHandleResult result = worker.handler.handle(message);
+                                        dispatchResult(message.getTopic(), pk.group, claimedId.toString(), pk.partitionId, message, result, data, stream);
+                                    } catch (Exception e) {
+                                        log.error("Error reprocessing pending {} from {}", claimedId, streamKey, e);
+                                        requeueOrDeadLetter(stream, pk.group, claimedId.toString(), pk.partitionId, message, data);
+                                    } finally {
+                                        inFlight.decrementAndGet();
+                                        if (permitAcquired) {
+                                            releaseInFlightPermit();
+                                        }
                                     }
                                 }
+                            } catch (Exception e) {
+                                log.error("Error claiming pending {} from {}", messageId, streamKey, e);
                             }
-                        } catch (Exception e) {
-                            log.error("Error claiming pending {} from {}", messageId, streamKey, e);
                         }
                     }
+                } catch (Exception e) {
+                    log.error("Error processing pending for {}", pk, e);
                 }
-            } catch (Exception e) {
-                log.error("Error processing pending for {}", pk, e);
-            }
-        });
+            });
+        } finally {
+            readsInFlight.decrementAndGet();
+        }
     }
 
     /**
