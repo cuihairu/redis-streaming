@@ -201,9 +201,7 @@ public class CDCConfigurationBuilder {
      * Build the configuration
      */
     public CDCConfiguration build() {
-        if (name == null || name.trim().isEmpty()) {
-            throw new IllegalArgumentException("Connector name is required");
-        }
+        validateCore(name, batchSize, pollingIntervalMs);
 
         return new DefaultCDCConfiguration(name, username, password, batchSize, pollingIntervalMs, properties);
     }
@@ -308,12 +306,39 @@ public class CDCConfigurationBuilder {
 
         @Override
         public boolean isAutoStart() {
-            return (Boolean) properties.getOrDefault("auto.start", false);
+            return booleanProperty("auto.start", false);
         }
 
         @Override
         public boolean isSnapshotEnabled() {
-            return (Boolean) properties.getOrDefault("snapshot.enabled", false);
+            return booleanProperty("snapshot.enabled", false);
+        }
+
+        /**
+         * Reads a boolean property tolerating the string form YAML/JSON configs produce —
+         * the raw {@code (Boolean)} cast threw ClassCastException for {@code "true"} (CDC-L2).
+         */
+        private boolean booleanProperty(String key, boolean defaultValue) {
+            Object value = properties.get(key);
+            if (value == null) {
+                return defaultValue;
+            }
+            if (value instanceof Boolean b) {
+                return b;
+            }
+            if (value instanceof String s) {
+                String t = s.trim();
+                if (t.equalsIgnoreCase("true")) {
+                    return true;
+                }
+                if (t.equalsIgnoreCase("false")) {
+                    return false;
+                }
+                throw new IllegalArgumentException(
+                        "Property \"" + key + "\" must be \"true\" or \"false\", got: " + s);
+            }
+            throw new IllegalArgumentException(
+                    "Property \"" + key + "\" must be a boolean or the string \"true\"/\"false\", got: " + value);
         }
 
         @Override
@@ -323,9 +348,26 @@ public class CDCConfigurationBuilder {
 
         @Override
         public void validate() throws IllegalArgumentException {
-            if (name == null || name.trim().isEmpty()) {
-                throw new IllegalArgumentException("Connector name is required");
-            }
+            validateCore(name, batchSize, pollingIntervalMs);
+        }
+    }
+
+    /**
+     * Shared contract of {@link CDCConfigurationBuilder#build()} and
+     * {@link CDCConfiguration#validate()}: name required, batch size positive (a
+     * non-positive one leaves doPoll draining nothing while the event queue grows,
+     * CDC-L2), polling interval non-negative (0 is the documented "no scheduled
+     * push" sentinel; a negative value is only ever a misconfiguration).
+     */
+    private static void validateCore(String name, int batchSize, long pollingIntervalMs) {
+        if (name == null || name.trim().isEmpty()) {
+            throw new IllegalArgumentException("Connector name is required");
+        }
+        if (batchSize <= 0) {
+            throw new IllegalArgumentException("batchSize must be > 0, got: " + batchSize);
+        }
+        if (pollingIntervalMs < 0) {
+            throw new IllegalArgumentException("pollingIntervalMs must be >= 0, got: " + pollingIntervalMs);
         }
     }
 

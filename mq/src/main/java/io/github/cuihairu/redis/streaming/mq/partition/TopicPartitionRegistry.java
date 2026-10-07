@@ -44,16 +44,33 @@ public class TopicPartitionRegistry {
         }
     }
 
-    /** Get partition count; default 1 if meta absent or unparsable. */
+    /**
+     * Get partition count. Falls back through the partitions set ensureTopic precomputed
+     * (RT-L3: a lost/corrupt meta hash used to shrink coverage to partition 0 while the
+     * precomputed set still survived), then to 1.
+     */
     public int getPartitionCount(String topic) {
         try {
             RMap<String, String> meta = redissonClient.getMap(StreamKeys.topicMeta(topic), org.redisson.client.codec.StringCodec.INSTANCE);
             String val = meta.get(FIELD_PARTITION_COUNT);
-            if (val == null) {
-                return 1;
+            if (val != null) {
+                try {
+                    int pc = Integer.parseInt(val);
+                    if (pc > 0) {
+                        return pc;
+                    }
+                } catch (NumberFormatException ignore) {
+                    // fall through to the partitions-set fallback
+                }
             }
-            int pc = Integer.parseInt(val);
-            return pc <= 0 ? 1 : pc;
+            RSet<String> partitions = redissonClient.getSet(StreamKeys.topicPartitionsSet(topic), org.redisson.client.codec.StringCodec.INSTANCE);
+            int fromSet = partitions == null ? 0 : partitions.size();
+            if (fromSet > 0) {
+                log.warn("Topic {} partition meta missing or unparsable (val={}); using partition set size {}",
+                        topic, val, fromSet);
+                return fromSet;
+            }
+            return 1;
         } catch (Exception e) {
             log.warn("Failed to read partition count for {}, defaulting to 1", topic, e);
             return 1;

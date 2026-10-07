@@ -287,21 +287,16 @@ class DatabasePollingCDCConnectorIntegrationTest {
 
     @Test
     void testConnectorWithNegativePollingInterval() {
-        CDCConfiguration configuration = CDCConfigurationBuilder.forDatabasePolling("neg-poll-connector")
-                .jdbcUrl(getMysqlUrl())
-                .driverClass("com.mysql.cj.jdbc.Driver")
-                .tables("test_db.users")
-                .username(getMysqlUser())
-                .password(getMysqlPassword())
-                .pollingIntervalMs(-1000)
-                .build();
-
-        DatabasePollingCDCConnector connector = new DatabasePollingCDCConnector(configuration);
-
-        assertNotNull(connector);
-        assertEquals(-1000L, configuration.getPollingIntervalMs());
-
-        connector.stop();
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () ->
+                CDCConfigurationBuilder.forDatabasePolling("neg-poll-connector")
+                        .jdbcUrl(getMysqlUrl())
+                        .driverClass("com.mysql.cj.jdbc.Driver")
+                        .tables("test_db.users")
+                        .username(getMysqlUser())
+                        .password(getMysqlPassword())
+                        .pollingIntervalMs(-1000)
+                        .build());
+        assertTrue(e.getMessage().contains("pollingIntervalMs"));
     }
 
     @Test

@@ -3,6 +3,10 @@ package io.github.cuihairu.redis.streaming.cdc;
 import io.github.cuihairu.redis.streaming.api.stream.StreamSource;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -83,5 +87,52 @@ class CDCSourceTest {
         assertThrows(IllegalArgumentException.class, () -> new CDCSource(connector, -1L, 3));
         assertThrows(IllegalArgumentException.class, () -> new CDCSource(connector, 10L, 0));
         assertThrows(NullPointerException.class, () -> new CDCSource(null, 10L, 1));
+    }
+
+    // CDC-L9: the connector field is transient — a Java-serialized source arrives without
+    // one and must fail fast in run()/cancel() until rewireConnector re-attaches it.
+
+    @Test
+    void deserializedSourceFailsFastUntilRewired() throws Exception {
+        // the live connector is an unserializable mock: writing the source only succeeds
+        // because the field no longer rides along in the stream
+        CDCConnector original = mock(CDCConnector.class);
+        when(original.getConfiguration()).thenReturn(null);
+        CDCSource source = new CDCSource(original, 0L, 3);
+
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ObjectOutputStream out = new ObjectOutputStream(bytes)) {
+            out.writeObject(source);
+        }
+        CDCSource restored;
+        try (ObjectInputStream in = new ObjectInputStream(new ByteArrayInputStream(bytes.toByteArray()))) {
+            restored = (CDCSource) in.readObject();
+        }
+
+        IllegalStateException onRun = assertThrows(IllegalStateException.class,
+                () -> restored.run(collectingContext(new CopyOnWriteArrayList<>())));
+        assertTrue(onRun.getMessage().contains("rewireConnector"));
+        IllegalStateException onCancel = assertThrows(IllegalStateException.class, restored::cancel);
+        assertTrue(onCancel.getMessage().contains("rewireConnector"));
+
+        // rewiring a live connector restores operability
+        CDCConnector live = mock(CDCConnector.class);
+        when(live.getConfiguration()).thenReturn(null);
+        when(live.isRunning()).thenReturn(true);
+        when(live.poll()).thenReturn(List.of());
+        when(live.stop()).thenReturn(CompletableFuture.completedFuture(null));
+        restored.rewireConnector(live);
+
+        List<ChangeEvent> sink = new CopyOnWriteArrayList<>();
+        restored.run(collectingContext(sink));
+        assertTrue(sink.isEmpty());
+        restored.cancel();
+        verify(live).stop();
+    }
+
+    @Test
+    void rewireConnectorRejectsNull() {
+        CDCSource source = new CDCSource(mock(CDCConnector.class), 0L, 1);
+        assertThrows(NullPointerException.class, () -> source.rewireConnector(null));
     }
 }

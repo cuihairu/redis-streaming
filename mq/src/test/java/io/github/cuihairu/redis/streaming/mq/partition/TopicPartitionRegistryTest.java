@@ -183,6 +183,87 @@ class TopicPartitionRegistryTest {
         assertEquals(1, registry.getPartitionCount("test-topic"));
     }
 
+    // RT-L3: the partitions set ensureTopic precomputed survives meta loss — the fallback
+    // chain reads its size before shrinking coverage to a single partition.
+
+    @Test
+    void getPartitionCount_withNullMeta_fallsBackToPartitionSetSize() {
+        MockitoAnnotations.openMocks(this);
+        lenient().when(mockRedissonClient.getMap(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(mockMetaMap);
+        lenient().when(mockMetaMap.get(anyString())).thenReturn(null);
+        lenient().when(mockRedissonClient.getSet(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(mockPartitionSet);
+        lenient().when(mockPartitionSet.size()).thenReturn(3);
+
+        registry = new TopicPartitionRegistry(mockRedissonClient);
+
+        assertEquals(3, registry.getPartitionCount("test-topic"));
+    }
+
+    @Test
+    void getPartitionCount_withZeroMeta_fallsBackToPartitionSetSize() {
+        MockitoAnnotations.openMocks(this);
+        lenient().when(mockRedissonClient.getMap(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(mockMetaMap);
+        lenient().when(mockMetaMap.get(anyString())).thenReturn("0");
+        lenient().when(mockRedissonClient.getSet(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(mockPartitionSet);
+        lenient().when(mockPartitionSet.size()).thenReturn(4);
+
+        registry = new TopicPartitionRegistry(mockRedissonClient);
+
+        assertEquals(4, registry.getPartitionCount("test-topic"));
+    }
+
+    @Test
+    void getPartitionCount_withNegativeMeta_fallsBackToPartitionSetSize() {
+        MockitoAnnotations.openMocks(this);
+        lenient().when(mockRedissonClient.getMap(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(mockMetaMap);
+        lenient().when(mockMetaMap.get(anyString())).thenReturn("-1");
+        lenient().when(mockRedissonClient.getSet(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(mockPartitionSet);
+        lenient().when(mockPartitionSet.size()).thenReturn(2);
+
+        registry = new TopicPartitionRegistry(mockRedissonClient);
+
+        assertEquals(2, registry.getPartitionCount("test-topic"));
+    }
+
+    @Test
+    void getPartitionCount_withUnparsableMeta_fallsBackToPartitionSetSize() {
+        MockitoAnnotations.openMocks(this);
+        lenient().when(mockRedissonClient.getMap(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(mockMetaMap);
+        lenient().when(mockMetaMap.get(anyString())).thenReturn("garbage");
+        lenient().when(mockRedissonClient.getSet(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(mockPartitionSet);
+        lenient().when(mockPartitionSet.size()).thenReturn(6);
+
+        registry = new TopicPartitionRegistry(mockRedissonClient);
+
+        assertEquals(6, registry.getPartitionCount("test-topic"));
+    }
+
+    @Test
+    void getPartitionCount_withNullMetaAndEmptyPartitionSet_returnsOne() {
+        MockitoAnnotations.openMocks(this);
+        lenient().when(mockRedissonClient.getMap(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(mockMetaMap);
+        lenient().when(mockMetaMap.get(anyString())).thenReturn(null);
+        lenient().when(mockRedissonClient.getSet(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(mockPartitionSet);
+        lenient().when(mockPartitionSet.size()).thenReturn(0);
+
+        registry = new TopicPartitionRegistry(mockRedissonClient);
+
+        assertEquals(1, registry.getPartitionCount("test-topic"));
+    }
+
+    @Test
+    void getPartitionCount_withValidMeta_prefersMetaOverPartitionSet() {
+        MockitoAnnotations.openMocks(this);
+        lenient().when(mockRedissonClient.getMap(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(mockMetaMap);
+        lenient().when(mockMetaMap.get(anyString())).thenReturn("5");
+        lenient().when(mockRedissonClient.getSet(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(mockPartitionSet);
+        lenient().when(mockPartitionSet.size()).thenReturn(2);
+
+        registry = new TopicPartitionRegistry(mockRedissonClient);
+
+        assertEquals(5, registry.getPartitionCount("test-topic"));
+    }
+
     @Test
     void listPartitionStreams_withMultiplePartitions_returnsAllKeys() {
         MockitoAnnotations.openMocks(this);

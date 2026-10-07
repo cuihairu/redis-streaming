@@ -12,6 +12,7 @@ import io.github.cuihairu.redis.streaming.mq.SubscriptionOptions;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
 import io.github.cuihairu.redis.streaming.mq.control.PausableMessageConsumer;
 import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
+import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisRuntimeCheckpointManager;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetricsCollector;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.SelectiveFailingMetricsCollector;
@@ -560,32 +561,21 @@ class RedisStreamExecutionEnvironmentResidualBranchTest {
     @Test
     @SuppressWarnings("unchecked")
     void deferredAcksSeparatorlessKeysAndEvilQueuesAreHandled() throws Exception {
-        Class<?> daClass = Class.forName(
-                "io.github.cuihairu.redis.streaming.runtime.redis.RedisStreamExecutionEnvironment$DeferredAcks");
-        Constructor<?> ctor = daClass.getDeclaredConstructor();
-        ctor.setAccessible(true);
-        Object deferred = ctor.newInstance();
-        Field byPipelineField = daClass.getDeclaredField("byPipeline");
+        // RT-L2: pipelines are keyed by the structured PipelineKey record now — the old
+        // "separatorless string key" injection is moot; what survives is that broken queue
+        // implementations must not escape drain/clear
+        RedisStreamExecutionEnvironment.DeferredAcks deferred = new RedisStreamExecutionEnvironment.DeferredAcks();
+        deferred.record("no-separator", "g", 0, "7-1");
+        deferred.ackAll(redisson);
+
+        deferred.record("t", "g", 0, "8-1");
+        Field byPipelineField = RedisStreamExecutionEnvironment.DeferredAcks.class.getDeclaredField("byPipeline");
         byPipelineField.setAccessible(true);
-        Map<String, Map<Integer, Queue<String>>> byPipeline =
-                (Map<String, Map<Integer, Queue<String>>>) byPipelineField.get(deferred);
-
-        Map<Integer, Queue<String>> separatorless = new ConcurrentHashMap<>();
-        Queue<String> ids = new ConcurrentLinkedQueue<>();
-        ids.add("7-1");
-        separatorless.put(0, ids);
-        byPipeline.put("no-separator", separatorless);
-
-        Method ackAll = daClass.getDeclaredMethod("ackAll", RedissonClient.class);
-        ackAll.setAccessible(true);
-        ackAll.invoke(deferred, redisson);
-
-        Map<Integer, Queue<String>> evil = new ConcurrentHashMap<>();
-        evil.put(0, new EvilQueue());
-        byPipeline.put("t|g", evil);
-        Method clear = daClass.getDeclaredMethod("clear");
-        clear.setAccessible(true);
-        clear.invoke(deferred);
+        Map<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, Queue<String>>> byPipeline =
+                (Map<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, Queue<String>>>) byPipelineField.get(deferred);
+        byPipeline.put(new RedisRuntimeCheckpointManager.PipelineKey("t", "g"),
+                new java.util.concurrent.ConcurrentHashMap<>(Map.of(0, new EvilQueue())));
+        deferred.clear();
     }
 
     // ------------------------------------------------------------------ consumer group bootstrap arms

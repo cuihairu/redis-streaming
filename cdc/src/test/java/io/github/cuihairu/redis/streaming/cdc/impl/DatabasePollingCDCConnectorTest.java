@@ -579,14 +579,13 @@ class DatabasePollingCDCConnectorTest {
 
     @Test
     void testConfigurationWithNegativePollingInterval() {
-        CDCConfiguration config = CDCConfigurationBuilder.forDatabasePolling("test")
-                .jdbcUrl("jdbc:h2:mem:test")
-                .tables("test_table")
-                .pollingIntervalMs(-1)
-                .build();
-
-        DatabasePollingCDCConnector c = new DatabasePollingCDCConnector(config);
-        assertEquals("test", c.getName());
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () ->
+                CDCConfigurationBuilder.forDatabasePolling("test")
+                        .jdbcUrl("jdbc:h2:mem:test")
+                        .tables("test_table")
+                        .pollingIntervalMs(-1)
+                        .build());
+        assertTrue(e.getMessage().contains("pollingIntervalMs"));
     }
 
     @Test
@@ -627,14 +626,13 @@ class DatabasePollingCDCConnectorTest {
 
     @Test
     void testConfigurationWithZeroBatchSize() {
-        CDCConfiguration config = CDCConfigurationBuilder.forDatabasePolling("test")
-                .jdbcUrl("jdbc:h2:mem:test")
-                .tables("test_table")
-                .batchSize(0)
-                .build();
-
-        DatabasePollingCDCConnector c = new DatabasePollingCDCConnector(config);
-        assertEquals("test", c.getName());
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () ->
+                CDCConfigurationBuilder.forDatabasePolling("test")
+                        .jdbcUrl("jdbc:h2:mem:test")
+                        .tables("test_table")
+                        .batchSize(0)
+                        .build());
+        assertTrue(e.getMessage().contains("batchSize"));
     }
 
     @Test

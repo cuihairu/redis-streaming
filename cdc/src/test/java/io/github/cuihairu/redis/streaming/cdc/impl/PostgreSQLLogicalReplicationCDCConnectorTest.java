@@ -248,7 +248,54 @@ class PostgreSQLLogicalReplicationCDCConnectorTest {
                 .build();
 
         PostgreSQLLogicalReplicationCDCConnector c = new PostgreSQLLogicalReplicationCDCConnector(config);
-        assertThrows(Exception.class, () -> c.start().join());
+        Exception e = assertThrows(Exception.class, () -> c.start().join());
+        IllegalArgumentException iae = unwrapIllegalArgument(e);
+        assertTrue(iae.getMessage().contains("status.interval.ms must be a number"),
+                "unexpected message: " + iae.getMessage());
+    }
+
+    @Test
+    void testConfigurationWithZeroStatusIntervalRejectedBeforeConnect() {
+        CDCConfiguration config = CDCConfigurationBuilder.forPostgreSQLLogicalReplication("test")
+                .postgresqlHostname("localhost")
+                .postgresqlDatabase("testdb")
+                .username("postgres")
+                .password("password")
+                .property("status.interval.ms", "0")
+                .build();
+
+        PostgreSQLLogicalReplicationCDCConnector c = new PostgreSQLLogicalReplicationCDCConnector(config);
+        Exception e = assertThrows(Exception.class, () -> c.start().join());
+        IllegalArgumentException iae = unwrapIllegalArgument(e);
+        assertTrue(iae.getMessage().contains("status.interval.ms must be in 1.."),
+                "unexpected message: " + iae.getMessage());
+    }
+
+    @Test
+    void testConfigurationWithOverflowingStatusIntervalRejected() {
+        CDCConfiguration config = CDCConfigurationBuilder.forPostgreSQLLogicalReplication("test")
+                .postgresqlHostname("localhost")
+                .postgresqlDatabase("testdb")
+                .username("postgres")
+                .password("password")
+                // 2^33: parses as a long but overflows the (int) cast that feeds withStatusInterval
+                .property("status.interval.ms", "8589934592")
+                .build();
+
+        PostgreSQLLogicalReplicationCDCConnector c = new PostgreSQLLogicalReplicationCDCConnector(config);
+        Exception e = assertThrows(Exception.class, () -> c.start().join());
+        IllegalArgumentException iae = unwrapIllegalArgument(e);
+        assertTrue(iae.getMessage().contains("status.interval.ms must be in 1.."),
+                "unexpected message: " + iae.getMessage());
+    }
+
+    private static IllegalArgumentException unwrapIllegalArgument(Throwable t) {
+        Throwable cause = t;
+        while (cause != null && !(cause instanceof IllegalArgumentException)) {
+            cause = cause.getCause();
+        }
+        assertNotNull(cause);
+        return (IllegalArgumentException) cause;
     }
 
     @Test

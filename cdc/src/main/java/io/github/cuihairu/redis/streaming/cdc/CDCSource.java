@@ -20,7 +20,13 @@ public class CDCSource implements StreamSource<ChangeEvent> {
     private static final long serialVersionUID = 1L;
     private static final Logger log = LoggerFactory.getLogger(CDCSource.class);
 
-    private final CDCConnector connector;
+    /**
+     * Transient (CDC-L9): a live connector holds Hikari pools / BinaryLogClients that can
+     * never serialize, so a Java-serialized {@code CDCSource} arrives without one and must
+     * be re-attached via {@link #rewireConnector}. Volatile: written once before the run
+     * thread starts, read from it.
+     */
+    private transient volatile CDCConnector connector;
     private final long pollIntervalMs;
     private final int maxIdlePolls;
 
@@ -54,8 +60,28 @@ public class CDCSource implements StreamSource<ChangeEvent> {
         }
     }
 
+    /**
+     * Re-attaches a live connector after Java deserialization. A restored source used to
+     * carry the stale (non-serializable) connector field and blew up with
+     * {@code NotSerializableException} on write; now the field is transient and the
+     * restored source fails fast in {@link #run}/{@link #cancel} until rewired.
+     */
+    public void rewireConnector(CDCConnector connector) {
+        this.connector = Objects.requireNonNull(connector, "connector");
+    }
+
+    private CDCConnector requireConnector() {
+        CDCConnector c = connector;
+        if (c == null) {
+            throw new IllegalStateException(
+                    "CDCSource was deserialized without a connector; call rewireConnector(...) before run()/cancel()");
+        }
+        return c;
+    }
+
     @Override
     public void run(SourceContext<ChangeEvent> ctx) throws Exception {
+        CDCConnector connector = requireConnector();
         if (!connector.isRunning()) {
             connector.start().join();
         }
@@ -85,6 +111,7 @@ public class CDCSource implements StreamSource<ChangeEvent> {
 
     @Override
     public void cancel() {
+        CDCConnector connector = requireConnector();
         if (connector.isRunning()) {
             connector.stop().join();
         }

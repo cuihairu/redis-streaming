@@ -43,6 +43,14 @@ public final class RedisRuntimeCheckpointManager {
     public static final String SNAPSHOT_KEY_TXNS = "runtime:txns";
     private static final String SINK_COMMITTED_MARKER_PREFIX = "runtime:sinkCommitted:";
     private static final String TXN_ABORTED_MARKER_PREFIX = "runtime:txnAborted:";
+    /**
+     * RT-L5: sink-committed markers previously lived forever — with the documented
+     * {@code checkpointsToKeep=0} ("cleanup disabled") they accumulated unbounded. A TTL
+     * bounds them; restore cannot lose a commit from expiry because
+     * {@code meta.sinkCommitted} inside each retained checkpoint is the authoritative
+     * source and is written alongside the marker by {@link #markSinkCommitted}.
+     */
+    private static final java.time.Duration SINK_COMMITTED_MARKER_TTL = java.time.Duration.ofDays(7);
 
     public enum RedisStateType {
         MAP,
@@ -271,7 +279,7 @@ public final class RedisRuntimeCheckpointManager {
     public boolean markSinkCommittedMarker(long checkpointId) {
         try {
             RBucket<String> b = redissonClient.getBucket(sinkCommittedMarkerKey(checkpointId), StringCodec.INSTANCE);
-            b.set("1");
+            b.set("1", SINK_COMMITTED_MARKER_TTL);
             return true;
         } catch (Exception e) {
             return false;

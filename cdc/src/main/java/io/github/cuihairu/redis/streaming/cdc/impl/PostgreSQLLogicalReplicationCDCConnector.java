@@ -109,9 +109,20 @@ public class PostgreSQLLogicalReplicationCDCConnector extends AbstractCDCConnect
 
         this.slotName = (String) configuration.getProperty(SLOT_NAME_PROPERTY, "cdc_slot");
         this.publicationName = (String) configuration.getProperty(PUBLICATION_NAME_PROPERTY);
-        this.statusIntervalMs = Long.parseLong(
-            String.valueOf(configuration.getProperty(STATUS_INTERVAL_PROPERTY, "10000"))
-        );
+        try {
+            this.statusIntervalMs = Long.parseLong(
+                String.valueOf(configuration.getProperty(STATUS_INTERVAL_PROPERTY, "10000"))
+            );
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(
+                    "status.interval.ms must be a number, got: " + configuration.getProperty(STATUS_INTERVAL_PROPERTY), e);
+        }
+        // CDC-L2: the value feeds an (int) cast below — reject out-of-range values here
+        // instead of silently truncating them into a nonsense interval
+        if (this.statusIntervalMs <= 0 || this.statusIntervalMs > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException(
+                    "status.interval.ms must be in 1.." + Integer.MAX_VALUE + ", got: " + this.statusIntervalMs);
+        }
         this.tableFilter = TableFilter.from(configuration.getTableIncludes(), configuration.getTableExcludes());
         // CDC-H3: a fresh start resets the recovery state — a halted (invalidated-slot) run
         // only resumes when the operator explicitly restarts the connector.

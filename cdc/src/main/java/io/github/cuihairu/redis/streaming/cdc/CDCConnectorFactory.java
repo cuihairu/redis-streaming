@@ -23,6 +23,9 @@ public class CDCConnectorFactory {
      * @return the CDC connector
      */
     public static CDCConnector create(ConnectorType type, CDCConfiguration configuration) {
+        if (type == null) {
+            throw new IllegalArgumentException("Connector type is required");
+        }
         switch (type) {
             case MYSQL_BINLOG:
                 return new MySQLBinlogCDCConnector(configuration);
@@ -43,6 +46,10 @@ public class CDCConnectorFactory {
      * @return the CDC connector
      */
     public static CDCConnector create(String typeName, CDCConfiguration configuration) {
+        if (typeName == null || typeName.trim().isEmpty()) {
+            // CDC-L2: a missing type name used to surface as an NPE from valueOf
+            throw new IllegalArgumentException("Connector type name is required");
+        }
         try {
             ConnectorType type = ConnectorType.valueOf(typeName.toUpperCase());
             return create(type, configuration);

@@ -994,7 +994,7 @@ public final class RedisStreamExecutionEnvironment {
             }
 
             Map<String, Map<Integer, String>> offsetsOverride = null;
-            Map<String, Map<Integer, java.util.List<String>>> deferredAckSnapshot = null;
+            Map<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, java.util.List<String>>> deferredAckSnapshot = null;
             if (config.isDeferAckUntilCheckpoint()) {
                 offsetsOverride = deferredAcks.snapshotOffsets();
                 // Freeze the ack set now: ids recorded after this point (a read that raced
@@ -1202,32 +1202,48 @@ public final class RedisStreamExecutionEnvironment {
         }
     }
 
-    private static final class DeferredAcks {
-        private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>>> byPipeline =
+    /**
+     * Tracks messages whose Redis ack is deferred until the covering checkpoint commits
+     * (two-phase commit over consumer offsets).
+     *
+     * <p>Pipelines are keyed by the structured {@link RedisRuntimeCheckpointManager.PipelineKey}
+     * instead of the old {@code topic + "|" + group} string (RT-L2): a topic containing
+     * {@code |} used to split back wrong at ack time, acking the wrong stream. The offsets
+     * snapshot still carries the {@link RedisRuntimeCheckpointManager.PipelineKey#key()}
+     * string form so the checkpoint-side {@code offsetsOverride.get(p.key())} lookups stay
+     * byte-compatible.</p>
+     */
+    static final class DeferredAcks {
+        private final java.util.concurrent.ConcurrentHashMap<RedisRuntimeCheckpointManager.PipelineKey, java.util.concurrent.ConcurrentHashMap<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>>> byPipeline =
                 new java.util.concurrent.ConcurrentHashMap<>();
 
         void record(String topic, String consumerGroup, int partitionId, String messageId) {
-            String key = topic + "|" + consumerGroup;
-            byPipeline.computeIfAbsent(key, k -> new java.util.concurrent.ConcurrentHashMap<>())
+            byPipeline.computeIfAbsent(new RedisRuntimeCheckpointManager.PipelineKey(topic, consumerGroup),
+                            k -> new java.util.concurrent.ConcurrentHashMap<>())
                     .computeIfAbsent(partitionId, k -> new java.util.concurrent.ConcurrentLinkedQueue<>())
                     .add(messageId);
         }
 
         Map<String, Map<Integer, String>> snapshotOffsets() {
             Map<String, Map<Integer, String>> out = new HashMap<>();
-            for (Map.Entry<String, java.util.concurrent.ConcurrentHashMap<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>>> e : byPipeline.entrySet()) {
+            for (Map.Entry<RedisRuntimeCheckpointManager.PipelineKey, java.util.concurrent.ConcurrentHashMap<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>>> e : byPipeline.entrySet()) {
                 Map<Integer, String> per = new HashMap<>();
                 for (Map.Entry<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>> pe : e.getValue().entrySet()) {
-                    String last = null;
+                    // RT-L2: the frontier must be the furthest id, not merely the one
+                    // appended last — the queue order is the poll order, which is not
+                    // guaranteed to be ascending under concurrent readers
+                    String maxId = null;
                     for (String id : pe.getValue()) {
-                        last = id;
+                        if (compareStreamId(id, maxId) > 0) {
+                            maxId = id;
+                        }
                     }
-                    if (last != null && !last.isBlank()) {
-                        per.put(pe.getKey(), last);
+                    if (maxId != null && !maxId.isBlank()) {
+                        per.put(pe.getKey(), maxId);
                     }
                 }
                 if (!per.isEmpty()) {
-                    out.put(e.getKey(), per);
+                    out.put(e.getKey().key(), per);
                 }
             }
             return out;
@@ -1246,16 +1262,16 @@ public final class RedisStreamExecutionEnvironment {
         }
 
         /**
-         * Removes and returns every id recorded so far, keyed "topic|group" -> partition ->
+         * Removes and returns every id recorded so far, keyed pipeline -> partition ->
          * ids. The checkpoint calls this once its two-phase epoch is prepared: anything
          * recorded afterwards belongs to the NEXT epoch (its side effects are not committed
          * by this checkpoint), so it must stay tracked for the next round instead of being
          * acked by this one — acking it would orphan the record if the process died before
          * its own epoch committed.
          */
-        Map<String, Map<Integer, java.util.List<String>>> drainForAck() {
-            Map<String, Map<Integer, java.util.List<String>>> out = new HashMap<>();
-            for (Map.Entry<String, java.util.concurrent.ConcurrentHashMap<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>>> e : byPipeline.entrySet()) {
+        Map<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, java.util.List<String>>> drainForAck() {
+            Map<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, java.util.List<String>>> out = new HashMap<>();
+            for (Map.Entry<RedisRuntimeCheckpointManager.PipelineKey, java.util.concurrent.ConcurrentHashMap<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>>> e : byPipeline.entrySet()) {
                 Map<Integer, java.util.List<String>> per = new HashMap<>();
                 for (Map.Entry<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>> pe : e.getValue().entrySet()) {
                     java.util.List<String> ids = new java.util.ArrayList<>();
@@ -1279,21 +1295,25 @@ public final class RedisStreamExecutionEnvironment {
             ackAll(redissonClient, drainForAck());
         }
 
-        void ackAll(RedissonClient redissonClient, Map<String, Map<Integer, java.util.List<String>>> snapshot) {
+        void ackAll(RedissonClient redissonClient,
+                    Map<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, java.util.List<String>>> snapshot) {
             if (redissonClient == null || snapshot == null) {
                 return;
             }
-            for (Map.Entry<String, Map<Integer, java.util.List<String>>> e : snapshot.entrySet()) {
-                String[] parts = e.getKey().split("\\|", 2);
-                String topic = parts.length > 0 ? parts[0] : "";
-                String group = parts.length > 1 ? parts[1] : "";
+            for (Map.Entry<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, java.util.List<String>>> e : snapshot.entrySet()) {
+                String topic = e.getKey().topic();
+                String group = e.getKey().consumerGroup();
                 for (Map.Entry<Integer, java.util.List<String>> pe : e.getValue().entrySet()) {
                     int pid = pe.getKey();
                     java.util.List<StreamMessageId> ids = new java.util.ArrayList<>();
                     String maxId = null;
                     for (String id : pe.getValue()) {
                         ids.add(parseStreamId(id));
-                        maxId = id;
+                        // RT-L2: take the furthest id for the frontier, not the last in
+                        // the (poll-ordered) list
+                        if (compareStreamId(id, maxId) > 0) {
+                            maxId = id;
+                        }
                     }
                     if (ids.isEmpty()) {
                         continue;

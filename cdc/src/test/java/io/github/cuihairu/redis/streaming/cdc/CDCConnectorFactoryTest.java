@@ -109,7 +109,37 @@ class CDCConnectorFactoryTest {
                 () -> CDCConnectorFactory.create("", config)
         );
 
-        assertTrue(exception.getMessage().contains("Unknown connector type"));
+        assertEquals("Connector type name is required", exception.getMessage());
+    }
+
+    @Test
+    void testCreateByNullTypeNameThrowsException() {
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> CDCConnectorFactory.create((String) null, config)
+        );
+
+        assertEquals("Connector type name is required", exception.getMessage());
+    }
+
+    @Test
+    void testCreateByBlankTypeNameThrowsException() {
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> CDCConnectorFactory.create("   ", config)
+        );
+
+        assertEquals("Connector type name is required", exception.getMessage());
+    }
+
+    @Test
+    void testCreateByNullConnectorTypeThrowsException() {
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> CDCConnectorFactory.create((CDCConnectorFactory.ConnectorType) null, config)
+        );
+
+        assertEquals("Connector type is required", exception.getMessage());
     }
 
     @Test

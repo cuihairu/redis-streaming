@@ -142,6 +142,30 @@ class RedisRuntimeCheckpointManagerIntegrationTest {
     }
 
     @Test
+    void sinkCommittedMarkerCarriesTtl() throws Exception {
+        RedissonClient client = createClient();
+        String uid = UUID.randomUUID().toString().substring(0, 8);
+        String prefix = "streaming:cpm:test:" + uid;
+        try {
+            RedisRuntimeCheckpointManager mgr = new RedisRuntimeCheckpointManager(client, cfg("cpm-ttl-" + uid, prefix, 0));
+            Checkpoint cp = mgr.triggerCheckpoint(List.of());
+            assertNotNull(cp);
+            assertTrue(mgr.markSinkCommitted(cp));
+
+            // RT-L5: markers previously lived forever; now they expire (meta.sinkCommitted
+            // stays the authoritative committed flag, written first in markSinkCommitted)
+            long ttlMs = client.getBucket(mgr.sinkCommittedMarkerKey(cp.getCheckpointId()), StringCodec.INSTANCE)
+                    .remainTimeToLive();
+            assertTrue(ttlMs > 0, "marker must expire, got no TTL");
+            assertTrue(ttlMs <= java.time.Duration.ofDays(7).toMillis(),
+                    "TTL must be <= 7 days, got " + ttlMs + "ms");
+        } finally {
+            client.getKeys().deleteByPattern(prefix + "*");
+            client.shutdown();
+        }
+    }
+
+    @Test
     void retentionCleansOldCheckpoints() throws Exception {
         RedissonClient client = createClient();
         String uid = UUID.randomUUID().toString().substring(0, 8);
