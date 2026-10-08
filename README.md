@@ -2,7 +2,9 @@
 
 <img src="docs/public/logo.svg" width="64" alt="Redis-Streaming logo" />
 
-# Redis-Streaming - 基于 Redis 的轻量级流处理框架
+# Redis-Streaming - A Lightweight Streaming Framework Built on Redis
+
+[English](README.md) | [中文](README.zh.md)
 
 [![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://www.oracle.com/java/)
 [![Redis](https://img.shields.io/badge/Redis-6.0+-red.svg)](https://redis.io/)
@@ -12,93 +14,93 @@
 
 </div>
 
-基于 Redis 与 Redisson 构建的**轻量级流处理运行时**（Apache License 2.0）：Redis Streams 既是消息管道，也是状态与检查点的底座——从消费、事件时间、窗口聚合到 checkpoint/故障恢复/HA 接管，由一套运行时托管完成。MQ、Registry、Config 等 Redis 基础设施能力作为配套模块一并提供。
+A **lightweight stream processing runtime** built on Redis and Redisson (Apache License 2.0): Redis Streams serves as both the message pipeline and the foundation for state and checkpoints — from consumption, event time, and windowed aggregation to checkpoint / failure recovery / HA takeover, all managed by a single runtime. Redis infrastructure capabilities such as MQ, Registry, and Config are provided as companion modules.
 
-## 60 秒理解它是什么
+## Understand It in 60 Seconds
 
 ```java
-RedissonClient redis = Redisson.create(cfg);            // 普通 Redisson 客户端
+RedissonClient redis = Redisson.create(cfg);            // a plain Redisson client
 RedisRuntimeConfig rc = RedisRuntimeConfig.builder()
         .jobName("order-analytics")
         .build();
 RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(redis, rc);
 
-env.fromMqTopic("orders", "analytics")                  // topic + 消费组
+env.fromMqTopic("orders", "analytics")                  // topic + consumer group
    .map(m -> (Integer) m.getPayload())
-   .keyBy(v -> v % 4)                                   // keyed 分区
-   .window(TumblingWindow.<Integer>ofMillis(60_000))    // 1 分钟滚动窗口
-   .reduce(Integer::sum)                                // 窗口内聚合
+   .keyBy(v -> v % 4)                                   // keyed partitioning
+   .window(TumblingWindow.<Integer>ofMillis(60_000))    // 1-minute tumbling window
+   .reduce(Integer::sum)                                // aggregate within the window
    .addSink(sum -> System.out.println("window sum = " + sum));
 
-RedisJobClient job = env.executeAsync();                 // 消费/水位线/窗口/checkpoint 全托管
-job.triggerCheckpointNow();                              // 可选：手动触发 checkpoint
+RedisJobClient job = env.executeAsync();                 // consumption/watermarks/windows/checkpoints fully managed
+job.triggerCheckpointNow();                              // optional: trigger a checkpoint manually
 ```
 
-### 处理语义（Processing Guarantees）
+### Processing Guarantees
 
-| 语义 | 路径 | 边界 |
+| Guarantee | Path | Boundary |
 |---|---|---|
-| At-least-once | 默认 MQ 消费：处理后 ACK，失败重试/DLQ | 可能重复投递 |
-| Effectively-once（Redis 目标端） | checkpoint + defer-ack + 幂等/原子 sink（`RedisAtomicCheckpointListSink`、sink 去重、2PC） | 端到端去重，Redis 内闭环 |
-| Effectively-once\*（跨系统） | Outbox-WAL：`RedisOutboxSink` + 异步 Dispatcher | at-least-once 派发 + 目标端按记录 id 幂等；\* 取决于 sink 能力 |
+| At-least-once | Default MQ consumption: ACK after processing, retries/DLQ on failure | Possible duplicate delivery |
+| Effectively-once (Redis sinks) | checkpoint + defer-ack + idempotent/atomic sinks (`RedisAtomicCheckpointListSink`, sink dedup, 2PC) | End-to-end dedup, closed loop within Redis |
+| Effectively-once* (cross-system) | Outbox-WAL: `RedisOutboxSink` + async Dispatcher | At-least-once dispatch + per-record id dedup on the target; * depends on sink capability |
 
-设计与边界详见 `docs/exactly-once.md`。
+See `docs/exactly-once.md` for design details and boundaries.
 
-## 核心特性
+## Key Features
 
-文档站（GitHub Pages）：https://cuihairu.github.io/redis-streaming/
+Documentation site (GitHub Pages): https://cuihairu.github.io/redis-streaming/
 
-### 已实现功能
-- 流处理运行时 (Runtime)：Redis-backed runtime（Redis Streams 消费组驱动，单进程并行/水位线/窗口/checkpoint/HA 接管）+ in-memory runtime（tests/examples）
-- 消息队列 (MQ)：基于 Redis Streams 的消息队列，支持消费者组、死信队列
-- 服务注册发现 (Registry)：服务注册与发现，多协议健康检查（HTTP/HTTPS/TCP/UDP/WebSocket/KCP/gRPC/Dubbo），支持 metadata 比较运算符过滤
-- 配置中心 (Config)：基于 Redis 的分布式配置管理，支持配置版本化、变更通知、历史记录
-- 状态管理 (State)：基于 Redis 的分布式状态存储，支持 ValueState、MapState、ListState、SetState
-- 检查点机制 (Checkpoint)：分布式检查点协调，支持故障恢复；两阶段提交 sink 与 Outbox-WAL 跨系统投递
-- Watermark：WatermarkStrategy + 生成器（有序/乱序），可与 runtime 结合使用（event-time）
-- 窗口分配器 (Window)：滚动/滑动/会话窗口 + 触发器（Redis runtime 已支持基于 watermark 的窗口计算；复杂 trigger 语义可扩展）
-- 窗口聚合 (Aggregation)：基于时间窗口的实时聚合，支持 PV/UV、TopK、分位数计算
-- 流式 Join (Join)：时间窗口内的流-流 Join 操作
-- CDC 集成 (CDC)：MySQL Binlog、PostgreSQL 逻辑复制、数据库轮询
-- 可靠性保证 (Reliability)：重试机制、死信队列、Bloom Filter 去重、窗口去重
-- Sink 连接器 (Sink)：Kafka Sink、Redis Stream Sink（XADD）、Redis List/Hash Sink
-- Source 连接器 (Source)：Kafka Source、HTTP API Source、Redis List/Stream Source
-- Prometheus 监控 (Metrics)：Prometheus Exporter、指标收集器
-- Spring Boot 集成：自动配置和注解支持
-- 流表二元性 (Table)：内存版和 Redis 持久化版 KTable 已实现
-- CEP：复杂事件处理，支持 Kleene closure、高级模式操作
+### Implemented Features
+- Stream Processing Runtime: Redis-backed runtime (Redis Streams consumer-group driven, single-process parallelism / watermarks / windows / checkpoints / HA takeover) + in-memory runtime (tests/examples)
+- Message Queue (MQ): Redis Streams-based message queue with consumer groups and dead-letter queues
+- Service Registry & Discovery: service registration and discovery with multi-protocol health checks (HTTP/HTTPS/TCP/UDP/WebSocket/KCP/gRPC/Dubbo) and metadata comparison-operator filtering
+- Config Center: Redis-based distributed configuration management with versioning, change notifications, and history
+- State Management: Redis-based distributed state store with ValueState, MapState, ListState, SetState
+- Checkpointing: distributed checkpoint coordination with failure recovery; two-phase commit sinks and Outbox-WAL cross-system delivery
+- Watermark: WatermarkStrategy + generators (ordered / out-of-order), usable with the runtime (event time)
+- Window Assigners: tumbling / sliding / session windows + triggers (the Redis runtime supports watermark-based window computation; richer trigger semantics are extensible)
+- Window Aggregation: real-time aggregation over time windows with PV/UV, TopK, and quantile computation
+- Streaming Join (Join): stream-stream joins within time windows
+- CDC Integration: MySQL Binlog, PostgreSQL logical replication, database polling
+- Reliability Guarantees: retries, dead-letter queues, Bloom Filter dedup, windowed dedup
+- Sink Connectors: Kafka Sink, Redis Stream Sink (XADD), Redis List/Hash Sinks
+- Source Connectors: Kafka Source, HTTP API Source, Redis List/Stream Sources
+- Prometheus Monitoring: Prometheus Exporter and metric collectors
+- Spring Boot Integration: auto-configuration and annotation support
+- Stream-Table Duality (Table): both in-memory and Redis-persisted KTable implemented
+- CEP: complex event processing with Kleene closure and advanced pattern operations
 
-## 模块架构
+## Module Architecture
 
-### Tier 1: 核心抽象层
+### Tier 1: Core Abstractions
 
-#### core - 核心抽象与 API 定义
-流处理的核心 API 和基础抽象，定义所有流处理操作的接口。
+#### core - Core Abstractions and API Definitions
+The core APIs and foundational abstractions of stream processing, defining the interfaces for all streaming operations.
 
-已完成，API 定义完整。
+Complete, with full API definitions.
 
-职责：
-- 流处理 API（DataStream, KeyedStream, WindowedStream）
-- 状态管理抽象（State, ValueState, MapState, ListState, SetState）
-- 检查点抽象（Checkpoint, CheckpointCoordinator）
-- 水位线抽象（Watermark, WatermarkGenerator）
-- 窗口抽象（WindowAssigner, WindowAssigner.Trigger）
-- 连接器抽象（StreamSource, StreamSink）
-- 工具类（InstanceIdGenerator, SystemUtils）
+Responsibilities:
+- Stream processing API (DataStream, KeyedStream, WindowedStream)
+- State management abstractions (State, ValueState, MapState, ListState, SetState)
+- Checkpoint abstractions (Checkpoint, CheckpointCoordinator)
+- Watermark abstractions (Watermark, WatermarkGenerator)
+- Window abstractions (WindowAssigner, WindowAssigner.Trigger)
+- Connector abstractions (StreamSource, StreamSink)
+- Utilities (InstanceIdGenerator, SystemUtils)
 
-关键类：`DataStream.java`, `KeyedStream.java`, `State.java` (27 个文件)
+Key classes: `DataStream.java`, `KeyedStream.java`, `State.java` (27 files)
 
-#### runtime - 流处理运行时引擎
-流处理运行时执行引擎。
+#### runtime - Stream Processing Runtime Engine
+The execution engine of the stream processing runtime.
 
-已实现：Redis runtime（单进程并行 + checkpoint/窗口/水位线）和最小 in-memory runtime。
+Implemented: Redis runtime (single-process parallelism + checkpoints/windows/watermarks) and a minimal in-memory runtime.
 
-说明：`runtime` 同时提供：
-- Redis runtime：`RedisStreamExecutionEnvironment`（Redis Streams 消费组驱动，Redis keyed state，stop-the-world checkpoint（实验），watermark/window/timer）
-- In-memory runtime：`StreamExecutionEnvironment`（主要用于 tests/examples）
-详见 `docs/`（VitePress）与 `runtime/README.md`。
+Note: `runtime` provides both:
+- Redis runtime: `RedisStreamExecutionEnvironment` (Redis Streams consumer-group driven, Redis keyed state, stop-the-world checkpoints (experimental), watermark/window/timers)
+- In-memory runtime: `StreamExecutionEnvironment` (mainly for tests/examples)
+See `docs/` (VitePress) and `runtime/README.md` for details.
 
-Event-time Watermark 示例（从元素中提取事件时间）：
+Event-time Watermark example (extracting event time from elements):
 ```java
 import io.github.cuihairu.redis.streaming.runtime.StreamExecutionEnvironment;
 import io.github.cuihairu.redis.streaming.watermark.WatermarkStrategy;
@@ -116,337 +118,335 @@ env.fromElements(new Event(10, "a"), new Event(20, "b"))
     .process(/* ... */);
 ```
 
-### Tier 2: 基础设施层
+### Tier 2: Infrastructure
 
-#### mq - 消息队列
-基于 Redis Stream 的消息队列实现。
+#### mq - Message Queue
+A message queue implementation based on Redis Streams.
 
-已完成。
+Complete.
 
-职责：
-- 消息生产和消费（异步支持）
-- 消费者组管理
-- 死信队列 (DLQ)
-- 消息重试机制
-- 作为流处理的数据管道
+Responsibilities:
+- Message production and consumption (async supported)
+- Consumer group management
+- Dead-letter queue (DLQ)
+- Message retry mechanism
+- Serves as the data pipeline for stream processing
 
-关键类：`MessageQueueFactory.java`, `MessageProducer.java`, `MessageConsumer.java`, `DeadLetterQueueManager.java` (62 个文件，含 admin/broker/dlq/lease/partition/retry 等子包)
+Retention and ACK deletion policy (overview)
+- Memory is controlled by "retain + trim" by default:
+  - Trim-on-write: `XTRIM MAXLEN ~` after each write (low overhead)
+  - Background trim: `XTRIM MAXLEN ~` every `trimIntervalSec`, optionally `XTRIM MINID ~`; with multiple groups, safe trimming is based on the "minimum committed frontier"
+- Optional ACK deletion policies:
+  - `none` (default): ACK only, no immediate deletion; relies on the retention policy
+  - `immediate`: usable in single-group scenarios, `XDEL` right after ACK
+  - `all-groups-ack`: per-record counting across groups; delete once all active groups have ACKed
+- DLQ can have its own retention thresholds (length/time)
 
-Retention 与 ACK 删除策略（简述）
-- 默认通过“保留 + 裁剪”控制内存：
-  - 写时裁剪：每次写入后执行 `XTRIM MAXLEN ~`（低开销）
-  - 后台裁剪：每 `trimIntervalSec` 执行 `XTRIM MAXLEN ~`，可选 `XTRIM MINID ~`；多组时按“最小提交前沿”做安全裁剪
-- 可选 ACK 删除策略：
-  - `none`（默认）：仅 ACK，不立刻删除；依赖保留策略
-  - `immediate`：单组场景可用，ACK 后立刻 `XDEL`
-  - `all-groups-ack`：多组逐条计数，所有活跃组都 ACK 后删除
-- DLQ 可配置独立保留阈值（长度/时间）
+See `docs/retention-and-ack-policy.md` for details.
 
-详见：`docs/retention-and-ack-policy.md`
+#### registry - Service Registry & Discovery
+Redis-based service registry and discovery supporting microservice architectures and health checks.
 
-#### registry - 服务注册发现
-基于 Redis 的服务注册与发现，支持微服务架构和健康检查。
+Complete.
 
-已完成。
+Responsibilities:
+- Service registration and deregistration (heartbeat mechanism, optimized Lua scripts)
+- Service discovery and subscription (real-time notifications via Redis Pub/Sub)
+- Multi-protocol health checks (`StandardProtocol` enum: HTTP/HTTPS/TCP/UDP/WS/WSS/KCP/GRPC/GRPCS/DUBBO/DUBBO2, custom `Protocol` supported)
+- Metadata-filtered queries (comparison operators: `>`, `>=`, `<`, `<=`, `!=`, `==`)
+- Load balancing (based on metadata such as weight, CPU, latency)
+- Ephemeral / permanent instance management
 
-职责：
-- 服务注册与注销（心跳机制、Lua 脚本优化）
-- 服务发现与订阅（Redis Pub/Sub 实时通知）
-- 多协议健康检查（`StandardProtocol` 枚举：HTTP/HTTPS/TCP/UDP/WS/WSS/KCP/GRPC/GRPCS/DUBBO/DUBBO2，可自定义 `Protocol`）
-- Metadata 过滤查询（支持比较运算符：`>`, `>=`, `<`, `<=`, `!=`, `==`）
-- 负载均衡支持（基于权重、CPU、延迟等 metadata）
-- 临时/永久实例管理
+Key classes: `RedisNamingService.java`, `RedisServiceProvider.java`, `RedisServiceConsumer.java`, `RegistryLuaScriptExecutor.java` (68 files)
 
-关键类：`RedisNamingService.java`, `RedisServiceProvider.java`, `RedisServiceConsumer.java`, `RegistryLuaScriptExecutor.java` (68 个文件)
-
-Metadata 过滤示例：
+Metadata filtering example:
 ```java
-// 基于权重的负载均衡
+// Weight-based load balancing
 Map<String, String> filters = new HashMap<>();
-filters.put("weight:>=", "80");          // 权重 >= 80
+filters.put("weight:>=", "80");          // weight >= 80
 filters.put("cpu_usage:<", "70");        // CPU < 70%
-filters.put("region", "us-east-1");      // 精确匹配
-filters.put("status:!=", "maintenance"); // 排除维护状态
+filters.put("region", "us-east-1");      // exact match
+filters.put("status:!=", "maintenance"); // exclude maintenance status
 
 List<ServiceInstance> instances =
     namingService.getInstancesByMetadata("order-service", filters);
 ```
 
-#### config - 配置中心
-基于 Redis 的分布式配置管理，提供配置版本化和变更通知。
+#### config - Config Center
+Redis-based distributed configuration management with versioning and change notifications.
 
-已完成。
+Complete.
 
-职责：
-- 配置发布与获取（支持分组管理）
-- 配置版本化（历史记录、回滚支持）
-- 配置变更通知（Redis Pub/Sub 实时推送）
-- 配置监听器（自动更新、热加载）
-- 配置历史查询（保留最近 N 个版本）
+Responsibilities:
+- Config publishing and retrieval (group management supported)
+- Config versioning (history and rollback)
+- Config change notifications (real-time push via Redis Pub/Sub)
+- Config listeners (auto-update, hot reload)
+- Config history queries (last N versions retained)
 
-关键类：`RedisConfigService.java`, `ConfigManager.java`, `ConfigChangeListener.java` (12 个文件)
+Key classes: `RedisConfigService.java`, `ConfigManager.java`, `ConfigChangeListener.java` (12 files)
 
-配置管理示例：
+Config management example:
 ```java
-// 发布配置
+// Publish a configuration
 configService.publishConfig("app.properties", "DEFAULT_GROUP",
     "key=value\ndb.url=jdbc:mysql://localhost:3306/db",
     "Updated database configuration");
 
-// 监听配置变更
+// Listen for configuration changes
 configService.addListener("app.properties", "DEFAULT_GROUP", (dataId, group, content, version) -> {
     System.out.println("Configuration changed (v" + version + "): " + content);
-    // 自动重新加载配置
+    // Reload configuration automatically
 });
 
-// 查询历史版本
+// Query history versions
 List<ConfigHistory> history = configService.getConfigHistory("app.properties", "DEFAULT_GROUP", 10);
 ```
 
-#### state - 状态管理
-基于 Redis 的分布式状态存储，提供多种状态类型。
+#### state - State Management
+Redis-based distributed state store with multiple state types.
 
-已完成。
+Complete.
 
-职责：
-- ValueState - 单值状态（Redis String）
-- MapState - 键值对状态（Redis Hash）
-- ListState - 列表状态（Redis List）
-- SetState - 集合状态（Redis Set）
-- 状态持久化和恢复
+Responsibilities:
+- ValueState - single-value state (Redis String)
+- MapState - key-value state (Redis Hash)
+- ListState - list state (Redis List)
+- SetState - set state (Redis Set)
+- State persistence and restoration
 
-关键类：`RedisStateBackend.java`, `RedisValueState.java`, `RedisMapState.java` (6 个文件)
+Key classes: `RedisStateBackend.java`, `RedisValueState.java`, `RedisMapState.java` (6 files)
 
-#### checkpoint - 检查点机制
-分布式检查点协调和存储，提供容错保证。
+#### checkpoint - Checkpointing
+Distributed checkpoint coordination and storage for fault tolerance.
 
-已完成。
+Complete.
 
-职责：
-- 检查点协调（分布式协调）
-- 状态快照（异步快照）
-- 故障恢复（从检查点恢复）
-- 检查点存储（Redis 持久化）
+Responsibilities:
+- Checkpoint coordination (distributed)
+- State snapshots (async snapshotting)
+- Failure recovery (restore from checkpoints)
+- Checkpoint storage (Redis persistence)
 
-关键类：`RedisCheckpointCoordinator.java`, `RedisCheckpointStorage.java`, `DefaultCheckpoint.java` (4 个文件)
+Key classes: `RedisCheckpointCoordinator.java`, `RedisCheckpointStorage.java`, `DefaultCheckpoint.java` (4 files)
 
-#### watermark - 水位线机制
-事件时间处理，处理乱序数据。
+#### watermark - Watermarks
+Event-time processing for out-of-order data.
 
-已完成，可与 runtime 结合使用（event-time）。
+Complete; usable with the runtime (event time).
 
-职责：
-- Watermark 生成（有序、乱序）
-- 延迟数据处理
-- 时间戳分配（`TimestampAssigner`）
-- 多种 Watermark 策略
+Responsibilities:
+- Watermark generation (ordered, out-of-order)
+- Late data handling
+- Timestamp assignment (`TimestampAssigner`)
+- Multiple watermark strategies
 
-关键类：`WatermarkStrategy.java`, `AscendingTimestampWatermarkGenerator.java`, `BoundedOutOfOrdernessWatermarkGenerator.java`
+Key classes: `WatermarkStrategy.java`, `AscendingTimestampWatermarkGenerator.java`, `BoundedOutOfOrdernessWatermarkGenerator.java`
 
-### Tier 3: 功能模块层
+### Tier 3: Feature Modules
 
-#### window - 窗口操作
-各种窗口类型和触发器，支持基于时间和计数的窗口。
+#### window - Windowing
+Various window types and triggers supporting time- and count-based windows.
 
-已完成：窗口分配器 + 触发器（in-memory runtime 经 `WindowAssigner.getDefaultTrigger()` 逐元素驱动；Redis runtime 窗口算子同样接入默认触发器）。
+Complete: window assigners + triggers (the in-memory runtime drives the default trigger per element via `WindowAssigner.getDefaultTrigger()`; the Redis runtime window operator is wired to the default trigger as well).
 
-职责：
-- 滚动窗口（Tumbling）
-- 滑动窗口（Sliding）
-- 会话窗口（Session）
-- 触发器（EventTime / ProcessingTime / Count）
+Responsibilities:
+- Tumbling windows
+- Sliding windows
+- Session windows
+- Triggers (EventTime / ProcessingTime / Count)
 
-关键类：`TumblingWindow.java`, `SlidingWindow.java`, `SessionWindow.java`, `EventTimeTrigger.java`, `ProcessingTimeTrigger.java`, `CountTrigger.java`
+Key classes: `TumblingWindow.java`, `SlidingWindow.java`, `SessionWindow.java`, `EventTimeTrigger.java`, `ProcessingTimeTrigger.java`, `CountTrigger.java`
 
-#### aggregation - 聚合函数
-聚合函数和窗口聚合支持，基于 Redis 实现。
+#### aggregation - Aggregation Functions
+Aggregation functions and window aggregation support built on Redis.
 
-已完成。
+Complete.
 
-职责：
-- 基础聚合（Sum, Count, Avg, Min, Max）
-- PV/UV 统计（Redis HyperLogLog）
-- TopK 排行榜（Redis Sorted Set）
-- 分位数计算
-- 窗口聚合（滚动窗口、滑动窗口）
+Responsibilities:
+- Basic aggregations (Sum, Count, Avg, Min, Max)
+- PV/UV counting (Redis HyperLogLog)
+- TopK rankings (Redis Sorted Set)
+- Quantile computation
+- Window aggregation (tumbling, sliding)
 
-关键类：`WindowAggregator.java`, `PVCounter.java`, `TopKAnalyzer.java`, `SumFunction.java` (14 个文件)
+Key classes: `WindowAggregator.java`, `PVCounter.java`, `TopKAnalyzer.java`, `SumFunction.java` (14 files)
 
-#### table - 流表二元性
-KTable 和 KStream，支持流表互转和表操作。
+#### table - Stream-Table Duality
+KTable and KStream with stream-table conversion and table operations.
 
-已完成：InMemoryKTable + RedisKTable。
+Complete: InMemoryKTable + RedisKTable.
 
-职责：
-- KTable - 可更新的表
-- KGroupedTable - 分组表
-- 流表转换
-- 表操作（map, filter, join）
+Responsibilities:
+- KTable - an updatable table
+- KGroupedTable - a grouped table
+- Stream-table conversion
+- Table operations (map, filter, join)
 
-关键类：`KTable.java`, `InMemoryKTable.java`, `RedisKTable.java`, `StreamTableConverter.java`
+Key classes: `KTable.java`, `InMemoryKTable.java`, `RedisKTable.java`, `StreamTableConverter.java`
 
-#### join - Join 操作
-时间窗口内的流式 Join，支持多种 Join 类型。
+#### join - Joins
+Streaming joins within time windows with multiple join types.
 
-已完成。
+Complete.
 
-职责：
-- Stream-Stream Join（时间窗口）
-- Join 类型（INNER, LEFT, RIGHT, FULL_OUTER）
-- 状态缓冲（Redis 存储）
-- Join 窗口管理
+Responsibilities:
+- Stream-Stream joins (time windows)
+- Join types (INNER, LEFT, RIGHT, FULL_OUTER)
+- State buffering (Redis-backed)
+- Join window management
 
-关键类：`StreamJoiner.java`, `JoinConfig.java`, `JoinWindow.java` (6 个文件)
+Key classes: `StreamJoiner.java`, `JoinConfig.java`, `JoinWindow.java` (6 files)
 
-#### cdc - 变更数据捕获
-从数据库捕获变更事件，支持多种数据源。
+#### cdc - Change Data Capture
+Change event capture from databases with multiple source types.
 
-已完成。
+Complete.
 
-职责：
-- MySQL Binlog CDC（实时捕获）
-- PostgreSQL 逻辑复制
-- 数据库轮询 CDC
-- 变更事件路由和转换
-- 健康监控和指标
+Responsibilities:
+- MySQL Binlog CDC (real-time capture)
+- PostgreSQL logical replication
+- Database polling CDC
+- Change event routing and transformation
+- Health monitoring and metrics
 
-关键类：`MySQLBinlogCDCConnector.java`, `PostgreSQLLogicalReplicationCDCConnector.java`, `CDCManager.java` (18 个文件)
+Key classes: `MySQLBinlogCDCConnector.java`, `PostgreSQLLogicalReplicationCDCConnector.java`, `CDCManager.java` (18 files)
 
-#### sink - 数据输出连接器
-多种数据汇连接器。
+#### sink - Output Connectors
+Multiple sink connectors.
 
-已完成，可用连接器见下方职责列表。
+Complete; available connectors are listed below.
 
-职责：
-- PrintSink - 控制台输出
-- FileSink - 文件输出
-- CollectionSink - 集合输出
-- RedisStreamSink - Redis Stream 输出（XADD）
-- RedisListSink - Redis List 输出
-- RedisHashSink - Redis Hash 输出
-- KafkaSink - Kafka 输出
+Responsibilities:
+- PrintSink - console output
+- FileSink - file output
+- CollectionSink - collection output
+- RedisStreamSink - Redis Stream output (XADD)
+- RedisListSink - Redis List output
+- RedisHashSink - Redis Hash output
+- KafkaSink - Kafka output
 
-关键类：`KafkaSink.java`, `RedisStreamSink.java`, `RedisHashSink.java`, `PrintSink.java`
+Key classes: `KafkaSink.java`, `RedisStreamSink.java`, `RedisHashSink.java`, `PrintSink.java`
 
-#### source - 数据输入连接器
-多种数据源连接器。
+#### source - Input Connectors
+Multiple source connectors.
 
-已完成，可用连接器见下方职责列表。
+Complete; available connectors are listed below.
 
-职责：
-- CollectionSource - 集合数据源
-- FileSource - 文件数据源
-- GeneratorSource - 测试数据生成
-- RedisListSource - Redis List 数据源
-- HttpApiSource - HTTP API 轮询数据源
-- KafkaSource - Kafka 数据源
+Responsibilities:
+- CollectionSource - collection data source
+- FileSource - file data source
+- GeneratorSource - test data generation
+- RedisListSource - Redis List data source
+- HttpApiSource - HTTP API polling data source
+- KafkaSource - Kafka data source
 
-关键类：`KafkaSource.java`, `HttpApiSource.java`, `RedisListSource.java`, `CollectionSource.java`
+Key classes: `KafkaSource.java`, `HttpApiSource.java`, `RedisListSource.java`, `CollectionSource.java`
 
-### Tier 4: 高级功能层
+### Tier 4: Advanced Features
 
-#### reliability - 可靠性保证
-流处理的可靠性保证机制，提供重试和故障处理。
+#### reliability - Reliability Guarantees
+Reliability mechanisms for stream processing: retries and failure handling.
 
-已完成。
+Complete.
 
-职责：
-- 重试机制（指数退避、最大重试次数）
-- 死信队列管理
-- 故障策略（重试、跳过、DLQ）
-- 失败元素追踪
-- 去重（Bloom Filter / Set / Windowed）
-- 限流（滑动窗口、令牌桶、漏桶；Redis/InMemory）
+Responsibilities:
+- Retry mechanism (exponential backoff, max retry count)
+- Dead-letter queue management
+- Failure policies (retry, skip, DLQ)
+- Failed element tracking
+- Deduplication (Bloom Filter / Set / Windowed)
+- Rate limiting (sliding window, token bucket, leaky bucket; Redis/InMemory)
 
-关键类：`RetryExecutor.java`, `RedisDeadLetterService.java`, `BloomFilterDeduplicator.java`, `RedisSlidingWindowRateLimiter.java`
+Key classes: `RetryExecutor.java`, `RedisDeadLetterService.java`, `BloomFilterDeduplicator.java`, `RedisSlidingWindowRateLimiter.java`
 
-#### cep - 复杂事件处理
-模式匹配和复杂事件检测。
+#### cep - Complex Event Processing
+Pattern matching and complex event detection.
 
-已完成，支持 Kleene closure / contiguity / 高级序列匹配。
+Complete, with Kleene closure / contiguity / advanced sequence matching.
 
-职责：
-- 模式定义（Pattern Builder）
-- 序列检测（PatternSequence / PatternSequenceMatcher）
-- Kleene closure（*, +, ?, {n}, {n,m}）
-- 邻接约束（STRICT / RELAXED / NON_DETERMINISTIC）
-- 时间窗口约束（within）
+Responsibilities:
+- Pattern definition (Pattern Builder)
+- Sequence detection (PatternSequence / PatternSequenceMatcher)
+- Kleene closure (*, +, ?, {n}, {n,m})
+- Contiguity constraints (STRICT / RELAXED / NON_DETERMINISTIC)
+- Time window constraints (within)
 
-关键类：`PatternSequenceMatcher.java`, `PatternSequence.java`, `PatternQuantifier.java`, `PatternConfig.java`
+Key classes: `PatternSequenceMatcher.java`, `PatternSequence.java`, `PatternQuantifier.java`, `PatternConfig.java`
 
-### Tier 5: 集成层
+### Tier 5: Integrations
 
-#### metrics - 监控指标
-监控指标收集和暴露。
+#### metrics - Monitoring Metrics
+Metric collection and exposure.
 
-已完成：Prometheus Exporter + Collector。
+Complete: Prometheus Exporter + Collector.
 
-职责：
-- 指标收集（Counter, Gauge, Histogram, Timer）
-- 内存指标存储
-- 指标注册管理
-- 计时器支持
-- Prometheus 导出（HTTP）
+Responsibilities:
+- Metric collection (Counter, Gauge, Histogram, Timer)
+- In-memory metric storage
+- Metric registry management
+- Timer support
+- Prometheus export (HTTP)
 
-关键类：`PrometheusExporter.java`, `PrometheusMetricCollector.java`, `MetricRegistry.java`
+Key classes: `PrometheusExporter.java`, `PrometheusMetricCollector.java`, `MetricRegistry.java`
 
-#### spring-boot-starter - Spring Boot 集成
-Spring Boot 自动配置和集成。
+#### spring-boot-starter - Spring Boot Integration
+Spring Boot auto-configuration and integration.
 
-已完成。
+Complete.
 
-职责：
-- 自动配置（Registry、Discovery、ConfigService）
-- 配置属性绑定
-- Bean 自动装配
-- 注解支持（@EnableRedisStreaming, @ServiceChangeListener, @ConfigChangeListener）
-- 自动服务注册
+Responsibilities:
+- Auto-configuration (Registry, Discovery, ConfigService)
+- Configuration property binding
+- Bean auto-wiring
+- Annotation support (@EnableRedisStreaming, @ServiceChangeListener, @ConfigChangeListener)
+- Automatic service registration
 
-关键类：`RedisStreamingAutoConfiguration.java`, `RedisStreamingProperties.java`, `@EnableRedisStreaming.java`
+Key classes: `RedisStreamingAutoConfiguration.java`, `RedisStreamingProperties.java`, `@EnableRedisStreaming.java`
 
-#### examples - 示例代码
-各种使用示例和最佳实践。
+#### examples - Example Code
+Usage examples and best practices.
 
-已提供基础示例。
+Basic examples provided.
 
-职责：
-- 服务注册发现示例
-- 消息队列示例
-- 限流示例
-- 聚合示例
-- 综合流处理示例（in-memory runtime）
+Responsibilities:
+- Service registry & discovery examples
+- Message queue examples
+- Rate limiting examples
+- Aggregation examples
+- Comprehensive streaming example (in-memory runtime)
 
-关键类：`ServiceRegistryExample.java`, `CustomPrefixExample.java`, `MessageQueueExample.java`, `RateLimitExample.java`, `StreamAggregationExample.java`, `ComprehensiveStreamingExample.java`
+Key classes: `ServiceRegistryExample.java`, `CustomPrefixExample.java`, `MessageQueueExample.java`, `RateLimitExample.java`, `StreamAggregationExample.java`, `ComprehensiveStreamingExample.java`
 
-## 快速开始
+## Quick Start
 
-### 1. 环境要求
+### 1. Requirements
 
 - Java 17+
 - Redis 6.0+
-- Gradle 8.5+（或直接用仓库自带 wrapper `./gradlew`）
+- Gradle 8.5+ (or just use the bundled wrapper `./gradlew`)
 
-### 2. 添加依赖
+### 2. Add Dependencies
 
-核心模块按需选择：
+Pick the core modules you need:
 ```gradle
 dependencies {
-    // 消息队列
+    // Message queue
     implementation 'io.github.cuihairu.redis-streaming:mq:0.2.0'
 
-    // 服务注册发现（支持 metadata 比较运算符过滤）
+    // Service registry & discovery (metadata comparison-operator filtering supported)
     implementation 'io.github.cuihairu.redis-streaming:registry:0.2.0'
 
-    // 配置中心（版本化配置、变更通知）
+    // Config center (versioned config, change notifications)
     implementation 'io.github.cuihairu.redis-streaming:config:0.2.0'
 
-    // 状态管理
+    // State management
     implementation 'io.github.cuihairu.redis-streaming:state:0.2.0'
 
-    // 检查点
+    // Checkpointing
     implementation 'io.github.cuihairu.redis-streaming:checkpoint:0.2.0'
 
-    // 窗口聚合
+    // Window aggregation
     implementation 'io.github.cuihairu.redis-streaming:aggregation:0.2.0'
 
     // CDC
@@ -454,15 +454,15 @@ dependencies {
 }
 ```
 
-Spring Boot 集成：
+Spring Boot integration:
 ```gradle
 dependencies {
     implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
-    // 自动引入 registry、config、mq 等核心模块
+    // Brings in core modules such as registry, config, and mq
 }
 ```
 
-### 3. 配置 Redis
+### 3. Configure Redis
 
 ```java
 Config config = new Config();
@@ -474,17 +474,17 @@ config.useSingleServer()
 RedissonClient redissonClient = Redisson.create(config);
 ```
 
-### 4. 快速示例
+### 4. Quick Examples
 
-#### 服务注册发现（支持 Metadata 过滤）
+#### Service Registry & Discovery (with metadata filtering)
 ```java
 import io.github.cuihairu.redis.streaming.registry.*;
 
-// 创建服务注册
+// Create the naming service
 NamingService namingService = new RedisNamingService(redissonClient);
 namingService.start();
 
-// 注册服务（带 metadata）
+// Register a service (with metadata)
 Map<String, String> metadata = new HashMap<>();
 metadata.put("version", "1.0.0");
 metadata.put("weight", "100");
@@ -502,85 +502,85 @@ ServiceInstance instance = DefaultServiceInstance.builder()
 
 namingService.register(instance);
 
-// 基础服务发现
+// Basic service discovery
 List<ServiceInstance> allInstances = namingService.getHealthyInstances("order-service");
 
-// 高级过滤：使用比较运算符
+// Advanced filtering: comparison operators
 Map<String, String> filters = new HashMap<>();
-filters.put("weight:>=", "80");           // 权重 >= 80
-filters.put("cpu_usage:<", "70");         // CPU使用率 < 70%
-filters.put("region", "us-east-1");       // 区域精确匹配
-filters.put("status:!=", "maintenance");  // 排除维护状态
+filters.put("weight:>=", "80");           // weight >= 80
+filters.put("cpu_usage:<", "70");         // CPU usage < 70%
+filters.put("region", "us-east-1");       // exact region match
+filters.put("status:!=", "maintenance");  // exclude maintenance status
 
 List<ServiceInstance> filteredInstances =
     namingService.getInstancesByMetadata("order-service", filters);
 
-// 监听服务变更
+// Subscribe to service changes
 namingService.subscribe("order-service", (serviceName, action, instance, allInstances) -> {
     System.out.println("Service changed: " + action + " - " + instance.getInstanceId());
 });
 ```
 
-#### 配置中心
+#### Config Center
 ```java
 import io.github.cuihairu.redis.streaming.config.*;
 
-// 创建配置服务
+// Create the config service
 ConfigService configService = new RedisConfigService(redissonClient);
 configService.start();
 
-// 发布配置
+// Publish a configuration
 configService.publishConfig(
-    "database.config",              // 配置 ID
-    "DEFAULT_GROUP",                // 配置组
+    "database.config",              // config ID
+    "DEFAULT_GROUP",                // config group
     "db.url=jdbc:mysql://localhost:3306/mydb\ndb.username=root",
-    "Initial database configuration" // 描述
+    "Initial database configuration" // description
 );
 
-// 获取配置
+// Get a configuration
 String dbConfig = configService.getConfig("database.config", "DEFAULT_GROUP");
 System.out.println("Database config: " + dbConfig);
 
-// 监听配置变更（自动热加载）
+// Listen for config changes (hot reload)
 configService.addListener("database.config", "DEFAULT_GROUP",
     (dataId, group, content, version) -> {
         System.out.println("Configuration updated (v" + version + "): " + content);
-        // 重新加载数据库连接池等
+        // Reload database connection pools, etc.
         reloadDatabaseConnection(content);
     }
 );
 
-// 查询历史版本
+// Query history versions
 List<ConfigHistory> history = configService.getConfigHistory("database.config", "DEFAULT_GROUP", 5);
 for (ConfigHistory h : history) {
     System.out.println("Version " + h.getVersion() + ": " + h.getDescription());
 }
 
-// 删除配置
+// Delete a configuration
 configService.removeConfig("database.config", "DEFAULT_GROUP");
 ```
 
-#### 消息队列
+#### Message Queue
 ```java
 import io.github.cuihairu.redis.streaming.mq.*;
 
 MessageQueueFactory mq = new MessageQueueFactory(redissonClient);
 
-// 生产者：发送消息（topic=order-events，key=order-123）
+// Producer: send a message (topic=order-events, key=order-123)
 MessageProducer producer = mq.createProducer();
 producer.send(new Message("order-events", "order-123", orderData)).join();
 
-// 消费者：订阅并启动消费
+// Consumer: subscribe and start consuming
 MessageConsumer consumer = mq.createConsumer("order-processor-1");
 consumer.subscribe("order-events", "order-processor-group", message -> {
     Object payload = message.getPayload();
-    // 处理消息
+    // Process the message
     return MessageHandleResult.SUCCESS;
 });
 consumer.start();
 ```
 
-#### 窗口聚合
+#### Window Aggregation
 ```java
 import io.github.cuihairu.redis.streaming.aggregation.*;
 import io.github.cuihairu.redis.streaming.aggregation.functions.SumFunction;
@@ -589,25 +589,25 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 
-// 创建窗口聚合器
+// Create a window aggregator
 WindowAggregator aggregator = new WindowAggregator(redissonClient, "page_views");
 aggregator.registerFunction("SUM", SumFunction.getInstance());
 
 TimeWindow window = TumblingWindow.of(Duration.ofMinutes(5));
 
-// 添加数据（窗口内的数值将被聚合）
+// Add values (values within the window will be aggregated)
 aggregator.addValue(window, "product-123", 19.99, Instant.now());
 
-// 获取聚合结果
+// Get the aggregated result
 BigDecimal total = aggregator.getAggregatedResult(window, "product-123", "SUM", Instant.now());
 ```
 
-#### CDC 数据捕获
+#### CDC Data Capture
 ```java
 import io.github.cuihairu.redis.streaming.cdc.*;
 import io.github.cuihairu.redis.streaming.cdc.impl.MySQLBinlogCDCConnector;
 
-// 配置 MySQL Binlog CDC（静态工厂按连接器类型给默认值）
+// Configure MySQL Binlog CDC (static factories provide defaults per connector type)
 CDCConfiguration config = CDCConfigurationBuilder.forMySQLBinlog("order_cdc")
     .username("cdc_user")
     .password("password")
@@ -616,7 +616,7 @@ CDCConfiguration config = CDCConfigurationBuilder.forMySQLBinlog("order_cdc")
     .tables("orders,products")
     .build();
 
-// 创建 CDC 连接器
+// Create the CDC connector
 CDCConnector connector = new MySQLBinlogCDCConnector(config);
 
 connector.setEventListener(new CDCEventListener() {
@@ -630,204 +630,204 @@ connector.start().join();
 List<ChangeEvent> events = connector.poll();
 ```
 
-## 技术栈
+## Tech Stack
 
-### 核心依赖
-- Redisson 4.7.0：Redis 客户端，用于分布式操作
-- Jackson 2.17.0：JSON 序列化/反序列化
-- Lombok 1.18.34：代码生成，减少样板代码
-- SLF4J 2.0.17：日志抽象
+### Core Dependencies
+- Redisson 4.7.0: Redis client for distributed operations
+- Jackson 2.17.0: JSON serialization/deserialization
+- Lombok 1.18.34: code generation to reduce boilerplate
+- SLF4J 2.0.17: logging abstraction
 
-### 测试框架
-- JUnit Jupiter 5.9.2：单元测试
-- Mockito 4.6.1：Mock 框架
+### Testing
+- JUnit Jupiter 5.9.2: unit tests
+- Mockito 4.6.1: mocking framework
 
-### 构建工具
-- Gradle 8.5+：构建工具（仓库自带 wrapper）
-- Java 17：编译目标版本
+### Build Tools
+- Gradle 8.5+: build tool (wrapper bundled)
+- Java 17: compilation target
 
-## 路线图
+## Roadmap
 
-### 成熟度总览
+### Maturity Overview
 
-模块全部就位（20/20），但"模块完成 ≠ 框架完成"——按能力维度标注当前状态：
+All modules are in place (20/20), but "modules complete ≠ framework complete" — current status is annotated per capability:
 
-| 能力 | 状态 |
+| Capability | Status |
 |---|---|
-| Stream API（DataStream / KeyedStream / WindowedStream） | ✅ |
-| Redis Runtime（单进程并行、事件时间、窗口、timer） | ✅ |
-| State / Checkpoint / 故障恢复 | ✅ |
-| 两阶段提交 sink + Outbox-WAL（跨系统投递路线） | ✅ |
-| HA：leader election + fencing token + 崩溃接管 | ✅ |
-| Watermark/Window 触发语义（空闲分区推进等） | 🚧 |
-| 多 worker 任务分片 / 动态伸缩 | 🚧 |
-| Benchmark（吞吐/延迟/恢复时间基线） | 🚧 |
+| Stream API (DataStream / KeyedStream / WindowedStream) | ✅ |
+| Redis Runtime (single-process parallelism, event time, windows, timers) | ✅ |
+| State / Checkpoint / failure recovery | ✅ |
+| Two-phase commit sinks + Outbox-WAL (cross-system delivery path) | ✅ |
+| HA: leader election + fencing token + crash takeover | ✅ |
+| Watermark/window trigger semantics (idle-partition advancement, etc.) | 🚧 |
+| Multi-worker task splitting / dynamic scaling | 🚧 |
+| Benchmarks (throughput/latency/recovery-time baselines) | 🚧 |
 
 ---
 
-### 已完成模块
+### Completed Modules
 
-#### Tier 1: 核心抽象层
-- [x] core：核心 API 定义
-  - 流处理 API 抽象
-  - 状态、检查点、水位线、窗口抽象
-- [x] runtime：流处理运行时引擎
-  - Redis runtime：`RedisStreamExecutionEnvironment`（Redis Streams，单进程并行/水位线/窗口/checkpoint）
-  - In-memory runtime：`StreamExecutionEnvironment`（用于 tests/examples）
+#### Tier 1: Core Abstractions
+- [x] core: core API definitions
+  - Stream processing API abstractions
+  - State, checkpoint, watermark, and window abstractions
+- [x] runtime: stream processing runtime engine
+  - Redis runtime: `RedisStreamExecutionEnvironment` (Redis Streams, single-process parallelism / watermarks / windows / checkpoints)
+  - In-memory runtime: `StreamExecutionEnvironment` (for tests/examples)
 
-#### Tier 2: 基础设施层
-- [x] mq：消息队列
-  - Redis Streams 实现
-  - 消费者组、DLQ、异步支持
-- [x] registry：服务注册发现
-  - 服务注册、发现、健康检查
-  - 多协议支持（HTTP/HTTPS/TCP/WebSocket/gRPC）
-  - Metadata 比较运算符过滤（`>`, `>=`, `<`, `<=`, `!=`, `==`）
-  - 基于权重、CPU、延迟等 metadata 的负载均衡
-- [x] config：配置中心
-  - 配置发布、获取、删除
-  - 配置版本化和历史记录
-  - 配置变更通知（Redis Pub/Sub）
-  - 配置监听器和热加载
-- [x] state：状态管理
-  - 4 种状态类型（Value、Map、List、Set）
-  - Redis 持久化
-- [x] checkpoint：检查点
-  - 分布式协调、快照、恢复
-- [x] watermark：水位线
-  - 水位线生成器实现
-- [x] window：窗口分配
-  - 滚动、滑动、会话窗口
+#### Tier 2: Infrastructure
+- [x] mq: message queue
+  - Redis Streams implementation
+  - Consumer groups, DLQ, async support
+- [x] registry: service registry & discovery
+  - Service registration, discovery, health checks
+  - Multi-protocol support (HTTP/HTTPS/TCP/WebSocket/gRPC)
+  - Metadata comparison-operator filtering (`>`, `>=`, `<`, `<=`, `!=`, `==`)
+  - Load balancing based on metadata such as weight, CPU, and latency
+- [x] config: config center
+  - Config publishing, retrieval, deletion
+  - Config versioning and history
+  - Config change notifications (Redis Pub/Sub)
+  - Config listeners and hot reload
+- [x] state: state management
+  - 4 state types (Value, Map, List, Set)
+  - Redis persistence
+- [x] checkpoint: checkpointing
+  - Distributed coordination, snapshots, recovery
+- [x] watermark: watermarks
+  - Watermark generator implementations
+- [x] window: windowing
+  - Tumbling, sliding, and session windows
 
-#### Tier 3: 功能模块层
-- [x] aggregation：聚合函数
-  - 窗口聚合、PV/UV、TopK
-- [x] table：流表二元性
-  - 内存版 & Redis 持久化版 KTable
-- [x] join：Join 操作
-  - 时间窗口 Join、4 种 Join 类型
-- [x] cdc：CDC
-  - MySQL、PostgreSQL、轮询 CDC
-- [x] sink：输出连接器
-  - Kafka Sink、Redis Stream/Hash Sink
-- [x] source：输入连接器
-  - Kafka Source、HTTP API Source、Redis List Source
+#### Tier 3: Feature Modules
+- [x] aggregation: aggregation functions
+  - Window aggregation, PV/UV, TopK
+- [x] table: stream-table duality
+  - In-memory & Redis-persisted KTable
+- [x] join: joins
+  - Time-window joins, 4 join types
+- [x] cdc: CDC
+  - MySQL, PostgreSQL, polling CDC
+- [x] sink: output connectors
+  - Kafka Sink, Redis Stream/Hash Sinks
+- [x] source: input connectors
+  - Kafka Source, HTTP API Source, Redis List Source
 
-#### Tier 4: 高级功能层
-- [x] cep：复杂事件处理
-  - Kleene closure、高级模式操作
-- [x] reliability：可靠性保证
-  - 重试机制、DLQ、去重、限流
+#### Tier 4: Advanced Features
+- [x] cep: complex event processing
+  - Kleene closure, advanced pattern operations
+- [x] reliability: reliability guarantees
+  - Retries, DLQ, deduplication, rate limiting
 
-#### Tier 5: 集成层
-- [x] metrics：监控指标
-  - Prometheus Exporter、指标收集器
-- [x] spring-boot-starter：Spring Boot 集成
-  - 自动配置、注解支持
+#### Tier 5: Integrations
+- [x] metrics: monitoring metrics
+  - Prometheus Exporter, metric collectors
+- [x] spring-boot-starter: Spring Boot integration
+  - Auto-configuration, annotation support
 
 ---
 
-### 下一步优先级
+### Next Priorities
 
-#### 已交付（v0.2.3 / v0.2.4）
-- 两阶段提交端到端（`TwoPhaseCommitSink` + 恢复补偿 + 故障注入）与 Outbox-WAL 派发（`RedisOutboxSink` + Dispatcher），见 `docs/exactly-once.md`
-- Leader election（`RedisLeaderElector`：SET NX PX 租约 + Lua 续约/释放）+ fencing token + 崩溃接管（checkpoint id 从存储重对齐）
-- keyed state 热键治理（LOG_ONLY / THROTTLE / FAIL_FAST）、静态审计与低危审计队列清零
+#### Delivered (v0.2.3 / v0.2.4)
+- End-to-end two-phase commit (`TwoPhaseCommitSink` + recovery compensation + fault injection) and Outbox-WAL dispatch (`RedisOutboxSink` + Dispatcher), see `docs/exactly-once.md`
+- Leader election (`RedisLeaderElector`: SET NX PX lease + Lua-based renewal/release) + fencing token + crash takeover (checkpoint IDs realigned from storage)
+- Keyed state hot-key handling (LOG_ONLY / THROTTLE / FAIL_FAST), static audit cleanup with the low-severity audit queue cleared
 
-#### 高优先级（Runtime 纵深）
-1. Runtime 语义补全：空闲分区水位推进、fire-and-purge 原子化、restore 原子性
-2. 多 worker 任务分片 / 动态伸缩（并行度变更、分区再均衡）
-3. Benchmark 基线：吞吐 / p50-p99 延迟 / 恢复时间 / checkpoint 耗时（1/2/4 worker 对比）
+#### High Priority (Runtime Depth)
+1. Runtime semantics completion: idle-partition watermark advancement, atomic fire-and-purge, restore atomicity
+2. Multi-worker task splitting / dynamic scaling (parallelism changes, partition rebalancing)
+3. Benchmark baselines: throughput / p50-p99 latency / recovery time / checkpoint duration (1/2/4 worker comparison)
 
-#### 已交付的语义声明面
-- `DeliveryGuarantee`（AT_MOST_ONCE / AT_LEAST_ONCE / EFFECTIVELY_ONCE）：sink 经 `StreamSink.deliveryGuarantee()` 声明自身能力——普通 sink 默认 AT_LEAST_ONCE，`TwoPhaseCommitSink` 与 Redis exactly-once 构件 sink（原子 checkpoint / 幂等列表 / Outbox）声明 EFFECTIVELY_ONCE
+#### Delivered Semantic Surface
+- `DeliveryGuarantee` (AT_MOST_ONCE / AT_LEAST_ONCE / EFFECTIVELY_ONCE): sinks declare their capability via `StreamSink.deliveryGuarantee()` — plain sinks default to AT_LEAST_ONCE, while `TwoPhaseCommitSink` and the Redis exactly-once sinks (atomic checkpoint / idempotent list / Outbox) declare EFFECTIVELY_ONCE
 
-#### 中优先级（功能增强）
-1. 连接器扩展
+#### Medium Priority (Feature Enhancements)
+1. Connector expansion
    - Elasticsearch Sink
    - HBase Sink
    - IoT Device Source
 
-## 文档
+## Documentation
 
-### 快速开始
-- [快速入门教程](QUICK_START.md) - 5分钟上手指南
-- [运行示例](RUNNING_EXAMPLES.md) - 端到端示例与演示程序
-- [完成报告](docs/archive/COMPLETION_REPORT.md) - 模块完成度与覆盖率
-- [测试指南](TESTING.md) - 单元测试 / 集成测试
+### Quick Start
+- [Quick Start Tutorial](QUICK_START.md) - get up and running in 5 minutes
+- [Running Examples](RUNNING_EXAMPLES.md) - end-to-end examples and demos
+- [Completion Report](docs/archive/COMPLETION_REPORT.md) - module completeness and coverage
+- [Testing Guide](TESTING.md) - unit tests / integration tests
 
-### 设计文档
-- [架构设计](docs/Architecture.md) - 整体架构设计
-- [项目总结](PROJECT_SUMMARY.md) - 详细功能说明
+### Design Documents
+- [Architecture](docs/Architecture.md) - overall architecture design
+- [Project Summary](PROJECT_SUMMARY.md) - detailed feature description
 
-### 部署运维
-- [部署指南](docs/Deployment.md) - 生产环境部署
-- [性能优化](docs/Performance.md) - 性能调优指南
+### Deployment & Operations
+- [Deployment Guide](docs/Deployment.md) - production deployment
+- [Performance Tuning](docs/Performance.md) - performance tuning guide
 
-### 开发指南
-- [开发文档](CLAUDE.md) - 开发者指南
-- [文档中心](docs/README.md) - 文档站点与索引（VitePress）
+### Development Guides
+- [Development Docs](CLAUDE.md) - developer guide
+- [Documentation Center](docs/README.md) - documentation site and index (VitePress)
 
-## 贡献
+## Contributing
 
-欢迎贡献代码、报告问题或提出建议！
+Contributions, bug reports, and suggestions are welcome!
 
-1. Fork 项目
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启 Pull Request
+1. Fork the project
+2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
-## 许可证
+## License
 
-本项目采用 Apache License 2.0 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
-## 联系
+## Contact
 
-- 项目地址: https://github.com/cuihairu/redis-streaming
-- 问题反馈: https://github.com/cuihairu/redis-streaming/issues
+- Project: https://github.com/cuihairu/redis-streaming
+- Issues: https://github.com/cuihairu/redis-streaming/issues
 
 ---
 
-当前版本：0.2.4（最新发布版本）
-最后更新：2026-10-08
-完成度：20/20 个模块；动态伸缩与 Benchmark 进行中
+Current version: 0.2.4 (latest release)
+Last updated: 2026-10-08
+Completeness: 20/20 modules; dynamic scaling and benchmarks in progress
 
-### 版本说明
+### Release Notes
 
-0.2.4 - 审计低危收口 + 静默丢失窗口修复
-- [低危审计队列清零：CDC 配置校验/序列化、DeferredAcks 结构键、分区数回退链、sink 提交标记 TTL]
-- [关闭 2PC/defer-ack 两个静默丢失窗口：epoch 误认领与 checkpoint abort 后的 stale ack]
-- [KTable 派生键空间增长有界化（lineage + 代际保留）]
+0.2.4 - Low-severity audit cleanup + silent-loss window fixes
+- [Low-severity audit queue cleared: CDC config validation/serialization, DeferredAcks structural keys, partition count fallback chain, sink commit marker TTL]
+- [Closed two silent-loss windows in 2PC/defer-ack: epoch mis-claiming and stale acks after checkpoint abort]
+- [Bounded growth of KTable-derived keyspaces (lineage + generational retention)]
 
-0.2.3 - 可靠性与 HA 专项
-- [两阶段提交端到端（TwoPhaseCommitSink + 恢复补偿 + 故障注入）]
-- [Leader election + fencing token + 崩溃接管（checkpoint id 从存储重对齐）]
-- [Outbox/WAL 派发（RedisOutboxSink + Dispatcher）、keyed state 热键治理（LOG_ONLY/THROTTLE/FAIL_FAST）]
+0.2.3 - Reliability & HA
+- [End-to-end two-phase commit (TwoPhaseCommitSink + recovery compensation + fault injection)]
+- [Leader election + fencing token + crash takeover (checkpoint IDs realigned from storage)]
+- [Outbox/WAL dispatch (RedisOutboxSink + Dispatcher), keyed state hot-key handling (LOG_ONLY/THROTTLE/FAIL_FAST)]
 
-0.2.2 - 加固与现代化
-- [静态审计 16 项缺陷修复（B-04..B-33）]
-- [Redisson 3.52.0→4.7.0、Gradle 版本目录集中管理、SLF4J 统一 2.0.17]
-- [新组件：CDCSource、ChangeEventQueueSink、RedisStreamSource；starter 解除 actuator/Micrometer 隐式依赖]
+0.2.2 - Hardening & modernization
+- [16 static-audit defect fixes (B-04..B-33)]
+- [Redisson 3.52.0→4.7.0, centralized Gradle version catalog, SLF4J unified to 2.0.17]
+- [New components: CDCSource, ChangeEventQueueSink, RedisStreamSource; starter decoupled from implicit actuator/Micrometer dependencies]
 
-0.2.0 - Runtime 能力完成（单进程）+ 文档站上线
-- [Redis runtime：并行度/背压、watermark/window、端到端 checkpoint（含 sink 协调与恢复）]
-- [Redis-only 原子提交 sink（Lua：写 sink + XACK + commit frontier），并提供 Exactly-once 路线说明（幂等/2PC/outbox）]
-- [文档迁移至 `docs/`，VitePress + GitHub Pages（Actions）自动构建发布]
+0.2.0 - Single-process runtime complete + documentation site launched
+- [Redis runtime: parallelism/backpressure, watermark/window, end-to-end checkpoints (incl. sink coordination and recovery)]
+- [Redis-only atomic commit sinks (Lua: write sink + XACK + commit frontier), with an exactly-once route description (idempotent/2PC/outbox)]
+- [Docs migrated to `docs/`, VitePress + GitHub Pages (Actions) auto-build and publish]
 
-0.1.1 - 修复与质量增强
-- [Registry/MQ/可靠性等模块若干稳定性修复]
-- [文档与 CI 发布流程完善]
+0.1.1 - Fixes and quality improvements
+- [Stability fixes across Registry/MQ/Reliability modules]
+- [Documentation and CI release process improvements]
 
-0.1.0 - 初始版本
-- [核心 API 抽象：流处理 API 定义（DataStream、KeyedStream、WindowedStream）]
-- [基础设施完成：MQ、Registry（含 Metadata 比较运算符）、Config、State、Checkpoint、Watermark、Window]
-- [服务注册发现增强：支持 Metadata 比较运算符过滤（`>`, `>=`, `<`, `<=`, `!=`, `==`），基于 metadata 的负载均衡]
-- [配置中心完成：配置版本化、变更通知、历史记录、监听器支持]
-- [功能模块完成：Aggregation、Table (含 Redis 持久化)、Join、CDC]
-- [可靠性模块：Reliability（含 Bloom Filter 去重）]
-- [连接器完成：Kafka/Redis Sink、Kafka/HTTP/Redis Source]
-- [CEP 完成：复杂事件处理（含 Kleene closure、高级模式操作）]
-- [监控集成：Prometheus Exporter、指标收集器]
-- [Spring Boot 自动配置（含 @ServiceChangeListener 注解支持）]
-- [Runtime 模块：Redis runtime + in-memory runtime（见 `runtime/` 与 `docs/`）]
+0.1.0 - Initial release
+- [Core API abstractions: stream processing API definitions (DataStream, KeyedStream, WindowedStream)]
+- [Infrastructure complete: MQ, Registry (incl. metadata comparison operators), Config, State, Checkpoint, Watermark, Window]
+- [Registry enhancements: metadata comparison-operator filtering (`>`, `>=`, `<`, `<=`, `!=`, `==`) and metadata-based load balancing]
+- [Config center complete: config versioning, change notifications, history, listener support]
+- [Feature modules complete: Aggregation, Table (incl. Redis persistence), Join, CDC]
+- [Reliability module: Reliability (incl. Bloom Filter dedup)]
+- [Connectors complete: Kafka/Redis Sinks, Kafka/HTTP/Redis Sources]
+- [CEP complete: complex event processing (incl. Kleene closure and advanced pattern operations)]
+- [Monitoring integration: Prometheus Exporter and metric collectors]
+- [Spring Boot auto-configuration (incl. @ServiceChangeListener annotation support)]
+- [Runtime module: Redis runtime + in-memory runtime (see `runtime/` and `docs/`)]
