@@ -279,7 +279,24 @@ matches.get(0).getEventsForStep("browse", sequence);  // List.of("b")
 matches.get(0).getDuration();                          // 10
 ```
 
+## 算子化：在 DataStream pipeline 里跑序列匹配
+
+`PatternSequenceProcessFunction`（`cep.operator` 包）把 `PatternSequenceMatcher` 装进 `KeyedProcessFunction`——每 key 一个独立 matcher 实例，序列匹配可以直接挂在 pipeline 上跑（设计细节见 [Join/CEP 算子化设计](Join-CEP-Operators-Design.md)）：
+
+```java
+env.fromMqTopic(eventsTopic, "cep-group")
+    .map(m -> parseEvent(String.valueOf(m.getPayload())))
+    .keyBy(Event::getUserId)
+    .process(new PatternSequenceProcessFunction<>(pattern, Event::getTimestamp))
+    .addSink(out);   // 每个完成的序列产出一条 EventSequence
+```
+
+- 每 key 独立匹配状态，互不串扰；`within` 截止由 matcher 的事件驱动清理承担（算子不注册引擎定时器）；
+- key 数上限 `maxTrackedKeys`（默认 10000，0 = 不限）：超限先逐空闲 key（无进行中 partial），再按最近触达逐出，防高基数 key 无界增长；逐出只丢进行中的 partial，已完成的匹配不受影响；
+- Phase 1 边界：partial 状态在算子实例内存（按分区隔离），不参与 checkpoint；丢失后果是漏报不误报（丢未完成序列）。
+
 ## 相关文档
 
 - [Architecture](Architecture.md) - 模块在整体架构中的位置
 - [window](window.md) - 窗口与触发器（另一种时间维度的事件切分）
+- [Join/CEP 算子化设计](Join-CEP-Operators-Design.md) - 算子化输入模型与分阶段路线

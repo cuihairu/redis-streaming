@@ -26,6 +26,8 @@ dependencies {
     testImplementation project(':state')
     testImplementation project(':watermark')
     testImplementation project(':window')
+    testImplementation project(':join')
+    testImplementation project(':cep')
     testImplementation libs.junit.jupiter
     testImplementation libs.junit.api
     testRuntimeOnly libs.junit.engine

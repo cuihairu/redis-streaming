@@ -1,5 +1,6 @@
 package io.github.cuihairu.redis.streaming.join;
 
+import java.io.Serializable;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
@@ -22,7 +23,9 @@ import java.util.function.Function;
  * @param <K> The type of the join key
  * @param <O> The type of output elements
  */
-public class StreamJoiner<L, R, K, O> {
+public class StreamJoiner<L, R, K, O> implements Serializable {
+
+    private static final long serialVersionUID = 1L;
 
     private final JoinConfig<L, R, K> config;
     private final JoinFunction<L, R, O> joinFunction;
@@ -48,6 +51,23 @@ public class StreamJoiner<L, R, K, O> {
     public synchronized List<O> processLeft(L element) throws Exception {
         K key = requireJoinKey(config.getLeftKeySelector().apply(element), "left", element);
         long timestamp = extractTimestamp(element, config.getLeftTimestampExtractor());
+        return processLeft(element, key, timestamp);
+    }
+
+    /**
+     * Process a left-stream element whose join key and event timestamp are already known —
+     * the entry point for operator integrations (see {@code join.operator}) that carry both
+     * alongside the payload instead of re-running the configured selector/extractor. The
+     * key and timestamp given here become authoritative: the selectors on
+     * {@link JoinConfig} are not consulted for this element.
+     *
+     * @param element   The element to process
+     * @param key       The join key (must be non-null)
+     * @param timestamp The event timestamp
+     * @return List of joined output elements
+     */
+    public synchronized List<O> processLeft(L element, K key, long timestamp) throws Exception {
+        requireJoinKey(key, "left", element);
 
         // Buffer the left element
         leftBuffer.computeIfAbsent(key, k -> new ArrayList<>())
@@ -89,6 +109,20 @@ public class StreamJoiner<L, R, K, O> {
     public synchronized List<O> processRight(R element) throws Exception {
         K key = requireJoinKey(config.getRightKeySelector().apply(element), "right", element);
         long timestamp = extractTimestamp(element, config.getRightTimestampExtractor());
+        return processRight(element, key, timestamp);
+    }
+
+    /**
+     * Process a right-stream element whose join key and event timestamp are already known —
+     * the entry point for operator integrations; see {@link #processLeft(Object, Object, long)}.
+     *
+     * @param element   The element to process
+     * @param key       The join key (must be non-null)
+     * @param timestamp The event timestamp
+     * @return List of joined output elements
+     */
+    public synchronized List<O> processRight(R element, K key, long timestamp) throws Exception {
+        requireJoinKey(key, "right", element);
 
         // Buffer the right element
         rightBuffer.computeIfAbsent(key, k -> new ArrayList<>())
@@ -259,7 +293,8 @@ public class StreamJoiner<L, R, K, O> {
     /**
      * Internal class to hold elements with timestamps
      */
-    private static class TimestampedElement<T> {
+    private static class TimestampedElement<T> implements Serializable {
+        private static final long serialVersionUID = 1L;
         final T element;
         final long timestamp;
 

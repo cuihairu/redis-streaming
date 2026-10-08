@@ -69,7 +69,7 @@ StreamJoinOperator.asKeyedProcessFunction(JoinConfig<L,R,K> cfg, JoinFunction<L,
 - 实例内按 key 持 `leftBuffer / rightBuffer`（与 `StreamJoiner` 同型的 `Map<K, List<TimestampedElement>>`）；
 - 配对谓词锚定**左元素时间戳**（沿用 `StreamJoiner` 修正后的语义：无论哪侧先到，asymmetric 窗口 `afterOnly/beforeOnly` 判定一致）；
 - 外连接（LEFT/RIGHT/FULL_OUTER）沿用 B-36 语义：无匹配**立即**发射 `join(elem, null)`；后到的对侧在窗口内命中时**再发射一次** `join(L, R)`——下游须容忍同 key 双记录（文档明示，非 waiting/retract 实现）；
-- 状态治理沿用 `JoinConfig.maxStateSize`（超限按最旧时间戳逐条淘汰）与 `stateRetentionTime`（每 key 注册 processing-time 清理定时器，到期清该 key 过期缓冲；窗口跨度 > 保留时长在 `JoinConfig.validate()` 已拦）；
+- 状态治理沿用 `JoinConfig.maxStateSize`（超限按最旧时间戳逐条淘汰）与 `stateRetentionTime`（清理为**事件驱动**：每次配对入口按两侧缓冲的最大时间戳统一清过期，与 `StreamJoiner.cleanup` 逐点一致，算子不另注册引擎定时器；窗口跨度 > 保留时长在 `JoinConfig.validate()` 已拦）；
 - 与 `StreamJoiner` 的关系：`StreamJoiner` 保留原样（独立场景与既有测试），`StreamJoinOperator` 在窗口谓词/淘汰策略上**委托同一份逻辑**（抽公共 helper 或直接内聚一份实现 + 对照测试钉住行为一致），避免第三套窗口判定。
 
 ### 3.3 一致性边界（Phase 1 明示）
@@ -91,7 +91,8 @@ PatternSequenceProcessFunction.of(PatternSequence<T> pattern, Function<T, Long> 
 语义：
 
 - 实例内按 key 持 `PatternSequenceMatcher` 实例（每 key 独立匹配状态，互不串扰）；
-- `within(duration)` 截止：构造时注册 processing-time 定时器，到期把该 key 的过期 partial 序列整体丢弃（超时未完成 = 不匹配，`PatternSequence` 的 within 语义）；
+- `within(duration)` 截止由 matcher 自身的**事件驱动清理**承担——`process(event, timestamp)` 入口先按事件时间戳丢弃过期 partial（超时未完成 = 不匹配），算子不另注册引擎定时器；闲置 key 的残留 partial 在该 key 下一条事件到达时清理，或被 key 数上限逐出；
+- key 数上限（`maxTrackedKeys`，默认 10000，0 = 不限）：按最近活跃时间逐出最久未触达的 key 的 matcher，防止高基数 key 场景下 matcher 映射无界增长；
 - 输出复用 `cep.EventSequence<T>`；
 - 单条件匹配（`Pattern` / `PatternMatcher`）不做算子：无序列状态的需求 `filter` 即可，有界扩展序列的场景归入后续需求，不预造 API。
 

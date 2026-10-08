@@ -524,7 +524,7 @@ void testRedisIntegration() {
 
 ### C. 孤岛模块接入或降级
 - [ ] `aggregation`:与 core `AggregateFunction`、window 模块的第三套 `TimeWindow/TumblingWindow` 统一(现三套并行抽象互不兼容,喂不进 `WindowedStream.aggregate`)
-- [ ] `join`/`cep`:包装为 DataStream 算子(现为纯内存工具类,无法参与 pipeline);join 与 table 的 join 语义二选一
+- [x] `join`/`cep`:包装为 DataStream 算子(现为纯内存工具类,无法参与 pipeline);join 与 table 的 join 语义二选一——Phase 1 落地 2026-10-08:设计先行 `docs/Join-CEP-Operators-Design.md`(信封多路复用输入模型零引擎改动;DataStream 侧 join=stream-stream windowed join,KTable join 保持表语义,边界入 Join.md/Table.md),实现 `join.operator.{Envelope,StreamJoinOperator}`(委托 StreamJoiner 新增的显式 key/ts 重载,窗口谓词/外连接/淘汰语义逐点复用)+ `cep.operator.PatternSequenceProcessFunction`(每 key 独立 matcher、within 事件驱动清理、maxTrackedKeys 空闲优先逐出);单测 12 例(含与 StreamJoiner 的差分对照)+ 双引擎集成 4 例(InMemory 普通车道 + Redis MQ topic 门控车道)全绿;join/cep 既有公开 API 零改动。Phase 2(`DataStream.join` 语法糖、缓冲入 keyed state)与 Phase 3(双源 pipeline)仅设计未实现
 - [ ] `table.RedisKTable.toStream()`:由静态快照导出改为持续 changelog
 - [x] 桥接完成(本轮):新增 `source.redis.RedisStreamSource implements StreamSource`——真 XREADGROUP、自动建组(用 `0-0` 而非 `StreamMessageId.MIN`,后者需 Redis≥7)、ack、有界排空;单测 4 个 + 真 Redis round-trip 集成测试。CDC→mq:`cdc.mq.ChangeEventQueueSink implements StreamSink<ChangeEvent>`(自描述 payload、key 作分区键、失败上抛),cdc 增 mq 依赖;单测 3 个。`RedisListSource` 保留原样(其名字与 List 语义相符,Consumer 风格工具类无错)
 - [ ] `metrics` 模块与 `RedisRuntimeMetrics`/`CDCMetrics`/`MqMetrics` 四套体系统一

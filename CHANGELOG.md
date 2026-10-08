@@ -6,6 +6,8 @@ All notable changes to this project are documented here (Conventional Commits st
 
 ### Added
 - **`DeliveryGuarantee` declaration surface** (`core` `api.stream`): sinks declare their capability via `StreamSink.deliveryGuarantee()` — plain sinks default to `AT_LEAST_ONCE`; `TwoPhaseCommitSink` and the Redis exactly-once building-block sinks (`RedisAtomicCheckpointListSink`, `RedisIdempotentListSink`, `RedisCheckpointedIdempotentListSink`, `RedisOutboxSink`) declare `EFFECTIVELY_ONCE`.
+- **Benchmark module** (`benchmark`, not published / not coverage-gated): MQ produce+consume throughput with p50/p95/p99 end-to-end latency, and `triggerCheckpointNow()` drain+snapshot duration on a live Redis runtime pipeline (`./gradlew :benchmark:run`, `REDIS_URL` / `BENCH_*` env knobs).
+- **join/cep operatorization** (phase 1 of `docs/Join-CEP-Operators-Design.md`): `join.operator.StreamJoinOperator` adapts the windowed stream-stream join to a `KeyedProcessFunction` over `join.operator.Envelope` (both sides map into tagged envelopes on one join-input stream; zero engine changes, runs on both engines); `cep.operator.PatternSequenceProcessFunction` runs `PatternSequenceMatcher` per key with a bounded key registry (`maxTrackedKeys`). Operator buffer state stays partition-local (not checkpointed) in this phase; `StreamJoiner` gains explicit `(element, key, timestamp)` overloads as the delegate entry point.
 
 ### Changed
 - **Dependencies are now centrally managed** via the Gradle version catalog (`gradle/libs.versions.toml`); module build scripts reference `libs.*` accessors.

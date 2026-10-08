@@ -140,6 +140,24 @@ StreamJoiner<String, Integer, String, String> joiner =
 // 该 key 会再输出一条 "x|1" —— 下游需容忍或去重（见上文外连接语义）。
 ```
 
+## 算子化：在 DataStream pipeline 里跑 join
+
+`StreamJoinOperator` 把上面的 join 语义装进 `KeyedProcessFunction`，两条流经**信封多路复用**接入同一个 keyed pipeline（设计细节与分阶段路线见 [Join/CEP 算子化设计](Join-CEP-Operators-Design.md)）：
+
+```java
+// 左右两源各自 map 成 Envelope（joinKey/时间戳随信封携带，是算子路径的权威值），
+// 合并进同一个 join 输入 topic（内存引擎直接合并两个 source），然后：
+env.fromMqTopic(joinInputTopic, "join-group")
+    .map(m -> parseEnvelope(String.valueOf(m.getPayload())))
+    .keyBy(Envelope::getJoinKey)
+    .process(StreamJoinOperator.asKeyedProcessFunction(config, (l, r) -> l + "+" + r))
+    .addSink(out);
+```
+
+- 语义与 `StreamJoiner` 逐点一致（算子内部就是委托一个 joiner 实例）：左锚定窗口谓词、外连接立即发射 + 后到补配对、retention/maxStateSize 淘汰；
+- 信封 key 须与 `JoinConfig` 的 selector 一致——不一致不会报错，只会让配对路由到互不相见的分区而**静默失配**；
+- Phase 1 边界：算子缓冲在实例内存（按 MQ 分区隔离），**不参与 checkpoint 快照**；failover 后窗口内历史缓冲丢失（输出对 failover at-most-once），缓冲入 keyed state 是 Phase 2。
+
 ## References
 
 - [Architecture](Architecture.md)
