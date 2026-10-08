@@ -108,4 +108,15 @@ public interface TwoPhaseCommitSink<T, Txn extends Serializable> extends Checkpo
      * checkpoint that was rolled back. Must be idempotent.
      */
     Txn recoverAndAbort(Txn txn) throws Exception;
+
+    /**
+     * Two-phase-commit sinks declare {@link DeliveryGuarantee#EFFECTIVELY_ONCE} by default:
+     * the runtime commits the transaction only after the covering checkpoint is stored and
+     * replays in-doubt transactions from the checkpoint on recovery, so an element is applied
+     * exactly once to the external system even across crashes.
+     */
+    @Override
+    default DeliveryGuarantee deliveryGuarantee() {
+        return DeliveryGuarantee.EFFECTIVELY_ONCE;
+    }
 }

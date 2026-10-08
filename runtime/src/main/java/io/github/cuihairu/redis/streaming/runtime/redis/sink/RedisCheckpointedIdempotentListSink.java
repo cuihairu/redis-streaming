@@ -1,6 +1,7 @@
 package io.github.cuihairu.redis.streaming.runtime.redis.sink;
 
 import io.github.cuihairu.redis.streaming.api.stream.CheckpointAwareSink;
+import io.github.cuihairu.redis.streaming.api.stream.DeliveryGuarantee;
 import io.github.cuihairu.redis.streaming.api.stream.IdempotentRecord;
 import org.redisson.api.RedissonClient;
 
@@ -74,5 +75,11 @@ public final class RedisCheckpointedIdempotentListSink<T> implements CheckpointA
             out.add(v);
         }
     }
+
+    @Override
+    public DeliveryGuarantee deliveryGuarantee() {
+        return DeliveryGuarantee.EFFECTIVELY_ONCE;
+    }
+
 }
 

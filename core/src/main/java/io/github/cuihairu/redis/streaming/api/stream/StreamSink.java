@@ -40,4 +40,18 @@ public interface StreamSink<T> extends Serializable {
      */
     default void close() throws Exception {
     }
+
+    /**
+     * The delivery guarantee this sink provides for the elements it consumes.
+     *
+     * <p>The default is {@link DeliveryGuarantee#AT_LEAST_ONCE}: a plain sink applies every
+     * element it is given exactly once per invocation, but the at-least-once replay semantics
+     * of the consuming pipeline (process-then-ack with retries) mean an element can be applied
+     * more than once across a crash/replay. Sinks that deduplicate by record id or coordinate
+     * their writes with checkpoints override this to declare the stronger guarantee — see
+     * {@link DeliveryGuarantee}.</p>
+     */
+    default DeliveryGuarantee deliveryGuarantee() {
+        return DeliveryGuarantee.AT_LEAST_ONCE;
+    }
 }

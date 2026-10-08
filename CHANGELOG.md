@@ -4,6 +4,9 @@ All notable changes to this project are documented here (Conventional Commits st
 
 ## [Unreleased]
 
+### Added
+- **`DeliveryGuarantee` declaration surface** (`core` `api.stream`): sinks declare their capability via `StreamSink.deliveryGuarantee()` — plain sinks default to `AT_LEAST_ONCE`; `TwoPhaseCommitSink` and the Redis exactly-once building-block sinks (`RedisAtomicCheckpointListSink`, `RedisIdempotentListSink`, `RedisCheckpointedIdempotentListSink`, `RedisOutboxSink`) declare `EFFECTIVELY_ONCE`.
+
 ### Changed
 - **Dependencies are now centrally managed** via the Gradle version catalog (`gradle/libs.versions.toml`); module build scripts reference `libs.*` accessors.
 - **SLF4J unified to 2.0.17** across all modules (previously mixed 1.7.36 / 2.0.17; Redisson requires the 2.x API).

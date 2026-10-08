@@ -737,8 +737,10 @@ List<ChangeEvent> events = connector.poll();
 #### 高优先级（Runtime 纵深）
 1. Runtime 语义补全：空闲分区水位推进、fire-and-purge 原子化、restore 原子性
 2. 多 worker 任务分片 / 动态伸缩（并行度变更、分区再均衡）
-3. `DeliveryGuarantee` 统一声明（AT_MOST_ONCE / AT_LEAST_ONCE / EFFECTIVELY_ONCE，各 sink 声明自身能力）
-4. Benchmark 基线：吞吐 / p50-p99 延迟 / 恢复时间 / checkpoint 耗时（1/2/4 worker 对比）
+3. Benchmark 基线：吞吐 / p50-p99 延迟 / 恢复时间 / checkpoint 耗时（1/2/4 worker 对比）
+
+#### 已交付的语义声明面
+- `DeliveryGuarantee`（AT_MOST_ONCE / AT_LEAST_ONCE / EFFECTIVELY_ONCE）：sink 经 `StreamSink.deliveryGuarantee()` 声明自身能力——普通 sink 默认 AT_LEAST_ONCE，`TwoPhaseCommitSink` 与 Redis exactly-once 构件 sink（原子 checkpoint / 幂等列表 / Outbox）声明 EFFECTIVELY_ONCE
 
 #### 中优先级（功能增强）
 1. 连接器扩展
