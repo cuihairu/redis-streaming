@@ -1,0 +1,23 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+application {
+    mainClass = 'io.github.cuihairu.redis.streaming.benchmark.BenchmarkRunner'
+}
+
+dependencies {
+    implementation project(':core')
+    implementation project(':mq')
+    implementation project(':runtime')
+    implementation project(':window')
+
+    implementation libs.redisson
+    implementation libs.jackson.databind
+    implementation libs.logback.classic
+
+    testImplementation libs.junit.jupiter
+    testImplementation libs.junit.api
+    testImplementation libs.mockito.core
+}

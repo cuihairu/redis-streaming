@@ -49,7 +49,7 @@ subprojects {
     apply plugin: 'jacoco'
     apply plugin: 'signing'
     // Only publish real modules; exclude example module from publishing
-    if (project.name != 'examples') {
+    if (project.name != 'examples' && project.name != 'benchmark') {
         apply plugin: 'com.vanniktech.maven.publish'
     }
 
@@ -247,7 +247,7 @@ tasks.register('jacocoRootReport', JacocoReport) {
     // If integration tests are already in the task graph (e.g., `check`), must run after them
     // so their execution data can be included.
     mustRunAfter subprojects.collect { it.tasks.named('integrationTest') }
-    def covProjects = subprojects.findAll { it.name != 'examples' }
+    def covProjects = subprojects.findAll { it.name != 'examples' && it.name != 'benchmark' }
     // Classes that merely wrap external-service client SDKs (Kafka broker, MySQL binlog
     // protocol, PostgreSQL logical replication) cannot be executed without those services;
     // they are excluded from the aggregate gate (industry-standard jacoco scoping).
@@ -280,7 +280,7 @@ tasks.register('jacocoRootCoverageVerification', JacocoCoverageVerification) {
     // visible; this gate pins the deterministic floor. Measured fresh unit-only floor
     // (2026-10-05, all modules): INSTRUCTION 0.9567, CLASS 0.9949.
     dependsOn subprojects.collect { it.tasks.named('test') }
-    def covProjects = subprojects.findAll { it.name != 'examples' }
+    def covProjects = subprojects.findAll { it.name != 'examples' && it.name != 'benchmark' }
     executionData.from files(covProjects.collect { fileTree(dir: it.buildDir, includes: ['jacoco/test.exec']) })
     def covClassDirs = { proj ->
         fileTree(dir: "${proj.buildDir}/classes/java/main", excludes: [

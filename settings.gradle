@@ -39,3 +39,4 @@ include 'cep'                      // Complex event processing
 include 'metrics'                  // Monitoring metrics
 include 'spring-boot-starter'      // Spring Boot integration
 include 'examples'                 // Example code
+include 'benchmark'                // Throughput/latency/checkpoint benchmarks (not published)
