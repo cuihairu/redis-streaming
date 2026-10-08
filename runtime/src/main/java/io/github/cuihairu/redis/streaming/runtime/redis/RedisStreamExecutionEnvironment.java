@@ -258,16 +258,16 @@ public final class RedisStreamExecutionEnvironment {
                 pipelineKeys.add(new RedisRuntimeCheckpointManager.PipelineKey(def.topic(), def.consumerGroup()));
             }
             if (config.isRestoreFromLatestCheckpoint()) {
-                try {
-                    Checkpoint restored = checkpointManager.restoreFromLatestCheckpointOrNull(pipelineKeys);
-                    if (restored != null) {
-                        restoredCheckpointIdRef.set(restored.getCheckpointId());
-                        restoredCheckpointRef.set(restored);
-                        log.info("Restored Redis runtime job from checkpoint {} (jobName={})",
-                                restoredCheckpointIdRef.get(), config.getJobName());
-                    }
-                } catch (Exception e) {
-                    log.warn("Failed to restore Redis runtime job from latest checkpoint (jobName={})", config.getJobName(), e);
+                // RT-M4: a requested restore that fails must abort the start instead of
+                // silently consuming from scratch without the restored state — the outer
+                // catch cleans everything up and rethrows. No checkpoint yet (null) still
+                // starts fresh.
+                Checkpoint restored = checkpointManager.restoreFromLatestCheckpointOrNull(pipelineKeys);
+                if (restored != null) {
+                    restoredCheckpointIdRef.set(restored.getCheckpointId());
+                    restoredCheckpointRef.set(restored);
+                    log.info("Restored Redis runtime job from checkpoint {} (jobName={})",
+                            restoredCheckpointIdRef.get(), config.getJobName());
                 }
             }
 

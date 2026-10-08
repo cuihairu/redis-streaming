@@ -213,8 +213,13 @@ class RedisRuntimeCheckpointManagerGapClosureTest {
         RScoredSortedSet<String> zset = mock(RScoredSortedSet.class);
         RMap<String, String> map = mock(RMap.class);
         RMap<String, String> asMap = mock(RMap.class);
+        // RT-M4: data lands on the staged key first (name + ":rst:42") and is RENAMEd into
+        // place; the final-name handle is still used for the post-swap TTL.
+        when(redisson.getScoredSortedSet(eq("z-full:rst:42"), any(Codec.class))).thenReturn((RScoredSortedSet) zset);
         when(redisson.getScoredSortedSet(eq("z-full"), any(Codec.class))).thenReturn((RScoredSortedSet) zset);
+        when(redisson.getMap(eq("m-full:rst:42"), any(Codec.class))).thenReturn((RMap) map);
         when(redisson.getMap(eq("m-full"), any(Codec.class))).thenReturn((RMap) map);
+        when(redisson.getMap(eq("as-map:rst:42"), any(Codec.class))).thenReturn((RMap) asMap);
         when(redisson.getMap(eq("as-map"), any(Codec.class))).thenReturn((RMap) asMap);
         when(index.readAll()).thenReturn((java.util.Set) java.util.Set.of("stale"));
 
@@ -227,8 +232,10 @@ class RedisRuntimeCheckpointManagerGapClosureTest {
         verify(map).expire((Duration) Duration.ofSeconds(20));
         verify(asMap).putAll(Map.of("k", "v"));
         verify(rkeys).delete("stale");
-        verify(index).clear();
-        verify(schema).clear();
+        // the snapshot's index replaces the live one via rename; the snapshot carries no
+        // schema entries, so the live schema key is dropped
+        verify(rkeys).rename("it-cp-gap:cp-gap:stateKeys:rst:42", "it-cp-gap:cp-gap:stateKeys");
+        verify(rkeys).delete("it-cp-gap:cp-gap:stateSchema");
     }
 
     @Test
@@ -239,7 +246,10 @@ class RedisRuntimeCheckpointManagerGapClosureTest {
         Map<String, Object> snap = Map.of("runtime:state", rawState);
         RScoredSortedSet<String> zset = mock(RScoredSortedSet.class);
         RMap<String, String> map = mock(RMap.class);
+        // RT-M4: writes go to the staged names; the final names only serve the TTL pass
+        when(redisson.getScoredSortedSet(eq("z-full:rst:42"), any(Codec.class))).thenReturn((RScoredSortedSet) zset);
         when(redisson.getScoredSortedSet(eq("z-full"), any(Codec.class))).thenReturn((RScoredSortedSet) zset);
+        when(redisson.getMap(eq("m-full:rst:42"), any(Codec.class))).thenReturn((RMap) map);
         when(redisson.getMap(eq("m-full"), any(Codec.class))).thenReturn((RMap) map);
 
         when(config.getStateTtl()).thenReturn(Duration.ZERO);
@@ -386,7 +396,9 @@ class RedisRuntimeCheckpointManagerGapClosureTest {
     }
 
     @Test
-    void restoreFromLatestReturnsNullWhenRestoreRejectsCheckpoint() throws Exception {
+    void restoreFromLatestReturnsNullForForeignJobCheckpoint() throws Exception {
+        // a checkpoint belonging to another job is "nothing to restore" for this one —
+        // a fresh start is correct here, unlike an operational restore failure (RT-M4 throws)
         Checkpoint mismatched = checkpointWith(Map.of("runtime:meta", Map.of("jobName", "other")));
         RedisCheckpointStorage storage = mock(RedisCheckpointStorage.class);
         when(storage.listCheckpoints(anyInt())).thenReturn(List.of(mismatched));

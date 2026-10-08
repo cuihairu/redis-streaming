@@ -644,7 +644,13 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - **RT-M1** `checkpointDrainTimeout=ZERO` 使排空循环死循环且消费者永久 pause（`RedisStreamExecutionEnvironment.java:657-678`；deadline 检查被 `>0` 门控，ZERO 通过校验）→ checkpointing 标志永不释放，作业死锁无报错。✅已修复：builder 将 null/ZERO/负值统一回退 30s 默认；排空循环的 deadline 检查改为无条件（防御性）。回归断言加入 `RedisRuntimeConfigBuilderCoverageTest`。
 - **RT-M2** 事件时间定时器队列满时静默丢弃注册（`RedisPipelineRunner.java:406-429`）→ 对应窗口/回调永不 fire，仅 60s 限速 warn。
 - **RT-M3** watermark 与窗口 fire 纯消息驱动：空闲分区/子任务永不 fire；`windowMaxFiresPerRecord=256` 截断后剩余窗口要等下一条记录；`markIdle()` 是 no-op（`RedisPipelineRunner.java:100-113,163-184`、`RedisStreamBuilder.java:451-454,791-810`）。
-- **RT-M4** `restoreState` 先删后建无原子性：中途失败状态已清空、作业以无状态继续（`RedisRuntimeCheckpointManager.java:469-549`；失败只 debug/warn）。
+
+### RT-M4 状态恢复先删后建：中途失败既丢状态又以无状态静默继续 [已修复]
+- 位置：`runtime/.../redis/internal/RedisRuntimeCheckpointManager.java`（`restoreState`）+ `RedisStreamExecutionEnvironment.java`（启动 restore 路径）。
+- 触发：恢复期间任一单键重建失败（Redis 抖动、超时、个别键操作异常）。
+- 影响：旧实现先把 live 键全部删除再逐键重建，单键失败仅 debug 吞掉 → 快照里有但重建失败的键静默缺失，作业带着残缺（甚至空）状态继续跑，聚合/去重结果错误且无报警。
+- 验证与修复：两处配合。（1）恢复改为**两阶段 stage-then-RENAME**——全部快照键先写 `<finalKey>:rst:<checkpointId>` staging 名（预删保证重试幂等），staging 完成后逐键 RENAME 原子换入（键级原子、可覆盖任意类型）；staging 或 swap 任一失败 → 清理 staging 键并抛 IllegalStateException，live 状态全程不先删；快照中空数据的键在 swap 成功后删除（恢复为空），快照外残留键仅在全部 staged 键落位后清理；快照 index/schema 无条目时对应 live 键**删除而非 RENAME**（RENAME 不存在的 staging 键在 Redis 直接报错——真实 Redis 集成测试抓出，mock 无法暴露）；TTL 属保留策略而非正确性，失败仅 warn。（2）`restoreFromLatestCheckpointOrNull` 语义变化：显式请求恢复且存在 checkpoint 时，恢复失败抛 IllegalStateException（env 启动中止），不再静默退化为无状态启动；无 checkpoint 仍返回 null 正常全新启动；checkpoint 属于其他 job（meta jobName 不匹配）仍返回 null——采纳他 job 的 checkpoint 是错的，对本 job 全新启动才是正确结果，不属恢复失败。
+- 回归测试：`RedisRuntimeCheckpointManagerRestoreSwapTest`（mock 6 用例：staging 失败 live 键零触碰、swap 失败清理全部 staging 键、空快照项清空 live 键并删除 index/schema、TTL 施加、请求恢复失败抛出、无 checkpoint 返回 null）+ `RedisRuntimeCheckpointManagerRestoreSwapIntegrationTest`（真实 Redis：损坏的 live 键被快照整体覆盖、checkpoint 后新增键被丢弃、index 恰为快照键集且无 staging 残留、TTL 生效）；既有 `RedisRuntimeCheckpointManagerGapClosureTest` 恢复用例更新为 staging 交互模式并新增他 job checkpoint 返回 null 断言。
 - **RT-M5** offset 快照期间 Redis 错误被 DEBUG 吞掉且存 null → 恢复时该分区静默回退 0-0（`RedisRuntimeCheckpointManager.java:283-292`）。✅已缓解：日志升为 WARN 并明示"该分区将回退 0-0"；恢复失败日志同样升 WARN（彻底修复需失败即中止 checkpoint，涉及策略决策，留待后续）。
 - **RT-M6** sink 去重是 check-then-act 两跳（`RSetCache.contains` 与 `add` 之间夹着 `sink.invoke`，`RedisPipelineRunner.java:186-230`）：并发重投递下双写（文档已注明 best-effort）。
 - **RT-M7** 同源分叉的两个 pipeline 按消费组分摊而非广播，且同种窗口算子 stateName 冲突共享状态（`RedisStreamBuilder.java:413,185-194`）→ 分叉用法下窗口结果静默错误；无校验无文档。
