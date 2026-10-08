@@ -55,6 +55,7 @@ export default withMermaid(
           { text: 'Exactly-Once', link: '/exactly-once' },
           { text: 'MQ 设计', link: '/MQ-Design' },
           { text: 'Registry 设计', link: '/Registry-Design' },
+          { text: 'Join/CEP 算子化', link: '/Join-CEP-Operators-Design' },
         ]
       },
       {
@@ -131,6 +132,7 @@ export default withMermaid(
             { text: 'Exactly-Once 语义', link: '/exactly-once' },
             { text: 'MQ 设计', link: '/MQ-Design' },
             { text: 'Registry 设计', link: '/Registry-Design' },
+            { text: 'Join/CEP 算子化', link: '/Join-CEP-Operators-Design' },
           ]
         },
         {
