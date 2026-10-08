@@ -41,6 +41,7 @@ All notable changes to this project are documented here (Conventional Commits st
 - `runtime` windowed-operator and watermark characterization/integration tests; `examples` Spring Boot starter sample app with annotated `application.yml`.
 
 ### Fixed
+- **Redis runtime windows** (RT-H3): a failed sink emit during a window fire no longer destroys the window. The five windowed operators (reduce/aggregate/apply/sum/count) purge accumulated state only after a successful emit, and `fireDueWindows` re-queues a fired member at its close score when the emit throws — the redelivered message re-fires the complete window instead of silently losing everything accumulated before the failure (apply previously purged even before emitting its buffered results).
 - **spring-boot-starter**: logback pinned to 1.4.14 (1.5.x removed `LoggerContext.getConfigurationLock()` which Spring Boot 3.2's logging system requires).
 - **spring-boot-starter**: empty default `redis-streaming.redis.password` no longer sends an `AUTH` command (broke servers without a password).
 - **spring-boot-starter**: `MqHealthIndicator` bean moved to a class-level `@ConditionalOnClass` nested configuration (actuator is optional; method-level guards did not prevent return-type introspection). Micrometer collector/installer beans gained `@ConditionalOnBean` guards so the starter now boots without actuator/MeterRegistry.

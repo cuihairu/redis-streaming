@@ -632,11 +632,12 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - 验证与修复：两个层次。（1）扫描宽度——B-15 已把 `listCheckpoints` 的遍历改为前缀模式化 SCAN（`KeysScanOptions.defaults().pattern(keyPrefix + "*")`，纯数字后缀过滤保留），本条"与 DB 总键数成正比"的部分随之消除；（2）暂停窗口内的逐 key 完整反序列化——修复前每个 tick 在 pause 与 resume 之间执行 `cleanupOld()` → `listCheckpoints(Integer.MAX_VALUE)`，把保留的全部 checkpoint（每个含完整状态快照）逐个反序列化再排序（老代码事件序 `pause, store, listCheckpoints, …, resume` 实证），暂停时长仍随 `checkpointsToKeep × 快照大小` 伸缩。修复：`RedisRuntimeCheckpointManager.triggerCheckpoint` 新增带 `cleanupRetainedAfterStore` 参数的重载（缺省 true，原有调用方语义不变），`cleanupOld()` 改为 public；STW 路径 `RedisStreamExecutionEnvironment.triggerCheckpointInternal` 拆为"暂停窗口内 checkpoint（cleanup=false）+ resume 后统一 `cleanupOld()`"两段——清扫成本移出暂停窗口，淘汰语义不变（先不完整后最旧、保留 keepCount，见 B-14）。残留（非本条 STW 范围）：启动期 `initNextId`/`restoreFromLatestCheckpointOrNull`/`getLatestSinkCommittedCheckpoint` 仍走全量列表，成本以 `checkpointsToKeep` 为界，且不在消费暂停窗口内。
 - 回归测试：`RedisStreamExecutionEnvironmentCleanupOffPauseTest`（pause/resume/listCheckpoints 事件序断言清扫发生在 resume 之后；3 次 trigger + keep=2 断言最旧者淘汰、留存 {2,3}）+ `RedisRuntimeCheckpointManagerCleanupDeferralTest`（4 参延迟清扫重载存在性、deferred trigger 零清扫、显式 `cleanupOld()` 裁剪语义）。旧代码复现：3 用例在修复前全数失败——env 级 `the retention sweep ran while the consumers were still paused (events=[pause, store, listCheckpoints, store, resume])`、`no sweep may precede the first resume`、manager 级 `triggerCheckpoint has no deferred-cleanup variant`。
 
-### RT-H3 窗口/定时器状态在 emit 前被清除：sink 发送失败即永久丢失该窗口已累加数据 [设计缺陷]
-- 位置：`runtime/.../redis/internal/RedisStreamBuilder.java`（reduce 516-539、aggregate 575-595、sum 713-738、count 758-777、apply 654-672）
+### RT-H3 窗口/定时器状态在 emit 前被清除：sink 发送失败即永久丢失该窗口已累加数据 [已修复]
+- 位置：`runtime/.../redis/internal/RedisStreamBuilder.java`（reduce/aggregate/apply/sum/count 五个窗口 emitter + `fireDueWindows`）
 - 触发：窗口 fire（due zset 先移除）后 `sink.invoke` 抛异常（Redis 抖动、sink 异常、checkpoint 中止）。
 - 影响：消息进 RETRY 重投递，但窗口状态已在 `finally` 里删掉 → 重投递的元素单独重新累计，窗口随后以残缺数据 fire——静默错误结果。apply 更糟：状态清除发生在缓冲结果 emit 之前。
-- 处理：fire-and-purge 非原子是该设计的固有问题，需两阶段/结果缓冲提交重构；记为后续任务。
+- 验证与修复：两处配合。（1）五个 emitter 的 purge 从 `finally` 移到 **emit 成功之后**——emit 抛异常时窗口状态原样保留（apply 同样改为全部缓冲结果投递成功后才 purge，消除"先清后发"）；（2）`fireDueWindows` 在 fire 前已 `pollFirstEntry` 把成员移出 due 集合，fire 失败时补一条**按原 close 分数回队**——否则窗口元素已被 ack、不会有新元素再把它加回 due，状态虽在但永无 fire 机会。语义结果：sink 失败不再丢窗口数据；重投递触发补发完整窗口（at-least-once 可能重复，与运行时文档化投递语义一致）；真正的两阶段提交（emit 与 purge 原子）仍属 2PC sink 的范畴。
+- 回归测试：`WindowFirePurgeAtomicityIntegrationTest`（count/apply 两用例：armed-once sink 在首次 close fire 时抛异常 → 断言完整窗口结果（3 条计数）经重投递补发到达。摘除修复实证：旧代码下结果集只含触发记录自身窗口的 `[1]`，窗口数据 3 永久丢失）。
 
 ### 中（Medium）
 

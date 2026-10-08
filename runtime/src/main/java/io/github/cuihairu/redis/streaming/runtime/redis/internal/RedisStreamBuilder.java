@@ -574,12 +574,14 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                 }
                                 emit.emit(out);
                             } catch (Exception e) {
+                                // RT-H3: the emit failed — keep the accumulated window state so
+                                // the redelivered message re-accumulates onto a complete window
+                                // instead of a purged one; purge only after a successful emit.
                                 throw new RuntimeException("Failed to emit window reduce result", e);
-                            } finally {
-                                if (purgeState) {
-                                    state.remove(member);
-                                    stateStore.touch(ref.redisKey(), stateName, state);
-                                }
+                            }
+                            if (purgeState) {
+                                state.remove(member);
+                                stateStore.touch(ref.redisKey(), stateName, state);
                             }
                         });
             }
@@ -631,12 +633,14 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                 }
                                 emit.emit(out);
                             } catch (Exception e) {
+                                // RT-H3: the emit failed — keep the accumulated window state so
+                                // the redelivered message re-accumulates onto a complete window
+                                // instead of a purged one; purge only after a successful emit.
                                 throw new RuntimeException("Failed to emit window aggregate result", e);
-                            } finally {
-                                if (purgeState) {
-                                    state.remove(member);
-                                    stateStore.touch(ref.redisKey(), stateName, state);
-                                }
+                            }
+                            if (purgeState) {
+                                state.remove(member);
+                                stateStore.touch(ref.redisKey(), stateName, state);
                             }
                         });
             }
@@ -705,18 +709,27 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                 windowFunction.apply(k, w, values, collector);
                             } catch (Exception e) {
                                 throw new RuntimeException("Window function failed", e);
-                            } finally {
-                                if (purgeState) {
-                                    state.remove(member);
-                                    stateStore.touch(ref.redisKey(), stateName, state);
-                                }
                             }
                             try {
                                 RedisRuntimeMetrics.get().incWindowFired(config.getJobName(), topic, consumerGroup, operatorId, stateName, partitionId);
                             } catch (Exception ignore) {
                             }
-                            while (!buffer.isEmpty()) {
-                                emit.emit(buffer.removeFirst());
+                            try {
+                                while (!buffer.isEmpty()) {
+                                    emit.emit(buffer.removeFirst());
+                                }
+                            } catch (Exception e) {
+                                // RT-H3: a failed emit mid-drain used to leave the window state
+                                // already purged (the purge ran in a finally before the buffered
+                                // results were emitted), so the redelivered message re-fired a
+                                // truncated window. Keep the state and purge only after every
+                                // buffered result was delivered; redelivery may duplicate results
+                                // (at-least-once) but never silently drops them.
+                                throw new RuntimeException("Failed to emit window apply results", e);
+                            }
+                            if (purgeState) {
+                                state.remove(member);
+                                stateStore.touch(ref.redisKey(), stateName, state);
                             }
                         });
             }
@@ -778,12 +791,14 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                 }
                                 emit.emit(out);
                             } catch (Exception e) {
+                                // RT-H3: the emit failed — keep the accumulated window state so
+                                // the redelivered message re-accumulates onto a complete window
+                                // instead of a purged one; purge only after a successful emit.
                                 throw new RuntimeException("Failed to emit window sum result", e);
-                            } finally {
-                                if (purgeState) {
-                                    state.remove(member);
-                                    stateStore.touch(ref.redisKey(), stateName, state);
-                                }
+                            }
+                            if (purgeState) {
+                                state.remove(member);
+                                stateStore.touch(ref.redisKey(), stateName, state);
                             }
                         });
             }
@@ -818,12 +833,14 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                 }
                                 emit.emit(Long.parseLong(s));
                             } catch (Exception e) {
+                                // RT-H3: the emit failed — keep the accumulated window state so
+                                // the redelivered message re-accumulates onto a complete window
+                                // instead of a purged one; purge only after a successful emit.
                                 throw new RuntimeException("Failed to emit window count result", e);
-                            } finally {
-                                if (purgeState) {
-                                    state.remove(member);
-                                    stateStore.touch(ref.redisKey(), stateName, state);
-                                }
+                            }
+                            if (purgeState) {
+                                state.remove(member);
+                                stateStore.touch(ref.redisKey(), stateName, state);
                             }
                         });
             }
@@ -909,7 +926,16 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                         bucketTriggers.remove(triggerKey);
                         continue;
                     }
-                    handler.fire(entry.getValue(), pw.start, pw.end, true);
+                    try {
+                        handler.fire(entry.getValue(), pw.start, pw.end, true);
+                    } catch (Exception e) {
+                        // RT-H3: the member was already polled off the due set; re-queue it at
+                        // its original close score so the emission is retried by the next fire
+                        // sweep. The emitter kept the window state (purge only happens after a
+                        // successful emit), so the retry fires the complete window.
+                        due.add(entry.getScore(), entry.getValue());
+                        throw e;
+                    }
                     bucketTriggers.remove(triggerKey);
                 }
             }
