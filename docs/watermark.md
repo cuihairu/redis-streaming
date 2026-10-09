@@ -80,7 +80,7 @@ stream.assignTimestampsAndWatermarks(
 
 - 默认(未调用 `assignTimestampsAndWatermarks`):`RedisPipelineRunner` 在每条消息处理链入口计算 `事件时间 = message.getTimestamp()`(无时间戳时回退为投递时刻),维护全局最大值,水位线 = `max(事件时间) − RedisRuntimeConfig.watermarkOutOfOrderness`(Builder 默认 `Duration.ZERO`,负值在配置校验时抛 `IllegalArgumentException`)。
 - 调用后:用户生成器的 `onEvent`/`onPeriodicEmit` 在每条消息上被调用(每条都调,非周期定时),发出的水位线经 `WatermarkOutput.emitWatermark` → `Context.raiseWatermark` **单调提升**全局水位线(不会下调启发式已达到的值)。集成测试 `RedisRuntimeWindowedStreamIntegrationTest` 证明:配置 `watermarkOutOfOrderness=10s` 时,启发式推不动的窗口可被用户生成器提前触发。
-- 窗口触发时机:水位线推进发生在消息处理链入口,窗口算子在逐条消息处理中检查到期(无独立定时器驱动窗口触发)。
+- 窗口触发时机:水位线推进发生在消息处理链入口,窗口算子在逐条消息处理中检查到期(每记录触发数受 `windowMaxFiresPerRecord` 封顶,封顶余量等下一条记录);空闲冲刷(RT-M3,`RedisRuntimeConfig.watermarkIdleTimeout`,默认关闭)把水位线冲至 `MAX_VALUE` 时,窗口算子经冲刷钩子不限量排空各自 due 集合,详见 docs/runtime.md 2.4。
 
 ## 已知限制
 

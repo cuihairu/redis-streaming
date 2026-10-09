@@ -187,9 +187,10 @@ class RedisWindowedStreamHelperUnitTest {
     void fireDueWindowsRespectsWatermarkBoundsAndMaxFires() throws Exception {
         WindowedStream<Object, Object> w = windowed(cfg(b -> b.windowMaxFiresPerRecord(2)));
         Method fireDueWindows = findFireDueWindows(w);
-        // (due, watermark, partitionId, stateName, bucketTriggers, handler) — the trigger map
-        // and handler are the last two params since the WindowAssigner.Trigger wiring (todo B3)
-        Class<?> handlerType = fireDueWindows.getParameterTypes()[fireDueWindows.getParameterCount() - 1];
+        // (due, watermark, partitionId, stateName, bucketTriggers, handler, maxFires) — the
+        // handler sits at count-2 since RT-M3 added the explicit maxFires tail param (the
+        // idle-flush hook drains with Integer.MAX_VALUE; the record path passes the config cap)
+        Class<?> handlerType = fireDueWindows.getParameterTypes()[fireDueWindows.getParameterCount() - 2];
         List<String> fired = new ArrayList<>();
         Object handler = Proxy.newProxyInstance(
                 handlerType.getClassLoader(),
@@ -204,7 +205,8 @@ class RedisWindowedStreamHelperUnitTest {
         // element and FIRE_AND_PURGE at close, so every due entry below reaches the handler
         java.util.function.Function<RScoredSortedSet<String>, Object[]> call = due -> new Object[]{due, 50L, 0, "s",
                 new java.util.HashMap<String, io.github.cuihairu.redis.streaming.api.stream.WindowAssigner.Trigger<Object>>(),
-                handler};
+                handler,
+                2};
 
         // empty due-set
         invoke(w, fireDueWindows, call.apply(mockSet()));
@@ -238,7 +240,7 @@ class RedisWindowedStreamHelperUnitTest {
         invoke(w, fireDueWindows, call.apply(nullValued));
         assertEquals(List.of(), fired);
 
-        // max fires per record clamp (config = 2, three due windows)
+        // maxFires clamp (2, three due windows)
         fired.clear();
         RScoredSortedSet<String> many = mockSet();
         when(many.firstEntry()).thenReturn(new ScoredEntry<>(1.0, "m"));
@@ -252,7 +254,7 @@ class RedisWindowedStreamHelperUnitTest {
 
     private static Method findFireDueWindows(Object target) throws Exception {
         for (Method m : target.getClass().getDeclaredMethods()) {
-            if ("fireDueWindows".equals(m.getName()) && m.getParameterCount() == 6) {
+            if ("fireDueWindows".equals(m.getName()) && m.getParameterCount() == 7) {
                 m.setAccessible(true);
                 return m;
             }

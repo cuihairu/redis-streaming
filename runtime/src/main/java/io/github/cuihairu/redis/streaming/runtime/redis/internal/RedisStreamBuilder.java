@@ -160,10 +160,14 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
 
                 @Override
                 public void markIdle() {
+                    // RT-M3: with watermarkIdleTimeout configured, the next idle sweep
+                    // flushes the watermark even without record silence
+                    ctx.markIdle();
                 }
 
                 @Override
                 public void markActive() {
+                    ctx.markActive();
                 }
             };
             watermarkGenerator.onEvent(v, ctx.currentEventTime(), output);
@@ -420,6 +424,10 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                 // due set. After a restart the registry starts empty, so due windows fire by
                 // the stock close-time semantics (a stateful custom trigger loses its counts).
                 Map<String, WindowAssigner.Trigger<V>> bucketTriggers = new java.util.concurrent.ConcurrentHashMap<>();
+                // RT-M3: partitions that have windowed records on this operator; the idle
+                // flush hook sweeps each one's due set.
+                java.util.Set<Integer> knownPartitions = java.util.concurrent.ConcurrentHashMap.newKeySet();
+                java.util.concurrent.atomic.AtomicBoolean idleFlushHookRegistered = new java.util.concurrent.atomic.AtomicBoolean(false);
                 ops.add((value, ctx, emit) -> {
                     V v = castValue(value);
                     if (guard != null) {
@@ -481,7 +489,35 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                             // CONTINUE: keep accumulating
                         }
 
-                        fireDueWindows(due, watermark, partitionId, stateName, bucketTriggers, fireHandler);
+                        // RT-M3: with watermarkIdleTimeout configured, register (once) an
+                        // idle-flush hook that drains this operator's due sets across all
+                        // known partitions — a quiet pipeline then still fires its remaining
+                        // windows. The record path itself stays the sole owner of the due
+                        // set while records flow, so trigger semantics (e.g. defer-once
+                        // close triggers) and the per-record fire clamp are untouched.
+                        knownPartitions.add(partitionId);
+                        if (ctx.idleFlushEnabled() && idleFlushHookRegistered.compareAndSet(false, true)) {
+                            WindowFireHandler flushHandler = fireHandler;
+                            ctx.addIdleFlushHook(() -> {
+                                long flushWatermark = ctx.currentWatermark();
+                                for (Integer pid : knownPartitions) {
+                                    stateStore.setCurrentPartitionId(pid);
+                                    try {
+                                        RScoredSortedSet<String> flushDue = redissonClient.getScoredSortedSet(
+                                                windowDueKey(pid, stateName), StringCodec.INSTANCE);
+                                        fireDueWindows(flushDue, flushWatermark, pid, stateName,
+                                                bucketTriggers, flushHandler, Integer.MAX_VALUE);
+                                    } catch (Exception e) {
+                                        log.warn("Idle flush window drain failed (jobName={}, topic={}, group={}, op={}, p={})",
+                                                config.getJobName(), topic, consumerGroup, stateName, pid, e);
+                                    } finally {
+                                        stateStore.clearCurrentPartitionId();
+                                    }
+                                }
+                            });
+                        }
+                        fireDueWindows(due, watermark, partitionId, stateName,
+                                bucketTriggers, fireHandler, Math.max(1, config.getWindowMaxFiresPerRecord()));
                     } finally {
                         stateStore.clearCurrentKey();
                         stateStore.clearCurrentPartitionId();
@@ -886,24 +922,30 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                         + ":windowDue:" + operatorId + ":" + stateName;
             }
 
+            /**
+             * Drains up to {@code maxFires} due windows whose close score is within the
+             * watermark. Returns when the set is empty, the earliest member closes in the
+             * future, or a bucket trigger answers CONTINUE (its explicit choice to keep
+             * that window open; the next drain re-consults it).
+             */
             private void fireDueWindows(RScoredSortedSet<String> due,
                                         long watermark,
                                         int partitionId,
                                         String stateName,
                                         Map<String, WindowAssigner.Trigger<V>> bucketTriggers,
-                                        WindowFireHandler handler) throws Exception {
-                int max = Math.max(1, config.getWindowMaxFiresPerRecord());
-                for (int i = 0; i < max; i++) {
+                                        WindowFireHandler handler,
+                                        int maxFires) throws Exception {
+                for (int i = 0; i < maxFires; i++) {
                     org.redisson.client.protocol.ScoredEntry<String> first = due.firstEntry();
-                    if (first == null) {
-                        return;
-                    }
-                    if (first.getScore() > watermark) {
+                    if (first == null || first.getScore() > watermark) {
                         return;
                     }
                     org.redisson.client.protocol.ScoredEntry<String> entry = due.pollFirstEntry();
-                    if (entry == null || entry.getValue() == null) {
-                        return;
+                    if (entry == null) {
+                        return; // raced with a concurrent drain
+                    }
+                    if (entry.getValue() == null || entry.getValue().isBlank()) {
+                        continue; // vanished/raced member — drop it, never fire a garbage window
                     }
                     ParsedWindow pw = parseWindow(entry.getValue());
                     // Window trigger wiring (todo B3): the bucket's trigger gets the final say

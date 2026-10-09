@@ -23,6 +23,7 @@ import java.util.PriorityQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
@@ -51,6 +52,16 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
     private final boolean closeTimerExecutor;
     private final AtomicLong maxEventTimeMs = new AtomicLong(Long.MIN_VALUE);
     private final AtomicLong watermarkMs = new AtomicLong(Long.MIN_VALUE);
+    /** RT-M3: idle watermark flush period in ms; 0 = disabled (record-driven only). */
+    private final long watermarkIdleTimeoutMs;
+    private final AtomicLong lastActivityMs = new AtomicLong(System.currentTimeMillis());
+    /** Set by {@link Context#markIdle()}; the next idle sweep flushes regardless of record silence. */
+    private final AtomicBoolean idleNow = new AtomicBoolean(false);
+    /** Set when the idle flush raised the watermark to MAX_VALUE; the next record starts a fresh epoch. */
+    private final AtomicBoolean idleFlushed = new AtomicBoolean(false);
+    /** RT-M3: hooks run after each idle flush (windowed operators drain their due sets). */
+    private final java.util.concurrent.CopyOnWriteArrayList<Runnable> idleFlushHooks =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
     private final Object eventTimerLock = new Object();
     private final PriorityQueue<EventTimer> eventTimers = new PriorityQueue<>(
             (a, b) -> {
@@ -101,6 +112,73 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
             this.timerExecutor = ex;
             this.closeTimerExecutor = true;
         }
+        long idleTimeout = 0L;
+        try {
+            Duration d = config.getWatermarkIdleTimeout();
+            if (d != null && !d.isZero() && !d.isNegative()) {
+                idleTimeout = d.toMillis();
+            }
+        } catch (Exception ignore) {
+        }
+        this.watermarkIdleTimeoutMs = idleTimeout;
+        if (watermarkIdleTimeoutMs > 0) {
+            // sweep cadence: responsive for short timeouts, bounded at 1s for long ones
+            // (the sweep body itself is two atomic reads and only flushes on idleness).
+            // First sweep runs one period in so an early markIdle() flushes promptly.
+            long period = Math.min(1000L, Math.max(1L, watermarkIdleTimeoutMs / 10));
+            this.timerExecutor.scheduleWithFixedDelay(this::idleSweep,
+                    period, period, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    /**
+     * RT-M3: idle watermark flush. Without it the watermark is purely record-driven, so a
+     * pipeline whose source went quiet never fires its due event-time timers or window
+     * close-fires again until a new record happens to arrive. After {@code
+     * watermarkIdleTimeout} of record silence (or a generator's {@code markIdle()}), the
+     * watermark is raised to {@code Long.MAX_VALUE} and the due event-time timers drain;
+     * windowed operators drain their remaining due sets through registered flush hooks
+     * ({@link Context#addIdleFlushHook}). The next record starts a fresh watermark epoch
+     * ({@link #updateWatermark}), so a live source resumes normal event-time semantics.
+     */
+    private void idleSweep() {
+        try {
+            if (watermarkIdleTimeoutMs <= 0) {
+                return;
+            }
+            if (!idleNow.get() && System.currentTimeMillis() - lastActivityMs.get() < watermarkIdleTimeoutMs) {
+                return;
+            }
+            // watermarkMs.set racing a concurrent updateWatermark can lose the flush (the
+            // record re-raises a lower candidate); that merely defers the flush to the next
+            // sweep — best-effort by design.
+            if (watermarkMs.get() == Long.MAX_VALUE) {
+                return;
+            }
+            watermarkMs.set(Long.MAX_VALUE);
+            idleFlushed.set(true);
+            fireDueEventTimers();
+            // Windowed operators register hooks so an idle flush drains their Redis-side
+            // due sets (the watermark alone cannot reach them — their close state lives in
+            // sorted sets, not in the event-time timer queue). One failing hook must not
+            // block the others; the failed drain re-queues its members for the next flush
+            // or record.
+            for (Runnable hook : idleFlushHooks) {
+                try {
+                    hook.run();
+                } catch (Exception e) {
+                    log.warn("Idle flush hook failed (jobName={}, topic={}, group={})",
+                            config.getJobName(), topic, consumerGroup, e);
+                }
+            }
+            try {
+                RedisRuntimeMetrics.get().setWatermarkMs(config.getJobName(), topic, consumerGroup, watermarkMs.get());
+            } catch (Exception ignore) {
+            }
+        } catch (Exception e) {
+            log.warn("Idle watermark flush failed (jobName={}, topic={}, group={})",
+                    config.getJobName(), topic, consumerGroup, e);
+        }
     }
 
     public boolean handle(Message message) throws Exception {
@@ -109,6 +187,8 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
         }
         ensureSinksOpen();
         long now = System.currentTimeMillis();
+        lastActivityMs.set(now);
+        idleNow.set(false);
         long eventTime = extractEventTimeMs(message, now);
         updateWatermark(eventTime);
         Context ctx = new Context(message, now, eventTime);
@@ -124,8 +204,23 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
     }
 
     private void updateWatermark(long eventTimeMs) {
-        maxEventTimeMs.updateAndGet(prev -> Math.max(prev, eventTimeMs));
-        long max = maxEventTimeMs.get();
+        if (idleFlushed.compareAndSet(true, false)) {
+            // RT-M3: first record after an idle flush. The flush pinned the watermark at
+            // MAX_VALUE — max() would keep it there forever — so this record starts a fresh
+            // watermark epoch from its own event time.
+            maxEventTimeMs.set(eventTimeMs);
+            watermarkMs.set(candidateFor(eventTimeMs));
+        } else {
+            maxEventTimeMs.updateAndGet(prev -> Math.max(prev, eventTimeMs));
+            watermarkMs.updateAndGet(prev -> Math.max(prev, candidateFor(maxEventTimeMs.get())));
+        }
+        try {
+            RedisRuntimeMetrics.get().setWatermarkMs(config.getJobName(), topic, consumerGroup, watermarkMs.get());
+        } catch (Exception ignore) {
+        }
+    }
+
+    private long candidateFor(long maxEventTimeMs) {
         long outOfOrdernessMs = 0L;
         try {
             if (config.getWatermarkOutOfOrderness() != null) {
@@ -133,16 +228,11 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
             }
         } catch (Exception ignore) {
         }
-        long candidate = max;
+        long candidate = maxEventTimeMs;
         if (outOfOrdernessMs > 0 && candidate != Long.MIN_VALUE) {
             candidate = candidate - outOfOrdernessMs;
         }
-        final long wmCandidate = candidate;
-        watermarkMs.updateAndGet(prev -> Math.max(prev, wmCandidate));
-        try {
-            RedisRuntimeMetrics.get().setWatermarkMs(config.getJobName(), topic, consumerGroup, watermarkMs.get());
-        } catch (Exception ignore) {
-        }
+        return candidate;
     }
 
     private void emitFrom(int index, Object value, Context ctx) throws Exception {
@@ -483,6 +573,45 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
                 RedisRuntimeMetrics.get().setWatermarkMs(config.getJobName(), topic, consumerGroup, RedisPipelineRunner.this.watermarkMs.get());
             } catch (Exception ignore) {
             }
+        }
+
+        /**
+         * RT-M3: declare the pipeline idle (a {@link io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator}
+         * that has run dry). The next idle sweep flushes the watermark even without record
+         * silence. Only takes effect when {@code watermarkIdleTimeout} is configured, since
+         * that is what schedules the sweep.
+         */
+        public void markIdle() {
+            if (watermarkIdleTimeoutMs > 0) {
+                idleNow.set(true);
+            }
+        }
+
+        /**
+         * RT-M3: clear a previous {@link #markIdle()} and record fresh activity.
+         */
+        public void markActive() {
+            idleNow.set(false);
+            lastActivityMs.set(System.currentTimeMillis());
+        }
+
+        /**
+         * RT-M3: registers a hook that runs after every idle watermark flush (while the
+         * watermark is still {@code MAX_VALUE}). Windowed operators use this to drain
+         * their Redis-side window due sets when the pipeline goes quiet; on the record
+         * path the per-record drain stays the sole owner of the due set, so trigger
+         * semantics (e.g. defer-once close triggers) are untouched.
+         */
+        public void addIdleFlushHook(Runnable hook) {
+            idleFlushHooks.addIfAbsent(hook);
+        }
+
+        /**
+         * RT-M3: whether idle watermark flush is configured at all. Flush-dependent
+         * machinery (due-set drain hooks) only registers when it is.
+         */
+        public boolean idleFlushEnabled() {
+            return watermarkIdleTimeoutMs > 0;
         }
 
 

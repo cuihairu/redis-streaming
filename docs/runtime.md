@@ -124,6 +124,7 @@ keyed.<String>process((key, value, ctx, collector) -> {
 | `checkpointThreads(int)` | int | `1` | 检查点调度线程数(执行仍按作业串行) |
 | `eventTimeTimerMaxSize(int)` | int | `100000` | 每 runner 事件时间定时器队列上限;`0` 不限;满时限频告警并丢弃注册 |
 | `watermarkOutOfOrderness(Duration)` | Duration | `ZERO` | 水位线 = max(事件时间) − 该值;非负 |
+| `watermarkIdleTimeout(Duration)` | Duration | `null`(关闭) | 空闲水位线冲刷:源静默该时长(或生成器 `markIdle()`)后水位线冲刷至 `MAX_VALUE`,触发全部到期 event-time 定时器并经冲刷钩子排空窗口 due 集合,下一条记录开启新水位线纪元;null/ZERO 关闭,负值抛 `IllegalArgumentException` |
 | `windowAllowedLateness(Duration)` | Duration | `ZERO` | 窗口关闭时间 = windowEnd + 该值 |
 | `windowMaxFiresPerRecord(int)` | int | `256` | 每条记录最多触发的到期窗口数(≥1) |
 | `mdcEnabled(boolean)` | boolean | `false` | 为每条消息安装 MDC(job/topic/group/consumer/id/key/partition) |
@@ -205,8 +206,9 @@ env.fromMqTopic(topic, group)
 ### 2.4 关键语义
 
 - 事件时间取 `Message.getTimestamp()`(发送方构造消息时的 `Instant.now()`),为空回退当前系统时间;水位线 = max(事件时间) − `watermarkOutOfOrderness`,单调不减。
-- 用户 WatermarkGenerator:`assignTimestampsAndWatermarks(gen)` 对每条元素调用 `onEvent` + `onPeriodicEmit`;生成器只能通过 `Context.raiseWatermark` **单调提升**水位线;`markIdle/markActive` 为空实现(idle 语义未接入),`onPeriodicEmit` 按元素驱动而非墙钟定时。
-- 窗口触发:每条消息处理过程中检查到期窗口,每条记录最多触发 `windowMaxFiresPerRecord` 个;窗口关闭时间 = `windowEnd + windowAllowedLateness`,水位线越过即晚到,元素被丢弃并计入 `incWindowLateDropped` 指标。窗口算子同时驱动 `WindowAssigner.getDefaultTrigger()`:每个 (partition,key,window) 桶一个实例,元素到达调 `onElement`(`FIRE` 提前发射并继续累积 / `FIRE_AND_PURGE` 发射并清桶 / `PURGE` 静默清桶 / `CONTINUE`),到期发射前调 `onEventTime`(`CONTINUE` 推迟、`PURGE` 静默丢弃、`FIRE` 按 `FIRE_AND_PURGE` 处理)。默认 `EventTimeTrigger` 与纯水位线关闭行为等价(见 docs/watermark.md)。
+- 用户 WatermarkGenerator:`assignTimestampsAndWatermarks(gen)` 对每条元素调用 `onEvent` + `onPeriodicEmit`;生成器只能通过 `Context.raiseWatermark` **单调提升**水位线;`markIdle()` 声明源空闲(配置 `watermarkIdleTimeout` 后由空闲清扫立即冲刷),`markActive()` 恢复活跃,`onPeriodicEmit` 按元素驱动而非墙钟定时。
+- 空闲水位线冲刷(RT-M3,可配置 `watermarkIdleTimeout`,默认关闭):管道静默该时长(或生成器 `markIdle()`)后,定时清扫把水位线冲刷至 `MAX_VALUE` 并触发全部到期 event-time 定时器——空闲管道的窗口/定时器不再永久滞留;下一条记录开启新水位线纪元(以该记录事件时间为基,而非被钉在冲刷值上)。
+- 窗口触发:每条消息处理过程中检查到期窗口,每条记录最多触发 `windowMaxFiresPerRecord` 个,封顶后剩余到期成员等下一条记录继续;空闲水位线冲刷(RT-M3,`watermarkIdleTimeout`)把水位线冲至 `MAX_VALUE` 时,窗口算子经注册的冲刷钩子不限量排空各自 due 集合——静默管道的窗口不再永久滞留。记录路径上 due 集合的唯一所有者仍是逐记录排空,触发器语义(如 defer-once 关闭触发器)与封顶行为不受冲刷影响;窗口关闭时间 = `windowEnd + windowAllowedLateness`,水位线越过即晚到,元素被丢弃并计入 `incWindowLateDropped` 指标。窗口算子同时驱动 `WindowAssigner.getDefaultTrigger()`:每个 (partition,key,window) 桶一个实例,元素到达调 `onElement`(`FIRE` 提前发射并继续累积 / `FIRE_AND_PURGE` 发射并清桶 / `PURGE` 静默清桶 / `CONTINUE`),到期发射前调 `onEventTime`(`CONTINUE` 推迟、`PURGE` 静默丢弃、`FIRE` 按 `FIRE_AND_PURGE` 处理)。默认 `EventTimeTrigger` 与纯水位线关闭行为等价(见 docs/watermark.md)。
 - 状态由 `RedisKeyedStateStore` 写入 (job,topic,group,partition,operator,stateName) 维度的 Redis Hash(字段为序列化后的 key),支持 TTL、按 `keyedStateShardCount` 分片、schema 版本校验与热键处理;状态取用:`keyed.getState(StateDescriptor)` 返回 `ValueState`(`value/update/clear`)。
 - 检查点由 `RedisRuntimeCheckpointManager` 停止世界后快照,内容为 `runtime:meta`(jobName/jobInstanceId/stateKeyPrefix/sinkCommitted/fencingToken)、`runtime:offsets`(各分区 commit frontier,即已 ack 的最大 stream id)、`runtime:state`(状态键索引覆盖到的 MAP/ZSET 全量)、`runtime:stateSchema`、可选 `runtime:txns`(两阶段提交句柄);恢复时重建消费组(`XGROUP DESTROY`+`CREATE` 到快照 offset)、回放状态、逐 runner 调 `onCheckpointRestore`,并处理 2PC 补偿(见 2.8)。
 - 定时器分两类:processing-time 走共享 `ScheduledExecutor`(`timerThreads`),event-time 走内存优先队列(容量 `eventTimeTimerMaxSize`),随水位线触发。

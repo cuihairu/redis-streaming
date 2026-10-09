@@ -68,6 +68,7 @@ public final class RedisRuntimeConfig {
     private final int eventTimeTimerMaxSize;
     private final Duration watermarkOutOfOrderness;
     private final Duration windowAllowedLateness;
+    private final Duration watermarkIdleTimeout;
     private final int windowMaxFiresPerRecord;
     private final boolean mdcEnabled;
     private final double mdcSampleRate;
@@ -137,6 +138,10 @@ public final class RedisRuntimeConfig {
         if (this.windowAllowedLateness.isNegative()) {
             throw new IllegalArgumentException("windowAllowedLateness must be >= 0");
         }
+        if (b.watermarkIdleTimeout != null && b.watermarkIdleTimeout.isNegative()) {
+            throw new IllegalArgumentException("watermarkIdleTimeout must be >= 0");
+        }
+        this.watermarkIdleTimeout = b.watermarkIdleTimeout;
         if (b.windowMaxFiresPerRecord <= 0) {
             throw new IllegalArgumentException("windowMaxFiresPerRecord must be >= 1");
         }
@@ -368,6 +373,22 @@ public final class RedisRuntimeConfig {
     }
 
     /**
+     * Idle timeout for the watermark: when a pipeline has processed no record for this
+     * long (or a watermark generator declared it idle via {@code markIdle()}), the runner
+     * flushes its watermark to {@code Long.MAX_VALUE}, firing all due event-time timers
+     * and (via the windowed operators' flush hooks) draining all remaining due windows;
+     * the next record starts a fresh watermark epoch instead of being capped by the
+     * flush.
+     *
+     * <p>{@code null} or zero disables the idle flush (the default: watermark and window
+     * firing stay purely record-driven). Callers that rely on watermarks only through
+     * user watermark generators may not want this behavior.</p>
+     */
+    public Duration getWatermarkIdleTimeout() {
+        return watermarkIdleTimeout;
+    }
+
+    /**
      * Whether to install per-message MDC keys (job/topic/group/consumer/id/key/partition) around handler execution.
      */
     public boolean isMdcEnabled() {
@@ -492,6 +513,7 @@ public final class RedisRuntimeConfig {
         private int eventTimeTimerMaxSize = 100_000;
         private Duration watermarkOutOfOrderness = Duration.ZERO;
         private Duration windowAllowedLateness = Duration.ZERO;
+        private Duration watermarkIdleTimeout;
         private int windowMaxFiresPerRecord = 256;
         private boolean mdcEnabled = false;
         private double mdcSampleRate = 1.0d;
@@ -636,6 +658,18 @@ public final class RedisRuntimeConfig {
 
         public Builder windowMaxFiresPerRecord(int max) {
             this.windowMaxFiresPerRecord = max;
+            return this;
+        }
+
+        /**
+         * Enables the idle watermark flush: after this long without a record (or on a
+         * watermark generator's {@code markIdle()}), the runner fires everything the
+         * watermark gates (event-time timers and remaining due windows) and the next
+         * record starts a fresh watermark epoch. {@code null} (the default) or zero
+         * disables the flush.
+         */
+        public Builder watermarkIdleTimeout(Duration idleTimeout) {
+            this.watermarkIdleTimeout = idleTimeout;
             return this;
         }
 

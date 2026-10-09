@@ -643,7 +643,14 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 - **RT-M1** `checkpointDrainTimeout=ZERO` 使排空循环死循环且消费者永久 pause（`RedisStreamExecutionEnvironment.java:657-678`；deadline 检查被 `>0` 门控，ZERO 通过校验）→ checkpointing 标志永不释放，作业死锁无报错。✅已修复：builder 将 null/ZERO/负值统一回退 30s 默认；排空循环的 deadline 检查改为无条件（防御性）。回归断言加入 `RedisRuntimeConfigBuilderCoverageTest`。
 - **RT-M2** 事件时间定时器队列满时静默丢弃注册（`RedisPipelineRunner.java:406-429`）→ 对应窗口/回调永不 fire，仅 60s 限速 warn。
-- **RT-M3** watermark 与窗口 fire 纯消息驱动：空闲分区/子任务永不 fire；`windowMaxFiresPerRecord=256` 截断后剩余窗口要等下一条记录；`markIdle()` 是 no-op（`RedisPipelineRunner.java:100-113,163-184`、`RedisStreamBuilder.java:451-454,791-810`）。
+- **RT-M3** watermark 与窗口 fire 纯消息驱动：空闲分区/子任务永不 fire；`windowMaxFiresPerRecord=256` 截断后剩余窗口要等下一条记录；`markIdle()` 是 no-op（`RedisPipelineRunner.java:100-113,163-184`、`RedisStreamBuilder.java:451-454,791-810`）。✅已修复（见下节 RT-M3）。
+
+### RT-M3 watermark/窗口 fire 纯消息驱动：空闲管道永不 fire、封顶截断依赖后续记录 [已修复]
+- 位置：`runtime/.../redis/internal/RedisPipelineRunner.java`（idle 冲刷 + 冲刷钩子）+ `RedisStreamBuilder.java`（窗口 due 集合冲刷钩子 + `markIdle/markActive` 接线）+ `RedisRuntimeConfig.java`（`watermarkIdleTimeout`）。
+- 触发：源静默（空闲分区、慢上游、消费积压间歇）；或单分区内多个 key 的窗口同时关闭而每记录触发数被 `windowMaxFiresPerRecord` 封顶。
+- 影响：水位线只在消息处理链入口推进——静默管道的到期 event-time 定时器与窗口永不 fire（直到恰好有新记录到来）；封顶后剩余到期窗口要等下一条记录才能继续触发，没有下一条记录就永久滞留；`markIdle()` 是空实现，`WatermarkGenerator` 无法声明源空闲。
+- 验证与修复：三层配合。（1）**空闲冲刷**（可配置 `watermarkIdleTimeout`，默认 null/ZERO 关闭、负值拒绝）：runner 以最小(超时/10, 1s)周期的定时清扫检测静默（或 `markIdle()` 置位），把水位线冲刷至 `MAX_VALUE` 并触发全部到期 event-time 定时器；下一条记录经 `idleFlushed` 标志开启**新水位线纪元**（以该记录事件时间为基），避免被钉在冲刷值上使水位线永久失效。（2）**窗口 due 集合冲刷钩子**：窗口算子在首条记录时向 runner 注册一个一次性冲刷钩子（仅当 `watermarkIdleTimeout` 已配置），空闲冲刷把水位线冲至 `MAX_VALUE` 后按算子遍历其已知分区、设分区 ThreadLocal 后**不限量**排空各自 due 集合——静默管道的窗口随之补发。设计取舍：不用 event-time 清扫定时器做桥（定时器在水位线越过关闭分数的那条记录末尾就会被消费，届时冲刷尚未发生， generation 门控跳过后再挂会在 `fireDueEventTimers` 的 while 循环里因同分重复注册而自旋）；记录路径上 due 集合的唯一所有者仍是逐记录排空，触发器语义（如 defer-once 关闭触发器）与 `windowMaxFiresPerRecord` 封顶行为完全不受冲刷影响，封顶余量等下一条记录或冲刷。（3）`markIdle()/markActive()` 经 `Context` 接线至 runner 的 idle 标志（`markIdle` 需配置 `watermarkIdleTimeout` 才有清扫可触发）。语义结果：空闲管道的窗口/定时器在超时后补发（at-least-once 语义不变，可能与迟到数据重复）；冲刷后新纪元内迟到旧元素仍按晚到丢弃策略处理。
+- 回归测试：`RedisPipelineRunnerIdleFlushTest`（mock-free 4 用例：静默冲刷触发远期定时器、冲刷后新纪元水位线=下一条记录事件时间而非 MAX、`markIdle` 无静默也冲刷、未配置时保持纯记录驱动）+ `IdleWatermarkWindowFlushIntegrationTest`（真实 Redis：静默管道超时后窗口补发 `contains(2L)`；`windowMaxFiresPerRecord=2` 封顶后由冲刷钩子排空余量——元素总和 11 为防窗口跨界分裂的不变量（4 个 key 累计 10 + 触发记录 z 自身窗口 1，冲刷水位线为 `MAX_VALUE` 故 z 的窗口同样补发），摘除实证：禁用钩子循环后两用例分别 `got [1, 2, 1, 2, 4]` 与 `got []`）。
 
 ### RT-M4 状态恢复先删后建：中途失败既丢状态又以无状态静默继续 [已修复]
 - 位置：`runtime/.../redis/internal/RedisRuntimeCheckpointManager.java`（`restoreState`）+ `RedisStreamExecutionEnvironment.java`（启动 restore 路径）。
@@ -698,7 +705,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 
 - **重构级**（需专项设计，非局部修复）：MQ-01/MQ-04（DLQ pending 回收与删除策略语义）、RT-H2（checkpoint 全库 SCAN）、B-20（完成匹配的有界化）——均已在此后专项修复；B-24（KTable 物化清理）经血缘登记+代际保留+级联删除修复（见上）。
 - 设计决策类：RT-H3（fire-and-purge 原子性，需两阶段提交）、B-06（配置通知重同步，涉及 API 契约）。
-- 风险可控/影响良性：MQ-11（frontier 回退方向安全）、RT-M3/M6/M7（文档化语义）、B-36（文档已声明测试用途）等。
+- 风险可控/影响良性：MQ-11（frontier 回退方向安全）、RT-M6/M7（文档化语义）、B-36（文档已声明测试用途）等。
 - 其余 ⏳ 条目为审计发现但本轮未逐条复现验证（范围限制），均已给出触发条件、位置与修复方向，可直接作为下轮输入。
 
 ### 低危清单核销（2026-10-07 逐条对照活代码）
