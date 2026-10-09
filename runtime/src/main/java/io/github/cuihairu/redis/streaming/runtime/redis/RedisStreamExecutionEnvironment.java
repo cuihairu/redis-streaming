@@ -42,6 +42,7 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
@@ -210,8 +211,14 @@ public final class RedisStreamExecutionEnvironment {
             RedisRuntimeMetrics.get().incJobStarted(config.getJobName());
         } catch (Exception ignore) {
         }
-        List<MessageConsumer> consumers = new ArrayList<>();
-        List<RedisPipelineRunner<?>> runners = new ArrayList<>();
+        // copy-on-write: scaleParallelism mutates these under the checkpointing gate while
+        // cancel() iterates them without any lock
+        List<MessageConsumer> consumers = new java.util.concurrent.CopyOnWriteArrayList<>();
+        List<RedisPipelineRunner<?>> runners = new java.util.concurrent.CopyOnWriteArrayList<>();
+        // per-subtask bookkeeping for scaleParallelism (mutated only under the same gate)
+        List<Subtask> subtasks = new ArrayList<>();
+        // monotonically increasing consumer-name sequence across resizes (never reused)
+        AtomicLong consumerSeq = new AtomicLong(0);
         ScheduledExecutorService sharedTimerExecutor = null;
         TopicPartitionRegistry partitionRegistry = new TopicPartitionRegistry(redissonClient);
         RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
@@ -271,6 +278,7 @@ public final class RedisStreamExecutionEnvironment {
                 }
             }
 
+            int pipelineIndex = 0;
             for (RedisPipelineDefinition def : pipelineDefinitions) {
                 RedisPipeline<?> p = def.freeze();
                 int parallelism = Math.max(1, config.getPipelineParallelism());
@@ -294,7 +302,9 @@ public final class RedisStreamExecutionEnvironment {
                         }
                     }
 
-                    String consumerName = config.getJobName() + "-" + config.getJobInstanceId() + "-" + (consumers.size() + 1);
+                    // register before subscribe so a concurrent cancel() cannot miss it
+                    String consumerName = config.getJobName() + "-" + config.getJobInstanceId() + "-"
+                            + consumerSeq.incrementAndGet();
                     MessageConsumer consumer = mqFactory.createConsumer(consumerName);
                     consumers.add(consumer);
 
@@ -303,26 +313,10 @@ public final class RedisStreamExecutionEnvironment {
                                 partitionRegistry, script, ENSURE_GROUP_LUA, p.topic(), p.consumerGroup());
                     }
 
-                    MessageHandler handler = createMessageHandler(runner, p, consumerName, deferredAcks);
-
-                    io.github.cuihairu.redis.streaming.mq.SubscriptionOptions opts =
-                            optionsForSubtask(p.subscriptionOptions(), parallelism, subtask);
-
-                    try {
-                        consumer.subscribe(p.topic(), p.consumerGroup(), handler, opts);
-                        consumer.start();
-                        try {
-                            RedisRuntimeMetrics.get().incPipelineStarted(config.getJobName(), p.topic(), p.consumerGroup());
-                        } catch (Exception ignore) {
-                        }
-                    } catch (Exception e) {
-                        try {
-                            RedisRuntimeMetrics.get().incPipelineStartFailed(config.getJobName(), p.topic(), p.consumerGroup());
-                        } catch (Exception ignore) {
-                        }
-                        throw e;
-                    }
+                    startSubtaskConsumer(consumer, consumerName, p, subtask, parallelism, runner, deferredAcks);
+                    subtasks.add(new Subtask(pipelineIndex, runner, consumer));
                 }
+                pipelineIndex++;
             }
 
             // every runner replayed its stored transactions: the restored checkpoint is now
@@ -357,7 +351,7 @@ public final class RedisStreamExecutionEnvironment {
         }
 
         return new LaunchedJobClient(checkpointExecutorRef, leaderRenewExecutor, leaderElector, isLeader,
-                sharedTimerExecutor, consumers, runners,
+                sharedTimerExecutor, consumers, runners, subtasks, consumerSeq,
                 checkpointManager, pipelineKeys, deferredAcks, twoPhaseEpochs, checkpointing, restoredCheckpointIdRef);
     }
 
@@ -467,6 +461,8 @@ public final class RedisStreamExecutionEnvironment {
         private final ScheduledExecutorService sharedTimerExecutor;
         private final List<MessageConsumer> consumers;
         private final List<RedisPipelineRunner<?>> runners;
+        private final List<Subtask> subtasks;
+        private final AtomicLong consumerSeq;
         private final RedisRuntimeCheckpointManager checkpointManager;
         private final List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys;
         private final DeferredAcks deferredAcks;
@@ -481,6 +477,8 @@ public final class RedisStreamExecutionEnvironment {
                                   ScheduledExecutorService sharedTimerExecutor,
                                   List<MessageConsumer> consumers,
                                   List<RedisPipelineRunner<?>> runners,
+                                  List<Subtask> subtasks,
+                                  AtomicLong consumerSeq,
                                   RedisRuntimeCheckpointManager checkpointManager,
                                   List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
                                   DeferredAcks deferredAcks,
@@ -494,6 +492,8 @@ public final class RedisStreamExecutionEnvironment {
             this.sharedTimerExecutor = sharedTimerExecutor;
             this.consumers = consumers;
             this.runners = runners;
+            this.subtasks = subtasks;
+            this.consumerSeq = consumerSeq;
             this.checkpointManager = checkpointManager;
             this.pipelineKeys = pipelineKeys;
             this.deferredAcks = deferredAcks;
@@ -593,6 +593,129 @@ public final class RedisStreamExecutionEnvironment {
                     return any ? total : -1L;
                 }
 
+                @Override
+                public boolean scaleParallelism(int newParallelism) {
+                    if (newParallelism < 1) {
+                        throw new IllegalArgumentException("newParallelism must be >= 1");
+                    }
+                    if (canceled.get()) {
+                        return false;
+                    }
+                    // exclusive with checkpoint flows (they pause the consumers and iterate
+                    // the same subtask lists): wait out an in-flight checkpoint instead of
+                    // racing it on the list mutations
+                    long deadline = System.currentTimeMillis() + 30_000;
+                    while (!checkpointing.compareAndSet(false, true)) {
+                        if (canceled.get() || System.currentTimeMillis() > deadline) {
+                            return false;
+                        }
+                        try {
+                            Thread.sleep(50);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            return false;
+                        }
+                    }
+                    try {
+                        return scaleSubtasks(newParallelism);
+                    } finally {
+                        checkpointing.set(false);
+                    }
+                }
+
+                private boolean scaleSubtasks(int newParallelism) {
+                    int pipelines = Math.max(1, pipelineKeys.size());
+                    List<List<Subtask>> byPipeline = new ArrayList<>(pipelines);
+                    for (int i = 0; i < pipelines; i++) {
+                        byPipeline.add(new ArrayList<>());
+                    }
+                    for (Subtask st : subtasks) {
+                        if (st.pipelineIndex < byPipeline.size()) {
+                            byPipeline.get(st.pipelineIndex).add(st);
+                        }
+                    }
+                    int current = byPipeline.get(0).size();
+                    if (newParallelism == current) {
+                        return true;
+                    }
+                    try {
+                        if (newParallelism < current) {
+                            // repin the survivors first: partitions moving between survivors
+                            // hand over promptly; partitions still held by the removed
+                            // subtasks follow when those stop below
+                            for (List<Subtask> pl : byPipeline) {
+                                for (int i = 0; i < newParallelism && i < pl.size(); i++) {
+                                    repin(pl.get(i), newParallelism, i);
+                                }
+                            }
+                            for (List<Subtask> pl : byPipeline) {
+                                for (int i = newParallelism; i < pl.size(); i++) {
+                                    removeSubtask(pl.get(i));
+                                }
+                            }
+                        } else {
+                            for (List<Subtask> pl : byPipeline) {
+                                for (int i = 0; i < pl.size(); i++) {
+                                    repin(pl.get(i), newParallelism, i);
+                                }
+                            }
+                            for (int pi = 0; pi < pipelines && pi < pipelineDefinitions.size(); pi++) {
+                                RedisPipeline<?> p = pipelineDefinitions.get(pi).freeze();
+                                for (int i = current; i < newParallelism; i++) {
+                                    if (canceled.get()) {
+                                        return false;
+                                    }
+                                    addSubtaskForScale(p, pi, i, newParallelism);
+                                }
+                            }
+                        }
+                        log.info("Scaled job {} parallelism {} -> {} (instance {})",
+                                config.getJobName(), current, newParallelism, config.getJobInstanceId());
+                        return true;
+                    } catch (Exception e) {
+                        log.error("scaleParallelism({}) failed (jobName={}, from={})",
+                                newParallelism, config.getJobName(), current, e);
+                        return false;
+                    }
+                }
+
+                private void repin(Subtask st, int parallelism, int subtask) {
+                    if (st.consumer instanceof io.github.cuihairu.redis.streaming.mq.control.ReassignableMessageConsumer rmc) {
+                        rmc.updatePartitionAssignment(pipelineKeys.get(st.pipelineIndex).topic(), parallelism, subtask);
+                    }
+                }
+
+                private void removeSubtask(Subtask st) {
+                    subtasks.remove(st);
+                    runners.remove(st.runner);
+                    consumers.remove(st.consumer);
+                    // stop first so the workers release their leases (prompt handover). The
+                    // runner is intentionally NOT closed: sinks are shared across a
+                    // pipeline's runners and stay owned by the survivors; cancel() closes
+                    // them at job end. A removed runner is passive (no threads) — at most a
+                    // bounded tail of already-scheduled timers still fires into shared,
+                    // partition-keyed state.
+                    try {
+                        st.consumer.stop();
+                    } catch (Exception ignore) {
+                    }
+                    try {
+                        st.consumer.close();
+                    } catch (Exception ignore) {
+                    }
+                }
+
+                private void addSubtaskForScale(RedisPipeline<?> p, int pipelineIndex, int subtask, int parallelism) {
+                    RedisPipelineRunner<?> runner = p.buildRunner(sharedTimerExecutor);
+                    runners.add(runner);
+                    String consumerName = config.getJobName() + "-" + config.getJobInstanceId() + "-"
+                            + consumerSeq.incrementAndGet();
+                    MessageConsumer consumer = mqFactory.createConsumer(consumerName);
+                    consumers.add(consumer);
+                    startSubtaskConsumer(consumer, consumerName, p, subtask, parallelism, runner, deferredAcks);
+                    subtasks.add(new Subtask(pipelineIndex, runner, consumer));
+                }
+
             @Override
                     public Map<String, Object> diagnostics() {
                         Map<String, Object> out = new HashMap<>();
@@ -611,6 +734,10 @@ public final class RedisStreamExecutionEnvironment {
                 out.put("windowAllowedLatenessMs", config.getWindowAllowedLateness() == null ? 0L : Math.max(0L, config.getWindowAllowedLateness().toMillis()));
                 out.put("eventTimeTimerMaxSize", config.getEventTimeTimerMaxSize());
                 out.put("consumerCount", consumers.size());
+                // parallelism is live after scaleParallelism; the config value is the start-time setting
+                out.put("liveParallelism", subtasks.isEmpty() || pipelineKeys.isEmpty()
+                        ? config.getPipelineParallelism()
+                        : Math.max(1, subtasks.size() / pipelineKeys.size()));
                         out.put("runnerCount", runners.size());
                         out.put("inFlight", inFlight());
                         out.put("checkpointing", checkpointing.get());
@@ -647,6 +774,19 @@ public final class RedisStreamExecutionEnvironment {
                     Duration t = timeout == null ? Duration.ZERO : timeout;
                     return stopped.await(Math.max(0, t.toMillis()), TimeUnit.MILLISECONDS);
                 }
+    }
+
+    /** One running subtask: a runner executing the pipeline plus its partition-pinned consumer. */
+    private static final class Subtask {
+        final int pipelineIndex;
+        final RedisPipelineRunner<?> runner;
+        final MessageConsumer consumer;
+
+        Subtask(int pipelineIndex, RedisPipelineRunner<?> runner, MessageConsumer consumer) {
+            this.pipelineIndex = pipelineIndex;
+            this.runner = runner;
+            this.consumer = consumer;
+        }
     }
 
     private static void stopConsumersQuietly(List<MessageConsumer> consumers) {
@@ -756,6 +896,32 @@ public final class RedisStreamExecutionEnvironment {
                 }
             }
         };
+    }
+
+    /**
+     * Subscribe and start one subtask's consumer (handler wiring, metrics, failure
+     * surfacing). Shared by the initial start loop and {@code scaleParallelism} scale-up.
+     */
+    private void startSubtaskConsumer(MessageConsumer consumer, String consumerName, RedisPipeline<?> p,
+                                      int subtask, int parallelism, RedisPipelineRunner<?> runner,
+                                      DeferredAcks deferredAcks) {
+        MessageHandler handler = createMessageHandler(runner, p, consumerName, deferredAcks);
+        io.github.cuihairu.redis.streaming.mq.SubscriptionOptions opts =
+                optionsForSubtask(p.subscriptionOptions(), parallelism, subtask);
+        try {
+            consumer.subscribe(p.topic(), p.consumerGroup(), handler, opts);
+            consumer.start();
+            try {
+                RedisRuntimeMetrics.get().incPipelineStarted(config.getJobName(), p.topic(), p.consumerGroup());
+            } catch (Exception ignore) {
+            }
+        } catch (Exception e) {
+            try {
+                RedisRuntimeMetrics.get().incPipelineStartFailed(config.getJobName(), p.topic(), p.consumerGroup());
+            } catch (Exception ignore) {
+            }
+            throw e;
+        }
     }
 
     private static io.github.cuihairu.redis.streaming.mq.SubscriptionOptions optionsForSubtask(

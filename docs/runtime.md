@@ -259,6 +259,15 @@ env.fromMqTopic(topic, group)
 - 窗口 `Trigger` 的 `onProcessingTime`:无 processing-time 窗口定时器
 - 用户 `WatermarkGenerator` 的 `markIdle/markActive`:空实现,无 idle 语义
 
+### 2.10 动态伸缩(`RedisJobClient.scaleParallelism`)
+
+- `scaleParallelism(n)`(n≥1,`RedisJobClient` 接口默认返回 false,`LaunchedJobClient` 实现):对作业的**每条管道**增/删子任务到 n 个,并把所有存活 consumer 重钉到 `partitionId % n == subtaskIndex`(经 MQ 层 `updatePartitionAssignment`,移出指派的分区即时停 worker 释放租约,同组新属主由再均衡取回,无需等租约 TTL)。
+- **状态与检查点天然向前兼容**:keyed state 与 checkpoint 都按 `(job,topic,group,partition,…)` 键控,不含并行度/子任务维度——伸缩后新属主子任务直接读写原分区的既有状态;并行度 2 时写的检查点可以在并行度 3 下恢复(`restoreFromLatestCheckpoint`)。
+- **伸缩与检查点互斥**:resize 等待(有界 30s)在途的 stop-the-world 检查点完成后才改动子任务列表;consumers/runners 列表为 copy-on-write,`cancel()` 无锁遍历安全。
+- **缩容语义**:被移除子任务的 consumer 先 stop(workers 退出时以 owner 身份释放租约,提示移交)再 close;其 runner **不 close**——sink 由同管道的全部 runner 共享,幸存 runner 仍持有,作业 cancel 时统一关闭。被移除 runner 无独立线程,至多已调度定时器的有界尾部仍写入共享的按分区键控状态。
+- **交接窗口是 at-least-once**:租约释放与再均衡取回之间(秒级)消息停留在 stream 中不丢失;与 leader 崩溃接管的语义一致。
+- 消费者命名跨伸缩单调递增(`jobName-jobInstanceId-{seq}`,seq 不复用);`diagnostics()` 的 `liveParallelism` 反映伸缩后的实时并行度(配置值为启动值)。
+
 ## 3. 指标
 
 `RedisRuntimeMetrics` 静态单例(默认 Noop,`setCollector` 覆盖,`null` 被忽略),维度为 jobName(+topic/consumerGroup/operatorId/stateName/partitionId):

@@ -67,6 +67,29 @@ public interface RedisJobClient extends AutoCloseable {
     }
 
     /**
+     * Change the job's pipeline parallelism at runtime (dynamic scaling).
+     *
+     * <p>Subtasks are added (scale up) or stopped and removed (scale down) for every
+     * pipeline of the job, and every live consumer is re-pinned to
+     * {@code partitionId % newParallelism == subtaskIndex}. Partition handover rides the
+     * MQ lease rebalance, so a brief handover window delivers at-least-once. Keyed state
+     * and checkpoints are partition-keyed (never subtask-keyed), so they remain valid
+     * across the change — including restoring a checkpoint written at a different
+     * parallelism.</p>
+     *
+     * <p>The resize is exclusive with checkpoint flows: it waits (bounded) for an
+     * in-flight checkpoint to finish before mutating the subtask lists.</p>
+     *
+     * @return true when applied; false when unsupported by this job client, the job is
+     *         canceled, the resize failed midway, or the checkpoint gate could not be
+     *         acquired in time.
+     * @throws IllegalArgumentException when newParallelism &lt; 1
+     */
+    default boolean scaleParallelism(int newParallelism) {
+        return false;
+    }
+
+    /**
      * Equivalent to {@link #cancel()}.
      */
     @Override

@@ -330,11 +330,15 @@
 - [x] 多环境部署：Docker/K8s 参考部署，滚动升级与回滚建议（已实现：2026-01-01）
 
 ## P4：分布式与高可用（下一阶段）
+> 方向决策（2026-10-10 拍板）：P4 内先做**动态伸缩**（并行度变更/分区再均衡/checkpoint 向前兼容），再做**控制面**（job submit/upgrade/rollback API + 权限审计）；§B 双执行引擎统一押后。
 - [x] 多节点协调：leader election + fencing token（防止 split-brain / 双写）：`RedisRuntimeConfig.leaderElectionEnabled`（默认 false 行为不变）+ `leaderLeaseTtl`/`leaderRenewInterval`——`RedisLeaderElector` Redis 租约选举（SET NX PX + Lua CAS 续租/释放），仅 leader 跑周期 checkpoint 调度；fencing token 按 leadership epoch INCR，checkpoint meta 携带 token，restore 按 max token 过滤拒绝 stale leader 快照（已实现：2026-10-01）
 - [x] 作业 HA：节点宕机自动接管（checkpoint/offset/state 一致性保证）（已实现：2026-10-01）
   - 前：接管只有选举语义（lease TTL 过期后 follower 抢到租约），但 `RedisRuntimeCheckpointManager.nextCheckpointId` 是构造时 `initNextId()` 的一次性快照——follower 运行期间死 leader 持续写入，接管后本地计数仍从陈旧值继续分配，**覆盖死 leader 最后写入的 checkpoint**（offset/状态恢复可能读到回退的历史）
   - 后：接管分支（`startLeaderCoordination` 的 acquire 成功路径）先执行 `refreshCheckpointIdFromStorage()` 把计数对齐 storage max+1（只进不退；storage 故障保持本地值，下次接管再对齐），再分配 id；fencing token 按 leadership epoch INCR 刷新 + restore 按 max token 过滤 stale 快照 + CAS 释放防死实例回收新租约——故障注入集成测试（kill -9 语义：反射关停 renew/checkpoint 调度器且不释放 lease，模拟进程直接被杀）验证接管后新 leader checkpoint id 严格大于死 leader 末值、死 leader checkpoint 全部完好（摘除修复该用例必挂：`expected inst-A but was inst-B`），及旧实例事后优雅 cancel 不夺回租约；3 个单测覆盖计数抬升/只进不退/storage 故障三臂；`leaderElectionEnabled=false` 默认路径零改动
-- [ ] 动态伸缩：并行度变更、分区再均衡、checkpoint 向前兼容
+- [x] 动态伸缩：并行度变更、分区再均衡、checkpoint 向前兼容（已实现：2026-10-10）
+  - [x] 分区再均衡（MQ 层）：`ReassignableMessageConsumer.updatePartitionAssignment(topic, modulo, remainder)`——运行期重钉存活 consumer 的指派；移出指派的分区即时停 worker 并以 owner 身份释放租约（同组新属主无需等 TTL 即可接管），新纳入的分区由周期再均衡取回；`Subscription.partitionModulo/Remainder` 转 volatile（rebalance/renew 调度线程读、运行期写）
+  - [x] 并行度变更（runtime 层）：`RedisJobClient.scaleParallelism(n)`——对每条管道增/删子任务到 n 个并把存活 consumer 重钉到 `partitionId % n == subtaskIndex`；缩容先重钉幸存者再 stop+close 被移除 consumer（runner 不 close：sink 由同管道 runner 共享，cancel 时统一关闭）；扩容先重钉再补建子任务（runner+consumer，命名 seq 单调不复用）；与检查点流互斥（复用 `checkpointing` CAS，有界等待在途检查点）；consumers/runners 转 copy-on-write（cancel 无锁遍历安全）；`diagnostics().liveParallelism` 反映实时并行度
+  - [x] checkpoint 向前兼容（验证）：keyed state 与 checkpoint 本就按 `(job,topic,group,partition,…)` 键控、不含并行度/子任务维度——集成测试钉死两形态：并行度 2 写检查点、并行度 3 恢复后计数延续（非全新起点）；1→3→2 在途伸缩三轮全量计数精确（不丢不重）
 - [ ] 控制面：job submit/upgrade/rollback API、权限控制与审计
 - [ ] 多租户隔离：资源配额（线程/内存/in-flight）、指标维度隔离
 - [ ] 安全：Redis ACL/TLS、secret 管理、配置加密/脱敏
