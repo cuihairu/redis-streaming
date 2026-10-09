@@ -24,6 +24,7 @@ export default withMermaid(
     },
 
   themeConfig: {
+    logo: '/logo.svg',
     repo: 'cuihairu/redis-streaming',
     socialLinks: [
       { icon: 'github', link: 'https://github.com/cuihairu/redis-streaming' },
