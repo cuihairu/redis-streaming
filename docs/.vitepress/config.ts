@@ -57,6 +57,7 @@ export default withMermaid(
           { text: 'MQ 设计', link: '/MQ-Design' },
           { text: 'Registry 设计', link: '/Registry-Design' },
           { text: 'Join/CEP 算子化', link: '/Join-CEP-Operators-Design' },
+          { text: '控制面设计', link: '/Control-Plane-Design' },
         ]
       },
       {
@@ -134,6 +135,7 @@ export default withMermaid(
             { text: 'MQ 设计', link: '/MQ-Design' },
             { text: 'Registry 设计', link: '/Registry-Design' },
             { text: 'Join/CEP 算子化', link: '/Join-CEP-Operators-Design' },
+            { text: '控制面设计', link: '/Control-Plane-Design' },
           ]
         },
         {
