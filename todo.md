@@ -132,10 +132,11 @@
 
 ---
 
-### 8. io.github.cuihairu.redis.streaming.source.redis - 47%
-**关键问题：** Redis 数据源测试不足（已过期：2026-09-28 实测包级 line 99%/branch 96%，`RedisListSource` 仅剩 1 未覆盖行）
+### 8. io.github.cuihairu.redis.streaming.source.redis - ✅ 已完成（2026-10-10 收口）
+**关键问题：** ~~Redis 数据源测试不足~~（已过期：2026-09-28 实测包级 line 99%/branch 96%，`RedisListSource` 仅剩 1 未覆盖行；2026-10-10 union 报告复核该行）
 **未覆盖的关键类：**
-- `RedisListSource` - 47% (10 个方法未覆盖)
+- `RedisListSource` - 47% (10 个方法未覆盖)（已过期：实际仅 L263 一条指令未覆盖）
+  - **L263 判定为防御天花板（2026-10-10）**：`pollBatch` 定时任务首行 `if (!running) return;`——`stop()` 先翻转 running 再 `task.cancel(false)`，该守卫仅在"tick 已入队执行 vs stop 翻转"的微秒级竞态窗口可达；`scheduleAtFixedRate` 不重入（在途执行期间取消则后续 run 直接抑制），任何确定性测试序列都无法命中，压测循环命中则为非确定性 flaky 覆盖（与门禁摆动教训同型）。同型先例：config L521、registry.lua L894-896、KafkaSource L260。不追。
 
 **建议添加的测试类型：**
 - [x] **集成测试**（需要 Redis）（2026-09-28 补齐：`RedisListSourceIntegrationTest` 7 用例，10 轮重复全绿 —— List 数据读取/FIFO 排空、空/不存在列表全 API 读空且零建 key、consume 持续消费、poll 与 pollBatch 跨 tick 批投递、record 类型 JSON 反序列化往返、连接失败降级 null/空不抛。两处注明：① 该类**无 BLPOP/BRPOP**——实现为 LPOP（`remove(0)`）+ 空转退避轮询，consume 循环即其"阻塞"行为，按实际行为覆盖；② Redisson 3.29 `create()` 为急切连接、死端点无法产出客户端对象，连接失败用例改用已 shutdown 客户端（每条命令必失败）走同类 catch 路径）
@@ -283,14 +284,14 @@
     - [x] `IdempotentRecord<T>`（稳定幂等键载体）（已实现：2026-01-01）
     - [x] Redis 幂等 sink 示例：`RedisIdempotentListSink<T>`（Lua 原子去重 + RPUSH）（已实现：2026-01-01）
     - [x] integration test：无 runtime dedup 时，幂等 sink 仍可防止重试重复写入（已实现：2026-01-01）
-  - [ ] v2：Two-Phase Commit Sink（2PC）API 设计与实现（类似 Flink 两阶段提交）
+  - [x] v2：Two-Phase Commit Sink（2PC）API 设计与实现（类似 Flink 两阶段提交）（✅ 2026-10-10 状态对齐：下列 core/runtime/故障注入/集成四个子项全部落地，见各自"已实现"注记）
     - [x] core：新增 `TwoPhaseCommitSink` API（Txn 可序列化进 checkpoint）（已实现：2026-09-28，`core/.../api/stream/TwoPhaseCommitSink.java`：beginTxn/invoke(value,txn)/preCommit/commit，默认 abort 委托 recoverAndAbort，Txn extends Serializable，单参 invoke 桥接为 fail-fast；单测 `TwoPhaseCommitSinkTest`）
     - [x] runtime：checkpoint 流程加入 `preCommit -> storeCheckpoint(txn) -> commit -> mark sinkCommitted -> ack`（已实现：2026-09-28，`TwoPhaseCommitCoordinator`（懒开启事务/prepare/commit/abort，handle=Java 序列化+Base64）+ `RedisPipelineRunner.prepareTwoPhaseCommits/commitTwoPhaseCommits/abortTwoPhaseCommits` + manager overload 快照键 `runtime:txns`（"runnerIndex:sinkIndex"->handle，空 map 不写键）+ env 暂停窗口内 preCommit->store(txn)->commit->markSinkCommitted->ack）
     - [x] runtime：恢复流程加入 txn 补偿（`recoverAndCommit/recoverAndAbort`）（已实现：2026-09-28，restore 后按 runner 索引回放：marker 存在→句柄已过期跳过；marker 缺失（store 后 commit 前崩溃）→对存储句柄逐个 recoverAndCommit（幂等）；补偿失败仅记日志不阻断启动）
     - [x] unit 故障注入：checkpoint 已写入但 commit 未执行 / commit 抛错 / store 失败（`TwoPhaseCommitFaultInjectionTest` 7 例 + coordinator/runner 单测 13+6 例；Redis mock 注入）
     - [x] integration tests：Redis 真实环境下的 2PC 端到端故障注入与恢复验证（条目过期收口 2026-10-08：`TwoPhaseCommitOutboxEndToEndIntegrationTest` 4 用例（happy path 配对投递、store 后 commit 前崩溃→restore 重放句柄 recoverAndCommit、preCommit 失败 abort+deferred-ack 重投下一 epoch、abort checkpoint 不误认领已丢弃记录）+ `TwoPhaseCommitRecoveryCompensationTest` 4 用例（未标 commit 的 checkpoint 句柄重放 / sinkCommitted 不重放 / 无句柄不动 sink / in-doubt epoch 采纳），提交 31d1579（2026-09-28）与 5817958（2026-10-05）晚于本条「本轮不派」注记）
   - [x] v2.5：Outbox/WAL（Redis 内 outbox + 异步投递器），作为跨系统 exactly-once 的折中方案（已实现：2026-09-28，`runtime/redis/sink`：`RedisOutboxSink<T>` 实现 `TwoPhaseCommitSink<IdempotentRecord<T>,OutboxTxn>`——invoke 内存缓冲→preCommit 逐条 XADD 入 outbox 流（epoch/seq/id/payload 字段，seq 为 epoch 内序）→commit/recoverAndCommit 单 HSET 把 `<outboxKey>:epochs` 状态翻成 COMMITTED（幂等，整 epoch 原子可见）→abort/recoverAndAbort 写 ABORTED；嵌套 record `OutboxTxn(epoch)` 可 Java 序列化进 checkpoint；env 侧经 `instanceof TwoPhaseCommitSink` 自动接入 v2 协调器，零环境改动。`RedisOutboxDispatcher<T>` 异步投递器（消费者组）：COMMITTED 按序投递+ack+XDEL、ABORTED 丢弃、无 marker 头部阻塞等 runtime 补偿、投递失败留 pending 按 retryIdle 重试、超 maxAttempts 转 `<outboxKey>:dlq`（附 failedAttempts/dlqReason/dlqTime）、group 创建容忍 BUSYGROUP。单测与故障注入 28 例（sink 11/dispatcher 11/fault 6）×10 轮全绿——store 后 commit 前崩溃→句柄恢复投递、commit 后 markSinkCommitted 前崩溃→幂等重放不重投、abort 丢弃不投递、preCommit 半程失败→残迹随 abort 丢弃、晚提交 epoch 头部阻塞、投递后 ack 前崩溃→pending 重投。语义注明：投递为 at-least-once，端到端 exactly-once 需目标端按稳定 record id 幂等（方案 C 折中：最终一致+可重试后处理））
-  - [ ] v3：Redis-only exactly-once（Lua 原子写 sink + 更新 offsets + XACK；Redis Cluster 需同 hash slot）
+  - [x] v3：Redis-only exactly-once（Lua 原子写 sink + 更新 offsets + XACK；Redis Cluster 需同 hash slot）（✅ 2026-10-10 状态对齐：两个子项 sink 均已实现并有测试背书；同 hash slot 约束仍为文档化限制——atomic Lua 原子性要求 sink 流与 commit frontier key 同 slot，跨 slot 场景应改走 v2 outbox 路线）
     - [x] Redis-only commit-on-checkpoint sink：`RedisCheckpointedIdempotentListSink<T>`（checkpoint complete 后 flush side effects）（已实现：2026-01-01）
     - [x] Redis-only atomic commit（单 Lua）：`RedisAtomicCheckpointListSink` + `RedisExactlyOnceRecord`（写 sink + XACK + commit frontier 原子提交）（已实现：2026-01-01）
 - [x] State 演进：state schema/versioning、兼容升级策略、回滚策略（已实现：2026-01-01）
