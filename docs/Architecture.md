@@ -40,10 +40,10 @@ flowchart TB
 ```
 
 ## 运行时线程模型
-- 每个被分配的分区一个串行 Worker；独立调度池负责租约续约、XAUTOCLAIM、指标与延迟重试搬运（调度线程数由 `MqOptions.schedulerThreads` 控制，默认 2）。
+- 每个被分配的分区一个串行 Worker；独立调度池负责租约续约、pending 扫描与接管（`XPENDING`+`XCLAIM`）、指标与延迟重试搬运（调度线程数由 `MqOptions.schedulerThreads` 控制，默认 2）。
 
 ## 故障处理
-- 实例宕机：租约过期，其他实例竞争获取；对孤儿 pending 执行 XAUTOCLAIM。
+- 实例宕机：租约过期，其他实例竞争获取；对孤儿 pending 执行 `XPENDING`+`XCLAIM` 接管。
 - 处理失败：按策略重试或入 DLQ；DLQ 可回放。
 
 ## 取舍
@@ -55,7 +55,7 @@ flowchart TB
 - 组读取：`XREADGROUP GROUP <g> <c>` ≈ Kafka 拉取（含批量与阻塞）
 - 提交位点：`XACK` ≈ Kafka commit
 - 待处理查询：`XPENDING` ≈ in-flight（Kafka 无直接命令）
-- 孤儿接管：`XAUTOCLAIM`/`XCLAIM` ≈ 再均衡后接管未确认记录
+- 孤儿接管：`XPENDING`+`XCLAIM` ≈ 再均衡后接管未确认记录
 - 分区独占：`SET NX EX` + `EXPIRE`（租约）≈ 组协调器分配分区
 - 延迟重试：`ZADD/ZRANGEBYSCORE/ZREM` + `EVAL`（Lua搬运）≈ 重试主题/延迟回放
 - 保留/裁剪：`XTRIM MAXLEN/MINID` ≈ retention.bytes/retention.ms

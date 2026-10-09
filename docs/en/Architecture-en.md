@@ -94,7 +94,7 @@ The project is a Gradle multi-module build (20 modules, matching `settings.gradl
 - Consume: `XREADGROUP GROUP <g> <c>` ≈ Kafka fetch (batch + block)
 - Commit offset: `XACK` ≈ Kafka commit
 - Pending query: `XPENDING` ≈ in-flight (Kafka has no direct equivalent)
-- Orphan reclaim: `XAUTOCLAIM`/`XCLAIM` ≈ rebalance reclaim of unacked records
+- Orphan reclaim: `XPENDING`+`XCLAIM` (Redisson `listPending` + `claim`) ≈ rebalance reclaim of unacked records
 - Partition lease: `SET NX EX` + `EXPIRE` (lease) ≈ group coordinator assigns partitions
 - Delayed retry: `ZADD/ZRANGEBYSCORE/ZREM` + `EVAL` (Lua mover) ≈ retry topic / delayed replay
 - Retention/trim: `XTRIM MAXLEN/MINID` ≈ retention.bytes/retention.ms
