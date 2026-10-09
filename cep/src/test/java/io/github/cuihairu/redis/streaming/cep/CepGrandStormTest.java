@@ -13,7 +13,7 @@ class CepGrandStormTest {
 
     @Test
     void sweepAllClasses() throws Exception {
-        int total = Storms.grandStorm(PatternSequence.class, "io.github.cuihairu.redis.streaming.cep", REAL_HINTS, 150);
+        int total = Storms.grandStorm(PatternSequence.class, "io.github.cuihairu.redis.streaming.cep", REAL_HINTS, 2000);
         System.err.println("GRAND cep invocations=" + total);
         assertTrue(total > 0);
     }

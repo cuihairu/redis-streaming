@@ -13,7 +13,7 @@ class JoinGrandStormTest {
 
     @Test
     void sweepAllClasses() throws Exception {
-        int total = Storms.grandStorm(StreamJoiner.class, "io.github.cuihairu.redis.streaming.join", REAL_HINTS, 150);
+        int total = Storms.grandStorm(StreamJoiner.class, "io.github.cuihairu.redis.streaming.join", REAL_HINTS, 2000);
         System.err.println("GRAND join invocations=" + total);
         assertTrue(total > 0);
     }

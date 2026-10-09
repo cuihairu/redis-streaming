@@ -13,7 +13,7 @@ class WindowGrandStormTest {
 
     @Test
     void sweepAllClasses() throws Exception {
-        int total = Storms.grandStorm(TimeWindow.class, "io.github.cuihairu.redis.streaming.window", REAL_HINTS, 150);
+        int total = Storms.grandStorm(TimeWindow.class, "io.github.cuihairu.redis.streaming.window", REAL_HINTS, 2000);
         System.err.println("GRAND window invocations=" + total);
         assertTrue(total > 0);
     }

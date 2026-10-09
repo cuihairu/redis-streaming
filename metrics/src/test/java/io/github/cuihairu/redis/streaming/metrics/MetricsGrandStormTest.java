@@ -13,7 +13,7 @@ class MetricsGrandStormTest {
 
     @Test
     void sweepAllClasses() throws Exception {
-        int total = Storms.grandStorm(MetricRegistry.class, "io.github.cuihairu.redis.streaming.metrics", REAL_HINTS, 150);
+        int total = Storms.grandStorm(MetricRegistry.class, "io.github.cuihairu.redis.streaming.metrics", REAL_HINTS, 2000);
         System.err.println("GRAND metrics invocations=" + total);
         assertTrue(total > 0);
     }

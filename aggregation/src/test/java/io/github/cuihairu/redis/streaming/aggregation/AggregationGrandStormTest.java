@@ -13,7 +13,7 @@ class AggregationGrandStormTest {
 
     @Test
     void sweepAllClasses() throws Exception {
-        int total = Storms.grandStorm(WindowAggregator.class, "io.github.cuihairu.redis.streaming.aggregation", REAL_HINTS, 150);
+        int total = Storms.grandStorm(WindowAggregator.class, "io.github.cuihairu.redis.streaming.aggregation", REAL_HINTS, 2000);
         System.err.println("GRAND aggregation invocations=" + total);
         assertTrue(total > 0);
     }

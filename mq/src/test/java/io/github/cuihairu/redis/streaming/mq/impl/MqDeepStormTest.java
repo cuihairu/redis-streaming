@@ -33,7 +33,7 @@ class MqDeepStormTest {
         RedisMessageConsumer consumer = Storms.constructing(() -> new RedisMessageConsumer(
                 deep, "c-deep", Storms.constructing(() -> new TopicPartitionRegistry(deep)), options, null));
         try {
-            assertTrue(Storms.stormDeep(consumer, hints(), 300, "start", "close", "stop") > 10);
+            assertTrue(Storms.stormDeep(consumer, hints(), 2000, "start", "close", "stop") > 10);
         } finally {
             consumer.stop();
             consumer.close();
@@ -42,7 +42,7 @@ class MqDeepStormTest {
         RedisMessageConsumer failing = Storms.constructing(() -> new RedisMessageConsumer(
                 boom, "c-deep-f", Storms.constructing(() -> new TopicPartitionRegistry(boom)), options, null));
         try {
-            assertTrue(Storms.stormDeep(failing, hints(), 300, "start") > 10);
+            assertTrue(Storms.stormDeep(failing, hints(), 2000, "start") > 10);
         } finally {
             failing.stop();
         }
@@ -53,10 +53,10 @@ class MqDeepStormTest {
         DefaultBroker failing = Storms.constructing(() -> new DefaultBroker(
                 Storms.exploding(RedissonClient.class), MqOptions.builder().build(),
                 (t, k, h, pc) -> 0, (t, p, m) -> "k"));
-        assertTrue(Storms.stormDeep(failing, hints(), 300) > 3);
+        assertTrue(Storms.stormDeep(failing, hints(), 2000) > 3);
         DefaultBroker happy = Storms.constructing(() -> new DefaultBroker(
                 Storms.deep(RedissonClient.class), MqOptions.builder().build(),
                 (t, k, h, pc) -> 0, (t, p, m) -> "k"));
-        assertTrue(Storms.stormDeep(happy, hints(), 300) > 3);
+        assertTrue(Storms.stormDeep(happy, hints(), 2000) > 3);
     }
 }

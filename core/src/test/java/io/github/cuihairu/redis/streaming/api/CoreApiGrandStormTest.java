@@ -13,7 +13,7 @@ class CoreApiGrandStormTest {
 
     @Test
     void sweepAllClasses() throws Exception {
-        int total = Storms.grandStorm(DataStream.class, "io.github.cuihairu.redis.streaming.api", REAL_HINTS, 150);
+        int total = Storms.grandStorm(DataStream.class, "io.github.cuihairu.redis.streaming.api", REAL_HINTS, 2000);
         System.err.println("GRAND core invocations=" + total);
         assertTrue(total > 0);
     }

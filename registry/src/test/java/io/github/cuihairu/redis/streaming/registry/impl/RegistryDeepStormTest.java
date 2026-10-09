@@ -32,10 +32,10 @@ class RegistryDeepStormTest {
         RegistryAdminService admin = new RegistryAdminService(redis, new BaseRedisConfig());
         RegistryLuaScriptExecutor lua = new RegistryLuaScriptExecutor(redis);
         try {
-            assertTrue(Storms.stormDeep(provider, java.util.Map.of(), 400) > 8);
-            assertTrue(Storms.stormDeep(consumer, java.util.Map.of(), 400) > 8);
-            assertTrue(Storms.stormDeep(admin, java.util.Map.of(), 400) > 5);
-            assertTrue(Storms.stormDeep(lua, java.util.Map.of(), 400) > 5);
+            assertTrue(Storms.stormDeep(provider, java.util.Map.of(), 2000) > 8);
+            assertTrue(Storms.stormDeep(consumer, java.util.Map.of(), 2000) > 8);
+            assertTrue(Storms.stormDeep(admin, java.util.Map.of(), 2000) > 5);
+            assertTrue(Storms.stormDeep(lua, java.util.Map.of(), 2000) > 5);
         } finally {
             provider.stop();
             consumer.stop();

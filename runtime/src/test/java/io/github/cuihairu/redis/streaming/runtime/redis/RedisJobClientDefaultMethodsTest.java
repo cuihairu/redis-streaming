@@ -33,6 +33,7 @@ class RedisJobClientDefaultMethodsTest {
         assertDoesNotThrow(client::pause);
         assertDoesNotThrow(client::resume);
         assertEquals(-1L, client.inFlight());
+        assertFalse(client.scaleParallelism(3));
         assertTrue(client.diagnostics().isEmpty());
 
         client.close();

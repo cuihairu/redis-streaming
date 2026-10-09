@@ -13,7 +13,7 @@ class CdcGrandStormTest {
 
     @Test
     void sweepAllClasses() throws Exception {
-        int total = Storms.grandStorm(ChangeEvent.class, "io.github.cuihairu.redis.streaming.cdc", REAL_HINTS, 150);
+        int total = Storms.grandStorm(ChangeEvent.class, "io.github.cuihairu.redis.streaming.cdc", REAL_HINTS, 2000);
         System.err.println("GRAND cdc invocations=" + total);
         assertTrue(total > 0);
     }

@@ -18,7 +18,7 @@ class ConfigGrandStormTest {
         redisCfg.useSingleServer().setAddress(System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379"));
         org.redisson.api.RedissonClient real = org.redisson.Redisson.create(redisCfg);
         hints.put(org.redisson.api.RedissonClient.class, real);
-        int total = Storms.grandStorm(ConfigServiceConfig.class, "io.github.cuihairu.redis.streaming.config", hints, 150);
+        int total = Storms.grandStorm(ConfigServiceConfig.class, "io.github.cuihairu.redis.streaming.config", hints, 2000);
         System.err.println("GRAND-REDIS config invocations=" + total);
         assertTrue(total > 0);
         real.shutdown();

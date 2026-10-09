@@ -76,11 +76,14 @@ class ProtocolHealthCheckersCoverageTest {
     void httpHealthCheckerFallsBackWhenServerErrors() throws Exception {
         HttpServer server = healthServer(500);
         try {
-            HttpHealthChecker checker = new HttpHealthChecker(500, 500, "/health");
+            // generous budgets: the assertion is "5xx is unhealthy", which only holds when the
+            // response is actually READ as HTTP — under CI-grade load a tight read timeout would
+            // throw, trip the exception-only TCP fallback, and flip the result to healthy
+            HttpHealthChecker checker = new HttpHealthChecker(5000, 5000, "/health");
             // 5xx is answered without an exception -> unhealthy (TCP fallback is exception-only)
             assertFalse(checker.check(instance(StandardProtocol.HTTP, server.getAddress().getPort())));
 
-            StandardHealthChecker standard = new StandardHealthChecker(500, 500);
+            StandardHealthChecker standard = new StandardHealthChecker(5000, 5000);
             assertFalse(standard.check(instance(StandardProtocol.HTTP, server.getAddress().getPort())));
         } finally {
             server.stop(0);

@@ -21,7 +21,7 @@ class ConfigDeepStormTest {
         RedissonClient redis = Redisson.create(cfg);
         RedisConfigService service = new RedisConfigService(redis, new ConfigServiceConfig("deep-cfg-" + System.nanoTime(), true));
         try {
-            assertTrue(Storms.stormDeep(service, java.util.Map.of(), 400) > 10);
+            assertTrue(Storms.stormDeep(service, java.util.Map.of(), 2000) > 10);
         } finally {
             service.stop();
             redis.shutdown();

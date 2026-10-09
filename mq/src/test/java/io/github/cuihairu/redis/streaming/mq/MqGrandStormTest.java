@@ -22,7 +22,7 @@ class MqGrandStormTest {
         hints.put(org.redisson.api.RedissonClient.class, real);
         hints.put(MessageHandler.class, (MessageHandler) m -> MessageHandleResult.SUCCESS);
         hints.put(Message.class, new Message("t", "k", "p"));
-        int total = Storms.grandStorm(MessageQueueFactory.class, "io.github.cuihairu.redis.streaming.mq", hints, 150);
+        int total = Storms.grandStorm(MessageQueueFactory.class, "io.github.cuihairu.redis.streaming.mq", hints, 2000);
         System.err.println("GRAND-REDIS mq invocations=" + total);
         assertTrue(total > 0);
         real.shutdown();

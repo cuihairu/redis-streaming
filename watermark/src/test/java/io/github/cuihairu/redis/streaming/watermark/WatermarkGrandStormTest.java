@@ -13,7 +13,7 @@ class WatermarkGrandStormTest {
 
     @Test
     void sweepAllClasses() throws Exception {
-        int total = Storms.grandStorm(WatermarkStrategy.class, "io.github.cuihairu.redis.streaming.watermark", REAL_HINTS, 150);
+        int total = Storms.grandStorm(WatermarkStrategy.class, "io.github.cuihairu.redis.streaming.watermark", REAL_HINTS, 2000);
         System.err.println("GRAND watermark invocations=" + total);
         assertTrue(total > 0);
     }

@@ -26,7 +26,7 @@ class RuntimeDeepStormTest {
         RedissonClient client = Storms.constructing(RedisDeepStormSupport::client);
         try {
             RedisRuntimeCheckpointManager mgr = new RedisRuntimeCheckpointManager(client, cfg("dm-" + System.nanoTime()));
-            assertTrue(Storms.stormDeep(mgr, Map0(), 500, "close") > 8);
+            assertTrue(Storms.stormDeep(mgr, Map0(), 2000, "close") > 8);
 
             RedisKeyedStateStore<String> store = new RedisKeyedStateStore<>(client,
                     new com.fasterxml.jackson.databind.ObjectMapper(), "deep:ks-" + System.nanoTime(), "job",
@@ -35,7 +35,7 @@ class RuntimeDeepStormTest {
                     true, RedisRuntimeConfig.StateSchemaMismatchPolicy.IGNORE);
             store.setCurrentPartitionId(0);
             store.setCurrentKey("k");
-            assertTrue(Storms.stormDeep(store, Map0(), 500) > 8);
+            assertTrue(Storms.stormDeep(store, Map0(), 2000) > 8);
             store.clearCurrentKey();
             store.clearCurrentPartitionId();
         } finally {
@@ -48,7 +48,7 @@ class RuntimeDeepStormTest {
         RedissonClient boom = Storms.exploding(RedissonClient.class);
         RedisStreamExecutionEnvironment env = Storms.constructing(
                 () -> RedisStreamExecutionEnvironment.create(boom, cfg("env-deep")));
-        assertTrue(Storms.stormDeep(env, Map0(), 300, "executeAsync", "execute") > 8);
+        assertTrue(Storms.stormDeep(env, Map0(), 2000, "executeAsync", "execute") > 8);
 
         RedissonClient deep = Storms.deep(RedissonClient.class);
         RedisStreamExecutionEnvironment happy = Storms.constructing(
@@ -57,7 +57,7 @@ class RuntimeDeepStormTest {
                 () -> happy.fromMqTopic("t", "g").map(m -> (String) m.getPayload()).keyBy(k -> k));
         io.github.cuihairu.redis.streaming.api.stream.WindowedStream<String, String> windowed =
                 keyed.window(io.github.cuihairu.redis.streaming.window.assigners.TumblingWindow.ofMillis(1000));
-        assertTrue(Storms.stormDeep(windowed, Map0(), 300) >= 5);
+        assertTrue(Storms.stormDeep(windowed, Map0(), 2000) >= 5);
     }
 
     private static java.util.Map<Class<?>, Object> Map0() {

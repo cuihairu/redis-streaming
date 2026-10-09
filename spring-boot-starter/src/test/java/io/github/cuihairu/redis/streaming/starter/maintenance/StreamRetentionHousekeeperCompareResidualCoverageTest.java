@@ -71,8 +71,8 @@ class StreamRetentionHousekeeperCompareResidualCoverageTest {
     @Test
     void trimTopicComputesMinFrontierIdAcrossGroups() throws Exception {
         RedissonClient redisson = mock(RedissonClient.class);
-        StreamRetentionHousekeeper keeper = quietKeeper(redisson);
-
+        // stub everything BEFORE the keeper exists: its background scheduler must never race
+        // a main-thread stubbing window on the shared mocks (WrongTypeOfReturnValue under load)
         @SuppressWarnings({"unchecked", "rawtypes"})
         RMap meta = mock(RMap.class);
         when(meta.get("partitionCount")).thenReturn("2");
@@ -100,6 +100,7 @@ class StreamRetentionHousekeeperCompareResidualCoverageTest {
         when(redisson.getBucket(anyString())).thenReturn(lease);
         when(lease.isExists()).thenReturn(true);
 
+        StreamRetentionHousekeeper keeper = quietKeeper(redisson);
         try {
             Method trimTopic = StreamRetentionHousekeeper.class.getDeclaredMethod("trimTopic", String.class);
             trimTopic.setAccessible(true);
@@ -112,8 +113,7 @@ class StreamRetentionHousekeeperCompareResidualCoverageTest {
     @Test
     void trimTopicSkipsFrontierTrimWhenNoGroupActive() throws Exception {
         RedissonClient redisson = mock(RedissonClient.class);
-        StreamRetentionHousekeeper keeper = quietKeeper(redisson);
-
+        // stub-before-construct, same reason as above: no stubbing window after the scheduler starts
         @SuppressWarnings({"unchecked", "rawtypes"})
         RMap meta = mock(RMap.class);
         when(meta.get("partitionCount")).thenReturn("1");
@@ -134,6 +134,7 @@ class StreamRetentionHousekeeperCompareResidualCoverageTest {
         when(redisson.getBucket(anyString())).thenReturn(lease);
         when(lease.isExists()).thenReturn(false); // inactive -> minId stays null
 
+        StreamRetentionHousekeeper keeper = quietKeeper(redisson);
         try {
             Method trimTopic = StreamRetentionHousekeeper.class.getDeclaredMethod("trimTopic", String.class);
             trimTopic.setAccessible(true);
