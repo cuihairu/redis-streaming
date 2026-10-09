@@ -21,6 +21,8 @@ dependencies {
     implementation project(':metrics')
     implementation project(':spring-boot-starter')
     implementation project(':cep')
+    implementation project(':join')
+    implementation project(':runtime')
     implementation project(':table')
     implementation project(':reliability')
 
