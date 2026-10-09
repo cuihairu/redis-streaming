@@ -15,6 +15,7 @@ import io.github.cuihairu.redis.streaming.mq.retry.RetryPolicy;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
 import io.github.cuihairu.redis.streaming.mq.metrics.MqMetrics;
 import io.github.cuihairu.redis.streaming.mq.control.PausableMessageConsumer;
+import io.github.cuihairu.redis.streaming.mq.control.ReassignableMessageConsumer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.*;
@@ -35,7 +36,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * Redis Streams based message consumer implementation with consumer group support
  */
 @Slf4j
-public class RedisMessageConsumer implements MessageConsumer, PausableMessageConsumer {
+public class RedisMessageConsumer implements MessageConsumer, PausableMessageConsumer, ReassignableMessageConsumer {
 
     private final RedissonClient redissonClient;
     private final String consumerName;
@@ -1134,6 +1135,31 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         return eligible;
     }
 
+    @Override
+    public boolean updatePartitionAssignment(String topic, int partitionModulo, int partitionRemainder) {
+        Subscription sub = subscriptions.get(topic);
+        if (sub == null) {
+            return false;
+        }
+        int mod = Math.max(1, partitionModulo);
+        int rem = Math.max(0, partitionRemainder);
+        sub.partitionModulo = mod;
+        sub.partitionRemainder = rem;
+        // Prompt handover: stop the workers of partitions that fell out of the new
+        // assignment. The worker's own exit path removes its slot and releases the lease
+        // while it is still the registered owner (MQ-15 semantics), so the new owner —
+        // another consumer of the same group — can acquire without waiting for the TTL.
+        workers.forEach((pk, w) -> {
+            if (pk.topic.equals(topic) && pk.group.equals(sub.consumerGroup)
+                    && (pk.partitionId % mod) != (rem % mod)) {
+                w.stop();
+            }
+        });
+        log.info("Updated partition assignment: topic='{}', group='{}', consumer='{}', modulo={}, remainder={}",
+                topic, sub.consumerGroup, consumerName, mod, rem);
+        return true;
+    }
+
     private void publishPartitionMetrics(String topic, String group, int eligibleCount) {
         try {
             int leased = 0;
@@ -1154,8 +1180,10 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         final MessageHandler handler;
         Integer batchOverride; // nullable
         Long timeoutOverrideMs; // nullable
-        Integer partitionModulo; // nullable
-        Integer partitionRemainder; // nullable
+        // volatile: read by the scheduler-thread rebalance/renew tasks, written at runtime
+        // by updatePartitionAssignment (dynamic scaling)
+        volatile Integer partitionModulo; // nullable
+        volatile Integer partitionRemainder; // nullable
 
         Subscription(String topic, String consumerGroup, MessageHandler handler) {
             this.topic = topic;

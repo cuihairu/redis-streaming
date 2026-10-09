@@ -68,7 +68,7 @@ void unsubscribe(String topic)
 void start();  void stop();  void close()
 boolean isRunning();  boolean isClosed()
 ```
-`RedisMessageConsumer` 同时实现 `control.PausableMessageConsumer`：`pause()` / `resume()` / `isPaused()` / `inFlight()`。
+`RedisMessageConsumer` 同时实现 `control.PausableMessageConsumer`：`pause()` / `resume()` / `isPaused()` / `inFlight()`，以及 `control.ReassignableMessageConsumer`：`updatePartitionAssignment(topic, modulo, remainder)` 运行期改分区指派（动态伸缩）——移出指派的分区即时停 worker 并释放租约（同组新属主无需等 TTL 即可接管），新纳入的分区由周期再均衡取回；topic 未订阅返回 false。
 
 `MessageHandler`（函数式接口）返回 `MessageHandleResult`：
 - `SUCCESS` 处理成功，默认 ACK（header `x-defer-ack=true` 可推迟 ACK，供 checkpoint 型运行时使用）

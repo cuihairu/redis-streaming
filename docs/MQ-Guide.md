@@ -54,7 +54,7 @@ consumer.start();
 - `MessageHandler` 返回 `MessageHandleResult`：`SUCCESS` / `RETRY` / `FAIL` / `DEAD_LETTER`。
 - `subscribe(topic, handler)` 使用默认组 `default-group`；一个消费者实例可订阅多个 topic，同组内一个分区只被一个实例租约独占。
 - 生命周期：`start()` 启动（同步做一次再均衡）、`stop()` 停止 Worker、`close()` 释放线程池（内部会先 `stop()`）。
-- `RedisMessageConsumer` 另实现 `PausableMessageConsumer`：`pause()` / `resume()` / `isPaused()` / `inFlight()`。
+- `RedisMessageConsumer` 另实现 `PausableMessageConsumer`：`pause()` / `resume()` / `isPaused()` / `inFlight()`；及 `ReassignableMessageConsumer`：`updatePartitionAssignment(topic, modulo, remainder)` 运行期改分区指派（移出的分区即时释放租约，新纳入的由再均衡取回）。
 
 按订阅覆盖读取参数或锁定分区子集：
 
