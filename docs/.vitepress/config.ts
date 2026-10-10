@@ -64,6 +64,7 @@ export default withMermaid(
           { text: '状态后端统一', link: '/State-Unification-Design' },
           { text: '多租户隔离', link: '/Multi-Tenancy-Design' },
           { text: '安全加固', link: '/Security-Hardening-Design' },
+          { text: '重试/死信/去重划界', link: '/Dedup-Retry-DLQ-Boundary-Design' },
         ]
       },
       {
@@ -148,6 +149,7 @@ export default withMermaid(
             { text: '状态后端统一', link: '/State-Unification-Design' },
             { text: '多租户隔离', link: '/Multi-Tenancy-Design' },
             { text: '安全加固', link: '/Security-Hardening-Design' },
+            { text: '重试/死信/去重划界', link: '/Dedup-Retry-DLQ-Boundary-Design' },
           ]
         },
         {
