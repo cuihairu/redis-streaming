@@ -16,7 +16,7 @@
 2. **事件格式**(payload JSON):`{"op":"PUT","k":<keyJson>,"v":<valueJson>}` / `{"op":"DEL","k":<keyJson>}`。`k`/`v` 是表主存的原始 JSON 编码(与 RMap key/value 同编码,双层编码:外层 JSON 字符串值 = 内层 JSON 文本)。事件 `KeyValue<K,V>`:PUT → `(k, v)`;DEL → `(k, null)`。
 3. **开关:默认关,`withChangelog()` 显式开启**。理由:每次 put 多一次 MQ append 的写放大,对查询型表(配置/维表)是错误取舍;changelog 是给"做流的表"用的。未开启时 `toStream()` 保持静态快照(行为不变,现有调用方零影响)。
 4. **emit 为 best-effort**:主存已更新,事件发送失败(异步回调异常/同步序列化异常)仅 WARN 不抛——与控制面审计流同一取舍:缺事件使消费者持旧值(最终由后续事件收敛),绝不阻断主路径。
-5. **消费者组语义**:默认组 `table-changelog-group:<tableName>`(组内单播 = 多消费端分流负载);`toStream(String group)` 重载可传自定义组,每组各得全量(跨组广播)。两组语义都有真实用途,由调用方选。
+5. **消费者组语义与执行模型**:默认组 `table-changelog-group:<tableName>`(组内单播 = 多消费端分流负载);`toStream(env, group)` 重载可传自定义组,每组各得全量(跨组广播)。**执行走调用方的环境**:Redis 引擎的管道只能经 `RedisStreamExecutionEnvironment.executeAsync()` 启动, therefore changelog 模式提供 `toStream(env)` / `toStream(env, group)` 重载把管道挂到调用方环境,由调用方 `executeAsync()` 启动并持 `RedisJobClient` 管理生命周期;因此无参 `toStream()` 在 changelog 模式下抛 `IllegalStateException`(隐藏环境里的 DataStream 永远无法启动——CI 集成测试以 CCE 实证过此坑),静态快照路径保持无参可用。
 6. **clear()/delete() 不写 changelog**:`clear` 逐 key 补发 DEL 事件的代价是全表读取,且"清空"在事件流里应显式可辨(引入 CLEAR 事件则下游折叠逻辑分叉);`delete` 连表带 lineage 整体回收,消费者应自行停止。javadoc 注明:流式场景用逐 key `put(k, null)` 代替 `clear()`。
 7. **InMemoryKTable 不改**:无分布式状态,changelog 无意义;静态快照即正确语义。
 
@@ -35,9 +35,9 @@
 ## 实现落点
 
 - `table` 模块新增 `implementation project(':mq')`(changelog 事件经 MQ 层)。
-- `RedisKTable`:`withChangelog()`/`isChangelogEnabled()`/`changelogTopic()`/`defaultChangelogGroup()`/`toStream(String)`;`put` 双写 PUT/DEL 事件;`toStream()` 在 changelog 模式下 `RedisStreamExecutionEnvironment.create(redissonClient).fromMqTopic(topic, group).map(parse)`。
+- `RedisKTable`:`withChangelog()`/`isChangelogEnabled()`/`changelogTopic()`/`defaultChangelogGroup()`/`toStream(env)`/`toStream(env, group)`;`put` 双写 PUT/DEL 事件;`toStream(env)` 挂管道 `env.fromMqTopic(topic, group).map(parse)`,启动由调用方 `env.executeAsync()`。
 
 ## 验证
 
-- 单测:事件 JSON 编解码往返(PUT/DEL/未知 op 拒绝)、开关语义(未开启 toStream 走快照、toStream(group) 未开启抛 ISE)。
-- 集成测试(真 Redis):put a→put b→put(a,null) 后 `toStream()` 全历史重放断言事件序列 `[a=1, b=2, a=null]`,追加 put c 后新事件到达;自定义组重载各自全量。
+- 单测:事件 JSON 编解码往返(PUT/DEL/未知 op 拒绝/坏 payload 包装)、emit 全链(生产者注入 seam:PUT/DEL 事件内容、失败 future 吞、send 抛吞)、开关与环境语义(未开启 toStream 走快照、changelog 开启后无参 toStream 抛 ISE、toStream(env[, group]) 参数校验、enabled 惰性构建不触 Redis)。
+- 集成测试(真 Redis):put a→put b→put(a,null) 后 `toStream(env)`+`executeAsync()` 全历史重放断言全事件到达且 a 的 DEL 在 PUT 之后(跨分区到达顺序不精确断言——分区扩容可乱序),追加 put c 后新事件到达;`toStream(envX, "grp-x")`/`toStream(envY, "grp-y")` 各自环境各自全量(排序比较)。

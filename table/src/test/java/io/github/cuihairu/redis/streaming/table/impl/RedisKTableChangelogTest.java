@@ -1,5 +1,6 @@
 package io.github.cuihairu.redis.streaming.table.impl;
 
+import io.github.cuihairu.redis.streaming.runtime.redis.RedisStreamExecutionEnvironment;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RedissonClient;
 
@@ -39,15 +40,29 @@ class RedisKTableChangelogTest {
     }
 
     @Test
-    void toStreamWithExplicitGroupRequiresChangelog() {
+    void toStreamEnvOverloadValidatesArguments() {
         RedisKTable<String, Integer> t = table();
-        IllegalStateException e = assertThrows(IllegalStateException.class, () -> t.toStream("grp"));
-        assertTrue(e.getMessage().contains("withChangelog"));
+        IllegalStateException disabled = assertThrows(IllegalStateException.class,
+                () -> t.toStream(env(), "grp"));
+        assertTrue(disabled.getMessage().contains("withChangelog"));
         t.withChangelog();
-        // enabled: constructing the pipeline must not touch Redis (lazy execution)
-        assertNotNull(t.toStream("grp"));
-        assertThrows(NullPointerException.class, () -> t.toStream(null));
-        assertThrows(IllegalArgumentException.class, () -> t.toStream(" "));
+        // enabled: building the pipeline must not touch Redis (lazy execution)
+        assertNotNull(t.toStream(env()));
+        assertThrows(NullPointerException.class, () -> t.toStream(null, "grp"));
+        assertThrows(NullPointerException.class, () -> t.toStream(env(), null));
+        assertThrows(IllegalArgumentException.class, () -> t.toStream(env(), " "));
+    }
+
+    @Test
+    void toStreamRejectsNoArgWhenChangelogEnabled() {
+        RedisKTable<String, Integer> t = table().withChangelog();
+        IllegalStateException e = assertThrows(IllegalStateException.class, () -> t.toStream());
+        assertTrue(e.getMessage().contains("toStream(RedisStreamExecutionEnvironment)"));
+    }
+
+    private RedisStreamExecutionEnvironment env() {
+        // real environment on a mock client: pipeline construction is lazy, no Redis touch
+        return RedisStreamExecutionEnvironment.create(mock(RedissonClient.class));
     }
 
     @Test
@@ -154,12 +169,12 @@ class RedisKTableChangelogTest {
     }
 
     @Test
-    void toStreamDefaultGroupBuildsPipelineWhenChangelogEnabled() {
+    void toStreamAttachesToEnvironmentWhenChangelogEnabled() {
         io.github.cuihairu.redis.streaming.mq.MessageProducer producer =
                 mock(io.github.cuihairu.redis.streaming.mq.MessageProducer.class);
         RedisKTable<String, Integer> t = new RedisKTable<>(mock(RedissonClient.class), "unit-changelog",
                 String.class, Integer.class).withChangelog(producer);
         // lazy pipeline construction must not touch Redis
-        assertNotNull(t.toStream());
+        assertNotNull(t.toStream(env()));
     }
 }

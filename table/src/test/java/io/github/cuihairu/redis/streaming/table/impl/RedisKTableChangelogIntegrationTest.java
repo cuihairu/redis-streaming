@@ -1,6 +1,7 @@
 package io.github.cuihairu.redis.streaming.table.impl;
 
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisJobClient;
+import io.github.cuihairu.redis.streaming.runtime.redis.RedisStreamExecutionEnvironment;
 import io.github.cuihairu.redis.streaming.table.KTable;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -76,12 +77,19 @@ class RedisKTableChangelogIntegrationTest {
             table.put("a", null); // delete event
 
             List<KTable.KeyValue<String, Integer>> out = new CopyOnWriteArrayList<>();
-            try (RedisJobClient job = (RedisJobClient) table.toStream().addSink(out::add)) {
-                // history replay must reconstruct the full change sequence in order
+            RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(redis);
+            table.toStream(env).addSink(out::add);
+            try (RedisJobClient job = env.executeAsync()) {
+                // history replay must reconstruct table state: all events delivered, and
+                // per-key order holds (delete after put) — global order across partitions
+                // may interleave if partitions expand mid-test
                 assertTrue(await(() -> out.size() >= 3, 20_000),
                         "history replay should deliver 3 events, got " + out);
-                assertEquals(List.of("a=1", "b=2", "a=null"), out.subList(0, 3).stream().map(
-                        RedisKTableChangelogIntegrationTest::kv).toList());
+                List<String> seq = out.subList(0, 3).stream().map(
+                        RedisKTableChangelogIntegrationTest::kv).toList();
+                assertTrue(seq.contains("b=2"), "put of b must be replayed, got " + seq);
+                assertTrue(seq.indexOf("a=null") > seq.indexOf("a=1"),
+                        "per-key order: delete must follow put, got " + seq);
 
                 // continuous follow: a new put arrives on the running stream
                 table.put("c", 3);
@@ -112,15 +120,21 @@ class RedisKTableChangelogIntegrationTest {
 
             List<KTable.KeyValue<String, Integer>> outX = new CopyOnWriteArrayList<>();
             List<KTable.KeyValue<String, Integer>> outY = new CopyOnWriteArrayList<>();
-            // each explicit group gets the full history (broadcast across groups)
-            try (RedisJobClient jobX = (RedisJobClient) table.toStream("grp-x").addSink(outX::add);
-                 RedisJobClient jobY = (RedisJobClient) table.toStream("grp-y").addSink(outY::add)) {
+            // each explicit group gets the full history (broadcast across groups);
+            // one independent job per group
+            RedisStreamExecutionEnvironment envX = RedisStreamExecutionEnvironment.create(redis);
+            table.toStream(envX, "grp-x").addSink(outX::add);
+            RedisStreamExecutionEnvironment envY = RedisStreamExecutionEnvironment.create(redis);
+            table.toStream(envY, "grp-y").addSink(outY::add);
+            try (RedisJobClient jobX = envX.executeAsync();
+                 RedisJobClient jobY = envY.executeAsync()) {
                 assertTrue(await(() -> outX.size() >= 2, 20_000), "group X history, got " + outX);
                 assertTrue(await(() -> outY.size() >= 2, 20_000), "group Y history, got " + outY);
+                // both events must reach each group; arrival order across partitions may interleave
                 assertEquals(List.of("x=10", "y=20"), outX.stream().map(
-                        RedisKTableChangelogIntegrationTest::kv).toList());
+                        RedisKTableChangelogIntegrationTest::kv).sorted().toList());
                 assertEquals(List.of("x=10", "y=20"), outY.stream().map(
-                        RedisKTableChangelogIntegrationTest::kv).toList());
+                        RedisKTableChangelogIntegrationTest::kv).sorted().toList());
             }
         } finally {
             redis.getKeys().deleteByPattern("*table-changelog:" + name + "*");

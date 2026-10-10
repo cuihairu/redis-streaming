@@ -504,12 +504,12 @@ public class RedisKTable<K, V> implements KTable<K, V> {
     @Override
     public DataStream<KeyValue<K, V>> toStream() {
         if (changelogEnabled) {
-            // changelog mode: emit table changes as a continuous event stream (Flink
-            // KTable.toStream semantics). The consumer group is created at 0-0, so the
-            // first consumer replays the full event history = reconstructs table state.
-            RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(redissonClient);
-            return env.fromMqTopic(changelogTopic(), defaultChangelogGroup())
-                    .map(this::parseChangelogMessage);
+            // The Redis engine launches pipelines via the environment (executeAsync), and a
+            // DataStream built on a hidden environment could never be started — so changelog
+            // mode requires the caller's environment; the static-snapshot path stays no-arg.
+            throw new IllegalStateException(
+                    "Changelog is enabled for table " + tableName
+                            + "; use toStream(RedisStreamExecutionEnvironment) and executeAsync() on that environment");
         }
         Map<K, V> snapshot = getState();
         List<KeyValue<K, V>> out = new ArrayList<>(snapshot.size());
@@ -519,8 +519,9 @@ public class RedisKTable<K, V> implements KTable<K, V> {
 
     /**
      * Enable the changelog: subsequent {@link #put} calls additionally emit
-     * {@code PUT}/{@code DEL} events to an MQ topic, and {@link #toStream()} switches
-     * from a static snapshot to the continuous event stream.
+     * {@code PUT}/{@code DEL} events to an MQ topic, and {@link #toStream(RedisStreamExecutionEnvironment)}
+     * switches from a static snapshot to the continuous event stream (no-arg {@link #toStream()}
+     * then throws — the stream needs the caller's environment to launch).
      *
      * <p>Disabled by default — every put would otherwise pay an extra MQ append, which
      * is the wrong trade for lookup/config tables that never stream. Idempotent; the
@@ -570,13 +571,33 @@ public class RedisKTable<K, V> implements KTable<K, V> {
     }
 
     /**
-     * Changelog mode variant with an explicit consumer group: each distinct group
-     * receives the full event history (broadcast across groups, unicast within).
+     * Changelog mode with the default consumer group: attach the continuous change-event
+     * stream to the given environment (launch it with {@code env.executeAsync()}). The
+     * group is created at 0-0, so the first consumer replays the full event history =
+     * reconstructs table state (Flink KTable.toStream semantics).
      *
+     * <p>All {@code toStream(env)} consumers of this table share this group (load
+     * balancing); use {@link #toStream(RedisStreamExecutionEnvironment, String)} when
+     * several independent consumers must each receive the full history.</p>
+     *
+     * @param env the environment to attach the pipeline to; must not be null
+     * @return the continuous changelog event stream
+     */
+    public DataStream<KeyValue<K, V>> toStream(RedisStreamExecutionEnvironment env) {
+        return toStream(env, defaultChangelogGroup());
+    }
+
+    /**
+     * Changelog mode with an explicit consumer group: each distinct group receives the
+     * full event history (broadcast across groups, unicast within). Launch the returned
+     * pipeline via {@code env.executeAsync()}.
+     *
+     * @param env the environment to attach the pipeline to; must not be null
      * @param consumerGroup consumer group name; must not be blank
      * @return the continuous changelog event stream
      */
-    public DataStream<KeyValue<K, V>> toStream(String consumerGroup) {
+    public DataStream<KeyValue<K, V>> toStream(RedisStreamExecutionEnvironment env, String consumerGroup) {
+        java.util.Objects.requireNonNull(env, "env");
         java.util.Objects.requireNonNull(consumerGroup, "consumerGroup");
         if (consumerGroup.isBlank()) {
             throw new IllegalArgumentException("consumerGroup must not be blank");
@@ -585,7 +606,6 @@ public class RedisKTable<K, V> implements KTable<K, V> {
             throw new IllegalStateException(
                     "Changelog is not enabled for table " + tableName + "; call withChangelog() first");
         }
-        RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(redissonClient);
         return env.fromMqTopic(changelogTopic(), consumerGroup).map(this::parseChangelogMessage);
     }
 
