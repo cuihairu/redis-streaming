@@ -4,7 +4,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.cuihairu.redis.streaming.api.stream.DataStream;
+import io.github.cuihairu.redis.streaming.mq.Message;
+import io.github.cuihairu.redis.streaming.mq.MessageProducer;
+import io.github.cuihairu.redis.streaming.mq.MessageQueueFactory;
+import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
 import io.github.cuihairu.redis.streaming.runtime.StreamExecutionEnvironment;
+import io.github.cuihairu.redis.streaming.runtime.redis.RedisStreamExecutionEnvironment;
 import io.github.cuihairu.redis.streaming.table.KGroupedTable;
 import io.github.cuihairu.redis.streaming.table.KTable;
 import lombok.extern.slf4j.Slf4j;
@@ -63,6 +68,8 @@ public class RedisKTable<K, V> implements KTable<K, V> {
     private final RedissonClient redissonClient;
     private final String tableName;
     private final ObjectMapper objectMapper;
+    private MessageProducer changelogProducer;
+    private volatile boolean changelogEnabled;
     private final Class<K> keyClass;
     private final Class<V> valueClass;
     private int derivedRetention = DEFAULT_DERIVED_RETENTION;
@@ -262,10 +269,12 @@ public class RedisKTable<K, V> implements KTable<K, V> {
             if (value == null) {
                 map.remove(keyStr);
                 log.debug("Removed key from table {}: {}", tableName, keyStr);
+                appendChangelog("DEL", keyStr, null);
             } else {
                 String valueStr = serializeValue(value);
                 map.put(keyStr, valueStr);
                 log.debug("Put key-value to table {}: {} = {}", tableName, keyStr, valueStr);
+                appendChangelog("PUT", keyStr, valueStr);
             }
         } catch (JsonProcessingException e) {
             log.error("Failed to serialize key-value for table {}", tableName, e);
@@ -494,10 +503,145 @@ public class RedisKTable<K, V> implements KTable<K, V> {
 
     @Override
     public DataStream<KeyValue<K, V>> toStream() {
+        if (changelogEnabled) {
+            // changelog mode: emit table changes as a continuous event stream (Flink
+            // KTable.toStream semantics). The consumer group is created at 0-0, so the
+            // first consumer replays the full event history = reconstructs table state.
+            RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(redissonClient);
+            return env.fromMqTopic(changelogTopic(), defaultChangelogGroup())
+                    .map(this::parseChangelogMessage);
+        }
         Map<K, V> snapshot = getState();
         List<KeyValue<K, V>> out = new ArrayList<>(snapshot.size());
         snapshot.forEach((k, v) -> out.add(KeyValue.of(k, v)));
         return StreamExecutionEnvironment.getExecutionEnvironment().fromCollection(out);
+    }
+
+    /**
+     * Enable the changelog: subsequent {@link #put} calls additionally emit
+     * {@code PUT}/{@code DEL} events to an MQ topic, and {@link #toStream()} switches
+     * from a static snapshot to the continuous event stream.
+     *
+     * <p>Disabled by default — every put would otherwise pay an extra MQ append, which
+     * is the wrong trade for lookup/config tables that never stream. Idempotent; the
+     * returned producer is shared by all puts on this instance.</p>
+     *
+     * @return this table, for chaining
+     */
+    public synchronized RedisKTable<K, V> withChangelog() {
+        if (!changelogEnabled) {
+            this.changelogProducer = new MessageQueueFactory(redissonClient, new MqOptions()).createProducer();
+            this.changelogEnabled = true;
+            log.info("Changelog enabled for table {} (topic {})", tableName, changelogTopic());
+        }
+        return this;
+    }
+
+    /**
+     * Test hook: enable the changelog with an explicit producer instead of the default
+     * MQ-factory one, so emit paths can be verified without a Redis server.
+     */
+    synchronized RedisKTable<K, V> withChangelog(MessageProducer producer) {
+        if (!changelogEnabled) {
+            this.changelogProducer = java.util.Objects.requireNonNull(producer, "producer");
+            this.changelogEnabled = true;
+        }
+        return this;
+    }
+
+    /** @return whether {@link #withChangelog()} has been called on this instance. */
+    public boolean isChangelogEnabled() {
+        return changelogEnabled;
+    }
+
+    /** @return the MQ topic this table's changelog events are emitted to. */
+    public String changelogTopic() {
+        return "table-changelog:" + tableName;
+    }
+
+    /**
+     * Default changelog consumer group: all {@code toStream()} consumers of this table
+     * share it, so multiple concurrent streams split events between them (load
+     * balancing). Pass an explicit group to {@link #toStream(String)} when several
+     * independent consumers must each receive the full history.
+     */
+    public String defaultChangelogGroup() {
+        return "table-changelog-group:" + tableName;
+    }
+
+    /**
+     * Changelog mode variant with an explicit consumer group: each distinct group
+     * receives the full event history (broadcast across groups, unicast within).
+     *
+     * @param consumerGroup consumer group name; must not be blank
+     * @return the continuous changelog event stream
+     */
+    public DataStream<KeyValue<K, V>> toStream(String consumerGroup) {
+        java.util.Objects.requireNonNull(consumerGroup, "consumerGroup");
+        if (consumerGroup.isBlank()) {
+            throw new IllegalArgumentException("consumerGroup must not be blank");
+        }
+        if (!changelogEnabled) {
+            throw new IllegalStateException(
+                    "Changelog is not enabled for table " + tableName + "; call withChangelog() first");
+        }
+        RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(redissonClient);
+        return env.fromMqTopic(changelogTopic(), consumerGroup).map(this::parseChangelogMessage);
+    }
+
+    /**
+     * Best-effort changelog append: the primary store is already updated, so a failed
+     * event emission degrades stream consumers (they keep the last known value) but
+     * never breaks the put itself — same trade as the control plane's audit stream.
+     */
+    private void appendChangelog(String op, String keyJson, String valueJson) {
+        if (!changelogEnabled) {
+            return;
+        }
+        try {
+            Map<String, Object> event = new HashMap<>();
+            event.put("op", op);
+            if (keyJson != null) {
+                event.put("k", keyJson);
+            }
+            if (valueJson != null) {
+                event.put("v", valueJson);
+            }
+            String payload = objectMapper.writeValueAsString(event);
+            changelogProducer.send(changelogTopic(), tableName, payload)
+                    .whenComplete((id, err) -> {
+                        if (err != null) {
+                            log.warn("Changelog emit failed for table {} (op {})", tableName, op, err);
+                        }
+                    });
+        } catch (Exception e) {
+            log.warn("Changelog emit failed for table {} (op {})", tableName, op, e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    /** Test hook: parse a changelog event without going through the MQ layer. */
+    KeyValue<K, V> parseChangelogForTest(Message message) {
+        return parseChangelogMessage(message);
+    }
+
+    private KeyValue<K, V> parseChangelogMessage(Message message) {
+        try {
+            String payload = String.valueOf(message.getPayload());
+            JsonNode node = objectMapper.readTree(payload);
+            String op = node.path("op").asText();
+            K key = node.hasNonNull("k") ? (K) deserializeKey(node.get("k").asText()) : null;
+            if ("PUT".equals(op)) {
+                V value = (V) deserializeValue(node.get("v").asText());
+                return KeyValue.of(key, value);
+            }
+            if ("DEL".equals(op)) {
+                return KeyValue.of(key, null);
+            }
+            throw new IllegalStateException("Unknown changelog op '" + op + "' on table " + tableName);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to parse changelog event for table " + tableName, e);
+        }
     }
 
     @Override

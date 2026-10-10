@@ -5,6 +5,8 @@ plugins {
 dependencies {
     api project(':core')
     implementation project(':runtime')
+    // changelog events for toStream() are emitted as MQ messages
+    implementation project(':mq')
 
     // Redis client for Redis KTable
     implementation libs.redisson
