@@ -95,6 +95,11 @@ public final class RedisStreamExecutionEnvironment {
     private final RedissonClient redissonClient;
     private final RedisRuntimeConfig config;
     private final MessageQueueFactory mqFactory;
+    /** Tenant-aware MQ key view for this environment (derived from the configured MQ options). */
+    private StreamKeys keys() {
+        return StreamKeys.of(config.getMqOptions());
+    }
+
     private final ObjectMapper objectMapper;
 
     private final List<RedisPipelineDefinition> pipelineDefinitions = new ArrayList<>();
@@ -1277,7 +1282,7 @@ public final class RedisStreamExecutionEnvironment {
 
             if (config.isDeferAckUntilCheckpoint()) {
                 if (config.isAckDeferredMessagesOnCheckpoint()) {
-                    deferredAcks.ackAll(redissonClient, deferredAckSnapshot);
+                    deferredAcks.ackAll(redissonClient, deferredAckSnapshot, keys());
                 } else {
                     deferredAcks.clear();
                 }
@@ -1457,12 +1462,13 @@ public final class RedisStreamExecutionEnvironment {
         }
 
         /** Convenience path: ack everything currently tracked (drain-and-ack). */
-        void ackAll(RedissonClient redissonClient) {
-            ackAll(redissonClient, drainForAck());
+        void ackAll(RedissonClient redissonClient, StreamKeys keys) {
+            ackAll(redissonClient, drainForAck(), keys);
         }
 
         void ackAll(RedissonClient redissonClient,
-                    Map<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, java.util.List<String>>> snapshot) {
+                    Map<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, java.util.List<String>>> snapshot,
+                    StreamKeys keys) {
             if (redissonClient == null || snapshot == null) {
                 return;
             }
@@ -1485,7 +1491,7 @@ public final class RedisStreamExecutionEnvironment {
                         continue;
                     }
                     try {
-                        RStream<String, Object> stream = redissonClient.getStream(StreamKeys.partitionStream(topic, pid), StringCodec.INSTANCE);
+                        RStream<String, Object> stream = redissonClient.getStream(keys.partitionStreamKey(topic, pid), StringCodec.INSTANCE);
                         stream.ack(group, ids.toArray(new StreamMessageId[0]));
                     } catch (Exception ex) {
                         log.warn("Failed to ack deferred messages (topic={}, group={}, partition={}, count={})", topic, group, pid, ids.size(), ex);
@@ -1500,7 +1506,7 @@ public final class RedisStreamExecutionEnvironment {
                             RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
                             script.eval(RScript.Mode.READ_WRITE, COMMIT_FRONTIER_CAS_LUA,
                                     RScript.ReturnType.LONG,
-                                    java.util.Collections.singletonList(StreamKeys.commitFrontier(topic, pid)),
+                                    java.util.Collections.singletonList(keys.commitFrontierKey(topic, pid)),
                                     group, maxId);
                         } catch (Exception ignore) {
                         }
@@ -1553,7 +1559,7 @@ public final class RedisStreamExecutionEnvironment {
         try {
             int pc = Math.max(1, partitionRegistry.getPartitionCount(topic));
             for (int pid = 0; pid < pc; pid++) {
-                String frontierKey = StreamKeys.commitFrontier(topic, pid);
+                String frontierKey = keys().commitFrontier(topic, pid);
                 String committedId = null;
                 try {
                     // MQ-11: the frontier hash is plain text "ms-seq" written by the ack
@@ -1564,7 +1570,7 @@ public final class RedisStreamExecutionEnvironment {
                 } catch (Exception ignore) {
                 }
                 String startId = (committedId == null || committedId.isBlank()) ? "0-0" : committedId;
-                String streamKey = StreamKeys.partitionStream(topic, pid);
+                String streamKey = keys().partitionStream(topic, pid);
                 try {
                     Object r = script.eval(RScript.Mode.READ_WRITE, ensureGroupLua, RScript.ReturnType.STRING,
                             java.util.Collections.singletonList(streamKey), consumerGroup, startId);

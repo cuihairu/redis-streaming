@@ -30,6 +30,18 @@ public interface JobControlPlane {
     JobSpec get(String jobName);
 
     /**
+     * Tenant-qualified lookup (docs/Multi-Tenancy-Design.md, step 3): reads the given
+     * tenant's spec store directly instead of resolving by name, which is ambiguous when
+     * several tenants registered the same job name. Defaults to the name-only lookup.
+     *
+     * @param tenant tenant namespace of the spec to read
+     * @return the tenant's spec, or null when absent
+     */
+    default JobSpec get(String tenant, String jobName) {
+        return get(jobName);
+    }
+
+    /**
      * @return all current specs, ordered by job name.
      */
     List<JobSpec> list();
@@ -73,9 +85,25 @@ public interface JobControlPlane {
     JobStatus status(String jobName);
 
     /**
+     * Tenant-qualified status read: resolves unambiguously even when several tenants
+     * registered the same job name. Defaults to the name-only lookup.
+     */
+    default JobStatus status(String tenant, String jobName) {
+        return status(jobName);
+    }
+
+    /**
      * Report local execution status. Intended for agents, not for operators.
      */
     void reportStatus(String jobName, JobState state, String instanceId, String detail);
+
+    /**
+     * Tenant-qualified status report: resolves unambiguously even when several tenants
+     * registered the same job name. Defaults to the name-only write.
+     */
+    default void reportStatus(String tenant, String jobName, JobState state, String instanceId, String detail) {
+        reportStatus(jobName, state, instanceId, detail);
+    }
 
     /**
      * Read the most recent audit entries, newest first.

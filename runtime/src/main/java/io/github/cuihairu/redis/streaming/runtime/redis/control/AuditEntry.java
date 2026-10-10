@@ -19,6 +19,9 @@ public class AuditEntry {
     /** Identity of the caller. */
     private String actor;
 
+    /** Tenant namespace of the target job ("default" when the job predates tenants). */
+    private String tenant;
+
     /** Attempted operation. */
     private JobControlOp op;
 

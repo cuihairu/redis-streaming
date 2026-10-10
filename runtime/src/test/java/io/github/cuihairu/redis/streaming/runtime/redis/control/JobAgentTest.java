@@ -60,7 +60,7 @@ class JobAgentTest {
     }
 
     private void statusOf(String job, JobState state) {
-        when(plane.status(job)).thenReturn(new JobStatus(state, "", "", 0L));
+        when(plane.status("default", job)).thenReturn(new JobStatus(state, "", "", 0L));
     }
 
     @Test
@@ -75,7 +75,7 @@ class JobAgentTest {
         agent.reconcileOnce();
 
         verify(launcher).launch(s);
-        verify(plane).reportStatus("j1", JobState.RUNNING, "inst-1", null);
+        verify(plane).reportStatus("default", "j1", JobState.RUNNING, "inst-1", null);
         verify(claimBucket).delete();
         assertEquals(java.util.Set.of("j1"), agent.localJobs());
     }
@@ -132,7 +132,7 @@ class JobAgentTest {
         agent.reconcileOnce();
 
         verify(job).cancel();
-        verify(plane).reportStatus("j1", JobState.DESIRED_STOPPED, "inst-1", null);
+        verify(plane).reportStatus("default", "j1", JobState.DESIRED_STOPPED, "inst-1", null);
         assertTrue(agent.localJobs().isEmpty());
     }
 
@@ -157,7 +157,7 @@ class JobAgentTest {
         verify(launcher).launch(v2);
         verify(next, never()).cancel();
         // RUNNING reported on deploy and again on upgrade
-        verify(plane, times(2)).reportStatus("j1", JobState.RUNNING, "inst-1", null);
+        verify(plane, times(2)).reportStatus("default", "j1", JobState.RUNNING, "inst-1", null);
         assertEquals(java.util.Set.of("j1"), agent.localJobs());
     }
 
@@ -214,7 +214,7 @@ class JobAgentTest {
 
         agent.reconcileOnce();
 
-        verify(plane).reportStatus(eq("j1"), eq(JobState.FAILED), eq("inst-1"), anyString());
+        verify(plane).reportStatus(eq("default"), eq("j1"), eq(JobState.FAILED), eq("inst-1"), anyString());
         verify(claimBucket).delete(); // claim released for retry
         assertTrue(agent.localJobs().isEmpty());
 
@@ -224,7 +224,7 @@ class JobAgentTest {
         org.mockito.Mockito.doReturn(job).when(launcher).launch(s);
         agent.reconcileOnce();
         verify(launcher, times(2)).launch(s);
-        verify(plane).reportStatus("j1", JobState.RUNNING, "inst-1", null);
+        verify(plane).reportStatus("default", "j1", JobState.RUNNING, "inst-1", null);
     }
 
     @Test
@@ -292,7 +292,7 @@ class JobAgentTest {
 
         verify(old).triggerCheckpointNow();
         verify(old).cancel();
-        verify(plane, times(2)).reportStatus("j1", JobState.RUNNING, "inst-1", null);
+        verify(plane, times(2)).reportStatus("default", "j1", JobState.RUNNING, "inst-1", null);
     }
 
     @Test
@@ -313,7 +313,7 @@ class JobAgentTest {
         agent.reconcileOnce();
 
         verify(old).cancel();
-        verify(plane).reportStatus(eq("j1"), eq(JobState.FAILED), eq("inst-1"), anyString());
+        verify(plane).reportStatus(eq("default"), eq("j1"), eq(JobState.FAILED), eq("inst-1"), anyString());
         assertTrue(agent.localJobs().isEmpty());
     }
 
@@ -330,7 +330,7 @@ class JobAgentTest {
 
         verify(claimBucket, never()).setIfAbsent(anyString(), any(Duration.class));
         verify(claimBucket, never()).delete();
-        verify(plane).reportStatus("j1", JobState.RUNNING, "inst-1", null);
+        verify(plane).reportStatus("default", "j1", JobState.RUNNING, "inst-1", null);
     }
 
     @Test
@@ -345,7 +345,7 @@ class JobAgentTest {
 
         agent.reconcileOnce();
 
-        verify(plane).reportStatus("j1", JobState.RUNNING, "inst-1", null);
+        verify(plane).reportStatus("default", "j1", JobState.RUNNING, "inst-1", null);
         assertEquals(java.util.Set.of("j1"), agent.localJobs());
     }
 
@@ -363,7 +363,7 @@ class JobAgentTest {
         statusOf("j1", JobState.DESIRED_STOPPED);
         agent.reconcileOnce();
 
-        verify(plane).reportStatus("j1", JobState.DESIRED_STOPPED, "inst-1", null);
+        verify(plane).reportStatus("default", "j1", JobState.DESIRED_STOPPED, "inst-1", null);
         assertTrue(agent.localJobs().isEmpty());
     }
 }

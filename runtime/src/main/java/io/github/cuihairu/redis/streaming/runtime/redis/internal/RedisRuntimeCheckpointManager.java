@@ -12,6 +12,7 @@ import org.redisson.api.RBucket;
 import org.redisson.api.RScript;
 import org.redisson.api.RScoredSortedSet;
 import org.redisson.api.RSet;
+import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import org.redisson.api.RedissonClient;
 import org.redisson.api.RType;
 import org.redisson.client.codec.StringCodec;
@@ -96,6 +97,7 @@ public final class RedisRuntimeCheckpointManager {
     private final RedisCheckpointStorage storage;
     private final TopicPartitionRegistry partitionRegistry;
     private final AtomicLong nextCheckpointId;
+    private final StreamKeys keys;
     /** Optional leader elector; when present, checkpoints carry a fencing token and restore scans reject stale-token checkpoints. */
     private final RedisLeaderElector leaderElector;
 
@@ -110,7 +112,8 @@ public final class RedisRuntimeCheckpointManager {
         this.leaderElector = leaderElector;
         String prefix = config.getCheckpointKeyPrefix() + config.getJobName() + ":";
         this.storage = new RedisCheckpointStorage(redissonClient, prefix);
-        this.partitionRegistry = new TopicPartitionRegistry(redissonClient);
+        this.keys = StreamKeys.of(config.getMqOptions());
+        this.partitionRegistry = new TopicPartitionRegistry(redissonClient, this.keys);
         this.nextCheckpointId = new AtomicLong(initNextId());
     }
 
@@ -566,7 +569,7 @@ public final class RedisRuntimeCheckpointManager {
                     // MQ-11: the frontier hash is plain text "ms-seq" written by the mq
                     // consumer's Lua script (StringCodec), regardless of the client codec
                     RMap<String, String> frontier = redissonClient.getMap(
-                            StreamKeys.commitFrontier(p.topic(), pid), StringCodec.INSTANCE);
+                            keys.commitFrontierKey(p.topic(), pid), StringCodec.INSTANCE);
                     String v = frontier.get(p.consumerGroup());
                     committed = v;
                 } catch (Exception ex) {
@@ -706,7 +709,7 @@ public final class RedisRuntimeCheckpointManager {
             for (int pid = 0; pid < pc; pid++) {
                 String id = offsetForPartition(perPartition, pid);
                 String startId = (id == null || id.isBlank()) ? "0-0" : id;
-                String streamKey = StreamKeys.partitionStream(p.topic(), pid);
+                String streamKey = keys.partitionStreamKey(p.topic(), pid);
                 try {
                     script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.STRING,
                             java.util.Collections.singletonList(streamKey), p.consumerGroup(), startId);

@@ -1,5 +1,6 @@
 package io.github.cuihairu.redis.streaming.runtime.redis.control;
 
+import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -25,6 +26,15 @@ public class JobSpec {
 
     /** Unique job name. Doubles as the keyed-state/checkpoint job identity. */
     private String jobName;
+
+    /**
+     * Tenant namespace of the job (docs/Multi-Tenancy-Design.md). {@code "default"} keeps the
+     * pre-tenant layout (no key segment) so existing deployments need no migration. Immutable
+     * after submit, like {@link #jobName}: changing the tenant would relocate state, streams and
+     * checkpoints, which a rolling upgrade cannot express.
+     */
+    @Builder.Default
+    private String tenant = StreamKeys.DEFAULT_TENANT;
 
     /** Name of the pipeline factory registered on the execution side. */
     private String pipelineFactory;

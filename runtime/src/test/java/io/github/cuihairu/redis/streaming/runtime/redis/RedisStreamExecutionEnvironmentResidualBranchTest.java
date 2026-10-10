@@ -566,7 +566,7 @@ class RedisStreamExecutionEnvironmentResidualBranchTest {
         // implementations must not escape drain/clear
         RedisStreamExecutionEnvironment.DeferredAcks deferred = new RedisStreamExecutionEnvironment.DeferredAcks();
         deferred.record("no-separator", "g", 0, "7-1");
-        deferred.ackAll(redisson);
+        deferred.ackAll(redisson, StreamKeys.shared());
 
         deferred.record("t", "g", 0, "8-1");
         Field byPipelineField = RedisStreamExecutionEnvironment.DeferredAcks.class.getDeclaredField("byPipeline");

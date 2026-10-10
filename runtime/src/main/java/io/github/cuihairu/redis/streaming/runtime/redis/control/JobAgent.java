@@ -141,7 +141,8 @@ public class JobAgent implements AutoCloseable {
 
     private void reconcileSpec(JobSpec spec) {
         String name = spec.getJobName();
-        JobStatus status = plane.status(name);
+        String tenant = tenantOf(spec);
+        JobStatus status = plane.status(tenant, name);
         boolean local = localJobs.containsKey(name);
 
         if (status != null && status.getState() == JobState.DESIRED_STOPPED) {
@@ -149,7 +150,7 @@ public class JobAgent implements AutoCloseable {
                 log.info("Job {} desired stopped; cancelling local instance", name);
                 cancelQuietly(name, localJobs.remove(name));
                 localSpecs.remove(name);
-                plane.reportStatus(name, JobState.DESIRED_STOPPED, instanceId, null);
+                plane.reportStatus(tenant, name, JobState.DESIRED_STOPPED, instanceId, null);
             }
             return;
         }
@@ -169,7 +170,7 @@ public class JobAgent implements AutoCloseable {
                 if (job != null && job.scaleParallelism(spec.getParallelism())) {
                     log.info("Job {} parallelism {} -> {} via scale fast path", name, previous.getParallelism(), spec.getParallelism());
                     track(name, spec, job);
-                    plane.reportStatus(name, JobState.RUNNING, instanceId, null);
+                    plane.reportStatus(tenantOf(spec), name, JobState.RUNNING, instanceId, null);
                     return;
                 }
                 log.info("Job {} scale fast path unavailable; falling back to full upgrade", name);
@@ -180,20 +181,20 @@ public class JobAgent implements AutoCloseable {
 
     private void deployNew(JobSpec spec) {
         String name = spec.getJobName();
-        if (!tryClaim(name)) {
+        if (!tryClaim(spec)) {
             log.debug("Job {} claim held elsewhere; skipping", name);
             return;
         }
         try {
             RedisJobClient job = launcher.launch(spec);
             track(name, spec, job);
-            plane.reportStatus(name, JobState.RUNNING, instanceId, null);
+            plane.reportStatus(tenantOf(spec), name, JobState.RUNNING, instanceId, null);
             log.info("Job {} deployed (version {}, instance {})", name, spec.getVersion(), instanceId);
         } catch (Exception e) {
             log.warn("Job {} deploy failed on instance {}", name, instanceId, e);
-            plane.reportStatus(name, JobState.FAILED, instanceId, String.valueOf(e.getMessage()));
+            plane.reportStatus(tenantOf(spec), name, JobState.FAILED, instanceId, String.valueOf(e.getMessage()));
         } finally {
-            releaseClaim(name);
+            releaseClaim(spec);
         }
     }
 
@@ -211,13 +212,13 @@ public class JobAgent implements AutoCloseable {
             }
             RedisJobClient job = launcher.launch(spec);
             track(name, spec, job);
-            plane.reportStatus(name, JobState.RUNNING, instanceId, null);
+            plane.reportStatus(tenantOf(spec), name, JobState.RUNNING, instanceId, null);
             log.info("Job {} upgraded to version {} (instance {})", name, spec.getVersion(), instanceId);
         } catch (Exception e) {
             log.warn("Job {} upgrade failed on instance {}", name, instanceId, e);
             localJobs.remove(name);
             localSpecs.remove(name);
-            plane.reportStatus(name, JobState.FAILED, instanceId, String.valueOf(e.getMessage()));
+            plane.reportStatus(tenantOf(spec), name, JobState.FAILED, instanceId, String.valueOf(e.getMessage()));
         }
     }
 
@@ -226,27 +227,44 @@ public class JobAgent implements AutoCloseable {
         localSpecs.put(name, spec);
     }
 
-    private boolean tryClaim(String name) {
+    /** Normalized tenant of a spec ("default" when blank/unset). */
+    private String tenantOf(JobSpec spec) {
+        return io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.normalizeTenant(spec.getTenant());
+    }
+
+    /**
+     * Claim key is tenant-scoped ({@code {prefix}[{tenant}:]{job}}) so two tenants can run
+     * the same job name on different agents without stealing each other's claim. The
+     * default tenant keeps the pre-tenant layout.
+     */
+    private String claimKey(JobSpec spec) {
+        String tenant = tenantOf(spec);
+        String segment = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.DEFAULT_TENANT.equals(tenant)
+                ? "" : tenant + ":";
+        return claimPrefix + segment + spec.getJobName();
+    }
+
+    private boolean tryClaim(JobSpec spec) {
         if (claimPrefix == null) {
             return true; // claims disabled (single-agent setups / tests)
         }
         try {
-            RBucket<String> bucket = redisson.getBucket(claimPrefix + name, StringCodec.INSTANCE);
+            RBucket<String> bucket = redisson.getBucket(claimKey(spec), StringCodec.INSTANCE);
             return bucket.setIfAbsent(instanceId, claimTtl());
         } catch (Exception e) {
-            log.warn("Claim attempt failed for job {} (deploying anyway is unsafe; skipping cycle)", name, e);
+            log.warn("Claim attempt failed for job {} (deploying anyway is unsafe; skipping cycle)", spec.getJobName(), e);
             return false;
         }
     }
 
-    private void releaseClaim(String name) {
+    private void releaseClaim(JobSpec spec) {
         if (claimPrefix == null) {
             return;
         }
         try {
-            redisson.getBucket(claimPrefix + name, StringCodec.INSTANCE).delete();
+            redisson.getBucket(claimKey(spec), StringCodec.INSTANCE).delete();
         } catch (Exception e) {
-            log.debug("Claim release failed for job {} (expires via TTL)", name, e);
+            log.debug("Claim release failed for job {} (expires via TTL)", spec.getJobName(), e);
         }
     }
 

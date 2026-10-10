@@ -23,6 +23,22 @@ public interface ControlPlaneAuthorizer {
     void authorize(String actor, JobControlOp op, String jobName) throws ControlPlaneAccessDeniedException;
 
     /**
+     * Tenant-aware hook (docs/Multi-Tenancy-Design.md, control-plane step): lets
+     * implementations scope decisions per tenant. Defaults to the tenant-blind
+     * {@link #authorize(String, JobControlOp, String)} so existing authorizers keep working.
+     *
+     * @param tenant  tenant namespace of the target job (never null, normalized)
+     * @param actor   identity of the caller (never blank)
+     * @param op      operation being attempted
+     * @param jobName target job name
+     * @throws ControlPlaneAccessDeniedException when the operation must be rejected
+     */
+    default void authorize(String tenant, String actor, JobControlOp op, String jobName)
+            throws ControlPlaneAccessDeniedException {
+        authorize(actor, op, jobName);
+    }
+
+    /**
      * @return an authorizer that allows every operation (the default).
      */
     static ControlPlaneAuthorizer allowAll() {

@@ -489,9 +489,13 @@ public final class RedisRuntimeConfig {
     }
 
     public static final class Builder {
+        private static final String DEFAULT_STATE_KEY_PREFIX = "streaming:runtime";
+        private static final String DEFAULT_CHECKPOINT_KEY_PREFIX = "streaming:runtime:checkpoint:";
+        private static final String DEFAULT_SINK_DEDUP_KEY_PREFIX = "streaming:runtime:sinkDedup:";
+
         private String jobName = "redis-streaming-job";
         private String jobInstanceId = defaultInstanceId();
-        private String stateKeyPrefix = "streaming:runtime";
+        private String stateKeyPrefix = DEFAULT_STATE_KEY_PREFIX;
         private Duration stateTtl = Duration.ZERO;
         private int stateSizeReportEveryNStateWrites = 0;
         private int keyedStateShardCount = 1;
@@ -504,7 +508,7 @@ public final class RedisRuntimeConfig {
         private boolean restoreConsumerGroupFromCommitFrontier = true;
         private boolean sinkDeduplicationEnabled = false;
         private Duration sinkDeduplicationTtl = Duration.ofDays(7);
-        private String sinkDedupKeyPrefix = "streaming:runtime:sinkDedup:";
+        private String sinkDedupKeyPrefix = DEFAULT_SINK_DEDUP_KEY_PREFIX;
         private boolean deferAckUntilCheckpoint = false;
         private boolean ackDeferredMessagesOnCheckpoint = true;
         private int pipelineParallelism = 1;
@@ -519,7 +523,7 @@ public final class RedisRuntimeConfig {
         private double mdcSampleRate = 1.0d;
         private Duration checkpointInterval = Duration.ZERO;
         private boolean restoreFromLatestCheckpoint = false;
-        private String checkpointKeyPrefix = "streaming:runtime:checkpoint:";
+        private String checkpointKeyPrefix = DEFAULT_CHECKPOINT_KEY_PREFIX;
         private int checkpointsToKeep = 5;
         private Duration checkpointDrainTimeout = Duration.ofSeconds(30);
         private MqOptions mqOptions;
@@ -545,6 +549,36 @@ public final class RedisRuntimeConfig {
         public Builder stateKeyPrefix(String stateKeyPrefix) {
             if (stateKeyPrefix != null && !stateKeyPrefix.isBlank()) {
                 this.stateKeyPrefix = stateKeyPrefix;
+            }
+            return this;
+        }
+
+        /**
+         * Stamp a tenant namespace onto the default key prefixes (state, checkpoint, sink
+         * dedup) and onto MQ options left at the default tenant (docs/Multi-Tenancy-Design.md):
+         * keys become {@code {prefix}:{tenant}:...} so two tenants can run the same job name
+         * without colliding. Explicitly customized prefixes win — callers who override them
+         * own their tenant segmentation. A null/blank tenant or {@code "default"} is a no-op.
+         */
+        public Builder tenant(String tenant) {
+            String t = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.normalizeTenant(tenant);
+            if (io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.DEFAULT_TENANT.equals(t)) {
+                return this;
+            }
+            if (DEFAULT_STATE_KEY_PREFIX.equals(stateKeyPrefix)) {
+                stateKeyPrefix = stateKeyPrefix + ":" + t;
+            }
+            if (DEFAULT_CHECKPOINT_KEY_PREFIX.equals(checkpointKeyPrefix)) {
+                checkpointKeyPrefix = checkpointKeyPrefix + t + ":";
+            }
+            if (DEFAULT_SINK_DEDUP_KEY_PREFIX.equals(sinkDedupKeyPrefix)) {
+                sinkDedupKeyPrefix = sinkDedupKeyPrefix + t + ":";
+            }
+            if (mqOptions == null) {
+                mqOptions = MqOptions.builder().tenant(t).build();
+            } else if (io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.DEFAULT_TENANT
+                    .equals(mqOptions.getTenant())) {
+                mqOptions = mqOptions.withTenant(t);
             }
             return this;
         }

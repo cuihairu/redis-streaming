@@ -79,7 +79,7 @@ class RedisStreamIdHelpersTest {
         record(deferred, "t", "g", 0, "5-1");
         record(deferred, "t", "g", 0, "7");
         record(deferred, "t", "g", 0, "nope");
-        invoke(deferred, "ackAll", redisson);
+        invokeAckAll(deferred, redisson, StreamKeys.shared());
 
         verify(stream).ack("g", new StreamMessageId(5, 1), new StreamMessageId(7), StreamMessageId.MIN);
         // MQ-11: the raw max id is handed to the atomic Lua CAS — unparseable new ids
@@ -102,7 +102,7 @@ class RedisStreamIdHelpersTest {
         record(deferred, "t", "g", 0, "5-1");
         record(deferred, "t", "g", 1, "9-2");
         record(deferred, "u", "h", 0, "1-0");
-        invoke(deferred, "ackAll", redisson);
+        invokeAckAll(deferred, redisson, StreamKeys.shared());
 
         // prev-frontier handling (higher existing id, garbage value) lives inside the
         // Lua script now — ackAll just hands every partition's max id to it
@@ -117,7 +117,7 @@ class RedisStreamIdHelpersTest {
     @Test
     @SuppressWarnings({"unchecked", "rawtypes"})
     void ackAllToleratesAckAndScriptErrorsAndNullClient() throws Exception {
-        invoke(newDeferredAcks(), "ackAll", new Object[]{null});
+        invokeAckAll(newDeferredAcks(), null, StreamKeys.shared());
 
         RedissonClient redisson = mock(RedissonClient.class);
         RStream<String, Object> stream = mock(RStream.class);
@@ -128,7 +128,7 @@ class RedisStreamIdHelpersTest {
 
         Object deferred = newDeferredAcks();
         record(deferred, "t", "g", 0, "5-1");
-        assertDoesNotThrow(() -> invoke(deferred, "ackAll", redisson));
+        assertDoesNotThrow(() -> invokeAckAll(deferred, redisson, StreamKeys.shared()));
         // ack failure must not block the frontier hand-off
         verify(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG),
                 eq(java.util.Collections.singletonList(StreamKeys.commitFrontier("t", 0))), eq("g"), eq("5-1"));
@@ -137,7 +137,7 @@ class RedisStreamIdHelpersTest {
         doThrow(new RuntimeException("script down")).when(script).eval(any(RScript.Mode.class), anyString(),
                 any(RScript.ReturnType.class), anyList(), any(Object.class));
         record(deferred, "t", "g", 0, "6-0");
-        assertDoesNotThrow(() -> invoke(deferred, "ackAll", redisson));
+        assertDoesNotThrow(() -> invokeAckAll(deferred, redisson, StreamKeys.shared()));
     }
 
     private static StreamMessageId parseStreamId(String id) throws Exception {
@@ -164,6 +164,12 @@ class RedisStreamIdHelpersTest {
         Method m = deferred.getClass().getDeclaredMethod("snapshotOffsets");
         m.setAccessible(true);
         return (Map<String, Map<Integer, String>>) m.invoke(deferred);
+    }
+
+    private static void invokeAckAll(Object target, RedissonClient redisson, StreamKeys keys) throws Exception {
+        Method m = target.getClass().getDeclaredMethod("ackAll", RedissonClient.class, StreamKeys.class);
+        m.setAccessible(true);
+        m.invoke(target, redisson, keys);
     }
 
     private static void invoke(Object target, String name, Object... args) throws Exception {

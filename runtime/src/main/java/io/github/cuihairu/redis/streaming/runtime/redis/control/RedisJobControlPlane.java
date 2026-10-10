@@ -1,6 +1,7 @@
 package io.github.cuihairu.redis.streaming.runtime.redis.control;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RList;
 import org.redisson.api.RMap;
@@ -14,30 +15,40 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.UnaryOperator;
 
 /**
  * Redis-backed {@link JobControlPlane}.
  *
  * <p>Storage layout (all under the configurable prefix, default
- * {@code streaming:runtime:control:}):</p>
+ * {@code streaming:runtime:control:}). Spec hashes, version hashes, job history and job
+ * status are segmented by tenant ({@code {tenant}:jobs}, ...); the {@code default} tenant
+ * keeps the pre-tenant layout exactly ({@code jobs}, {@code versions}, {@code history:<job>},
+ * {@code status:<job>}), so existing deployments need no migration (docs/Multi-Tenancy-Design.md,
+ * step 3). Non-default tenants are tracked in a {@code tenants} index set so reads and
+ * listings can resolve their key space without a Redis scan:</p>
  * <ul>
- *   <li>{@code jobs} hash: jobName → {@link JobSpec} JSON</li>
- *   <li>{@code versions} hash: jobName → monotonic version (CAS token)</li>
- *   <li>{@code history:<job>} list: previous spec JSON versions, newest last (cap {@code historyMaxEntries})</li>
- *   <li>{@code status:<job>} hash: observed status fields</li>
- *   <li>{@code audit} stream: audit entries, trimmed to {@code auditMaxEntries}</li>
+ *   <li>{@code tenants} set: registered non-default tenant names</li>
+ *   <li>{@code [{tenant}:]jobs} hash: jobName → {@link JobSpec} JSON</li>
+ *   <li>{@code [{tenant}:]versions} hash: jobName → monotonic version (CAS token)</li>
+ *   <li>{@code history:[{tenant}:]<job>} list: previous spec JSON versions, newest last (cap {@code historyMaxEntries})</li>
+ *   <li>{@code status:[{tenant}:]<job>} hash: observed status fields</li>
+ *   <li>{@code audit} stream: audit entries (each carries its tenant), trimmed to {@code auditMaxEntries}</li>
  * </ul>
  *
  * <p>Upgrade and rollback are compare-and-set on the version hash via a single Lua
  * script (read version → compare → write spec + bump version + append history in
  * one atomic step); concurrent writers are rejected instead of silently overwriting.
- * Audit writes are best-effort: a Redis audit failure never breaks an operation.</p>
+ * Job names are unique per tenant, and a job may not change tenant (that would relocate
+ * state, streams and checkpoints). Audit writes are best-effort: a Redis audit failure
+ * never breaks an operation.</p>
  */
 @Slf4j
 public class RedisJobControlPlane implements JobControlPlane {
@@ -63,27 +74,34 @@ public class RedisJobControlPlane implements JobControlPlane {
     private final RedissonClient redissonClient;
     private final String prefix;
     private final ControlPlaneAuthorizer authorizer;
+    private final TenantQuotaPolicy quotaPolicy;
     private final int auditMaxEntries;
     private final int historyMaxEntries;
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
-    private final String jobsKey;
-    private final String versionsKey;
+    private final String tenantsKey;
     private final String auditKey;
 
     public RedisJobControlPlane(RedissonClient redissonClient) {
-        this(redissonClient, DEFAULT_PREFIX, ControlPlaneAuthorizer.allowAll(), 1000, 10);
+        this(redissonClient, DEFAULT_PREFIX, ControlPlaneAuthorizer.allowAll(), 1000, 10, null);
     }
 
     public RedisJobControlPlane(RedissonClient redissonClient, String prefix,
                                 ControlPlaneAuthorizer authorizer, int auditMaxEntries, int historyMaxEntries) {
+        this(redissonClient, prefix, authorizer, auditMaxEntries, historyMaxEntries, null);
+    }
+
+    /** Full constructor: authorizer plus per-tenant capacity quota (null = unlimited). */
+    public RedisJobControlPlane(RedissonClient redissonClient, String prefix,
+                                ControlPlaneAuthorizer authorizer, int auditMaxEntries, int historyMaxEntries,
+                                TenantQuotaPolicy quotaPolicy) {
         this.redissonClient = Objects.requireNonNull(redissonClient, "redissonClient");
         this.prefix = Objects.requireNonNull(prefix, "prefix");
         this.authorizer = authorizer == null ? ControlPlaneAuthorizer.allowAll() : authorizer;
+        this.quotaPolicy = quotaPolicy == null ? TenantQuotaPolicy.none() : quotaPolicy;
         this.auditMaxEntries = Math.max(1, auditMaxEntries);
         this.historyMaxEntries = Math.max(1, historyMaxEntries);
-        this.jobsKey = prefix + "jobs";
-        this.versionsKey = prefix + "versions";
+        this.tenantsKey = prefix + "tenants";
         this.auditKey = prefix + "audit";
     }
 
@@ -91,37 +109,59 @@ public class RedisJobControlPlane implements JobControlPlane {
     public JobSpec submit(JobSpec spec, String actor) {
         validate(spec);
         String name = spec.getJobName();
+        String tenant = StreamKeys.normalizeTenant(spec.getTenant());
         String resolvedActor = resolveActor(actor);
-        authorize(resolvedActor, JobControlOp.SUBMIT, name);
+        authorize(tenant, resolvedActor, JobControlOp.SUBMIT, name);
+        enforceQuota(tenant, name, spec.getParallelism(), spec.getParallelism());
         JobSpec copy = toBuilder(spec);
+        copy.setTenant(tenant);
         copy.setVersion(1L);
         copy.setUpdatedBy(resolvedActor);
         copy.setUpdatedAt(System.currentTimeMillis());
         copy.setSpecHash(specHash(copy));
         String json = writeJson(copy);
-        RMap<String, String> jobs = jobs();
+        RMap<String, String> jobs = jobs(tenant);
         String previous = jobs.putIfAbsent(name, json);
         if (previous != null) {
             throw new IllegalArgumentException("Job already exists: " + name);
         }
-        versions().put(name, "1");
-        writeStatus(name, JobState.PENDING_DEPLOY, "", "", System.currentTimeMillis());
-        appendAudit(JobControlOp.SUBMIT, resolvedActor, name, null, 1L, true, null);
+        rememberTenant(tenant);
+        versions(tenant).put(name, "1");
+        writeStatus(tenant, name, JobState.PENDING_DEPLOY, "", "", System.currentTimeMillis());
+        appendAudit(tenant, JobControlOp.SUBMIT, resolvedActor, name, null, 1L, true, null);
         return copy;
     }
 
     @Override
     public JobSpec get(String jobName) {
-        String json = jobs().get(jobName);
-        return json == null ? null : readJson(json);
+        String json = jobs(StreamKeys.DEFAULT_TENANT).get(jobName);
+        if (json != null) {
+            return readJson(json);
+        }
+        for (String tenant : knownTenants()) {
+            json = jobs(tenant).get(jobName);
+            if (json != null) {
+                return readJson(json);
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public JobSpec get(String tenant, String jobName) {
+        return readOrNull(jobs(StreamKeys.normalizeTenant(tenant)).get(jobName));
     }
 
     @Override
     public List<JobSpec> list() {
-        Map<String, String> all = jobs().readAllMap();
         List<JobSpec> out = new ArrayList<>();
-        for (Map.Entry<String, String> e : all.entrySet()) {
+        for (Map.Entry<String, String> e : jobs(StreamKeys.DEFAULT_TENANT).readAllMap().entrySet()) {
             out.add(readJson(e.getValue()));
+        }
+        for (String tenant : knownTenants()) {
+            for (Map.Entry<String, String> e : jobs(tenant).readAllMap().entrySet()) {
+                out.add(readJson(e.getValue()));
+            }
         }
         out.sort(Comparator.comparing(JobSpec::getJobName));
         return out;
@@ -130,89 +170,115 @@ public class RedisJobControlPlane implements JobControlPlane {
     @Override
     public JobSpec upgrade(String jobName, UnaryOperator<JobSpec> mutator, String actor) {
         String resolvedActor = resolveActor(actor);
-        authorize(resolvedActor, JobControlOp.UPGRADE, jobName);
         JobSpec current = get(jobName);
         if (current == null) {
+            // authorize first so the denial is audited without leaking existence
+            authorize(StreamKeys.DEFAULT_TENANT, resolvedActor, JobControlOp.UPGRADE, jobName);
             throw new IllegalArgumentException("Job does not exist: " + jobName);
         }
+        String tenant = StreamKeys.normalizeTenant(current.getTenant());
+        authorize(tenant, resolvedActor, JobControlOp.UPGRADE, jobName);
         // snapshot the pristine spec BEFORE the mutator runs — mutators mutate in place,
         // and the CAS history entry must hold the pre-upgrade state
         String oldJson = writeJson(current);
+        int currentParallelism = current.getParallelism();
         JobSpec next = mutator.apply(current);
         validate(next);
         if (!next.getJobName().equals(jobName)) {
             throw new IllegalArgumentException("Mutator must not change the job name");
         }
+        if (!tenant.equals(StreamKeys.normalizeTenant(next.getTenant()))) {
+            throw new IllegalArgumentException("Mutator must not change the tenant");
+        }
         JobSpec stored = toBuilder(next);
+        stored.setTenant(tenant);
         stored.setVersion(current.getVersion() + 1L);
         stored.setUpdatedBy(resolvedActor);
         stored.setUpdatedAt(System.currentTimeMillis());
         stored.setSpecHash(specHash(stored));
         String newJson = writeJson(stored);
-        long applied = casVersionAndWrite(jobName, current.getVersion(), newJson, oldJson);
+        enforceQuota(tenant, jobName, stored.getParallelism(), Math.max(0, stored.getParallelism() - currentParallelism));
+        long applied = casVersionAndWrite(tenant, jobName, current.getVersion(), newJson, oldJson);
         if (applied < 0) {
             throw new IllegalStateException("Concurrent modification on job " + jobName + " (code " + applied + "); retry the upgrade");
         }
-        appendAudit(JobControlOp.UPGRADE, resolvedActor, jobName, current.getVersion(), stored.getVersion(), true, null);
+        appendAudit(tenant, JobControlOp.UPGRADE, resolvedActor, jobName, current.getVersion(), stored.getVersion(), true, null);
         return stored;
     }
 
     @Override
     public JobSpec rollback(String jobName, String actor) {
         String resolvedActor = resolveActor(actor);
-        authorize(resolvedActor, JobControlOp.ROLLBACK, jobName);
         JobSpec current = get(jobName);
         if (current == null) {
+            authorize(StreamKeys.DEFAULT_TENANT, resolvedActor, JobControlOp.ROLLBACK, jobName);
             throw new IllegalArgumentException("Job does not exist: " + jobName);
         }
-        List<String> history = historyList(jobName);
+        String tenant = StreamKeys.normalizeTenant(current.getTenant());
+        authorize(tenant, resolvedActor, JobControlOp.ROLLBACK, jobName);
+        List<String> history = historyList(tenant, jobName);
         if (history.isEmpty()) {
             throw new IllegalStateException("No history to roll back to for job " + jobName);
         }
         String prevJson = history.get(history.size() - 1);
         JobSpec prev = readJson(prevJson);
         JobSpec stored = toBuilder(prev);
+        stored.setTenant(tenant);
         stored.setVersion(current.getVersion() + 1L);
         stored.setUpdatedBy(resolvedActor);
         stored.setUpdatedAt(System.currentTimeMillis());
         stored.setSpecHash(specHash(stored));
         String newJson = writeJson(stored);
-        long applied = casVersionAndWrite(jobName, current.getVersion(), newJson, writeJson(current));
+        long applied = casVersionAndWrite(tenant, jobName, current.getVersion(), newJson, writeJson(current));
         if (applied < 0) {
             throw new IllegalStateException("Concurrent modification on job " + jobName + " (code " + applied + "); retry the rollback");
         }
-        appendAudit(JobControlOp.ROLLBACK, resolvedActor, jobName, current.getVersion(), stored.getVersion(), true, null);
+        appendAudit(tenant, JobControlOp.ROLLBACK, resolvedActor, jobName, current.getVersion(), stored.getVersion(), true, null);
         return stored;
     }
 
     @Override
     public void stop(String jobName, String actor) {
         String resolvedActor = resolveActor(actor);
-        authorize(resolvedActor, JobControlOp.STOP, jobName);
-        if (get(jobName) == null) {
+        JobSpec spec = get(jobName);
+        if (spec == null) {
+            authorize(StreamKeys.DEFAULT_TENANT, resolvedActor, JobControlOp.STOP, jobName);
             throw new IllegalArgumentException("Job does not exist: " + jobName);
         }
+        String tenant = StreamKeys.normalizeTenant(spec.getTenant());
+        authorize(tenant, resolvedActor, JobControlOp.STOP, jobName);
         JobStatus current = status(jobName);
         String instanceId = current != null && current.getInstanceId() != null ? current.getInstanceId() : "";
         String detail = current != null && current.getDetail() != null ? current.getDetail() : "";
-        writeStatus(jobName, JobState.DESIRED_STOPPED, instanceId, detail, System.currentTimeMillis());
-        appendAudit(JobControlOp.STOP, resolvedActor, jobName, null, null, true, null);
+        writeStatus(tenant, jobName, JobState.DESIRED_STOPPED, instanceId, detail, System.currentTimeMillis());
+        appendAudit(tenant, JobControlOp.STOP, resolvedActor, jobName, null, null, true, null);
     }
 
     @Override
     public void resume(String jobName, String actor) {
         String resolvedActor = resolveActor(actor);
-        authorize(resolvedActor, JobControlOp.RESUME, jobName);
-        if (get(jobName) == null) {
+        JobSpec spec = get(jobName);
+        if (spec == null) {
+            authorize(StreamKeys.DEFAULT_TENANT, resolvedActor, JobControlOp.RESUME, jobName);
             throw new IllegalArgumentException("Job does not exist: " + jobName);
         }
-        writeStatus(jobName, JobState.PENDING_DEPLOY, "", "", System.currentTimeMillis());
-        appendAudit(JobControlOp.RESUME, resolvedActor, jobName, null, null, true, null);
+        String tenant = StreamKeys.normalizeTenant(spec.getTenant());
+        authorize(tenant, resolvedActor, JobControlOp.RESUME, jobName);
+        writeStatus(tenant, jobName, JobState.PENDING_DEPLOY, "", "", System.currentTimeMillis());
+        appendAudit(tenant, JobControlOp.RESUME, resolvedActor, jobName, null, null, true, null);
     }
 
     @Override
     public JobStatus status(String jobName) {
-        RMap<String, String> status = redissonClient.<String, String>getMap(statusKey(jobName), StringCodec.INSTANCE);
+        JobSpec spec = get(jobName);
+        String tenant = spec != null ? StreamKeys.normalizeTenant(spec.getTenant()) : StreamKeys.DEFAULT_TENANT;
+        return status(tenant, jobName);
+    }
+
+    @Override
+    public JobStatus status(String tenant, String jobName) {
+        RMap<String, String> status = redissonClient.<String, String>getMap(
+                statusKey(StreamKeys.normalizeTenant(tenant), jobName), StringCodec.INSTANCE);
         Map<String, String> all = status.readAllMap();
         if (all.isEmpty()) {
             return null;
@@ -227,9 +293,17 @@ public class RedisJobControlPlane implements JobControlPlane {
 
     @Override
     public void reportStatus(String jobName, JobState state, String instanceId, String detail) {
-        writeStatus(jobName, state, instanceId, detail, System.currentTimeMillis());
+        JobSpec spec = get(jobName);
+        String tenant = spec != null ? StreamKeys.normalizeTenant(spec.getTenant()) : StreamKeys.DEFAULT_TENANT;
+        reportStatus(tenant, jobName, state, instanceId, detail);
+    }
+
+    @Override
+    public void reportStatus(String tenant, String jobName, JobState state, String instanceId, String detail) {
+        String t = StreamKeys.normalizeTenant(tenant);
+        writeStatus(t, jobName, state, instanceId, detail, System.currentTimeMillis());
         if (state == JobState.FAILED) {
-            appendAudit(JobControlOp.REPORT_STATUS, "agent", jobName, null, null, true, detail);
+            appendAudit(t, JobControlOp.REPORT_STATUS, "agent", jobName, null, null, true, detail);
         }
     }
 
@@ -290,14 +364,64 @@ public class RedisJobControlPlane implements JobControlPlane {
         if (spec.getConfig() == null) {
             throw new IllegalArgumentException("Config cannot be null");
         }
+        // blank/null collapses to "default" (no key segment); anything else must be a
+        // valid name so derived keys stay unambiguous
+        spec.setTenant(StreamKeys.normalizeTenant(spec.getTenant()));
     }
 
-    private void authorize(String actor, JobControlOp op, String jobName) {
+    private void authorize(String tenant, String actor, JobControlOp op, String jobName) {
         try {
-            authorizer.authorize(actor, op, jobName);
+            authorizer.authorize(tenant, actor, op, jobName);
         } catch (ControlPlaneAccessDeniedException e) {
-            appendAudit(op, actor, jobName, null, null, false, e.getMessage());
+            appendAudit(tenant, op, actor, jobName, null, null, false, e.getMessage());
             throw e;
+        }
+    }
+
+    /**
+     * Enforce the per-tenant capacity quota. The job count and parallelism sum are read
+     * from the stored specs of the tenant, so the quota can never drift from the actual
+     * state (no separate counter to fall out of sync). A limit of 0 is unlimited.
+     *
+     * @param tenant         tenant being checked
+     * @param jobName        job being written (used in the error message)
+     * @param parallelism    parallelism of the spec being written
+     * @param parallelismDelta added parallelism vs. the currently stored spec (0 on submit)
+     */
+    private void enforceQuota(String tenant, String jobName, int parallelism, int parallelismDelta) {
+        int maxJobs = quotaPolicy.getMaxJobsPerTenant();
+        int maxParallelism = quotaPolicy.getMaxTotalParallelismPerTenant();
+        if (maxJobs <= 0 && maxParallelism <= 0) {
+            return;
+        }
+        Map<String, String> existing = jobs(tenant).readAllMap();
+        if (maxJobs > 0 && existing.size() >= maxJobs) {
+            throw new IllegalStateException(
+                    "Tenant quota exceeded for tenant '" + tenant + "': maxJobsPerTenant=" + maxJobs
+                            + " (submitting " + jobName + ")");
+        }
+        if (maxParallelism > 0) {
+            long currentTotal = 0L;
+            for (Map.Entry<String, String> e : existing.entrySet()) {
+                currentTotal += specParallelism(e.getValue());
+            }
+            long projected = currentTotal + parallelismDelta;
+            if (projected > maxParallelism) {
+                throw new IllegalStateException(
+                        "Tenant quota exceeded for tenant '" + tenant + "': maxTotalParallelismPerTenant="
+                                + maxParallelism + " (current=" + currentTotal + ", requesting +"
+                                + parallelismDelta + " for " + jobName + ")");
+            }
+        }
+    }
+
+    /** Tolerant parallelism read from a stored spec JSON (0 when the entry is unreadable). */
+    private int specParallelism(String json) {
+        try {
+            return objectMapper.readTree(json).path("parallelism").asInt(0);
+        } catch (Exception e) {
+            log.warn("Could not read spec parallelism for quota check", e);
+            return 0;
         }
     }
 
@@ -305,6 +429,7 @@ public class RedisJobControlPlane implements JobControlPlane {
         Map<String, String> config = spec.getConfig() == null ? Map.of() : new LinkedHashMap<>(spec.getConfig());
         return JobSpec.builder()
                 .jobName(spec.getJobName())
+                .tenant(spec.getTenant())
                 .pipelineFactory(spec.getPipelineFactory())
                 .config(config)
                 .parallelism(spec.getParallelism())
@@ -319,6 +444,7 @@ public class RedisJobControlPlane implements JobControlPlane {
     private String specHash(JobSpec spec) {
         StringBuilder sb = new StringBuilder();
         sb.append(spec.getJobName()).append('|')
+                .append(spec.getTenant()).append('|')
                 .append(spec.getPipelineFactory()).append('|');
         spec.getConfig().entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
@@ -351,24 +477,56 @@ public class RedisJobControlPlane implements JobControlPlane {
         return prefix;
     }
 
-    private RMap<String, String> jobs() {
-        return redissonClient.<String, String>getMap(jobsKey, StringCodec.INSTANCE);
+    private RMap<String, String> jobs(String tenant) {
+        return redissonClient.<String, String>getMap(prefix + tenantSegment(tenant) + "jobs", StringCodec.INSTANCE);
     }
 
-    private RMap<String, String> versions() {
-        return redissonClient.<String, String>getMap(versionsKey, StringCodec.INSTANCE);
+    private RMap<String, String> versions(String tenant) {
+        return redissonClient.<String, String>getMap(prefix + tenantSegment(tenant) + "versions", StringCodec.INSTANCE);
     }
 
-    private RList<String> historyList(String jobName) {
-        return redissonClient.<String>getList(historyKey(jobName), StringCodec.INSTANCE);
+    /** @return "" for the default tenant, else "{tenant}:" — inserted after the prefix. */
+    private static String tenantSegment(String tenant) {
+        return StreamKeys.DEFAULT_TENANT.equals(tenant) ? "" : tenant + ":";
     }
 
-    private String historyKey(String jobName) {
-        return prefix + "history:" + jobName;
+    /**
+     * Registered non-default tenants, read from the tenants index set (no Redis scan).
+     * Sorted for deterministic resolution when several tenants claim the same job name.
+     */
+    private List<String> knownTenants() {
+        try {
+            Set<String> tenants = redissonClient.<String>getSet(tenantsKey, StringCodec.INSTANCE).readAll();
+            List<String> out = new ArrayList<>(tenants);
+            Collections.sort(out);
+            return out;
+        } catch (Exception e) {
+            log.warn("Failed to read tenants index", e);
+            return List.of();
+        }
     }
 
-    private String statusKey(String jobName) {
-        return prefix + "status:" + jobName;
+    private void rememberTenant(String tenant) {
+        if (StreamKeys.DEFAULT_TENANT.equals(tenant)) {
+            return;
+        }
+        try {
+            redissonClient.<String>getSet(tenantsKey, StringCodec.INSTANCE).add(tenant);
+        } catch (Exception e) {
+            log.warn("Failed to record tenant {} in the index", tenant, e);
+        }
+    }
+
+    private RList<String> historyList(String tenant, String jobName) {
+        return redissonClient.<String>getList(historyKey(tenant, jobName), StringCodec.INSTANCE);
+    }
+
+    private String historyKey(String tenant, String jobName) {
+        return prefix + "history:" + tenantSegment(tenant) + jobName;
+    }
+
+    private String statusKey(String tenant, String jobName) {
+        return prefix + "status:" + tenantSegment(tenant) + jobName;
     }
 
     /**
@@ -377,8 +535,9 @@ public class RedisJobControlPlane implements JobControlPlane {
      * Returns -1 when the job vanished, -2 on version conflict, and the new version
      * on success.
      */
-    private long casVersionAndWrite(String jobName, long expectedVersion, String newJson, String oldJson) {
-        List<Object> keys = List.of(versionsKey, jobsKey, historyKey(jobName));
+    private long casVersionAndWrite(String tenant, String jobName, long expectedVersion, String newJson, String oldJson) {
+        List<Object> keys = List.of(prefix + tenantSegment(tenant) + "versions",
+                prefix + tenantSegment(tenant) + "jobs", historyKey(tenant, jobName));
         Object result = redissonClient.getScript(StringCodec.INSTANCE).eval(
                 RScript.Mode.READ_WRITE, CAS_VERSION_AND_WRITE_LUA, RScript.ReturnType.LONG, keys,
                 jobName, String.valueOf(expectedVersion), newJson, String.valueOf(expectedVersion + 1),
@@ -389,20 +548,21 @@ public class RedisJobControlPlane implements JobControlPlane {
         return ((Number) result).longValue();
     }
 
-    private void writeStatus(String jobName, JobState state, String instanceId, String detail, long updatedAt) {
+    private void writeStatus(String tenant, String jobName, JobState state, String instanceId, String detail, long updatedAt) {
         Map<String, String> fields = new LinkedHashMap<>();
         fields.put("state", state.name());
         fields.put("instanceId", nullToEmpty(instanceId));
         fields.put("detail", nullToEmpty(detail));
         fields.put("updatedAt", String.valueOf(updatedAt));
-        redissonClient.<String, String>getMap(statusKey(jobName), StringCodec.INSTANCE).putAll(fields);
+        redissonClient.<String, String>getMap(statusKey(tenant, jobName), StringCodec.INSTANCE).putAll(fields);
     }
 
-    private void appendAudit(JobControlOp op, String actor, String jobName, Long fromVersion,
+    private void appendAudit(String tenant, JobControlOp op, String actor, String jobName, Long fromVersion,
                              Long toVersion, boolean allowed, String detail) {
         try {
             Map<String, String> entry = new LinkedHashMap<>();
             entry.put("ts", String.valueOf(System.currentTimeMillis()));
+            entry.put("tenant", nullToEmpty(tenant));
             entry.put("actor", nullToEmpty(actor));
             entry.put("op", op.name());
             entry.put("jobName", nullToEmpty(jobName));
@@ -428,6 +588,7 @@ public class RedisJobControlPlane implements JobControlPlane {
         AuditEntry entry = new AuditEntry();
         entry.setTs(Long.parseLong((String) fields.getOrDefault("ts", "0")));
         entry.setActor((String) fields.get("actor"));
+        entry.setTenant((String) fields.getOrDefault("tenant", StreamKeys.DEFAULT_TENANT));
         entry.setOp(JobControlOp.valueOf((String) fields.get("op")));
         entry.setJobName((String) fields.get("jobName"));
         String from = (String) fields.get("fromVersion");
@@ -453,6 +614,10 @@ public class RedisJobControlPlane implements JobControlPlane {
         } catch (Exception e) {
             throw new IllegalStateException("Failed to parse job spec JSON", e);
         }
+    }
+
+    private JobSpec readOrNull(String json) {
+        return json == null ? null : readJson(json);
     }
 
     private static String nullToEmpty(String s) {

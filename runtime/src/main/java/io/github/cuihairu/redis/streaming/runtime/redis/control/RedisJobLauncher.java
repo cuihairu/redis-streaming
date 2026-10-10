@@ -45,6 +45,7 @@ public class RedisJobLauncher implements JobLauncher {
         }
         RedisRuntimeConfig config = RedisRuntimeConfig.builder()
                 .jobName(spec.getJobName())
+                .tenant(spec.getTenant())
                 .pipelineParallelism(spec.getParallelism())
                 .build();
         RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(redissonClient, config);

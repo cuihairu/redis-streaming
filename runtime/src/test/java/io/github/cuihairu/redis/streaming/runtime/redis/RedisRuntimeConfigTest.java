@@ -144,4 +144,85 @@ class RedisRuntimeConfigTest {
         assertEquals(Duration.ofSeconds(30), cfg.getLeaderLeaseTtl());
         assertEquals(Duration.ofSeconds(10), cfg.getLeaderRenewInterval());
     }
+
+    // ===== tenant stamping (docs/Multi-Tenancy-Design.md step 3) =====
+
+    @Test
+    void tenantStampsDefaultPrefixesAndMqOptions() {
+        RedisRuntimeConfig cfg = RedisRuntimeConfig.builder()
+                .jobName("counter")
+                .tenant("acme")
+                .build();
+
+        assertEquals("streaming:runtime:acme", cfg.getStateKeyPrefix());
+        assertEquals("streaming:runtime:checkpoint:acme:", cfg.getCheckpointKeyPrefix());
+        assertEquals("streaming:runtime:sinkDedup:acme:", cfg.getSinkDedupKeyPrefix());
+        assertEquals("acme", cfg.getMqOptions().getTenant());
+    }
+
+    @Test
+    void defaultTenantIsANoop() {
+        RedisRuntimeConfig cfg = RedisRuntimeConfig.builder()
+                .tenant("default")
+                .tenant(null)
+                .tenant("  ")
+                .build();
+
+        assertEquals("streaming:runtime", cfg.getStateKeyPrefix());
+        assertEquals("streaming:runtime:checkpoint:", cfg.getCheckpointKeyPrefix());
+        assertEquals("default", cfg.getMqOptions().getTenant());
+    }
+
+    @Test
+    void customizedPrefixesWinOverTenantStamp() {
+        RedisRuntimeConfig cfg = RedisRuntimeConfig.builder()
+                .stateKeyPrefix("my:state")
+                .checkpointKeyPrefix("my:ckpt:")
+                .sinkDedupKeyPrefix("my:dedup:")
+                .tenant("acme")
+                .build();
+
+        assertEquals("my:state", cfg.getStateKeyPrefix());
+        assertEquals("my:ckpt:", cfg.getCheckpointKeyPrefix());
+        assertEquals("my:dedup:", cfg.getSinkDedupKeyPrefix());
+    }
+
+    @Test
+    void explicitMqTenantIsNotOverridden() {
+        io.github.cuihairu.redis.streaming.mq.config.MqOptions mq =
+                io.github.cuihairu.redis.streaming.mq.config.MqOptions.builder().tenant("acme").build();
+        RedisRuntimeConfig cfg = RedisRuntimeConfig.builder()
+                .mqOptions(mq)
+                .tenant("billing")
+                .build();
+
+        assertEquals("acme", cfg.getMqOptions().getTenant());
+        // prefixes still carry the spec tenant
+        assertEquals("streaming:runtime:billing", cfg.getStateKeyPrefix());
+    }
+
+    @Test
+    void tenantStampPreservesMqOptionsSettings() {
+        io.github.cuihairu.redis.streaming.mq.config.MqOptions mq =
+                io.github.cuihairu.redis.streaming.mq.config.MqOptions.builder()
+                        .keyPrefix("custom:mq")
+                        .defaultPartitionCount(4)
+                        .build();
+        RedisRuntimeConfig cfg = RedisRuntimeConfig.builder()
+                .mqOptions(mq)
+                .tenant("acme")
+                .build();
+
+        assertEquals("acme", cfg.getMqOptions().getTenant());
+        assertEquals("custom:mq", cfg.getMqOptions().getKeyPrefix());
+        assertEquals(4, cfg.getMqOptions().getDefaultPartitionCount());
+        // original options untouched
+        assertEquals("default", mq.getTenant());
+    }
+
+    @Test
+    void tenantRejectsInvalidNames() {
+        assertThrows(IllegalArgumentException.class,
+                () -> RedisRuntimeConfig.builder().tenant("bad:name").build());
+    }
 }

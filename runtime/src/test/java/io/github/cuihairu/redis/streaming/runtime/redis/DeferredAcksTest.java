@@ -115,7 +115,7 @@ class DeferredAcksTest {
         acks.record(topic, "g", 0, "1-0");
         acks.record(topic, "g", 1, "2-0");
 
-        acks.ackAll(redis, acks.drainForAck());
+        acks.ackAll(redis, acks.drainForAck(), StreamKeys.shared());
 
         // the pipe-in-topic case used to split back to the wrong stream key here
         verify(redis).getStream(StreamKeys.partitionStream(topic, 0), StringCodec.INSTANCE);
@@ -136,7 +136,7 @@ class DeferredAcksTest {
         acks.record("t", "g", 0, "100-0");
         acks.record("t", "g", 0, "50-0");
 
-        acks.ackAll(redis, acks.drainForAck());
+        acks.ackAll(redis, acks.drainForAck(), StreamKeys.shared());
 
         verify(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG),
                 eq(List.of(StreamKeys.commitFrontier("t", 0))), eq("g"), eq("100-0"));
@@ -145,11 +145,11 @@ class DeferredAcksTest {
     @Test
     void ackAll_toleratesNullClientAndNullSnapshot() {
         RedisStreamExecutionEnvironment.DeferredAcks acks = new RedisStreamExecutionEnvironment.DeferredAcks();
-        assertDoesNotThrow(() -> acks.ackAll(null));
-        assertDoesNotThrow(() -> acks.ackAll(null, Map.of()));
+        assertDoesNotThrow(() -> acks.ackAll(null, StreamKeys.shared()));
+        assertDoesNotThrow(() -> acks.ackAll(null, Map.of(), StreamKeys.shared()));
 
         RedissonClient redis = mock(RedissonClient.class);
-        assertDoesNotThrow(() -> acks.ackAll(redis, null));
+        assertDoesNotThrow(() -> acks.ackAll(redis, null, StreamKeys.shared()));
         verifyNoInteractions(redis);
     }
 
@@ -165,7 +165,7 @@ class DeferredAcksTest {
         RedisStreamExecutionEnvironment.DeferredAcks acks = new RedisStreamExecutionEnvironment.DeferredAcks();
         acks.record("t", "g", 0, "1-0");
 
-        assertDoesNotThrow(() -> acks.ackAll(redis, acks.drainForAck()));
+        assertDoesNotThrow(() -> acks.ackAll(redis, acks.drainForAck(), StreamKeys.shared()));
     }
 
     @Test

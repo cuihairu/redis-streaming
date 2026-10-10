@@ -83,6 +83,7 @@ public final class RedisAtomicCheckpointListSink<T> implements CheckpointAwareSi
     private final Duration dedupTtl;
 
     private final ConcurrentLinkedQueue<RedisExactlyOnceRecord<T>> buffer = new ConcurrentLinkedQueue<>();
+    private final io.github.cuihairu.redis.streaming.mq.partition.StreamKeys keys;
 
     public RedisAtomicCheckpointListSink(RedissonClient redissonClient, String dedupSetKey, String listKey) {
         this(redissonClient, dedupSetKey, listKey, null, null);
@@ -93,7 +94,19 @@ public final class RedisAtomicCheckpointListSink<T> implements CheckpointAwareSi
                                          String listKey,
                                          ObjectMapper objectMapper,
                                          Duration dedupTtl) {
+        this(redissonClient, dedupSetKey, listKey, objectMapper, dedupTtl,
+                io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.shared());
+    }
+
+    /** Key view carrying the tenant segment, so the acked frontier/stream keys match the topic. */
+    public RedisAtomicCheckpointListSink(RedissonClient redissonClient,
+                                         String dedupSetKey,
+                                         String listKey,
+                                         ObjectMapper objectMapper,
+                                         Duration dedupTtl,
+                                         io.github.cuihairu.redis.streaming.mq.partition.StreamKeys keys) {
         this.redissonClient = Objects.requireNonNull(redissonClient, "redissonClient");
+        this.keys = keys == null ? io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.shared() : keys;
         this.dedupSetKey = Objects.requireNonNull(dedupSetKey, "dedupSetKey");
         this.listKey = Objects.requireNonNull(listKey, "listKey");
         this.objectMapper = objectMapper == null ? new ObjectMapper().findAndRegisterModules() : objectMapper;
@@ -126,8 +139,8 @@ public final class RedisAtomicCheckpointListSink<T> implements CheckpointAwareSi
         for (java.util.List<RedisExactlyOnceRecord<T>> rs : groups.values()) {
             if (rs.isEmpty()) continue;
             RedisExactlyOnceRecord<T> first = rs.get(0);
-            String streamKey = StreamKeys.partitionStream(first.topic(), first.partitionId());
-            String frontierKey = StreamKeys.commitFrontier(first.topic(), first.partitionId());
+            String streamKey = keys.partitionStreamKey(first.topic(), first.partitionId());
+            String frontierKey = keys.commitFrontierKey(first.topic(), first.partitionId());
 
             java.util.List<Object> args = new java.util.ArrayList<>(2 + rs.size() * 3);
             args.add(first.consumerGroup());
