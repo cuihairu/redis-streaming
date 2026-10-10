@@ -63,6 +63,7 @@ server:
 | `RedisStreamingConfigServiceAutoConfiguration` | `redis-streaming.config.enabled`(默认 `true`) | `ConfigService`(启动即 `start()`) |
 | `RedisStreamingMqAutoConfiguration` | `redis-streaming.mq.enabled`(默认 `true`) | `MqOptions`、`BrokerFactory`/`BrokerRouter`、`MessageQueueFactory`、`MessageQueueAdmin`、`dlqReplayProducer`、`dlqReplayHandler`、`DeadLetterService`/`DeadLetterAdmin`/`DeadLetterConsumer`/`DeadLetterQueueManager`、保留治理 `StreamRetentionHousekeeper`(destroyMethod=close)、Micrometer 桥(见「指标导出」)、`MqHealthIndicator` |
 | `RedisStreamingRateLimitAutoConfiguration` | `redis-streaming.ratelimit.enabled`(默认 **`false`**) | `RateLimiterRegistry`、`@Primary RateLimiter`(按 `default-name` 取) |
+| `RedisStreamingRuntimeAutoConfiguration` | `redis-streaming.runtime.control-plane.enabled`(默认 **`false`**);agent 另需 `redis-streaming.runtime.agent.enabled`(默认 **`false`**) | `ControlPlaneAuthorizer`(默认 allowAll,用户 Bean 优先)、`RedisJobControlPlane`(即 `JobControlPlane`)、agent 开启时:`JobLauncher`(默认 `RedisJobLauncher`,自动注册容器内全部 `JobPipelineFactory` Bean)、`JobAgent`(initMethod=`start`,destroyMethod=`close`) |
 
 `LoadBalancer` 按 `load-balancer.strategy` 选择实现:`wrr → WeightedRoundRobinLoadBalancer`、`weighted-random → WeightedRandomLoadBalancer`、`consistent-hash → ConsistentHashLoadBalancer`,其余(含默认 `scored`)→ `ScoredLoadBalancer` + `RedisMetricsProvider`。
 `BrokerFactory` 按 `mq.broker.type` 选择:`jdbc` 且 classpath 有 `DataSource` Bean 时用 `JdbcBrokerFactory`,否则(无 DataSource 或 `redis`)用 `RedisBrokerFactory` 并记录告警。
@@ -178,6 +179,27 @@ server:
 `enabled`(boolean,`false`)、`backend`(`memory|redis`,默认 `memory`)、`window-ms`(long,`1000`)、`limit`(int,`100`)、`key-prefix`(String,`streaming:rl`)、`default-name`(String,`default`),以及命名策略集合 `policies.<名称>.*`:`algorithm`(`sliding|token-bucket|leaky-bucket`,默认 `sliding`)、`backend`(`memory|redis`,默认 `memory`)、`window-ms`(long,`1000`)、`limit`(int,`100`)、`capacity`(double,`100.0`)、`rate-per-second`(double,`100.0`)、`key-prefix`(String,`streaming:rl`)。
 
 组装规则:`policies` 为空时用顶层键构建单个默认限流器;非空时逐个构建,并保证 `default-name` 存在。算法与后端对应 `InMemory/Redis SlidingWindow`、`InMemory/Redis TokenBucket`、`InMemory LeakyBucket`——`leaky-bucket` 只有内存实现;请求 `redis` 后端但没有 `RedissonClient` 时回退内存实现并告警;未知算法回退 sliding。
+
+### `redis-streaming.runtime.*`(作业控制面,两项均 **opt-in**)
+
+`runtime.control-plane.*`:
+
+| 键 | 类型 | 默认 |
+|---|---|---|
+| `enabled` | boolean | `false`(显式开启才装配控制面 Bean) |
+| `prefix` | String | `streaming:runtime:control:`(jobs/versions/history:<job>/status:<job>/audit 键族) |
+| `audit-max-entries` | int | `1000`(审计流近似封顶) |
+| `history-max-entries` | int | `10`(每作业保留的旧版本 spec 数,供 rollback) |
+
+`runtime.agent.*`(仅控制面开启时有意义):
+
+| 键 | 类型 | 默认 |
+|---|---|---|
+| `enabled` | boolean | `false`(显式开启才在本进程运行对账器) |
+| `instance-id` | String | `""`(空则自动生成 `主机名-8位随机`) |
+| `poll-interval` | Duration | `PT5S`(首轮立即执行) |
+| `claim-prefix` | String | `null`(缺省取 `<control-plane prefix>claim:`;置空串禁用认领,仅单 agent 场景) |
+
 
 ## 注入示例
 
@@ -491,6 +513,57 @@ redis-streaming:
     max-in-flight: 1024
     claim-idle-ms: 300000
 ```
+
+## 作业控制面(runtime)
+
+starter 可选装配 Redis 作业控制面(声明式 spec + 执行侧对账,设计与 Redis 键布局见 [Control-Plane-Design.md](Control-Plane-Design.md)):
+
+```yaml
+redis-streaming:
+  runtime:
+    control-plane:
+      enabled: true
+    agent:
+      enabled: true        # 本进程作为执行侧 agent
+      instance-id: node-a  # 可省略,自动生成
+```
+
+流水线工厂按 **Spring Bean 名** 注册到默认 `JobLauncher`,`JobSpec.pipelineFactory` 必须与之相等:
+
+```java
+@Bean
+public JobPipelineFactory pvAgg() {
+    return (spec, env) -> {
+        String topic = spec.getConfig().getOrDefault("topic", "pv");
+        env.fromMqTopic(topic, "grp-" + spec.getJobName())
+           .map(m -> 1L)
+           .addSink(new MyRedisCounterSink(spec));
+    };
+}
+```
+
+随后用注入的 `JobControlPlane` 提交/升级/停止(作业在 agent 下一轮对账时生效):
+
+```java
+plane.submit(JobSpec.builder()
+        .jobName("pv-agg")
+        .pipelineFactory("pvAgg")          // = Bean 名
+        .config(Map.of("topic", "pv"))
+        .parallelism(2)
+        .build(), "alice");
+
+plane.upgrade("pv-agg", s -> { s.setParallelism(4); return s; }, "alice"); // 仅并行度变化走 scale 快路径
+plane.stop("pv-agg", "alice");   // agent 取消本地实例并确认 DESIRED_STOPPED
+plane.resume("pv-agg", "alice"); // 重新部署
+```
+
+要点:
+
+- 控制面只写期望状态,从不直接触碰运行中的作业;agent 负责 claim(`SET NX EX`)→launch→上报,失败报 FAILED 并在下一轮重试。
+- 多个应用实例都开 `agent.enabled` 时,同一作业由认领键仲裁,只在一个实例部署;实例宕机后其认领随 TTL 过期,其余实例需显式 `resume` 才会接管(无自动故障转移)。
+- 应用关闭时 `JobAgent.close()`(`destroyMethod`)取消本实例全部本地作业;不希望随应用退出而取消时,自行创建 agent 并只调 `start()`。
+- `ControlPlaneAuthorizer`/`JobLauncher` 用户 Bean 优先(`@ConditionalOnMissingBean`);自定义 `JobLauncher` 时工厂注册由自己负责。
+- 空应用上下文里工厂 Bean 为空是合法的(纯控制面用法):submit/upgrade/rollback 照常,agent 侧另起进程执行。
 
 ## 注意事项
 

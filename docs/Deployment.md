@@ -96,3 +96,12 @@ spring:
 - 同一 job 建议通过 consumer group 水平扩展；并结合 `MqOptions.maxLeasedPartitionsPerConsumer`（默认 0 = 取 `workerThreads`）避免超配 lease。
 - checkpoint 为单进程 stop-the-world（不跨实例 barrier）；多实例部署时请优先使用幂等 sink 或 Redis-only 原子 sink 方案确保端到端效果一致性。
 - 滚动升级：先扩容新版本实例，观察 leased partitions 与错误率稳定后，再逐步缩容旧版本实例。
+
+## 9) 作业控制面（可选,声明式升级/回滚）
+作业的提交、升级、回滚与停止可通过 Redis 控制面集中管理（设计与键布局见 [Control-Plane-Design.md](Control-Plane-Design.md),starter 装配见 [Spring-Boot-Starter.md](Spring-Boot-Starter.md) 的「作业控制面」）：
+
+- **拓扑**：任一进程开启 `redis-streaming.runtime.control-plane.enabled=true` 作为提交入口（CLI/运维服务/应用皆可）；执行侧实例开启 `redis-streaming.runtime.agent.enabled=true`。控制面只写 spec（期望状态），agent 周期对账：认领（`SET NX EX`，TTL=max(3×poll,10s)）→ 部署 → 上报状态。
+- **升级语义**：config/工厂/描述变化 = 全量升级（best-effort checkpoint → cancel → 重新部署，短暂中断）；仅并行度变化走 `scaleParallelism` 快速路径（不重启）。`rollback` 回到上一版本 spec。
+- **多实例仲裁**：同一作业由认领键保证只在一个 agent 部署。agent 宕机后作业随进程消失（无自动故障转移）；认领 TTL 过期后在其余实例执行 `resume` 即可重新拉起。期望停止/重启以 `stop`/`resume` 为准。
+- **滚动升级建议**：先在新实例 `resume`（认领会选中负载空闲的 agent）观察 `status:<job>` 稳定，再对旧实例 `stop`；回滚直接 `rollback`（spec 回退触发 agent 全量升级）。
+- **审计**：操作与失败报告写入 `<prefix>audit` 流（近似封顶 `audit-max-entries`），`tailAudit` 倒序读取;拒绝的授权也会留痕。

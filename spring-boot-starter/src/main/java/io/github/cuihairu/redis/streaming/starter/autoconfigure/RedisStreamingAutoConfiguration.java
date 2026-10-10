@@ -35,7 +35,8 @@ import org.springframework.context.annotation.Import;
         RedisStreamingDiscoveryAutoConfiguration.class,
         RedisStreamingConfigServiceAutoConfiguration.class,
         RedisStreamingMqAutoConfiguration.class,
-        RedisStreamingRateLimitAutoConfiguration.class
+        RedisStreamingRateLimitAutoConfiguration.class,
+        RedisStreamingRuntimeAutoConfiguration.class
 })
 public class RedisStreamingAutoConfiguration {
 

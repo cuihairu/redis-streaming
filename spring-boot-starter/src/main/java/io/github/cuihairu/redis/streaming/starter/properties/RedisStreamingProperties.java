@@ -63,6 +63,11 @@ public class RedisStreamingProperties {
     private RateLimitProperties ratelimit = new RateLimitProperties();
 
     /**
+     * Runtime job control plane / agent configuration
+     */
+    private RuntimeProperties runtime = new RuntimeProperties();
+
+    /**
      * Redis single-server configuration (simplified)
      *
      * Only supports single-server mode, suitable for quick development and testing.
@@ -457,5 +462,47 @@ public class RedisStreamingProperties {
             // redis key prefix (sliding/token)
             private String keyPrefix = "streaming:rl";
         }
+    }
+
+    @Data
+    public static class RuntimeProperties {
+        /** Job control plane settings (spec store + audit) */
+        private ControlPlaneProperties controlPlane = new ControlPlaneProperties();
+
+        /** Execution-side reconciler (JobAgent) settings */
+        private AgentProperties agent = new AgentProperties();
+    }
+
+    @Data
+    public static class ControlPlaneProperties {
+        /** Whether to expose the Redis-backed JobControlPlane bean (opt-in) */
+        private boolean enabled = false;
+
+        /** Redis key prefix for the control plane (jobs/versions/history/status/audit keys) */
+        private String prefix = "streaming:runtime:control:";
+
+        /** Audit stream trim target (approximate, XTRIM MAXLEN ~) */
+        private int auditMaxEntries = 1000;
+
+        /** Per-job spec history entries kept for rollback */
+        private int historyMaxEntries = 10;
+    }
+
+    @Data
+    public static class AgentProperties {
+        /** Whether to run a JobAgent reconciler in this application (opt-in) */
+        private boolean enabled = false;
+
+        /** Instance id; auto-generated (hostname + random suffix) when blank */
+        private String instanceId = "";
+
+        /** Reconcile poll interval (first pass runs immediately) */
+        private java.time.Duration pollInterval = java.time.Duration.ofSeconds(5);
+
+        /**
+         * Claim key prefix for multi-agent arbitration; defaults to {@code <control-plane prefix>claim:}.
+         * Set it to the empty value to disable claims (single-agent setups).
+         */
+        private String claimPrefix;
     }
 }
