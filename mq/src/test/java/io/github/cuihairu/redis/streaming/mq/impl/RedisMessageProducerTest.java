@@ -363,4 +363,61 @@ class RedisMessageProducerTest {
             assertEquals("1234567-0", messageId);
         }
     }
+
+    // ===== production quota (docs/Multi-Tenancy-Design.md step 2) =====
+
+    @Test
+    void quotaRejectionFailsFastWithoutAppend() throws Exception {
+        MqOptions options = MqOptions.builder()
+                .tenant("acme")
+                .sendQuota((tenant, topic) -> false)
+                .build();
+        RedisMessageProducer producer = createProducer(options);
+
+        Message message = new Message();
+        message.setTopic("orders");
+        message.setPayload("p");
+
+        CompletableFuture<String> future = producer.send(message);
+        ExecutionException ex = assertThrows(ExecutionException.class, future::get);
+        assertTrue(ex.getCause() instanceof io.github.cuihairu.redis.streaming.mq.config.SendRateLimitedException,
+                "cause should be SendRateLimitedException but was " + ex.getCause());
+        verify(mockStream, never()).add(any(org.redisson.api.stream.StreamAddArgs.class));
+    }
+
+    @Test
+    void quotaAllowStillAppends() throws Exception {
+        MqOptions options = MqOptions.builder()
+                .sendQuota((tenant, topic) -> true)
+                .build();
+        RedisMessageProducer producer = createProducer(options);
+
+        Message message = new Message();
+        message.setTopic("orders");
+        message.setPayload("p");
+
+        assertEquals("1234567-0", producer.send(message).get());
+        verify(mockStream).add(any(org.redisson.api.stream.StreamAddArgs.class));
+    }
+
+    @Test
+    void tenantOfOptionsReachesQuota() throws Exception {
+        java.util.concurrent.atomic.AtomicReference<String> seenTenant =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        MqOptions options = MqOptions.builder()
+                .tenant("acme")
+                .sendQuota((tenant, topic) -> {
+                    seenTenant.set(tenant);
+                    return true;
+                })
+                .build();
+        RedisMessageProducer producer = createProducer(options);
+
+        Message message = new Message();
+        message.setTopic("orders");
+        message.setPayload("p");
+        producer.send(message).get();
+
+        assertEquals("acme", seenTenant.get());
+    }
 }

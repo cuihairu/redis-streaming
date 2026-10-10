@@ -27,7 +27,7 @@ public class MessageQueueFactory {
         this.brokerFactory = new io.github.cuihairu.redis.streaming.mq.broker.impl.RedisBrokerFactory();
         // Configure key prefixes once per factory instance
         io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.configure(
-                this.options.getKeyPrefix(), this.options.getStreamKeyPrefix());
+                this.options.getKeyPrefix(), this.options.getStreamKeyPrefix(), this.options.getTenant());
     }
 
     public MessageQueueFactory(RedissonClient redissonClient, MqOptions options) {
@@ -35,7 +35,7 @@ public class MessageQueueFactory {
         this.options = options == null ? MqOptions.builder().build() : options;
         this.brokerFactory = new io.github.cuihairu.redis.streaming.mq.broker.impl.RedisBrokerFactory();
         io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.configure(
-                this.options.getKeyPrefix(), this.options.getStreamKeyPrefix());
+                this.options.getKeyPrefix(), this.options.getStreamKeyPrefix(), this.options.getTenant());
     }
 
     public MessageQueueFactory(RedissonClient redissonClient, MqOptions options,
@@ -44,7 +44,7 @@ public class MessageQueueFactory {
         this.options = options == null ? MqOptions.builder().build() : options;
         this.brokerFactory = brokerFactory == null ? new io.github.cuihairu.redis.streaming.mq.broker.impl.RedisBrokerFactory() : brokerFactory;
         io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.configure(
-                this.options.getKeyPrefix(), this.options.getStreamKeyPrefix());
+                this.options.getKeyPrefix(), this.options.getStreamKeyPrefix(), this.options.getTenant());
     }
 
     /**
@@ -67,7 +67,8 @@ public class MessageQueueFactory {
         String consumerName = generateConsumerName();
         io.github.cuihairu.redis.streaming.mq.broker.Broker broker = brokerFactory.create(redissonClient, options);
         return new RedisMessageConsumer(redissonClient, consumerName,
-                new TopicPartitionRegistry(redissonClient), options, broker);
+                new TopicPartitionRegistry(redissonClient,
+                        io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.of(this.options)), options, broker);
     }
 
     /**
@@ -79,7 +80,8 @@ public class MessageQueueFactory {
     public MessageConsumer createConsumer(String consumerName) {
         io.github.cuihairu.redis.streaming.mq.broker.Broker broker = brokerFactory.create(redissonClient, options);
         return new RedisMessageConsumer(redissonClient, consumerName,
-                new TopicPartitionRegistry(redissonClient), options, broker);
+                new TopicPartitionRegistry(redissonClient,
+                        io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.of(this.options)), options, broker);
     }
 
     /**

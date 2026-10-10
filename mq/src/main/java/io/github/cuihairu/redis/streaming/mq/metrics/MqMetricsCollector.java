@@ -3,6 +3,12 @@ package io.github.cuihairu.redis.streaming.mq.metrics;
 /**
  * Pluggable collector for MQ internal metrics. Default is Noop.
  * Starter can provide a Micrometer-backed implementation and install it via MqMetrics.setCollector.
+ *
+ * <p>Tenant dimension (docs/Multi-Tenancy-Design.md): topic-scoped counters have
+ * {@code (tenant, topic, partitionId)} overloads; producers/consumers call the
+ * tenant-aware variant with their configured tenant. The defaults delegate to the
+ * legacy signatures, so existing implementations keep compiling — override the
+ * tenant-aware variants to expose the dimension.</p>
  */
 public interface MqMetricsCollector {
     void incProduced(String topic, int partitionId);
@@ -11,6 +17,29 @@ public interface MqMetricsCollector {
     void incRetried(String topic, int partitionId);
     void incDeadLetter(String topic, int partitionId);
     void recordHandleLatency(String topic, int partitionId, long millis);
+
+    /** Tenant-aware produced counter (default: ignores the tenant). */
+    default void incProduced(String tenant, String topic, int partitionId) { incProduced(topic, partitionId); }
+
+    /** Tenant-aware consumed counter (default: ignores the tenant). */
+    default void incConsumed(String tenant, String topic, int partitionId) { incConsumed(topic, partitionId); }
+
+    /** Tenant-aware acked counter (default: ignores the tenant). */
+    default void incAcked(String tenant, String topic, int partitionId) { incAcked(topic, partitionId); }
+
+    /** Tenant-aware retried counter (default: ignores the tenant). */
+    default void incRetried(String tenant, String topic, int partitionId) { incRetried(topic, partitionId); }
+
+    /** Tenant-aware dead-letter counter (default: ignores the tenant). */
+    default void incDeadLetter(String tenant, String topic, int partitionId) { incDeadLetter(topic, partitionId); }
+
+    /** Tenant-aware handle latency (default: ignores the tenant). */
+    default void recordHandleLatency(String tenant, String topic, int partitionId, long millis) {
+        recordHandleLatency(topic, partitionId, millis);
+    }
+
+    /** Count of sends rejected by the {@link io.github.cuihairu.redis.streaming.mq.config.SendQuota}. */
+    default void incRateLimited(String tenant, String topic) {}
 
     /** Optional: count messages that failed due to missing hash payload at parse time. */
     default void incPayloadMissing(String topic, int partitionId) {}

@@ -96,7 +96,7 @@ class TopicRegistryTest {
         when(mockRedissonClient.getSet(anyString(), eq(StringCodec.INSTANCE))).thenReturn(mockRSet);
         when(mockRSet.add("t")).thenReturn(true);
 
-        TopicRegistry testRegistry = new TopicRegistry(mockRedissonClient, null);
+        TopicRegistry testRegistry = new TopicRegistry(mockRedissonClient, (io.github.cuihairu.redis.streaming.mq.partition.StreamKeys) null);
         assertTrue(testRegistry.registerTopic("t"));
 
         ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);

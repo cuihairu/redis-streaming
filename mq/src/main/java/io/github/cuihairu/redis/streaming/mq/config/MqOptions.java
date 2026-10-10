@@ -2,11 +2,17 @@ package io.github.cuihairu.redis.streaming.mq.config;
 
 import lombok.Getter;
 
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * MQ runtime options. Provide sensible defaults and a builder for overrides.
  */
 @Getter
 public class MqOptions {
+
+    // Tenant namespace (docs/Multi-Tenancy-Design.md). "default" disables the key segment.
+    private String tenant = "default";
 
     // Partitions
     private int defaultPartitionCount = 1;
@@ -73,10 +79,73 @@ public class MqOptions {
     // TTL for ack-set keys used by all-groups-ack strategy (seconds)
     private int acksetTtlSec = 86400; // 1 day
 
+    // Production rate quota (docs/Multi-Tenancy-Design.md step 2): checked before every
+    // append with key tenant:topic; a rejected send fails fast with SendRateLimitedException
+    // and is counted by MqMetrics.incRateLimited. Null disables the quota.
+    private transient SendQuota sendQuota;
+
+    // Retention cap overrides per tenant: tenant -> maxLenPerPartition. Topics of a tenant
+    // present in this map are trimmed to their cap instead of retentionMaxLenPerPartition
+    // (0 disables length trimming for that tenant). Applied by retention housekeeping.
+    private Map<String, Integer> tenantRetentionMaxLenPerPartition = new HashMap<>();
+
     public static Builder builder() { return new Builder(); }
+
+    /**
+     * A copy of these options with the given tenant stamped on (docs/Multi-Tenancy-Design.md).
+     * All other fields are carried over unchanged.
+     */
+    public MqOptions withTenant(String tenant) {
+        return new Builder(this).tenant(tenant).build();
+    }
 
     public static class Builder {
         private final MqOptions o = new MqOptions();
+
+        public Builder() {
+        }
+
+        /** Copy constructor: starts from an existing options instance. */
+        public Builder(MqOptions src) {
+            if (src == null) return;
+            o.tenant = src.tenant;
+            o.defaultPartitionCount = src.defaultPartitionCount;
+            o.workerThreads = src.workerThreads;
+            o.schedulerThreads = src.schedulerThreads;
+            o.consumerBatchCount = src.consumerBatchCount;
+            o.consumerPollTimeoutMs = src.consumerPollTimeoutMs;
+            o.leaseTtlSeconds = src.leaseTtlSeconds;
+            o.rebalanceIntervalSec = src.rebalanceIntervalSec;
+            o.renewIntervalSec = src.renewIntervalSec;
+            o.pendingScanIntervalSec = src.pendingScanIntervalSec;
+            o.claimIdleMs = src.claimIdleMs;
+            o.claimBatchSize = src.claimBatchSize;
+            o.maxInFlight = src.maxInFlight;
+            o.maxLeasedPartitionsPerConsumer = src.maxLeasedPartitionsPerConsumer;
+            o.retryMaxAttempts = src.retryMaxAttempts;
+            o.retryBaseBackoffMs = src.retryBaseBackoffMs;
+            o.retryMaxBackoffMs = src.retryMaxBackoffMs;
+            o.retryMoverBatch = src.retryMoverBatch;
+            o.retryMoverIntervalSec = src.retryMoverIntervalSec;
+            o.retryLockWaitMs = src.retryLockWaitMs;
+            o.retryLockLeaseMs = src.retryLockLeaseMs;
+            o.keyPrefix = src.keyPrefix;
+            o.streamKeyPrefix = src.streamKeyPrefix;
+            o.consumerNamePrefix = src.consumerNamePrefix;
+            o.dlqConsumerSuffix = src.dlqConsumerSuffix;
+            o.defaultConsumerGroup = src.defaultConsumerGroup;
+            o.defaultDlqGroup = src.defaultDlqGroup;
+            o.retentionMaxLenPerPartition = src.retentionMaxLenPerPartition;
+            o.retentionMs = src.retentionMs;
+            o.trimIntervalSec = src.trimIntervalSec;
+            o.dlqRetentionMaxLen = src.dlqRetentionMaxLen;
+            o.dlqRetentionMs = src.dlqRetentionMs;
+            o.ackDeletePolicy = src.ackDeletePolicy;
+            o.acksetTtlSec = src.acksetTtlSec;
+            o.sendQuota = src.sendQuota;
+            o.tenantRetentionMaxLenPerPartition = new HashMap<>(src.tenantRetentionMaxLenPerPartition);
+        }
+        public Builder tenant(String v){ o.tenant = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.normalizeTenant(v); return this; }
         public Builder defaultPartitionCount(int v){ o.defaultPartitionCount = Math.max(1, v); return this; }
         public Builder workerThreads(int v){ o.workerThreads = Math.max(1, v); return this; }
         public Builder schedulerThreads(int v){ o.schedulerThreads = Math.max(1, v); return this; }
@@ -110,6 +179,13 @@ public class MqOptions {
         public Builder dlqRetentionMs(long v){ o.dlqRetentionMs = Math.max(0, v); return this; }
         public Builder ackDeletePolicy(String v){ if (v != null && !v.isBlank()) o.ackDeletePolicy = v.toLowerCase(); return this; }
         public Builder acksetTtlSec(int v){ o.acksetTtlSec = Math.max(1, v); return this; }
+        public Builder sendQuota(SendQuota v){ o.sendQuota = v; return this; }
+        /** Per-tenant retention cap override (0 disables length trimming for that tenant). */
+        public Builder tenantRetentionMaxLenPerPartition(String tenant, int maxLen){
+            o.tenantRetentionMaxLenPerPartition.put(
+                    io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.normalizeTenant(tenant), Math.max(0, maxLen));
+            return this;
+        }
         public MqOptions build(){ return o; }
     }
 

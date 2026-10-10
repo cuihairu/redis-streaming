@@ -29,18 +29,25 @@ import java.util.Map;
 @SuppressWarnings("deprecation")
 public class DeadLetterQueueManager {
     private final RedissonClient redissonClient;
+    private final StreamKeys keys;
     // Keep a configured mapper to parse any JSON header maps reliably
     private static final ObjectMapper MAPPER = new ObjectMapper()
             .findAndRegisterModules()
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     public DeadLetterQueueManager(RedissonClient redissonClient) {
+        this(redissonClient, StreamKeys.shared());
+    }
+
+    /** Key view carrying the tenant segment, so DLQ/stream keys match a tenant-scoped topic. */
+    public DeadLetterQueueManager(RedissonClient redissonClient, StreamKeys keys) {
         this.redissonClient = redissonClient;
+        this.keys = keys == null ? StreamKeys.shared() : keys;
     }
 
     /** Return DLQ size for a topic (best-effort). */
     public long getDeadLetterQueueSize(String topic) {
-        String key = StreamKeys.dlq(topic);
+        String key = keys.dlqKey(topic);
         try {
             long sz = redissonClient.getStream(key).size();
             if (sz > 0) return sz;
@@ -68,7 +75,7 @@ public class DeadLetterQueueManager {
 
     /** List recent DLQ entries for a topic (ascending by id). */
     public Map<StreamMessageId, Map<String, Object>> getDeadLetterMessages(String topic, int limit) {
-        String key = StreamKeys.dlq(topic);
+        String key = keys.dlqKey(topic);
         try {
             // Try default codec first, then fallback to StringCodec to read entries regardless of writer codec
             RStream<String, Object> dlqDefault = redissonClient.getStream(key);
@@ -88,7 +95,7 @@ public class DeadLetterQueueManager {
 
     /** Delete a specific DLQ entry. */
     public boolean deleteMessage(String topic, StreamMessageId id) {
-        String key = StreamKeys.dlq(topic);
+        String key = keys.dlqKey(topic);
         try {
             return redissonClient.getStream(key).remove(id) > 0;
         } catch (Exception e) {
@@ -98,7 +105,7 @@ public class DeadLetterQueueManager {
 
     /** Clear the DLQ stream for a topic; returns approximate deleted count. */
     public long clearDeadLetterQueue(String topic) {
-        String key = StreamKeys.dlq(topic);
+        String key = keys.dlqKey(topic);
         try {
             long size = redissonClient.getStream(key).size();
             long deleted = redissonClient.getKeys().delete(key);
@@ -110,7 +117,7 @@ public class DeadLetterQueueManager {
 
     /** Replay a DLQ entry back to the original topic/partition, returns true on success. */
     public boolean replayMessage(String topic, StreamMessageId id) {
-        String dlqKey = StreamKeys.dlq(topic);
+        String dlqKey = keys.dlqKey(topic);
         try {
             // Try default codec first, then StringCodec fallback (entries may be written with either)
             Map<StreamMessageId, Map<String, Object>> one = null;
@@ -179,7 +186,7 @@ public class DeadLetterQueueManager {
             Object key = data.get("key"); if (key != null) replay.put("key", key);
             if (!headers.isEmpty()) replay.put("headers", headers);
 
-            String streamKey = StreamKeys.partitionStream(topic, pid);
+            String streamKey = keys.partitionStreamKey(topic, pid);
             RStream<String, Object> orig = redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE);
             replay.values().removeIf(java.util.Objects::isNull);
             return orig.add(StreamAddArgs.entries(replay)) != null;

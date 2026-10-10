@@ -8,6 +8,8 @@ import io.github.cuihairu.redis.streaming.mq.partition.Partitioner;
 import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
+import io.github.cuihairu.redis.streaming.mq.config.SendQuota;
+import io.github.cuihairu.redis.streaming.mq.config.SendRateLimitedException;
 import io.github.cuihairu.redis.streaming.mq.metrics.MqMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RStream;
@@ -33,6 +35,7 @@ public class RedisMessageProducer implements MessageProducer {
     private final MqOptions options;
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final PayloadLifecycleManager payloadLifecycleManager;
+    private final StreamKeys keys;
 
     public RedisMessageProducer(RedissonClient redissonClient,
                                 Partitioner partitioner,
@@ -42,7 +45,8 @@ public class RedisMessageProducer implements MessageProducer {
         this.partitioner = partitioner;
         this.partitionRegistry = partitionRegistry;
         this.options = options;
-        this.topicRegistry = new TopicRegistry(redissonClient, this.options.getKeyPrefix());
+        this.keys = StreamKeys.of(this.options);
+        this.topicRegistry = new TopicRegistry(redissonClient, this.keys);
         this.payloadLifecycleManager = new PayloadLifecycleManager(redissonClient, this.options);
     }
 
@@ -54,6 +58,11 @@ public class RedisMessageProducer implements MessageProducer {
 
         return CompletableFuture.supplyAsync(() -> {
             try {
+                // Production rate quota (tenant:topic bucket); a rejection fails fast, never blocks
+                if (!SendQuota.tryAcquire(options.getSendQuota(), keys.getTenant(), message.getTopic())) {
+                    throw new SendRateLimitedException(keys.getTenant(), message.getTopic());
+                }
+
                 // Ensure topic is registered and meta exists (default to 1 partition)
                 topicRegistry.registerTopic(message.getTopic());
                 partitionRegistry.ensureTopic(message.getTopic(), options.getDefaultPartitionCount());
@@ -72,7 +81,7 @@ public class RedisMessageProducer implements MessageProducer {
                 } catch (Exception ignore) {
                     partitionId = partitioner.partition(message.getKey(), partitions);
                 }
-                String streamKey = StreamKeys.partitionStream(message.getTopic(), partitionId);
+                String streamKey = keys.partitionStreamKey(message.getTopic(), partitionId);
             RStream<String, Object> stream = redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE);
 
                 Map<String, Object> data = StreamEntryCodec.buildPartitionEntry(message, partitionId, payloadLifecycleManager);
@@ -84,11 +93,16 @@ public class RedisMessageProducer implements MessageProducer {
                 message.setId(id);
 
                 // metrics
-                MqMetrics.get().incProduced(message.getTopic(), partitionId);
+                MqMetrics.get().incProduced(keys.getTenant(), message.getTopic(), partitionId);
                 log.debug("Message sent to topic '{}' partition {} with ID: {}", message.getTopic(), partitionId, id);
                 return id;
 
             } catch (Exception e) {
+                if (e instanceof SendRateLimitedException) {
+                    // quota rejection is a policy decision, not a transport failure — no stack trace
+                    log.warn("Send rejected by rate quota: topic='{}' tenant='{}'", message.getTopic(), keys.getTenant());
+                    throw (SendRateLimitedException) e;
+                }
                 log.error("Failed to send message to topic '{}'", message.getTopic(), e);
                 throw new RuntimeException("Failed to send message", e);
             }

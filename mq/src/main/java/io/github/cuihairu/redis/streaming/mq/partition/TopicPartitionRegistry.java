@@ -17,25 +17,33 @@ public class TopicPartitionRegistry {
     private static final String FIELD_PARTITION_COUNT = "partitionCount";
 
     private final RedissonClient redissonClient;
+    private final StreamKeys keys;
 
+    /** Uses the process-wide default key view (no tenant segment). */
     public TopicPartitionRegistry(RedissonClient redissonClient) {
+        this(redissonClient, StreamKeys.shared());
+    }
+
+    /** Uses an explicit key view so callers sharing an MqOptions tenant see identical keys. */
+    public TopicPartitionRegistry(RedissonClient redissonClient, StreamKeys keys) {
         this.redissonClient = redissonClient;
+        this.keys = keys == null ? StreamKeys.shared() : keys;
     }
 
     /** Ensure topic meta exists; if absent, initialize with given partitionCount. */
     public void ensureTopic(String topic, int partitionCount) {
         try {
             // Register topic name using configured control prefix
-            redissonClient.getSet(StreamKeys.topicsRegistry(), org.redisson.client.codec.StringCodec.INSTANCE).add(topic);
+            redissonClient.getSet(keys.topicsRegistryKey(), org.redisson.client.codec.StringCodec.INSTANCE).add(topic);
 
-            RMap<String, String> meta = redissonClient.getMap(StreamKeys.topicMeta(topic), org.redisson.client.codec.StringCodec.INSTANCE);
+            RMap<String, String> meta = redissonClient.getMap(keys.topicMetaKey(topic), org.redisson.client.codec.StringCodec.INSTANCE);
             if (!meta.containsKey(FIELD_PARTITION_COUNT)) {
                 meta.put(FIELD_PARTITION_COUNT, Integer.toString(Math.max(1, partitionCount)));
                 // Precompute partition keys set for convenience
-                RSet<String> set = redissonClient.getSet(StreamKeys.topicPartitionsSet(topic), org.redisson.client.codec.StringCodec.INSTANCE);
+                RSet<String> set = redissonClient.getSet(keys.topicPartitionsSetKey(topic), org.redisson.client.codec.StringCodec.INSTANCE);
                 int pc = Math.max(1, partitionCount);
                 for (int i = 0; i < pc; i++) {
-                    set.add(StreamKeys.partitionStream(topic, i));
+                    set.add(keys.partitionStreamKey(topic, i));
                 }
                 log.info("Initialized topic meta: {} partitions for topic {}", pc, topic);
             }
@@ -51,7 +59,7 @@ public class TopicPartitionRegistry {
      */
     public int getPartitionCount(String topic) {
         try {
-            RMap<String, String> meta = redissonClient.getMap(StreamKeys.topicMeta(topic), org.redisson.client.codec.StringCodec.INSTANCE);
+            RMap<String, String> meta = redissonClient.getMap(keys.topicMetaKey(topic), org.redisson.client.codec.StringCodec.INSTANCE);
             String val = meta.get(FIELD_PARTITION_COUNT);
             if (val != null) {
                 try {
@@ -63,7 +71,7 @@ public class TopicPartitionRegistry {
                     // fall through to the partitions-set fallback
                 }
             }
-            RSet<String> partitions = redissonClient.getSet(StreamKeys.topicPartitionsSet(topic), org.redisson.client.codec.StringCodec.INSTANCE);
+            RSet<String> partitions = redissonClient.getSet(keys.topicPartitionsSetKey(topic), org.redisson.client.codec.StringCodec.INSTANCE);
             int fromSet = partitions == null ? 0 : partitions.size();
             if (fromSet > 0) {
                 log.warn("Topic {} partition meta missing or unparsable (val={}); using partition set size {}",
@@ -82,7 +90,7 @@ public class TopicPartitionRegistry {
         int pc = getPartitionCount(topic);
         List<String> keys = new ArrayList<>(pc);
         for (int i = 0; i < pc; i++) {
-            keys.add(StreamKeys.partitionStream(topic, i));
+            keys.add(this.keys.partitionStreamKey(topic, i));
         }
         return keys;
     }
@@ -93,7 +101,7 @@ public class TopicPartitionRegistry {
     public boolean updatePartitionCount(String topic, int newCount) {
         try {
             if (newCount < 1) return false;
-            RMap<String, String> meta = redissonClient.getMap(StreamKeys.topicMeta(topic), org.redisson.client.codec.StringCodec.INSTANCE);
+            RMap<String, String> meta = redissonClient.getMap(keys.topicMetaKey(topic), org.redisson.client.codec.StringCodec.INSTANCE);
             String val = meta.get(FIELD_PARTITION_COUNT);
             int old = 1;
             if (val != null) {
@@ -103,9 +111,9 @@ public class TopicPartitionRegistry {
                 return false; // only increase
             }
             meta.put(FIELD_PARTITION_COUNT, Integer.toString(newCount));
-            RSet<String> set = redissonClient.getSet(StreamKeys.topicPartitionsSet(topic), org.redisson.client.codec.StringCodec.INSTANCE);
+            RSet<String> set = redissonClient.getSet(keys.topicPartitionsSetKey(topic), org.redisson.client.codec.StringCodec.INSTANCE);
             for (int i = old; i < newCount; i++) {
-                set.add(StreamKeys.partitionStream(topic, i));
+                set.add(keys.partitionStreamKey(topic, i));
             }
             log.info("Updated partition count for {}: {} -> {}", topic, old, newCount);
             return true;

@@ -3,6 +3,7 @@ package io.github.cuihairu.redis.streaming.mq.dlq;
 import io.github.cuihairu.redis.streaming.mq.metrics.MqMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RStream;
+import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import org.redisson.api.RedissonClient;
 import org.redisson.api.stream.StreamMessageId;
 import org.redisson.api.stream.StreamAddArgs;
@@ -16,6 +17,7 @@ import java.util.Map;
 @Slf4j
 public class RedisDeadLetterService implements DeadLetterService {
     private final RedissonClient redissonClient;
+    private final StreamKeys keys;
     private final ReplayHandler replayHandler;
     private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER =
             new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
@@ -23,13 +25,19 @@ public class RedisDeadLetterService implements DeadLetterService {
     public RedisDeadLetterService(RedissonClient redissonClient) { this(redissonClient, null); }
 
     public RedisDeadLetterService(RedissonClient redissonClient, ReplayHandler replayHandler) {
+        this(redissonClient, replayHandler, StreamKeys.shared());
+    }
+
+    /** Key view carrying the tenant segment, so DLQ keys match a tenant-scoped topic. */
+    public RedisDeadLetterService(RedissonClient redissonClient, ReplayHandler replayHandler, StreamKeys keys) {
         this.redissonClient = redissonClient;
         this.replayHandler = replayHandler;
+        this.keys = keys == null ? StreamKeys.shared() : keys;
     }
 
     @Override
     public StreamMessageId send(DeadLetterRecord record) {
-        String key = DlqKeys.dlq(record.originalTopic);
+        String key = keys.dlqKey(record.originalTopic);
         RStream<String, Object> dlq = redissonClient.getStream(key);
         Map<String, Object> entry = DeadLetterCodec.buildEntry(record);
         return dlq.add(StreamAddArgs.entries(entry));
@@ -40,7 +48,7 @@ public class RedisDeadLetterService implements DeadLetterService {
         if (limit <= 0) {
             return Map.of();
         }
-        String key = DlqKeys.dlq(originalTopic);
+        String key = keys.dlqKey(originalTopic);
         RStream<String, Object> dlq = redissonClient.getStream(key);
         try {
             @SuppressWarnings("deprecation")
@@ -54,7 +62,7 @@ public class RedisDeadLetterService implements DeadLetterService {
 
     @Override
     public long size(String originalTopic) {
-        String key = DlqKeys.dlq(originalTopic);
+        String key = keys.dlqKey(originalTopic);
         try {
             long sz = redissonClient.getStream(key).size();
             if (sz == 0) {
@@ -71,7 +79,7 @@ public class RedisDeadLetterService implements DeadLetterService {
 
     @Override
     public boolean delete(String originalTopic, StreamMessageId id) {
-        String key = DlqKeys.dlq(originalTopic);
+        String key = keys.dlqKey(originalTopic);
         try {
             long deleted = redissonClient.getStream(key).remove(id);
             boolean ok = deleted > 0;
@@ -85,7 +93,7 @@ public class RedisDeadLetterService implements DeadLetterService {
 
     @Override
     public long clear(String originalTopic) {
-        String key = DlqKeys.dlq(originalTopic);
+        String key = keys.dlqKey(originalTopic);
         try {
             long size = redissonClient.getStream(key).size();
             boolean ok = redissonClient.getKeys().delete(key) > 0;
@@ -99,7 +107,7 @@ public class RedisDeadLetterService implements DeadLetterService {
 
     @Override
     public boolean replay(String originalTopic, StreamMessageId id) {
-        String dlqKey = DlqKeys.dlq(originalTopic);
+        String dlqKey = keys.dlqKey(originalTopic);
         try {
             long start = System.nanoTime();
             RStream<String, Object> dlq = redissonClient.getStream(dlqKey);
@@ -152,7 +160,7 @@ public class RedisDeadLetterService implements DeadLetterService {
                 MqMetrics.get().recordDlqReplay(originalTopic, pid, ok, dur);
                 return ok;
             } else {
-                String streamKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(originalTopic, pid);
+                String streamKey = keys.partitionStreamKey(originalTopic, pid);
                 RStream<String, Object> orig = redissonClient.getStream(streamKey);
                 Map<String, Object> replay = DeadLetterCodec.buildPartitionEntryFromDlq(data, originalTopic, pid);
 

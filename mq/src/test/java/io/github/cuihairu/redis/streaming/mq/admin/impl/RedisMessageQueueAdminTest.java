@@ -46,7 +46,7 @@ class RedisMessageQueueAdminTest {
 
     @Test
     void testConstructorWithNullOptions() {
-        MessageQueueAdmin admin = new RedisMessageQueueAdmin(mockRedissonClient, null);
+        MessageQueueAdmin admin = new RedisMessageQueueAdmin(mockRedissonClient, (MqOptions) null);
 
         assertNotNull(admin);
     }

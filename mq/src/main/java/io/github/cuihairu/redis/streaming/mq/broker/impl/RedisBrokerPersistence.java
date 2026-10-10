@@ -22,6 +22,7 @@ public class RedisBrokerPersistence implements BrokerPersistence {
     private final RedissonClient redissonClient;
     private final TopicRegistry topicRegistry;
     private final MqOptions options;
+    private final StreamKeys keys;
     // MQ-13: hard-cap rescue deletes only need entry IDS, so the range scan is paged with
     // a bounded count instead of materializing the whole backlog (values included) in one
     // range(Integer.MAX_VALUE-ish) call. Read per instance (not static) so tests can tune
@@ -31,7 +32,8 @@ public class RedisBrokerPersistence implements BrokerPersistence {
     public RedisBrokerPersistence(RedissonClient redissonClient, MqOptions options) {
         this.redissonClient = redissonClient;
         this.options = options == null ? MqOptions.builder().build() : options;
-        this.topicRegistry = new TopicRegistry(redissonClient, this.options.getKeyPrefix());
+        this.keys = StreamKeys.of(this.options);
+        this.topicRegistry = new TopicRegistry(redissonClient, this.keys);
     }
 
     @Override
@@ -43,9 +45,15 @@ public class RedisBrokerPersistence implements BrokerPersistence {
             return null;
         }
 
+        // Production rate quota (tenant:topic bucket); a rejection fails fast, never blocks
+        if (!io.github.cuihairu.redis.streaming.mq.config.SendQuota.tryAcquire(
+                options.getSendQuota(), keys.getTenant(), topic)) {
+            throw new io.github.cuihairu.redis.streaming.mq.config.SendRateLimitedException(keys.getTenant(), topic);
+        }
+
         // Ensure topic keyspace exists (compat with current behavior)
         topicRegistry.registerTopic(topic);
-        String streamKey = StreamKeys.partitionStream(topic, partitionId);
+        String streamKey = keys.partitionStreamKey(topic, partitionId);
         Map<String, Object> data = StreamEntryCodec.buildPartitionEntry(message, partitionId,
                 new io.github.cuihairu.redis.streaming.mq.impl.PayloadLifecycleManager(redissonClient, options));
 

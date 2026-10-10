@@ -62,7 +62,7 @@ class PayloadLifecycleManagerTest {
     @Test
     void testConstructorWithNullMqOptions() {
         MockitoAnnotations.openMocks(this);
-        PayloadLifecycleManager manager = new PayloadLifecycleManager(mockRedissonClient, null);
+        PayloadLifecycleManager manager = new PayloadLifecycleManager(mockRedissonClient, (MqOptions) null);
 
         assertNotNull(manager);
         // Falls back to StreamKeys.controlPrefix()

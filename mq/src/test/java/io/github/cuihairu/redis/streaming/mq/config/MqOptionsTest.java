@@ -1112,4 +1112,53 @@ class MqOptionsTest {
         // Then
         assertEquals(0, options.getConsumerPollTimeoutMs());
     }
+
+    @Test
+    void testDefaultTenantIsDefault() {
+        assertEquals("default", MqOptions.builder().build().getTenant());
+    }
+
+    @Test
+    void testBuilderWithTenantNormalizes() {
+        assertEquals("acme", MqOptions.builder().tenant("acme").build().getTenant());
+        assertEquals("default", MqOptions.builder().tenant(null).build().getTenant());
+        assertEquals("default", MqOptions.builder().tenant("").build().getTenant());
+        assertThrows(IllegalArgumentException.class, () -> MqOptions.builder().tenant("bad:name"));
+    }
+
+    @Test
+    void testWithTenantCopiesAllFieldsAndStampsTenant() {
+        MqOptions src = MqOptions.builder()
+            .tenant("acme")
+            .keyPrefix("custom:mq")
+            .streamKeyPrefix("custom:stream")
+            .defaultPartitionCount(3)
+            .workerThreads(4)
+            .retryMaxAttempts(7)
+            .retentionMaxLenPerPartition(1234)
+            .tenantRetentionMaxLenPerPartition("acme", 50)
+            .build();
+
+        MqOptions copy = src.withTenant("beta");
+
+        assertEquals("beta", copy.getTenant());
+        assertEquals("acme", src.getTenant());
+        assertEquals("custom:mq", copy.getKeyPrefix());
+        assertEquals("custom:stream", copy.getStreamKeyPrefix());
+        assertEquals(3, copy.getDefaultPartitionCount());
+        assertEquals(4, copy.getWorkerThreads());
+        assertEquals(7, copy.getRetryMaxAttempts());
+        assertEquals(1234, copy.getRetentionMaxLenPerPartition());
+        // per-tenant retention map is carried over and isolated per copy
+        assertEquals(50, copy.getTenantRetentionMaxLenPerPartition().get("acme"));
+        src.getTenantRetentionMaxLenPerPartition().put("acme", 99);
+        assertEquals(50, copy.getTenantRetentionMaxLenPerPartition().get("acme"),
+                "mutating the source map must not leak into the copy");
+    }
+
+    @Test
+    void testWithTenantRejectsInvalidName() {
+        MqOptions options = MqOptions.builder().build();
+        assertThrows(IllegalArgumentException.class, () -> options.withTenant("bad:name"));
+    }
 }

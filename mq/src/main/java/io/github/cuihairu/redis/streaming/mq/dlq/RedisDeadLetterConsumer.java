@@ -3,6 +3,7 @@ package io.github.cuihairu.redis.streaming.mq.dlq;
 import io.github.cuihairu.redis.streaming.mq.metrics.MqMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RStream;
+import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import org.redisson.api.RedissonClient;
 import org.redisson.api.stream.StreamMessageId;
 import org.redisson.api.stream.StreamAddArgs;
@@ -23,6 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Slf4j
 public class RedisDeadLetterConsumer implements DeadLetterConsumer {
     private final RedissonClient redissonClient;
+    private final StreamKeys keys;
     private final String consumerName;
     private final String defaultGroup;
     private final ReplayHandler replayHandler;
@@ -48,10 +50,17 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
     }
 
     public RedisDeadLetterConsumer(RedissonClient redissonClient, String consumerName, String defaultGroup, ReplayHandler replayHandler) {
+        this(redissonClient, consumerName, defaultGroup, replayHandler, StreamKeys.shared());
+    }
+
+    /** Key view carrying the tenant segment, so DLQ keys match a tenant-scoped topic. */
+    public RedisDeadLetterConsumer(RedissonClient redissonClient, String consumerName, String defaultGroup,
+                                   ReplayHandler replayHandler, StreamKeys keys) {
         this.redissonClient = redissonClient;
         this.consumerName = consumerName;
         this.defaultGroup = (defaultGroup==null||defaultGroup.isBlank())?"dlq-group":defaultGroup;
         this.replayHandler = replayHandler;
+        this.keys = keys == null ? StreamKeys.shared() : keys;
         this.executor = Executors.newSingleThreadScheduledExecutor();
     }
 
@@ -63,7 +72,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
     @Override
     public void subscribe(String topic, String group, DeadLetterHandler handler) {
         if (closed.get()) throw new IllegalStateException("Consumer is closed");
-        String dlqKey = DlqKeys.dlq(topic);
+        String dlqKey = keys.dlqKey(topic);
         try {
             redissonClient.getStream(dlqKey)
                     .createGroup(StreamCreateGroupArgs.name(group).id(new StreamMessageId(0, 0)).makeStream());
@@ -99,7 +108,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
         while (running.get() && !closed.get()) {
             try {
                 for (Sub s : subs.values()) {
-                    String dlq = DlqKeys.dlq(s.topic);
+                    String dlq = keys.dlqKey(s.topic);
                     RStream<String, Object> streamDefault = redissonClient.getStream(dlq);
                     RStream<String, Object> streamString  = redissonClient.getStream(dlq, org.redisson.client.codec.StringCodec.INSTANCE);
                     RStream<String, Object> stream = streamDefault;
@@ -183,7 +192,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                             String topic = entry.getOriginalTopic();
                             int pid = entry.getPartitionId();
                             RStream<String, Object> p = redissonClient.getStream(
-                                    io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, pid),
+                                    keys.partitionStreamKey(topic, pid),
                                     org.redisson.client.codec.StringCodec.INSTANCE);
                             Map<String, Object> d = DeadLetterCodec.buildPartitionEntryFromDlq(data, topic, pid);
                             p.add(StreamAddArgs.entries(d));
@@ -191,7 +200,7 @@ public class RedisDeadLetterConsumer implements DeadLetterConsumer {
                             try {
                                 boolean visible = p.isExists() && p.size() > 0;
                                 if (!visible) { Thread.sleep(50); p.add(StreamAddArgs.entries(d)); }
-                                try { log.info("DLQ group RETRY replay ok={}, origKey={}, visible={} size={}", ok, io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, pid), (p.isExists() && p.size()>0), p.size()); } catch (Exception ignore) {}
+                                try { log.info("DLQ group RETRY replay ok={}, origKey={}, visible={} size={}", ok, keys.partitionStreamKey(topic, pid), (p.isExists() && p.size()>0), p.size()); } catch (Exception ignore) {}
                             } catch (Exception ignore) {}
                         }
                     } catch (Exception ex) {

@@ -30,18 +30,25 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
     // range(Integer.MAX_VALUE) call that materialized the entire age range (values included)
     // into the heap. Read per instance (not static) so tests can tune it for a fresh instance.
     private final int trimAgePageSize = Math.max(1, Integer.getInteger("mq.admin.test.trimAgePageSize", 500));
+    private final io.github.cuihairu.redis.streaming.mq.partition.StreamKeys keyView;
 
     public RedisMessageQueueAdmin(RedissonClient redissonClient) {
-        this(redissonClient, null);
+        this(redissonClient, (MqOptions) null);
     }
 
     public RedisMessageQueueAdmin(RedissonClient redissonClient, MqOptions options) {
-        String prefix = options != null ? options.getKeyPrefix() : TopicRegistry.DEFAULT_PREFIX;
-        MqOptions resolved = options != null ? options : io.github.cuihairu.redis.streaming.mq.config.MqOptions.builder().build();
+        this(redissonClient, io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.of(options));
+    }
+
+    public RedisMessageQueueAdmin(RedissonClient redissonClient,
+                                  io.github.cuihairu.redis.streaming.mq.partition.StreamKeys keys) {
+        io.github.cuihairu.redis.streaming.mq.partition.StreamKeys view =
+                keys == null ? io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.shared() : keys;
         this.redissonClient = redissonClient;
-        this.topicRegistry = new TopicRegistry(redissonClient, prefix);
-        this.partitionRegistry = new TopicPartitionRegistry(redissonClient);
-        this.payloadLifecycleManager = new PayloadLifecycleManager(redissonClient, resolved);
+        this.topicRegistry = new TopicRegistry(redissonClient, view);
+        this.partitionRegistry = new TopicPartitionRegistry(redissonClient, view);
+        this.payloadLifecycleManager = new PayloadLifecycleManager(redissonClient, view);
+        this.keyView = view;
     }
 
     RedisMessageQueueAdmin(RedissonClient redissonClient,
@@ -52,6 +59,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
         this.topicRegistry = Objects.requireNonNull(topicRegistry, "topicRegistry");
         this.partitionRegistry = Objects.requireNonNull(partitionRegistry, "partitionRegistry");
         this.payloadLifecycleManager = Objects.requireNonNull(payloadLifecycleManager, "payloadLifecycleManager");
+        this.keyView = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.shared();
     }
 
     // ==================== Queue Information Queries ====================
@@ -62,7 +70,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             int pc = partitionRegistry.getPartitionCount(topic);
             if (pc <= 1) {
                 // Prefer partition stream key for pc=1; fallback to legacy topic key for compatibility
-                RStream<String, Object> stream = redissonClient.getStream(StreamKeys.partitionStream(topic, 0), org.redisson.client.codec.StringCodec.INSTANCE);
+                RStream<String, Object> stream = redissonClient.getStream(keyView.partitionStreamKey(topic, 0), org.redisson.client.codec.StringCodec.INSTANCE);
                 if (!stream.isExists()) {
                     stream = redissonClient.getStream(topic, org.redisson.client.codec.StringCodec.INSTANCE);
                     if (!stream.isExists()) {
@@ -86,7 +94,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
                 StreamMessageId first = null;
                 StreamMessageId last = null;
                 for (int i = 0; i < pc; i++) {
-                    String key = StreamKeys.partitionStream(topic, i);
+                    String key = keyView.partitionStreamKey(topic, i);
                     RStream<String, Object> s = redissonClient.getStream(key, org.redisson.client.codec.StringCodec.INSTANCE);
                     if (!s.isExists()) continue;
                     total += s.size();
@@ -135,12 +143,12 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
     @Override
     public boolean topicExists(String topic) {
         try {
-            RStream<String, Object> s0 = redissonClient.getStream(StreamKeys.partitionStream(topic, 0), org.redisson.client.codec.StringCodec.INSTANCE);
+            RStream<String, Object> s0 = redissonClient.getStream(keyView.partitionStreamKey(topic, 0), org.redisson.client.codec.StringCodec.INSTANCE);
             if (s0.isExists()) return true;
             int pc = partitionRegistry.getPartitionCount(topic);
             if (pc <= 1) return s0.isExists();
             for (int i = 0; i < pc; i++) {
-                if (redissonClient.getStream(StreamKeys.partitionStream(topic, i), org.redisson.client.codec.StringCodec.INSTANCE).isExists()) return true;
+                if (redissonClient.getStream(keyView.partitionStreamKey(topic, i), org.redisson.client.codec.StringCodec.INSTANCE).isExists()) return true;
             }
             return false;
         } catch (Exception e) {
@@ -157,7 +165,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             int pc = partitionRegistry.getPartitionCount(topic);
             Map<String, ConsumerGroupInfo> map = new HashMap<>();
             if (pc <= 1) {
-                RStream<String, Object> stream = redissonClient.getStream(StreamKeys.partitionStream(topic, 0), org.redisson.client.codec.StringCodec.INSTANCE);
+                RStream<String, Object> stream = redissonClient.getStream(keyView.partitionStreamKey(topic, 0), org.redisson.client.codec.StringCodec.INSTANCE);
                 if (!stream.isExists()) return Collections.emptyList();
                 for (StreamGroup g : stream.listGroups()) {
                     map.put(g.getName(), ConsumerGroupInfo.builder()
@@ -170,7 +178,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
                 }
             } else {
                 for (int i = 0; i < pc; i++) {
-                    RStream<String, Object> s = redissonClient.getStream(StreamKeys.partitionStream(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
+                    RStream<String, Object> s = redissonClient.getStream(keyView.partitionStreamKey(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
                     if (!s.isExists()) continue;
                     for (StreamGroup g : s.listGroups()) {
                         ConsumerGroupInfo agg = map.get(g.getName());
@@ -209,7 +217,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             boolean hasActive = false;
             boolean foundGroup = false;
             for (int i = 0; i < pc; i++) {
-                RStream<String, Object> s = redissonClient.getStream(pc <= 1 ? StreamKeys.partitionStream(topic, 0) : StreamKeys.partitionStream(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
+                RStream<String, Object> s = redissonClient.getStream(pc <= 1 ? keyView.partitionStreamKey(topic, 0) : keyView.partitionStreamKey(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
                 if (!s.isExists()) continue;
                 List<StreamGroup> groups = s.listGroups();
                 StreamGroup g = groups.stream().filter(x -> x.getName().equals(group)).findFirst().orElse(null);
@@ -253,7 +261,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
         try {
             int pc = partitionRegistry.getPartitionCount(topic);
             for (int i = 0; i < Math.max(1, pc); i++) {
-                RStream<String, Object> s = redissonClient.getStream(StreamKeys.partitionStream(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
+                RStream<String, Object> s = redissonClient.getStream(keyView.partitionStreamKey(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
                 if (!s.isExists()) continue;
                 List<StreamGroup> groups = s.listGroups();
                 if (groups.stream().anyMatch(g -> g.getName().equals(group))) return true;
@@ -289,7 +297,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             int samplePerPartition = Math.min(Math.max(1, limit), 200);
             List<PendingEntry> all = new ArrayList<>();
             for (int i = 0; i < pc; i++) {
-                RStream<String, Object> stream = redissonClient.getStream(StreamKeys.partitionStream(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
+                RStream<String, Object> stream = redissonClient.getStream(keyView.partitionStreamKey(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
                 if (!stream.isExists()) continue;
                 @SuppressWarnings("deprecation")
                 List<PendingEntry> list = stream.listPending(group, StreamMessageId.MIN, StreamMessageId.MAX, samplePerPartition);
@@ -335,7 +343,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             long total = 0;
             for (int i = 0; i < pc; i++) {
                 RStream<String, Object> s = redissonClient.getStream(
-                        pc <= 1 ? StreamKeys.partitionStream(topic, 0) : StreamKeys.partitionStream(topic, i),
+                        pc <= 1 ? keyView.partitionStreamKey(topic, 0) : keyView.partitionStreamKey(topic, i),
                         org.redisson.client.codec.StringCodec.INSTANCE);
                 if (!s.isExists()) continue;
                 List<StreamGroup> groups = s.listGroups();
@@ -360,7 +368,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             long per = Math.max(0, maxLen / pc);
             long deletedTotal = 0;
             for (int i = 0; i < pc; i++) {
-                RStream<String, Object> s = redissonClient.getStream(pc == 1 ? StreamKeys.partitionStream(topic, 0) : StreamKeys.partitionStream(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
+                RStream<String, Object> s = redissonClient.getStream(pc == 1 ? keyView.partitionStreamKey(topic, 0) : keyView.partitionStreamKey(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
                 if (!s.isExists()) continue;
                 long size = s.size();
                 if (size > per) {
@@ -408,7 +416,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             long minTs = Instant.now().minus(maxAge).toEpochMilli();
             long deletedTotal = 0;
             for (int i = 0; i < pc; i++) {
-                RStream<String, Object> s = redissonClient.getStream(pc == 1 ? StreamKeys.partitionStream(topic, 0) : StreamKeys.partitionStream(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
+                RStream<String, Object> s = redissonClient.getStream(pc == 1 ? keyView.partitionStreamKey(topic, 0) : keyView.partitionStreamKey(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
                 if (!s.isExists()) continue;
                 // Fallback: range scan and remove (avoid relying on StreamTrimArgs API variations).
                 // MQ-13: page with a bounded count and an id cursor — the old single
@@ -452,11 +460,11 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             // Collect all keys to delete: partition streams, DLQ, meta, partitions set, and legacy bare topic key
             java.util.List<String> toDelete = new java.util.ArrayList<>();
             for (int i = 0; i < pc; i++) {
-                toDelete.add(StreamKeys.partitionStream(topic, i));
+                toDelete.add(keyView.partitionStreamKey(topic, i));
             }
-            toDelete.add(StreamKeys.dlq(topic));
-            toDelete.add(StreamKeys.topicMeta(topic));
-            toDelete.add(StreamKeys.topicPartitionsSet(topic));
+            toDelete.add(keyView.dlqKey(topic));
+            toDelete.add(keyView.topicMetaKey(topic));
+            toDelete.add(keyView.topicPartitionsSetKey(topic));
             // legacy single-stream key (if ever used)
             toDelete.add(topic);
 
@@ -488,19 +496,19 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             int removed = 0;
             java.util.Set<String> keys = new java.util.LinkedHashSet<>();
             for (int i = 0; i < pc; i++) {
-                keys.add(StreamKeys.partitionStream(topic, i));
+                keys.add(keyView.partitionStreamKey(topic, i));
             }
             // Fallback: if meta not initialized (pc==1), also scan for any existing partition streams
             if (pc <= 1) {
                 try {
-                    String pat = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.streamPrefix()
+                    String pat = keyView.getStreamPrefix() + keyView.tenantSegment()
                             + ":" + topic + ":p:*";
                     try {
                         // MQ-12: scan with the partition pattern instead of walking the entire
                         // keyspace — same result, but scoped to this topic's partitions.
                         for (String k : redissonClient.getKeys().getKeys(
                                 org.redisson.api.options.KeysScanOptions.defaults().pattern(pat))) {
-                            if (k != null && k.startsWith(io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.streamPrefix() + ":" + topic + ":p:")) {
+                            if (k != null && k.startsWith(keyView.getStreamPrefix() + keyView.tenantSegment() + ":" + topic + ":p:")) {
                                 keys.add(k);
                             }
                         }
@@ -549,7 +557,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
 
             boolean any = false;
             for (int i = 0; i < pc; i++) {
-                RStream<String, Object> s = redissonClient.getStream(StreamKeys.partitionStream(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
+                RStream<String, Object> s = redissonClient.getStream(keyView.partitionStreamKey(topic, i), org.redisson.client.codec.StringCodec.INSTANCE);
                 // Always attempt to (re)create with MKSTREAM to be robust even if stream key doesn't exist yet
                 any = true;
                 try { s.removeGroup(group); } catch (Exception ignore) {}
@@ -597,7 +605,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
             List<MessageEntry> all = new ArrayList<>();
             int per = Math.max(1, Math.min(perPartitionCount, 200));
             for (int i = 0; i < pc; i++) {
-                String sk = StreamKeys.partitionStream(topic, i);
+                String sk = keyView.partitionStreamKey(topic, i);
                 org.redisson.api.RStream<String, Object> stream = redissonClient.getStream(sk, org.redisson.client.codec.StringCodec.INSTANCE);
                 if (!stream.isExists()) continue;
                 // Use XREVRANGE to fetch last N entries efficiently
@@ -647,7 +655,7 @@ public class RedisMessageQueueAdmin implements MessageQueueAdmin {
         try {
             int pc = Math.max(1, partitionRegistry.getPartitionCount(topic));
             int pid = Math.max(0, Math.min(partitionId, pc - 1));
-            String sk = StreamKeys.partitionStream(topic, pid);
+            String sk = keyView.partitionStreamKey(topic, pid);
             RStream<String, Object> stream = redissonClient.getStream(sk, org.redisson.client.codec.StringCodec.INSTANCE);
             if (!stream.isExists()) return Collections.emptyList();
             List<MessageEntry> out = new ArrayList<>();

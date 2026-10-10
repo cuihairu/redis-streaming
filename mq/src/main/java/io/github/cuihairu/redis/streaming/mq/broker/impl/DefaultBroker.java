@@ -18,6 +18,7 @@ public class DefaultBroker implements Broker {
     private static final Logger log = LoggerFactory.getLogger(DefaultBroker.class);
     private final RedissonClient redissonClient;
     private final MqOptions options;
+    private final io.github.cuihairu.redis.streaming.mq.partition.StreamKeys keys;
     private final BrokerRouter router;
     private final BrokerPersistence persistence;
     private final TopicPartitionRegistry partitionRegistry;
@@ -28,6 +29,7 @@ public class DefaultBroker implements Broker {
                          BrokerPersistence persistence) {
         this.redissonClient = redissonClient;
         this.options = options == null ? MqOptions.builder().build() : options;
+        this.keys = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.of(this.options);
         this.router = router;
         this.persistence = persistence;
         this.partitionRegistry = new TopicPartitionRegistry(redissonClient);
@@ -56,7 +58,7 @@ public class DefaultBroker implements Broker {
 
     @Override
     public java.util.List<io.github.cuihairu.redis.streaming.mq.broker.BrokerRecord> readGroup(String topic, String consumerGroup, String consumerName, int partitionId, int count, long timeoutMs) {
-        String streamKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, partitionId);
+        String streamKey = keys.partitionStreamKey(topic, partitionId);
         org.redisson.api.RStream<String, Object> stream = redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE);
         // Ensure the consumer group exists on this stream before reading. This avoids NOGROUP races
         // and makes DefaultBroker usable without an explicit "subscribe/create group" step.
@@ -114,7 +116,7 @@ public class DefaultBroker implements Broker {
 
     @Override
     public void ack(String topic, String consumerGroup, int partitionId, String messageId) {
-        String streamKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, partitionId);
+        String streamKey = keys.partitionStreamKey(topic, partitionId);
         org.redisson.api.RStream<String, Object> stream = redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE);
         String policy = options.getAckDeletePolicy();
         if (policy == null) policy = "none";
@@ -136,7 +138,7 @@ public class DefaultBroker implements Broker {
                 break;
             case "all-groups-ack": {
                 // Collect group ack into ack-set; if size reaches active group count, delete the entry
-                String ackKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.ackSet(topic, partitionId, messageId);
+                String ackKey = keys.ackSetKey(topic, partitionId, messageId);
                 org.redisson.api.RSet<String> ackset = redissonClient.getSet(ackKey, org.redisson.client.codec.StringCodec.INSTANCE);
                 try { ackset.add(consumerGroup); } catch (Exception e) {
                     log.debug("Ack-set add failed: {}", ackKey, e);

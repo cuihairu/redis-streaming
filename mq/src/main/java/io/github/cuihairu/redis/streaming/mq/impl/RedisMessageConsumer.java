@@ -55,6 +55,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
     private final LeaseManager leaseManager;
     private final RetryPolicy retryPolicy;
     private final MqOptions options;
+    private final StreamKeys keys;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final PayloadLifecycleManager payloadLifecycleManager;
     private final Semaphore inFlightLimiter;
@@ -66,6 +67,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         this.redissonClient = redissonClient;
         this.consumerName = consumerName;
         this.options = options == null ? MqOptions.builder().build() : options;
+        this.keys = StreamKeys.of(this.options);
         // Separate pools: one for workers, one for scheduled tasks (sizes configurable)
         this.consumerPool = Executors.newScheduledThreadPool(this.options.getWorkerThreads());
         this.schedulerPool = Executors.newScheduledThreadPool(this.options.getSchedulerThreads());
@@ -78,7 +80,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 this.options.getRetryMaxBackoffMs());
         this.payloadLifecycleManager = new PayloadLifecycleManager(redissonClient, this.options);
         this.inFlightLimiter = this.options.getMaxInFlight() > 0 ? new Semaphore(this.options.getMaxInFlight()) : null;
-        this.deadLetterService = new io.github.cuihairu.redis.streaming.mq.dlq.RedisDeadLetterService(redissonClient);
+        this.deadLetterService = new io.github.cuihairu.redis.streaming.mq.dlq.RedisDeadLetterService(redissonClient, null, this.keys);
     }
 
     public RedisMessageConsumer(RedissonClient redissonClient, String consumerName,
@@ -88,6 +90,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         this.redissonClient = redissonClient;
         this.consumerName = consumerName;
         this.options = options == null ? MqOptions.builder().build() : options;
+        this.keys = StreamKeys.of(this.options);
         this.consumerPool = Executors.newScheduledThreadPool(this.options.getWorkerThreads());
         this.schedulerPool = Executors.newScheduledThreadPool(this.options.getSchedulerThreads());
         this.partitionRegistry = partitionRegistry;
@@ -140,7 +143,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 "if type(r)=='table' and r.err then if string.find(r.err,'BUSYGROUP') then return 'EXISTS' else return r.err end end \n" +
                 "return r";
         for (int i = 0; i < pc; i++) {
-            String streamKey = StreamKeys.partitionStream(topic, i);
+            String streamKey = keys.partitionStreamKey(topic, i);
             try {
                 Object r = script.eval(org.redisson.api.RScript.Mode.READ_WRITE, lua,
                         org.redisson.api.RScript.ReturnType.STRING,
@@ -289,7 +292,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         String group = worker.group;
         int partitionId = worker.partitionId;
         MessageHandler handler = worker.handler;
-        String leaseKey = StreamKeys.lease(topic, group, partitionId);
+        String leaseKey = keys.leaseKey(topic, group, partitionId);
 
         try {
             while (running.get() && !closed.get() && worker.running.get()) {
@@ -321,7 +324,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                                 processIncomingRecord(topic, group, partitionId, br.getId(), br.getData(), null, handler, true);
                             }
                         } else {
-                            String streamKey = StreamKeys.partitionStream(topic, partitionId);
+                            String streamKey = keys.partitionStreamKey(topic, partitionId);
                             RStream<String, Object> stream = redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE);
                             Map<StreamMessageId, Map<String, Object>> messages = stream.readGroup(
                                     group,
@@ -392,7 +395,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         try {
             workers.forEach((pk, worker) -> {
                 try {
-                    String streamKey = StreamKeys.partitionStream(pk.topic, pk.partitionId);
+                    String streamKey = keys.partitionStreamKey(pk.topic, pk.partitionId);
                     RStream<String, Object> stream = redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE);
 
                     @SuppressWarnings("deprecation")
@@ -742,7 +745,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                     data.values().removeIf(java.util.Objects::isNull);
                     RStream<String, Object> target = (stream != null)
                             ? stream
-                            : redissonClient.getStream(StreamKeys.partitionStream(topic, partitionId), org.redisson.client.codec.StringCodec.INSTANCE);
+                            : redissonClient.getStream(keys.partitionStreamKey(topic, partitionId), org.redisson.client.codec.StringCodec.INSTANCE);
                     target.add(StreamAddArgs.entries(data));
                     requeued = true;
                 } catch (Exception ex) {
@@ -760,7 +763,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
             boolean scheduled = false;
             try {
                 String itemId = java.util.UUID.randomUUID().toString();
-                String itemKey = StreamKeys.retryItem(topic, itemId);
+                String itemKey = keys.retryItemKey(topic, itemId);
                 // Use StringCodec to ensure plain string fields readable by Lua (HGET) and avoid binary values
                 org.redisson.api.RMap<String, String> item = redissonClient.getMap(itemKey, org.redisson.client.codec.StringCodec.INSTANCE);
                 // Store as strings for Lua simplicity; payload/headers JSON-encoded
@@ -789,7 +792,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 }
                 item.put("originalMessageId", orig);
 
-                String bucketKey = StreamKeys.retryBucket(topic);
+                String bucketKey = keys.retryBucketKey(topic);
                 // Use StringCodec so ZSET members are plain strings (keys), matching hash keys for Lua mover
                 org.redisson.api.RScoredSortedSet<String> bucket = redissonClient.getScoredSortedSet(bucketKey, org.redisson.client.codec.StringCodec.INSTANCE);
                 bucket.add(dueAt, itemKey);
@@ -835,7 +838,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 streamOrNull.ack(consumerGroup, parseStreamId(messageId));
             } else {
                 // fallback get stream just for ack
-                String streamKey = StreamKeys.partitionStream(topic, partitionId);
+                String streamKey = keys.partitionStreamKey(topic, partitionId);
                 redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE)
                         .ack(consumerGroup, parseStreamId(messageId));
             }
@@ -861,7 +864,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         // read-then-put let two workers read the same prev and land the smaller id last,
         // regressing the frontier.
         try {
-            String frontierKey = StreamKeys.commitFrontier(topic, partitionId);
+            String frontierKey = keys.commitFrontierKey(topic, partitionId);
             // The frontier hash is plain text ("ms-seq" under the group field, StringCodec):
             // a binary client codec would store ids the Lua comparison can never parse
             org.redisson.api.RScript script =
@@ -982,7 +985,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
             try {
                 locked = lock.tryLock(options.getRetryLockWaitMs(), options.getRetryLockLeaseMs(), TimeUnit.MILLISECONDS);
                 if (!locked) return;
-                String bucketKey = StreamKeys.retryBucket(topic);
+                String bucketKey = keys.retryBucketKey(topic);
                 String lua = "local z=KEYS[1]; local now=tonumber(ARGV[1]); local limit=tonumber(ARGV[2]); local ts=ARGV[3]; local sp=ARGV[4]; "
                         + "local ids=redis.call('ZRANGEBYSCORE', z, '-inf', now, 'LIMIT', 0, limit); local moved={}; "
                         + "for i=1,#ids do local id=ids[i]; "
@@ -1003,7 +1006,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 // Use StringCodec and pass ARGV as strings to avoid non-string arg issues in Lua (tonumber())
                 RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
                 List<Object> moved = script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.LIST, java.util.Collections.singletonList(bucketKey),
-                        String.valueOf(System.currentTimeMillis()), String.valueOf(options.getRetryMoverBatch()), Instant.now().toString(), StreamKeys.streamPrefix());
+                        String.valueOf(System.currentTimeMillis()), String.valueOf(options.getRetryMoverBatch()), Instant.now().toString(), keys.getStreamPrefix() + keys.tenantSegment());
                 if (moved != null && !moved.isEmpty()) {
                     log.debug("Moved {} retry items for topic {}", moved.size(), topic);
                 }
@@ -1040,7 +1043,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                     continue;
                 }
                 final PartitionKey pk = new PartitionKey(topic, sub.consumerGroup, i);
-                final String leaseKey = StreamKeys.lease(topic, sub.consumerGroup, i);
+                final String leaseKey = keys.leaseKey(topic, sub.consumerGroup, i);
                 final int pid = i;
                 // MQ-15: the old containsKey -> tryAcquire -> put sequence was a check-then-act
                 // across two maintenance tasks sharing a multi-thread scheduler: renewLeases()
@@ -1084,7 +1087,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         }
         Set<String> touched = new HashSet<>();
         workers.forEach((pk, w) -> {
-            String leaseKey = StreamKeys.lease(pk.topic, pk.group, pk.partitionId);
+            String leaseKey = keys.leaseKey(pk.topic, pk.group, pk.partitionId);
             boolean ok = leaseManager.renewIfOwner(leaseKey, consumerName, options.getLeaseTtlSeconds());
             if (!ok) {
                 // lost ownership, stop worker

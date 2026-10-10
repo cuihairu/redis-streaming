@@ -37,6 +37,14 @@ public class TopicRegistry {
         this.keyPrefix = (keyPrefix == null || keyPrefix.isBlank()) ? DEFAULT_PREFIX : keyPrefix;
     }
 
+    /**
+     * Use a key view (prefixes + tenant segment) so a tenant-scoped registry set is
+     * addressed: {prefix}:{tenant}:topics:registry.
+     */
+    public TopicRegistry(RedissonClient redissonClient, io.github.cuihairu.redis.streaming.mq.partition.StreamKeys keys) {
+        this(redissonClient, keys == null ? DEFAULT_PREFIX : keys.getControlPrefix() + keys.tenantSegment());
+    }
+
     private String registryKey() {
         return keyPrefix + ":topics:registry";
     }

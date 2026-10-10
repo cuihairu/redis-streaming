@@ -23,9 +23,11 @@ public class DlqConsumerAdapter implements MessageConsumer {
 
     public DlqConsumerAdapter(RedissonClient client, String consumerName, MqOptions options) {
         this.client = client;
+        io.github.cuihairu.redis.streaming.mq.partition.StreamKeys keys =
+                io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.of(options);
         io.github.cuihairu.redis.streaming.mq.dlq.ReplayHandler replay = (topic, partitionId, payload, headers, maxRetries) -> {
             try {
-                String key = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, partitionId);
+                String key = keys.partitionStreamKey(topic, partitionId);
                 org.redisson.api.RStream<String, Object> p = client.getStream(key, org.redisson.client.codec.StringCodec.INSTANCE);
                 java.util.Map<String,Object> d = new java.util.HashMap<>();
                 d.put("payload", (payload instanceof String) ? payload : toJson(payload));
@@ -46,10 +48,11 @@ public class DlqConsumerAdapter implements MessageConsumer {
         };
         this.delegate = new RedisDeadLetterConsumer(client, consumerName,
                 options != null ? options.getDefaultDlqGroup() : "dlq-group",
-                replay);
+                replay, keys);
         io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.configure(
                 options != null ? options.getKeyPrefix() : null,
-                options != null ? options.getStreamKeyPrefix() : "stream:topic");
+                options != null ? options.getStreamKeyPrefix() : "stream:topic",
+                options != null ? options.getTenant() : null);
         io.github.cuihairu.redis.streaming.mq.dlq.DlqKeys.configure(
                 options != null ? options.getStreamKeyPrefix() : "stream:topic");
     }

@@ -33,29 +33,33 @@ public class PayloadLifecycleManager {
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     private final RedissonClient redissonClient;
+    private final StreamKeys keys;
     private final String controlPrefix;
-    private final String payloadPrefix; // {controlPrefix}:payload
+    private final String payloadPrefix; // {controlPrefix}[:tenant]:payload
     private final long ttlMs; // 0 means no TTL (prefer ACK deletion)
 
     /** Backward compatible constructor using configured StreamKeys prefix and no TTL. */
     public PayloadLifecycleManager(RedissonClient redissonClient) {
-        this(redissonClient, null);
+        this(redissonClient, StreamKeys.shared(), 0L);
     }
 
-    /** Preferred constructor: derive prefixes and TTL from options. */
+    /** Preferred constructor: derive prefixes, tenant segment and TTL from options. */
     public PayloadLifecycleManager(RedissonClient redissonClient, MqOptions options) {
+        this(redissonClient,
+                options != null ? StreamKeys.of(options) : StreamKeys.shared(),
+                options != null && options.getRetentionMs() > 0 ? options.getRetentionMs() : 0L);
+    }
+
+    /** Constructor over an explicit key view (prefixes + tenant segment), no TTL. */
+    public PayloadLifecycleManager(RedissonClient redissonClient, StreamKeys keys) {
+        this(redissonClient, keys, 0L);
+    }
+
+    private PayloadLifecycleManager(RedissonClient redissonClient, StreamKeys keys, long candidateTtl) {
         this.redissonClient = redissonClient;
-        // Prefer options.keyPrefix; fallback to currently configured StreamKeys.controlPrefix()
-        String cp = options != null && options.getKeyPrefix() != null && !options.getKeyPrefix().isBlank()
-                ? options.getKeyPrefix() : StreamKeys.controlPrefix();
-        this.controlPrefix = cp;
-        this.payloadPrefix = cp + ":payload";
-        // TTL strategy: default disable to avoid payload disappearing before consumption
-        long candidateTtl = 0L;
-        if (options != null && options.getRetentionMs() > 0) {
-            // If a time retention exists, TTL can be a relaxed upper bound; still allow disable by keeping 0 if desired.
-            candidateTtl = options.getRetentionMs();
-        }
+        this.keys = keys == null ? StreamKeys.shared() : keys;
+        this.controlPrefix = this.keys.getControlPrefix() + this.keys.tenantSegment();
+        this.payloadPrefix = this.controlPrefix + ":payload";
         this.ttlMs = candidateTtl;
     }
 
