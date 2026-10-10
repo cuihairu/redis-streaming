@@ -3,6 +3,7 @@ package io.github.cuihairu.redis.streaming.starter.maintenance;
 import io.github.cuihairu.redis.streaming.mq.admin.MessageQueueAdmin;
 import io.github.cuihairu.redis.streaming.mq.admin.model.QueueInfo;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
+import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RScript;
@@ -48,50 +49,83 @@ public class StreamRetentionHousekeeper implements AutoCloseable {
                 options.getTrimIntervalSec(), options.getRetentionMaxLenPerPartition(), options.getRetentionMs());
     }
 
+    /** A topic discovered under a tenant namespace ("default" = pre-tenant layout). */
+    private record TenantTopic(String tenant, String topic) {}
+
+    /** Tenants with a configured retention cap (never contains the default tenant). */
+    private java.util.Set<String> cappedTenants() {
+        java.util.Set<String> out = new java.util.TreeSet<>(options.getTenantRetentionMaxLenPerPartition().keySet());
+        out.remove(io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.DEFAULT_TENANT);
+        return out;
+    }
+
+    /** Retention cap for a discovered tenant: per-tenant override, else the global cap. */
+    private long maxLenFor(String tenant) {
+        Integer override = options.getTenantRetentionMaxLenPerPartition().get(tenant);
+        return override != null ? Math.max(0, override) : Math.max(0, options.getRetentionMaxLenPerPartition());
+    }
+
+    private StreamKeys viewFor(String tenant) {
+        return new StreamKeys(options.getKeyPrefix(), options.getStreamKeyPrefix(), tenant);
+    }
+
     public void runOnce() {
         try {
-            java.util.Set<String> topics = new java.util.LinkedHashSet<>(admin.listAllTopics());
-            // Discover topics by scanning keys for partition streams and DLQ keys (handles unregistered topics)
+            String ownTenant = StreamKeys.of(options).getTenant();
+            java.util.Set<TenantTopic> topics = new java.util.LinkedHashSet<>();
+            for (String t : admin.listAllTopics()) {
+                topics.add(new TenantTopic(ownTenant, t));
+            }
+            // Discover topics by scanning keys for partition streams and DLQ keys (handles
+            // unregistered topics). A key whose first segment names a tenant with a configured
+            // cap belongs to that tenant; every other key parses under the pre-tenant layout.
+            java.util.Set<String> tenants = cappedTenants();
             try {
-                String sp = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.streamPrefix();
+                String sp = options.getStreamKeyPrefix();
                 String start = sp + ":"; // e.g., "stream:topic:"
                 for (String key : redissonClient.getKeys().getKeys()) {
-                    if (key == null) continue;
-                    if (key.startsWith(start)) {
-                        if (key.endsWith(":dlq")) {
-                            String t = key.substring(start.length(), key.length() - 4);
-                            if (!t.isEmpty()) topics.add(t);
-                        } else {
-                            int idx = key.indexOf(":p:");
-                            if (idx > start.length()) {
-                                String t = key.substring(start.length(), idx);
-                                if (!t.isEmpty()) topics.add(t);
-                            }
+                    if (key == null || !key.startsWith(start)) continue;
+                    String rest = key.substring(start.length());
+                    String tenant = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.DEFAULT_TENANT;
+                    int sep = rest.indexOf(':');
+                    if (sep > 0 && tenants.contains(rest.substring(0, sep))) {
+                        tenant = rest.substring(0, sep);
+                        rest = rest.substring(sep + 1);
+                    }
+                    if (rest.endsWith(":dlq")) {
+                        String t = rest.substring(0, rest.length() - 4);
+                        if (!t.isEmpty()) topics.add(new TenantTopic(tenant, t));
+                    } else {
+                        int idx = rest.indexOf(":p:");
+                        if (idx > 0) {
+                            String t = rest.substring(0, idx);
+                            if (!t.isEmpty()) topics.add(new TenantTopic(tenant, t));
                         }
                     }
                 }
             } catch (Exception ignore) {}
-            for (String topic : topics) {
-                try { io.github.cuihairu.redis.streaming.mq.metrics.RetentionMetrics.get().recordTrim(topic, -1, 0L, "housekeeper"); } catch (Exception ignore) {}
-                trimTopic(topic);
-                trimDlq(topic);
+            for (TenantTopic tt : topics) {
+                try { io.github.cuihairu.redis.streaming.mq.metrics.RetentionMetrics.get().recordTrim(tt.topic(), -1, 0L, "housekeeper"); } catch (Exception ignore) {}
+                trimTopic(tt.tenant(), tt.topic());
+                trimDlq(tt.tenant(), tt.topic());
             }
         } catch (Exception e) {
             log.warn("Retention housekeeper iteration failed", e);
         }
     }
 
-    private void trimTopic(String topic) {
+    private void trimTopic(String tenant, String topic) {
         try {
-            int pc = new TopicPartitionRegistry(redissonClient).getPartitionCount(topic);
+            StreamKeys keys = viewFor(tenant);
+            int pc = new TopicPartitionRegistry(redissonClient, keys).getPartitionCount(topic);
             if (pc <= 0) pc = options.getDefaultPartitionCount();
             if (pc <= 0) pc = 1;
 
-            long maxLen = Math.max(0, options.getRetentionMaxLenPerPartition());
+            long maxLen = maxLenFor(tenant);
             long retentionMs = Math.max(0, options.getRetentionMs());
 
             for (int i = 0; i < pc; i++) {
-                String streamKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.partitionStream(topic, i);
+                String streamKey = keys.partitionStreamKey(topic, i);
                 try {
                     if (maxLen > 0) {
                         // Use precise MAXLEN for deterministic bounds; write-path also trims precisely
@@ -110,7 +144,7 @@ public class StreamRetentionHousekeeper implements AutoCloseable {
                         try { io.github.cuihairu.redis.streaming.mq.metrics.RetentionMetrics.get().recordTrim(topic, i, deleted != null ? deleted : 0L, "minid"); } catch (Exception ignore) {}
                     }
                     // Safe frontier trim: compute min committed id across active groups for this partition
-                    String frontierKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.commitFrontier(topic, i);
+                    String frontierKey = keys.commitFrontierKey(topic, i);
                     org.redisson.api.RMap<String, String> fm = redissonClient.getMap(frontierKey);
                     java.util.Map<String,String> all = fm.readAllMap();
                     if (all != null && !all.isEmpty()) {
@@ -118,7 +152,7 @@ public class StreamRetentionHousekeeper implements AutoCloseable {
                         for (java.util.Map.Entry<String,String> e : all.entrySet()) {
                             String group = e.getKey();
                             // consider group active if lease exists for this partition
-                            String leaseKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.lease(topic, group, i);
+                            String leaseKey = keys.leaseKey(topic, group, i);
                             boolean active = redissonClient.getBucket(leaseKey).isExists();
                             if (!active) continue;
                             String val = e.getValue();
@@ -142,12 +176,12 @@ public class StreamRetentionHousekeeper implements AutoCloseable {
         }
     }
 
-    private void trimDlq(String topic) {
+    private void trimDlq(String tenant, String topic) {
         try {
             int maxLen = Math.max(0, options.getDlqRetentionMaxLen());
             long retentionMs = Math.max(0, options.getDlqRetentionMs());
             if (maxLen <= 0 && retentionMs <= 0) return; // disabled
-            String dlqKey = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.dlq(topic);
+            String dlqKey = viewFor(tenant).dlqKey(topic);
             if (maxLen > 0) {
                 String lua = "return redis.call('XTRIM', KEYS[1], 'MAXLEN', ARGV[1])";
                 Long deleted = redissonClient.getScript().eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.LONG,

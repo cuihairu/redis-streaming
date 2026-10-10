@@ -56,10 +56,10 @@ class StreamRetentionHousekeeperDlqAndFrontierResidualTest {
         return new StreamRetentionHousekeeper(redisson, admin, options);
     }
 
-    private static void invokeTrim(StreamRetentionHousekeeper keeper, String method, String topic) throws Exception {
-        Method m = StreamRetentionHousekeeper.class.getDeclaredMethod(method, String.class);
+    private static void invokeTrim(StreamRetentionHousekeeper keeper, String method, String tenant, String topic) throws Exception {
+        Method m = StreamRetentionHousekeeper.class.getDeclaredMethod(method, String.class, String.class);
         m.setAccessible(true);
-        m.invoke(keeper, topic);
+        m.invoke(keeper, tenant, topic);
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -78,7 +78,7 @@ class StreamRetentionHousekeeperDlqAndFrontierResidualTest {
         StreamRetentionHousekeeper k = keeper(redisson, admin, MqOptions.builder()
                 .trimIntervalSec(3600).dlqRetentionMaxLen(0).dlqRetentionMs(0).build());
         try {
-            invokeTrim(k, "trimDlq", "topicA");
+            invokeTrim(k, "trimDlq", StreamKeys.DEFAULT_TENANT, "topicA");
             verify(redisson, never()).getScript();
         } finally {
             k.close();
@@ -97,7 +97,7 @@ class StreamRetentionHousekeeperDlqAndFrontierResidualTest {
         StreamRetentionHousekeeper k = keeper(redisson, admin, MqOptions.builder()
                 .trimIntervalSec(3600).dlqRetentionMaxLen(7).dlqRetentionMs(1000).build());
         try {
-            invokeTrim(k, "trimDlq", "topicA");
+            invokeTrim(k, "trimDlq", StreamKeys.DEFAULT_TENANT, "topicA");
             ArgumentCaptor<Object> arg = ArgumentCaptor.forClass(Object.class);
             verify(script, org.mockito.Mockito.times(2))
                     .eval(any(RScript.Mode.class), anyString(), any(RScript.ReturnType.class),
@@ -121,7 +121,7 @@ class StreamRetentionHousekeeperDlqAndFrontierResidualTest {
         StreamRetentionHousekeeper k1 = keeper(minIdOnly, admin1, MqOptions.builder()
                 .trimIntervalSec(3600).dlqRetentionMaxLen(0).dlqRetentionMs(500).build());
         try {
-            invokeTrim(k1, "trimDlq", "topicA");
+            invokeTrim(k1, "trimDlq", StreamKeys.DEFAULT_TENANT, "topicA");
             verify(s1, org.mockito.Mockito.times(1))
                     .eval(any(RScript.Mode.class), anyString(), any(RScript.ReturnType.class), anyList(), any());
         } finally {
@@ -137,7 +137,7 @@ class StreamRetentionHousekeeperDlqAndFrontierResidualTest {
         StreamRetentionHousekeeper k2 = keeper(maxLenOnly, admin2, MqOptions.builder()
                 .trimIntervalSec(3600).dlqRetentionMaxLen(3).dlqRetentionMs(0).build());
         try {
-            invokeTrim(k2, "trimDlq", "topicA");
+            invokeTrim(k2, "trimDlq", StreamKeys.DEFAULT_TENANT, "topicA");
             verify(s2, org.mockito.Mockito.times(1))
                     .eval(any(RScript.Mode.class), anyString(), any(RScript.ReturnType.class), anyList(), any());
         } finally {
@@ -171,7 +171,7 @@ class StreamRetentionHousekeeperDlqAndFrontierResidualTest {
         StreamRetentionHousekeeper k = keeper(redisson, admin, MqOptions.builder()
                 .trimIntervalSec(3600).retentionMaxLenPerPartition(0).retentionMs(0).build());
         try {
-            invokeTrim(k, "trimTopic", "topicF");
+            invokeTrim(k, "trimTopic", StreamKeys.DEFAULT_TENANT, "topicF");
             ArgumentCaptor<Object> arg = ArgumentCaptor.forClass(Object.class);
             verify(script, atLeastOnce())
                     .eval(any(RScript.Mode.class), anyString(), any(RScript.ReturnType.class),
@@ -210,7 +210,7 @@ class StreamRetentionHousekeeperDlqAndFrontierResidualTest {
         StreamRetentionHousekeeper k = keeper(redisson, admin, MqOptions.builder()
                 .trimIntervalSec(3600).retentionMaxLenPerPartition(0).retentionMs(0).build());
         try {
-            invokeTrim(k, "trimTopic", "topicG");
+            invokeTrim(k, "trimTopic", StreamKeys.DEFAULT_TENANT, "topicG");
             ArgumentCaptor<Object> arg = ArgumentCaptor.forClass(Object.class);
             verify(script, atLeastOnce())
                     .eval(any(RScript.Mode.class), anyString(), any(RScript.ReturnType.class),
@@ -241,7 +241,7 @@ class StreamRetentionHousekeeperDlqAndFrontierResidualTest {
             StreamRetentionHousekeeper k = keeper(redisson, admin, MqOptions.builder()
                     .trimIntervalSec(3600).retentionMaxLenPerPartition(5).retentionMs(0).build());
             try {
-                invokeTrim(k, "trimTopic", "topicH");
+                invokeTrim(k, "trimTopic", StreamKeys.DEFAULT_TENANT, "topicH");
                 // only the MAXLEN trim runs; the frontier MINID trim is skipped
                 verify(script, org.mockito.Mockito.times(1))
                         .eval(any(RScript.Mode.class), anyString(), any(RScript.ReturnType.class), anyList(), any());
@@ -274,7 +274,7 @@ class StreamRetentionHousekeeperDlqAndFrontierResidualTest {
         StreamRetentionHousekeeper k = keeper(redisson, admin, MqOptions.builder()
                 .trimIntervalSec(3600).retentionMaxLenPerPartition(0).retentionMs(0).build());
         try {
-            invokeTrim(k, "trimTopic", "topicI");
+            invokeTrim(k, "trimTopic", StreamKeys.DEFAULT_TENANT, "topicI");
             verify(redisson, never()).getScript();
         } finally {
             k.close();

@@ -126,9 +126,9 @@ class StreamRetentionHousekeeperResidualCoverageTest {
             f.setAccessible(true);
             f.set(keeper, hostile);
 
-            Method trimTopic = StreamRetentionHousekeeper.class.getDeclaredMethod("trimTopic", String.class);
+            Method trimTopic = StreamRetentionHousekeeper.class.getDeclaredMethod("trimTopic", String.class, String.class);
             trimTopic.setAccessible(true);
-            assertDoesNotThrow(() -> trimTopic.invoke(keeper, "thostile"));
+            assertDoesNotThrow(() -> trimTopic.invoke(keeper, StreamKeys.DEFAULT_TENANT, "thostile"));
         } finally {
             keeper.close();
         }

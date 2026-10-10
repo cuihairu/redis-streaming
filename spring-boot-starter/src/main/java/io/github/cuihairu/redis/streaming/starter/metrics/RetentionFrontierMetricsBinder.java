@@ -22,11 +22,13 @@ public class RetentionFrontierMetricsBinder implements io.micrometer.core.instru
     private final RedissonClient redissonClient;
     private final MessageQueueAdmin admin;
     private final MqOptions options;
+    private final StreamKeys keys;
 
     public RetentionFrontierMetricsBinder(RedissonClient redissonClient, MessageQueueAdmin admin, MqOptions options) {
         this.redissonClient = redissonClient;
         this.admin = admin;
         this.options = options;
+        this.keys = StreamKeys.of(options);
     }
 
     @Override
@@ -42,11 +44,11 @@ public class RetentionFrontierMetricsBinder implements io.micrometer.core.instru
         try {
             List<String> topics = admin.listAllTopics();
             for (String topic : topics) {
-                int pc = new io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry(redissonClient).getPartitionCount(topic);
+                int pc = new io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry(redissonClient, keys).getPartitionCount(topic);
                 if (pc <= 0) pc = options.getDefaultPartitionCount();
                 if (pc <= 0) pc = 1;
                 for (int i = 0; i < pc; i++) {
-                    String frontierKey = StreamKeys.commitFrontier(topic, i);
+                    String frontierKey = keys.commitFrontierKey(topic, i);
                     org.redisson.api.RMap<String,String> fmap = redissonClient.getMap(frontierKey);
                     java.util.Map<String,String> fm = fmap.readAllMap();
                     if (fm == null || fm.isEmpty()) continue;
@@ -54,7 +56,7 @@ public class RetentionFrontierMetricsBinder implements io.micrometer.core.instru
                     for (var e : fm.entrySet()) {
                         String group = e.getKey();
                         // active if lease exists for this partition
-                        String leaseKey = StreamKeys.lease(topic, group, i);
+                        String leaseKey = keys.leaseKey(topic, group, i);
                         boolean live = redissonClient.getBucket(leaseKey).isExists();
                         if (!live) continue;
                         String id = e.getValue();

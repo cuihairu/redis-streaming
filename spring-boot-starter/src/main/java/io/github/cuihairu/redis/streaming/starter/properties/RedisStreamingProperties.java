@@ -290,6 +290,9 @@ public class RedisStreamingProperties {
         /** Whether to enable the MQ module (only affects auto-configuration) */
         private boolean enabled = true;
 
+        /** Tenant namespace of the MQ keyspace ("default" = no key segment) */
+        private String tenant = "default";
+
         /** Default partition count (used when a topic is first written to) */
         private int defaultPartitionCount = 1;
 

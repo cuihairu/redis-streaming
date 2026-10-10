@@ -102,9 +102,9 @@ class StreamRetentionHousekeeperCompareResidualCoverageTest {
 
         StreamRetentionHousekeeper keeper = quietKeeper(redisson);
         try {
-            Method trimTopic = StreamRetentionHousekeeper.class.getDeclaredMethod("trimTopic", String.class);
+            Method trimTopic = StreamRetentionHousekeeper.class.getDeclaredMethod("trimTopic", String.class, String.class);
             trimTopic.setAccessible(true);
-            assertDoesNotThrow(() -> trimTopic.invoke(keeper, "topicY"));
+            assertDoesNotThrow(() -> trimTopic.invoke(keeper, StreamKeys.DEFAULT_TENANT, "topicY"));
         } finally {
             keeper.close();
         }
@@ -136,9 +136,9 @@ class StreamRetentionHousekeeperCompareResidualCoverageTest {
 
         StreamRetentionHousekeeper keeper = quietKeeper(redisson);
         try {
-            Method trimTopic = StreamRetentionHousekeeper.class.getDeclaredMethod("trimTopic", String.class);
+            Method trimTopic = StreamRetentionHousekeeper.class.getDeclaredMethod("trimTopic", String.class, String.class);
             trimTopic.setAccessible(true);
-            assertDoesNotThrow(() -> trimTopic.invoke(keeper, "topicZ"));
+            assertDoesNotThrow(() -> trimTopic.invoke(keeper, StreamKeys.DEFAULT_TENANT, "topicZ"));
         } finally {
             keeper.close();
         }
@@ -238,9 +238,9 @@ class StreamRetentionHousekeeperCompareResidualCoverageTest {
         StreamRetentionHousekeeper keeper = new StreamRetentionHousekeeper(redisson, admin,
                 MqOptions.builder().dlqRetentionMaxLen(2).dlqRetentionMs(1_000).trimIntervalSec(3600).build());
         try {
-            Method trimDlq = StreamRetentionHousekeeper.class.getDeclaredMethod("trimDlq", String.class);
+            Method trimDlq = StreamRetentionHousekeeper.class.getDeclaredMethod("trimDlq", String.class, String.class);
             trimDlq.setAccessible(true);
-            assertDoesNotThrow(() -> trimDlq.invoke(keeper, "topicD"));
+            assertDoesNotThrow(() -> trimDlq.invoke(keeper, StreamKeys.DEFAULT_TENANT, "topicD"));
         } finally {
             keeper.close();
         }

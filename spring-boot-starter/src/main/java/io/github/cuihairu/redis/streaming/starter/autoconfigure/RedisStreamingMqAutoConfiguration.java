@@ -36,6 +36,7 @@ public class RedisStreamingMqAutoConfiguration {
     public MqOptions mqOptions(RedisStreamingProperties props) {
         var p = props.getMq();
         return MqOptions.builder()
+                .tenant(p.getTenant())
                 .defaultPartitionCount(p.getDefaultPartitionCount())
                 .workerThreads(p.getWorkerThreads())
                 .schedulerThreads(p.getSchedulerThreads())
