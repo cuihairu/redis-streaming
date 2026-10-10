@@ -59,6 +59,11 @@ export default withMermaid(
           { text: 'Join/CEP 算子化', link: '/Join-CEP-Operators-Design' },
           { text: '控制面设计', link: '/Control-Plane-Design' },
           { text: '表变更流设计', link: '/Table-Changelog-Design' },
+          { text: '聚合体系统一', link: '/Aggregation-Unification-Design' },
+          { text: '指标体系统一', link: '/Metrics-Unification-Design' },
+          { text: '状态后端统一', link: '/State-Unification-Design' },
+          { text: '多租户隔离', link: '/Multi-Tenancy-Design' },
+          { text: '安全加固', link: '/Security-Hardening-Design' },
         ]
       },
       {
@@ -138,6 +143,11 @@ export default withMermaid(
             { text: 'Join/CEP 算子化', link: '/Join-CEP-Operators-Design' },
             { text: '控制面设计', link: '/Control-Plane-Design' },
             { text: '表变更流设计', link: '/Table-Changelog-Design' },
+            { text: '聚合体系统一', link: '/Aggregation-Unification-Design' },
+            { text: '指标体系统一', link: '/Metrics-Unification-Design' },
+            { text: '状态后端统一', link: '/State-Unification-Design' },
+            { text: '多租户隔离', link: '/Multi-Tenancy-Design' },
+            { text: '安全加固', link: '/Security-Hardening-Design' },
           ]
         },
         {
