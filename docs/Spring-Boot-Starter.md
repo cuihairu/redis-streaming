@@ -606,6 +606,9 @@ starter 只读 `redis-streaming.*`;历史文档中的 `streaming.*` 前缀均已
 **Q: 为什么 jdbc broker 没生效?**
 `mq.broker.type=jdbc` 但没有 `DataSource` Bean 时会回退 `redis` 并打印告警。
 
+**Q: agent 提交了作业,但状态一直 PENDING_DEPLOY?**
+先确认 `JobSpec.pipelineFactory` 与容器内某个 `JobPipelineFactory` Bean 的名字相等(默认 launcher 按 Bean 名注册);名字不匹配时部署会因找不到工厂而报 FAILED。其次确认 `claim-prefix` 没有把认领键指到别的 agent 上(默认取 `<control-plane prefix>claim:`);多 agent 同 key 时未持有认领的一方会跳过部署。最后确认对应应用真的开了 `runtime.agent.enabled`——控制面只写期望状态,必须有执行侧 agent 才会部署。
+
 **Q: 多环境配置?**
 ```yaml
 # application-dev.yml
