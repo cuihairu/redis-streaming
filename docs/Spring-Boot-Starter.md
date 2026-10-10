@@ -187,7 +187,7 @@ server:
 | 键 | 类型 | 默认 |
 |---|---|---|
 | `enabled` | boolean | `false`(显式开启才装配控制面 Bean) |
-| `prefix` | String | `streaming:runtime:control:`(jobs/versions/history:<job>/status:<job>/audit 键族) |
+| `prefix` | String | `streaming:runtime:control:`（键族：jobs/versions/history:job/status:job/audit） |
 | `audit-max-entries` | int | `1000`(审计流近似封顶) |
 | `history-max-entries` | int | `10`(每作业保留的旧版本 spec 数,供 rollback) |
 

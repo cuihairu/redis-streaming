@@ -104,4 +104,4 @@ spring:
 - **升级语义**：config/工厂/描述变化 = 全量升级（best-effort checkpoint → cancel → 重新部署，短暂中断）；仅并行度变化走 `scaleParallelism` 快速路径（不重启）。`rollback` 回到上一版本 spec。
 - **多实例仲裁**：同一作业由认领键保证只在一个 agent 部署。agent 宕机后作业随进程消失（无自动故障转移）；认领 TTL 过期后在其余实例执行 `resume` 即可重新拉起。期望停止/重启以 `stop`/`resume` 为准。
 - **滚动升级建议**：先在新实例 `resume`（认领会选中负载空闲的 agent）观察 `status:<job>` 稳定，再对旧实例 `stop`；回滚直接 `rollback`（spec 回退触发 agent 全量升级）。
-- **审计**：操作与失败报告写入 `<prefix>audit` 流（近似封顶 `audit-max-entries`），`tailAudit` 倒序读取;拒绝的授权也会留痕。
+- **审计**：操作与失败报告写入 `prefix + audit` 流（近似封顶 `audit-max-entries`），`tailAudit` 倒序读取;拒绝的授权也会留痕。
