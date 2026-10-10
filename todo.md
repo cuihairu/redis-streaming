@@ -298,7 +298,7 @@
   - [x] `StateDescriptor.schemaVersion`（默认 1）
   - [x] Redis runtime state schema 元数据与校验（`stateSchemaEvolutionEnabled` + `stateSchemaMismatchPolicy=FAIL/CLEAR/IGNORE`）
   - [x] Checkpoint snapshot/restore state schema 元数据（避免恢复后 schema 丢失）
-  - [ ] 状态迁移工具/策略：提供在线迁移或离线重放方案（按业务自定义）
+  - [x] 状态迁移工具/策略（已给出策略并决策"不建专用迁移工具"：2026-10-10）——框架已提供两条迁移路径所需的原语：①**离线重放**（推荐）：停消费→`StateDescriptor.schemaVersion`+1→`stateSchemaMismatchPolicy=CLEAR`（或 IGNORE 兼容读）→从 MQ topic 历史重放（consumer group 首建固定 `0-0`，topic 有 retention）或走 CDC snapshot 存量回填（`snapshot.enabled=true` 且 mode≠never 时存量行走 INSERT 事件）重建 keyed state；keyed state 键含 `{stateKeyPrefix}:{job}:cg:{group}:topic:{topic}:p:{pid}:...`，换 stateKeyPrefix 即天然新命名空间，旧数据不动。②**在线滚动**：按分区/实例滚动重启，`stateSchemaMismatchPolicy=CLEAR` 逐桶丢弃不兼容旧值（或 IGNORE 强读），偏斜窗口=一次重启；schema 元数据随 checkpoint snapshot/restore 往返，滚动中不会丢版本信息。**不建**字段级映射/转换框架（业务自定义），理由：策略开关 + checkpoint schema 元数据 + MQ 历史重放三者已能表达"重建"这一唯一通用做法，字段映射是各业务自己的语义，框架无法通用化
 - [x] State 治理：TTL/清理策略、热点 key 保护、state size 上报与告警（已实现：2026-10-01）
   - [x] State TTL：`RedisRuntimeConfig.stateTtl(...)`（对 keyed state Redis hash key 写入后 best-effort expire）
   - [x] State size 上报（抽样）：`RedisRuntimeConfig.stateSizeReportEveryNStateWrites(n)`（每 N 次 state 写入上报一次 hash 字段数）
@@ -447,28 +447,28 @@ void testRedisIntegration() {
 
 ## 执行计划
 
-### 阶段 1：核心功能测试（优先级 1）
-- [ ] CDC 实现集成测试（预计 5-7 天）
-- [ ] Spring Boot 自动配置测试（预计 2-3 天）
-- [ ] Checkpoint 功能测试（预计 2-3 天）
-- [ ] 窗口功能测试（预计 3-4 天）
+### 阶段 1：核心功能测试（优先级 1）（2026-10-10 按 `@Tag("integration")` 文件数核对收口）
+- [x] CDC 实现集成测试（cdc 模块 8 个集成测试文件）
+- [x] Spring Boot 自动配置测试（starter 6 个集成测试文件，含 ApplicationContextRunner 装配矩阵）
+- [x] Checkpoint 功能测试（checkpoint 4 个）
+- [x] 窗口功能测试（window 1 个 + runtime 侧窗口/触发器集成套件）
 
 **预计总计：12-17 天**
 
-### 阶段 2：关键集成测试（优先级 2）
-- [ ] 运行时核心测试（预计 3-4 天）
-- [ ] Kafka/Redis Source/Sink 测试（预计 4-5 天）
-- [ ] CDC 接口层测试（预计 2-3 天）
-- [ ] MQ 核心实现测试（预计 4-5 天）
+### 阶段 2：关键集成测试（优先级 2）（2026-10-10 按 `@Tag("integration")` 文件数核对收口）
+- [x] 运行时核心测试（runtime 30 个集成测试文件，含窗口/触发器/幂等 sink/outbox/控制面 agent）
+- [x] Redis Source/Sink 集成测试（source 3 / sink 2 个集成文件）；Kafka broker 腿仍挂起待 broker（见上文 source.kafka/sink.kafka 条目，`**/kafka/**` 已排除出覆盖率门禁）
+- [x] CDC 接口层测试（cdc 8 个集成文件）
+- [x] MQ 核心实现测试（mq 62 个集成文件，含 DLQ/租约/提交前沿/回放）
 
 **预计总计：13-17 天**
 
-### 阶段 3：完善测试覆盖（优先级 3-4）
-- [ ] 服务注册测试（预计 2-3 天）
-- [ ] 配置中心测试（预计 2-3 天）
-- [ ] 死信队列测试（预计 2-3 天）
-- [ ] MQ 配置测试（预计 1-2 天）
-- [ ] KTable 测试（预计 2-3 天）
+### 阶段 3：完善测试覆盖（优先级 3-4）（2026-10-10 按 `@Tag("integration")` 文件数核对收口）
+- [x] 服务注册测试（registry 30 个集成文件）
+- [x] 配置中心测试（config 16 个）
+- [x] 死信队列测试（mq DLQ 集成套件：`DlqConsumerLoopIntegrationTest`/`DlqPendingReclaimIntegrationTest`/`DlqReplayAndAdminIntegrationTest` 等）
+- [x] MQ 配置测试（mq 62 个集成文件，含 `CommitFrontierUpdate`/`CommitFrontierAtomicity`/`LeaseOwnership` 等配置与租约语义）
+- [x] KTable 表操作测试（table 6 个集成文件，含 changelog 全历史重放与双组广播）
 
 **预计总计：9-14 天**
 
