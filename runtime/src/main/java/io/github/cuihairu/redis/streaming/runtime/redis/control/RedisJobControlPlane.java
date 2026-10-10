@@ -346,6 +346,11 @@ public class RedisJobControlPlane implements JobControlPlane {
         return actor;
     }
 
+    /** @return the configured key prefix (agents derive their claim key prefix from it). */
+    public String prefix() {
+        return prefix;
+    }
+
     private RMap<String, String> jobs() {
         return redissonClient.<String, String>getMap(jobsKey, StringCodec.INSTANCE);
     }
