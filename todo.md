@@ -480,8 +480,8 @@ void testRedisIntegration() {
 
 - [x] 总体指令覆盖率 ≥ 98%（2026-09-24 实测 **99.210%**，60496/60978 指令，missed 482；原 0.99 聚合门槛已于 2026-10-05 改为单测确定性口径：INSTRUCTION ≥ 0.95 且 CLASS ≥ 0.99，仅吃 `jacoco/test.exec`——聚合 0.99 门在运行间掷硬币，同码 CI 出过 0.98 与 0.99+ 双结果；并集仍经 `jacocoRootReport` 报告上传 Codecov。2026-10-05 单测口径实测 INSTRUCTION 0.95674 / CLASS 0.99488）
 - [x] 总体分支覆盖率 ≥ 60%（实测 **90.88%**，4675/5144 分支）
-- [x] 所有核心包（mq, registry, cdc）覆盖率 ≥ 70%（2026-10-11 现行门禁口径实测复核:mq 94.97%(13341/14048)、registry 97.82%(12379/12655)、cdc 98.99%(3632/3669),均远超 70%,满足并集口径(jacocoRootReport)）
-- [ ] 所有关键业务类覆盖率 ≥ 80%（未满足,2026-10-11 实测差距:4 个 ≥200 指令类低于 80%——`runtime/redis/RedisKeyedValueState` 37.09%(102/275)、`RedisStreamExecutionEnvironment$LaunchedJobClient` 55.49%(556/1002)、`RedisStreamBuilder$RedisKeyedStreamBuilder` 55.91%(312/558)、其嵌套 `RedisWindowedStreamImpl` 75.71%(1359/1795);聚合门禁(INSTRUCTION≥0.95/CLASS≥0.99)绿,此类粒度目标门禁不强制）
+- [x] 所有核心包（mq, registry, cdc）覆盖率 ≥ 70%（2026-10-11 全新 test+integrationTest exec 后的并集口径实测:mq 96.07%(13496/14048)、registry 97.95%(12395/12655)、cdc 98.99%(3632/3669),均远超 70%;并集总量 97.603%(73500/75305)）
+- [x] 所有关键业务类覆盖率 ≥ 80%（2026-10-11 勾账:全新并集口径下 0 个 ≥200 指令类低于 80%——此前报的 4 类差距是**陈旧 integrationTest.exec 混入并集报告的测量假象**:`LaunchedJobClient` 55.49%→93.21%(934/1002)、`RedisKeyedStreamBuilder` 55.91%→100%(558/558)、`RedisWindowedStreamImpl` 75.71%→97.21%(1745/1795) 全由新鲜集成 exec 补齐;`RedisKeyedValueState` 37.09%→100%(275/275) 为本轮单测真实补齐(`RedisKeyedValueStateGapClosureTest` 扩至 11 例:读路径命中/默认值/坏 JSON 包装、写路径序列化/空值删/hot-key FAIL_FAST 不包壳直抛、clear、三处无 current key 守卫)。测量教训:类级并集覆盖率必须在同批 test+integrationTest 全新 exec 后生成 jacocoRootReport,陈旧 exec 会把集成覆盖类打到假低值,与"覆盖率解读禁并跑 gradle"同源的陈旧产物陷阱）
 - [x] CI/CD 集成测试通过率 100%（2026-10-11 勾账:修复 commit `07d38d8` 的 CI run 38117907427 全绿(13m35s,unit+integration 全套,含此前红的 table changelog 与 mq integrationTest);此前的红收口——run 38110161447 唯一失败=changelog per-key 顺序,真实产品缺陷,`fix(table): chain changelog emits in put order` 修复;更早 run 38099977473 的 mq DLQ replay 失败与本次失败集不同,且新提交全量复跑绿,按负载假红协议(跨次失败集不同+隔离复跑绿)判为门禁负载抖动,未改产品代码）
 
 ---
