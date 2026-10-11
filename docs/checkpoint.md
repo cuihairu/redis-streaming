@@ -80,6 +80,14 @@ public interface CheckpointStorage {
 - `cleanupOldCheckpoints(int keepCount)`:优先淘汰未完成检查点,再淘汰更早的已完成检查点,存活数仍为 `keepCount`。
 - `close()`:清空 pending 并调用 `storage.close()`。
 
+### runtime in-memory 引擎:快照与流水线互斥
+
+runtime 内置的内存引擎(`InMemoryCheckpointCoordinator`)不使用上面的 Redis 存储,其快照屏障是**双锁契约**:
+
+- **快照锁**:协调器持有独立的 `checkpointLock()` 监视器;注册 store 的全部变更(put/remove/setCurrentKey/snapshot/restore)与协调器的快照/恢复都同步其上,`triggerCheckpoint` 跨全部已注册 store 持锁——一次检查点即单一一致切面,快照与流水线线程写竞跑(CME/脏拷贝)不可能。该锁只在有界非阻塞内存操作上持有。
+- **发射锁**:`SourceContext.getCheckpointLock()` 返回的是源级发射锁,生产者可跨满队列阻塞持有,消费者绝不取它。两把锁不相交,背压永不死锁;按 Flink 习惯把 `collect()` 包在 `getCheckpointLock()` 里的写法是安全的。
+- 残余边界:同一记录的多次 state 写入仍可被快照劈开(逐记录屏障归检查点协议 v2,见 [Checkpoint-Barrier-Design.md](Checkpoint-Barrier-Design.md))。
+
 ## 配置项
 
 | 项 | 类型 | 默认值 | 说明 |
@@ -163,4 +171,5 @@ redisson.shutdown();
 
 - [State 模块](state.md) - 状态管理
 - [Runtime 模块](runtime.md) - 周期触发与运行时检查点管理
+- [Checkpoint 屏障设计](Checkpoint-Barrier-Design.md) - 快照屏障与锁契约
 - [Core API](Core.md) - 检查点接口定义

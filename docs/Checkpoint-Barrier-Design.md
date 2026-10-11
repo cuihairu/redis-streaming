@@ -55,4 +55,4 @@
 1. **P1 快照屏障**(已落地 2026-10-11,见方案 A① 的修正记录):协调器 `checkpointLock()` + 注册 store 绑定 + 快照/恢复持锁切面;3 个并发测试钉死,背压场景由既有流式测试(慢 sink/10 万条顺序)覆盖。
 2. **P2 注册面泛化**(随 B4):窗口累加器、WatermarkState 注册为快照源。
 3. **P3 unaligned v2**(独立评审):两级 CAS 门 + epoch 对齐 + frontier 重放去重,默认关,`RedisRuntimeConfig` 新开关;与 metrics 的 checkpoint 时延指标同批观察收益。
-4. 文档同步:`docs/checkpoint.md` 补"in-memory 快照与流水线互斥"语义;`docs/Deployment.md:97` 的 stop-theWorld 记载在 P3 落地前保持不变。
+4. 文档同步(已落地 2026-10-11):`docs/checkpoint.md` 已补"in-memory 快照与流水线互斥"语义(双锁契约);`docs/Deployment.md:97` 的 stop-theWorld 记载在 P3 落地前保持不变。
