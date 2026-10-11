@@ -1,10 +1,10 @@
 # Watermark 模块
 
-模块目录:`watermark/`。提供 core `WatermarkGenerator` / `TimestampAssigner` 接口的内置实现与组合策略。模块只依赖 `core`,不含任何运行时引擎代码(runtime 对本模块的依赖仅存在于测试配置)。
+模块目录:`watermark/`。提供 core `WatermarkGenerator` / `TimestampAssigner` 接口的内置实现与组合策略。模块只依赖 `core`;runtime 主源集亦依赖本模块——`RedisPipelineRunner` 的启发式水位线经 `BoundedOutOfOrdernessWatermarkGenerator.watermarkFor(...)` 与本模块共用同一公式(state 统一设计第 1 步,2026-10-11)。
 
 ## 核心概念
 
-水位线(watermark)= "事件时间不会再早于 T" 的断言,驱动事件时间窗口触发与迟到处理。core 的 `Watermark` 是一个带 `long timestamp` 的可比较值,`Watermark.maxWatermark()` 等于 `Long.MAX_VALUE`。
+水位线(watermark)= "时间戳 ≤ T 的事件不会再到达" 的断言,驱动事件时间窗口触发与迟到处理。因此 bounded-out-of-orderness 水位线取 `maxTs − δ − 1` 而非 `maxTs − δ`:`maxTs − δ` 本身仍可能再次出现。core 的 `Watermark` 是一个带 `long timestamp` 的可比较值,`Watermark.maxWatermark()` 等于 `Long.MAX_VALUE`。
 
 ## 内置生成器(`watermark.generators` 包)
 
@@ -78,14 +78,14 @@ stream.assignTimestampsAndWatermarks(
 
 ### Redis 引擎的水位线模型
 
-- 默认(未调用 `assignTimestampsAndWatermarks`):`RedisPipelineRunner` 在每条消息处理链入口计算 `事件时间 = message.getTimestamp()`(无时间戳时回退为投递时刻),维护全局最大值,水位线 = `max(事件时间) − RedisRuntimeConfig.watermarkOutOfOrderness`(Builder 默认 `Duration.ZERO`,负值在配置校验时抛 `IllegalArgumentException`)。
+- 默认(未调用 `assignTimestampsAndWatermarks`):`RedisPipelineRunner` 在每条消息处理链入口计算 `事件时间 = message.getTimestamp()`(无时间戳时回退为投递时刻),维护全局最大值,水位线 = `max(事件时间) − watermarkOutOfOrderness − 1`(与 `BoundedOutOfOrdernessWatermarkGenerator.watermarkFor` 同一公式;Builder 默认 `Duration.ZERO`,负值在配置校验时抛 `IllegalArgumentException`)。**边界语义变更(2026-10-11)**:此前 runtime 缺最后的 `-1`,水位线含义是"事件时间 > w 不会再早到";收敛后统一为"`≤ w` 的事件不再来",与 watermark 模块生成器逐点一致,迟到判定边界整体前移 1ms。
 - 调用后:用户生成器的 `onEvent`/`onPeriodicEmit` 在每条消息上被调用(每条都调,非周期定时),发出的水位线经 `WatermarkOutput.emitWatermark` → `Context.raiseWatermark` **单调提升**全局水位线(不会下调启发式已达到的值)。集成测试 `RedisRuntimeWindowedStreamIntegrationTest` 证明:配置 `watermarkOutOfOrderness=10s` 时,启发式推不动的窗口可被用户生成器提前触发。
 - 窗口触发时机:水位线推进发生在消息处理链入口,窗口算子在逐条消息处理中检查到期(每记录触发数受 `windowMaxFiresPerRecord` 封顶,封顶余量等下一条记录);空闲冲刷(RT-M3,`RedisRuntimeConfig.watermarkIdleTimeout`,默认关闭)把水位线冲至 `MAX_VALUE` 时,窗口算子经冲刷钩子不限量排空各自 due 集合,详见 docs/runtime.md 2.4。
 
 ## 已知限制
 
 - `WindowAssigner.getDefaultTrigger()` 已接入两套引擎的窗口算子(原死接口,接入记录见 todo.md B3):按 (partition, key, window) 桶各持一个触发器实例。元素到达时调用 `onElement`(`FIRE` 提前发射并保留状态、`FIRE_AND_PURGE` 提前发射并清空桶、`PURGE` 丢弃桶、`CONTINUE` 继续累积);到期检查时调用 `onEventTime`(Redis 引擎:`CONTINUE` 推迟本次关闭、`PURGE` 不发射直接丢弃、`FIRE`/`FIRE_AND_PURGE` 发射并关闭;内存引擎:输入耗尽时以 `+inf` 水位线对每个剩余桶调一次 `onEventTime(window.getEnd(), window)` 后冲刷)。内置 `TumblingWindow`/`SlidingWindow`/`SessionWindow` 的 `getDefaultTrigger()` 均返回新的 `EventTimeTrigger`(`onElement`→`CONTINUE`,`onEventTime` 到点→`FIRE_AND_PURGE`),接入前的纯关闭行为与它逐点等价(等价用例钉住,见 todo.md B3)。`onProcessingTime` 仍未被任何引擎调用(两引擎均无 processing-time 窗口定时器,窗口只随水位线触发)。
-- `StreamSource.SourceContext.getCheckpointLock()`:内存引擎返回 `addSource` 内新建的 `Object`,运行时没有任何代码对它 `synchronized`,未参与检查点对齐;Redis 引擎没有 `StreamSource` 路径(源入口是 `fromMqTopic`)。
+- `StreamSource.SourceContext.getCheckpointLock()`:内存引擎返回源级发射锁(生产者跨满队列阻塞持有,消费者绝不取,背压不死锁);检查点一致性由 `InMemoryCheckpointCoordinator.checkpointLock()`(独立协调器锁)承担,详见 docs/Checkpoint-Barrier-Design.md;Redis 引擎没有 `StreamSource` 路径(源入口是 `fromMqTopic`)。
 
 ## References
 

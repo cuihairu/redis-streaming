@@ -104,7 +104,8 @@ class RedisPipelineRunnerGapClosureTest {
         RedisPipelineRunner<Object> r1 = runner(nullOod, redisson, v -> {
         }, observe);
         r1.handle(msg(100_000L, "1-1"));
-        assertEquals(100_000L, wm.get());
+        // watermark = max - ooo - 1, so zero out-of-orderness still holds back the last ms
+        assertEquals(99_999L, wm.get());
         r1.close();
 
         RedisRuntimeConfig throwingOod = mock(RedisRuntimeConfig.class, delegatesTo(realConfig));
@@ -112,13 +113,13 @@ class RedisPipelineRunnerGapClosureTest {
         RedisPipelineRunner<Object> r2 = runner(throwingOod, redisson, v -> {
         }, observe);
         r2.handle(msg(100_000L, "1-2"));
-        assertEquals(100_000L, wm.get(), "throwing config falls back to zero out-of-orderness");
+        assertEquals(99_999L, wm.get(), "throwing config falls back to zero out-of-orderness");
         r2.close();
 
         RedisPipelineRunner<Object> r3 = runner(cfg(b -> b.watermarkOutOfOrderness(Duration.ZERO)), redisson, v -> {
         }, observe);
         r3.handle(msg(100_000L, "1-3"));
-        assertEquals(100_000L, wm.get());
+        assertEquals(99_999L, wm.get());
         r3.close();
     }
 
@@ -131,7 +132,7 @@ class RedisPipelineRunnerGapClosureTest {
         RedisPipelineRunner<Object> r = runner(cfg, redisson, v -> {
         }, observe);
         r.handle(msg(100_000L, "1-1"));
-        assertEquals(95_000L, wm.get(), "watermark lags event time by out-of-orderness");
+        assertEquals(94_999L, wm.get(), "watermark lags event time by out-of-orderness");
         r.close();
 
         RedisPipelineRunner<Object> min = runner(cfg, redisson, v -> {

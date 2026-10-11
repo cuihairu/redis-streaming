@@ -51,14 +51,15 @@ class RedisPipelineRunnerWatermarkTest {
         );
 
         runner.handle(msgAt(1000));
-        assertEquals(995, lastWatermark.get());
+        // watermark = max - ooo - 1: no event with timestamp <= watermark arrives again
+        assertEquals(994, lastWatermark.get());
 
         runner.handle(msgAt(1200));
-        assertEquals(1195, lastWatermark.get());
+        assertEquals(1194, lastWatermark.get());
 
         // out-of-order event should not decrease watermark
         runner.handle(msgAt(1100));
-        assertEquals(1195, lastWatermark.get());
+        assertEquals(1194, lastWatermark.get());
     }
 
     @Test

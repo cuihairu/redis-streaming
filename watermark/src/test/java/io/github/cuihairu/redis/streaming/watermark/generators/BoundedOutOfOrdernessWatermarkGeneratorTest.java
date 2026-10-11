@@ -318,6 +318,24 @@ class BoundedOutOfOrdernessWatermarkGeneratorTest {
         assertEquals(899, output.getWatermarks().get(0).getTimestamp());
     }
 
+    @Test
+    void watermarkFormulaMatchesGeneratorEmission() {
+        // the shared formula behind every engine watermark path: w = max - ooo - 1
+        assertEquals(899, BoundedOutOfOrdernessWatermarkGenerator.watermarkFor(1000, 100));
+        assertEquals(999, BoundedOutOfOrdernessWatermarkGenerator.watermarkFor(1000, 0));
+        assertEquals(Long.MAX_VALUE - 101,
+                BoundedOutOfOrdernessWatermarkGenerator.watermarkFor(Long.MAX_VALUE, 100));
+    }
+
+    @Test
+    void watermarkFormulaSaturatesOnUnderflow() {
+        // MIN_VALUE input or a subtraction that wraps must saturate at MIN_VALUE, not flip sign
+        assertEquals(Long.MIN_VALUE,
+                BoundedOutOfOrdernessWatermarkGenerator.watermarkFor(Long.MIN_VALUE, 100));
+        assertEquals(Long.MIN_VALUE,
+                BoundedOutOfOrdernessWatermarkGenerator.watermarkFor(Long.MIN_VALUE + 50, 100));
+    }
+
     /**
      * Test implementation of WatermarkOutput
      */

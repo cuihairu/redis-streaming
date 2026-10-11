@@ -10,6 +10,8 @@ dependencies {
     implementation project(':mq')
     implementation project(':window')
     implementation project(':checkpoint')
+    // Shared watermark formula (bounded out-of-orderness) used by the redis pipeline runner
+    implementation project(':watermark')
 
     // External dependencies
     implementation libs.redisson
@@ -24,7 +26,6 @@ dependencies {
 
     // Only referenced from tests / example code, not the main runtime pipeline
     testImplementation project(':state')
-    testImplementation project(':watermark')
     testImplementation project(':window')
     testImplementation project(':join')
     testImplementation project(':cep')

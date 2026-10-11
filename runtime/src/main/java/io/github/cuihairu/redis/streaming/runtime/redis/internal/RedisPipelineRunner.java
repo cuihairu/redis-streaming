@@ -7,6 +7,7 @@ import io.github.cuihairu.redis.streaming.api.stream.TwoPhaseCommitSink;
 import io.github.cuihairu.redis.streaming.mq.Message;
 import io.github.cuihairu.redis.streaming.mq.MqHeaders;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisRuntimeConfig;
+import io.github.cuihairu.redis.streaming.watermark.generators.BoundedOutOfOrdernessWatermarkGenerator;
 import org.redisson.api.RedissonClient;
 import org.redisson.api.RSetCache;
 import org.redisson.client.codec.StringCodec;
@@ -228,11 +229,9 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
             }
         } catch (Exception ignore) {
         }
-        long candidate = maxEventTimeMs;
-        if (outOfOrdernessMs > 0 && candidate != Long.MIN_VALUE) {
-            candidate = candidate - outOfOrdernessMs;
-        }
-        return candidate;
+        // Shared bounded-out-of-orderness semantics (watermark w = no event <= w arrives again):
+        // the -1 used to be missing here, silently shifting the late-event boundary by 1ms.
+        return BoundedOutOfOrdernessWatermarkGenerator.watermarkFor(maxEventTimeMs, outOfOrdernessMs);
     }
 
     private void emitFrom(int index, Object value, Context ctx) throws Exception {

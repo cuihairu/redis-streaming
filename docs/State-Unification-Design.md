@@ -48,7 +48,7 @@
 
 不可行：checkpoint 的 stateKeys 契约、按分区键控、TTL/热键都要重做，破坏面远大于方案 A。
 
-## 水位线收敛（独立小项，先做）
+## 水位线收敛（独立小项，先做；已落地 2026-10-11）
 
 把"bounded-out-of-orderness 计算"收敛到 `watermark` 模块一处：
 
@@ -57,9 +57,11 @@
 - `WatermarkState` 保留（它是"只增不减 + idle"的容器，与计算逻辑正交）。
 - 边界语义变更（`-1`）需要在文档标注：watermark `w` 从此表示"≤ w 的事件不再来"。
 
+落地记录：公式收敛为 `BoundedOutOfOrdernessWatermarkGenerator.watermarkFor(maxEventTimeMs, outOfOrdernessMillis)` 静态方法（下溢饱和到 `MIN_VALUE`），`onPeriodicEmit` 与 `RedisPipelineRunner.candidateFor` 都经它；runtime 主源集新增 `implementation project(':watermark')`。边界语义前移 1ms 已在 `docs/watermark.md` 标注，钉住新边界的测试：`RedisPipelineRunnerWatermarkTest`（994/1194）、`RedisPipelineRunnerGapClosureTest`（94_999/99_999 + `MIN_VALUE` 守卫）、`RedisPipelineRunnerIdleFlushTest`（`t-1`）、`BoundedOutOfOrdernessWatermarkGeneratorTest`（公式与饱和直测）。
+
 ## 迁移路径（方案 A 分期）
 
-1. **第 1 步（最小）**：水位线收敛（上面的独立小项），纯 runtime 内部 + watermark 模块，无外部兼容性影响。
+1. **第 1 步（最小，已落地 2026-10-11）**：水位线收敛（上面的独立小项），纯 runtime 内部 + watermark 模块，无外部兼容性影响。
 2. **第 2 步**：keyed store 补 Map/List/Set 状态类型 + schema 登记；补单测（含 checkpoint 枚举新状态类型）。
 3. **第 3 步（major）**：`RedisStateBackend` 改为适配层委托 keyed store；删除 `RedisValueState/RedisMapState/RedisListState/RedisSetState` 旧实现；迁移文档给 key/codec 对照表。
 

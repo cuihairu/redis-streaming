@@ -79,7 +79,8 @@ class RedisPipelineRunnerIdleFlushTest {
 
         long t0 = System.currentTimeMillis();
         runner.handle(msgAt(t0));
-        assertEquals(t0, lastWatermark.get());
+        // record-driven watermark = max event time - 1 (bounded-out-of-orderness with ooo = 0)
+        assertEquals(t0 - 1, lastWatermark.get());
 
         // silence: the flush pins the watermark at MAX_VALUE
         long deadline = System.currentTimeMillis() + 10_000;
@@ -91,7 +92,7 @@ class RedisPipelineRunnerIdleFlushTest {
         // the next record starts a fresh epoch instead of staying pinned at MAX_VALUE
         long t1 = t0 + 5000;
         runner.handle(msgAt(t1));
-        assertEquals(t1, lastWatermark.get());
+        assertEquals(t1 - 1, lastWatermark.get());
         runner.close();
     }
 
@@ -144,7 +145,7 @@ class RedisPipelineRunnerIdleFlushTest {
 
         // no idle timeout configured: the watermark stays at the record-driven value
         Thread.sleep(400);
-        assertEquals(t0, lastWatermark.get());
+        assertEquals(t0 - 1, lastWatermark.get());
         runner.close();
     }
 

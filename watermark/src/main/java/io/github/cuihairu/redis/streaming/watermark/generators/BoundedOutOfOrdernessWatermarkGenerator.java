@@ -44,7 +44,20 @@ public class BoundedOutOfOrdernessWatermarkGenerator<T> implements WatermarkGene
     @Override
     public void onPeriodicEmit(WatermarkOutput output) {
         // Emit watermark = max observed timestamp - max out of orderness
-        output.emitWatermark(new Watermark(maxTimestamp - maxOutOfOrdernessMillis - 1));
+        output.emitWatermark(new Watermark(watermarkFor(maxTimestamp, maxOutOfOrdernessMillis)));
+    }
+
+    /**
+     * The single bounded-out-of-orderness computation: watermark {@code w} means no event with
+     * timestamp {@code <= w} will arrive again. Every engine watermark path must derive its
+     * candidate through this method so the boundary semantics cannot fork again (an earlier
+     * runtime copy dropped the {@code -1}, which silently moved the late-event boundary by 1ms).
+     *
+     * <p>Saturates at {@link Long#MIN_VALUE} when the subtraction would underflow.</p>
+     */
+    public static long watermarkFor(long maxEventTimeMs, long outOfOrdernessMillis) {
+        long candidate = maxEventTimeMs - outOfOrdernessMillis - 1;
+        return candidate > maxEventTimeMs ? Long.MIN_VALUE : candidate;
     }
 
     /**
