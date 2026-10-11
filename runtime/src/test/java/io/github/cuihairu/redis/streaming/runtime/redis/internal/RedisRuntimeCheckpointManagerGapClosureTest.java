@@ -9,6 +9,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RBucket;
 import org.redisson.api.RKeys;
+import org.redisson.api.RList;
 import org.redisson.api.RMap;
 import org.redisson.api.RScoredSortedSet;
 import org.redisson.api.RSet;
@@ -162,11 +163,17 @@ class RedisRuntimeCheckpointManagerGapClosureTest {
 
     @Test
     void snapshotStatePrunesEmptyAndNullZsetEntries() throws Exception {
-        when(index.readAll()).thenReturn((java.util.Set) java.util.Set.of("z-full", "z-empty", "m-full", "m-empty", " "));
+        when(index.readAll()).thenReturn((java.util.Set) java.util.Set.of(
+                "z-full", "z-empty", "m-full", "m-empty", "l-full", "l-empty", "l-null", "s-full", "s-empty", " "));
         when(rkeys.getType("z-full")).thenReturn(RType.ZSET);
         when(rkeys.getType("z-empty")).thenReturn(RType.ZSET);
         when(rkeys.getType("m-full")).thenReturn(RType.MAP);
         when(rkeys.getType("m-empty")).thenReturn(RType.MAP);
+        when(rkeys.getType("l-full")).thenReturn(RType.LIST);
+        when(rkeys.getType("l-empty")).thenReturn(RType.LIST);
+        when(rkeys.getType("l-null")).thenReturn(RType.LIST);
+        when(rkeys.getType("s-full")).thenReturn(RType.SET);
+        when(rkeys.getType("s-empty")).thenReturn(RType.SET);
 
         RScoredSortedSet<String> zFull = mock(RScoredSortedSet.class);
         when(zFull.entryRange(0, -1)).thenReturn((List) Arrays.asList(
@@ -183,6 +190,23 @@ class RedisRuntimeCheckpointManagerGapClosureTest {
         when(redisson.getMap(eq("m-full"), any(Codec.class))).thenReturn((RMap) mFull);
         when(redisson.getMap(eq("m-empty"), any(Codec.class))).thenReturn((RMap) mEmpty);
 
+        RList<String> lFull = mock(RList.class);
+        when(lFull.readAll()).thenReturn(List.of("x", "y"));
+        RList<String> lEmpty = mock(RList.class);
+        when(lEmpty.readAll()).thenReturn(List.of());
+        RList<String> lNull = mock(RList.class);
+        when(lNull.readAll()).thenReturn(null);
+        when(redisson.getList(eq("l-full"), any(Codec.class))).thenReturn((RList) lFull);
+        when(redisson.getList(eq("l-empty"), any(Codec.class))).thenReturn((RList) lEmpty);
+        when(redisson.getList(eq("l-null"), any(Codec.class))).thenReturn((RList) lNull);
+
+        RSet<String> sFull = mock(RSet.class);
+        when(sFull.readAll()).thenReturn((java.util.Set) java.util.Set.of("e1", "e2"));
+        RSet<String> sEmpty = mock(RSet.class);
+        when(sEmpty.readAll()).thenReturn((java.util.Set) java.util.Set.of());
+        when(redisson.<String>getSet(eq("s-full"), any(Codec.class))).thenReturn((RSet) sFull);
+        when(redisson.<String>getSet(eq("s-empty"), any(Codec.class))).thenReturn((RSet) sEmpty);
+
         Checkpoint cp = manager().triggerCheckpoint(8L, List.of(), null);
         @SuppressWarnings("unchecked")
         Map<String, Object> state = (Map<String, Object>) cp.getStateSnapshot().getState("runtime:state");
@@ -192,8 +216,18 @@ class RedisRuntimeCheckpointManagerGapClosureTest {
         assertNull(state.get("z-empty"), "empty zsets are pruned from the snapshot");
         assertNotNull(state.get("m-full"));
         assertNull(state.get("m-empty"), "empty maps are pruned from the snapshot");
+        assertEquals(List.of("x", "y"),
+                ((RedisRuntimeCheckpointManager.RedisStateValue) state.get("l-full")).list());
+        assertNull(state.get("l-empty"), "empty lists are pruned from the snapshot");
+        assertNull(state.get("l-null"), "null reads are pruned from the snapshot");
+        assertEquals(new java.util.HashSet<>(List.of("e1", "e2")),
+                ((RedisRuntimeCheckpointManager.RedisStateValue) state.get("s-full")).set());
+        assertNull(state.get("s-empty"), "empty sets are pruned from the snapshot");
         verify(index, org.mockito.Mockito.atLeastOnce()).remove("z-empty");
         verify(index, org.mockito.Mockito.atLeastOnce()).remove("m-empty");
+        verify(index, org.mockito.Mockito.atLeastOnce()).remove("l-empty");
+        verify(index, org.mockito.Mockito.atLeastOnce()).remove("l-null");
+        verify(index, org.mockito.Mockito.atLeastOnce()).remove("s-empty");
     }
 
     @Test
@@ -206,6 +240,11 @@ class RedisRuntimeCheckpointManagerGapClosureTest {
         rawState.put("z-full", RedisRuntimeCheckpointManager.RedisStateValue.ofZset(Map.of("v", 1.0d)));
         rawState.put("m-empty", RedisRuntimeCheckpointManager.RedisStateValue.ofMap(Map.of()));
         rawState.put("m-full", RedisRuntimeCheckpointManager.RedisStateValue.ofMap(Map.of("a", "b")));
+        rawState.put("l-null", RedisRuntimeCheckpointManager.RedisStateValue.ofList(null));
+        rawState.put("l-empty", RedisRuntimeCheckpointManager.RedisStateValue.ofList(List.of()));
+        rawState.put("l-full", RedisRuntimeCheckpointManager.RedisStateValue.ofList(List.of("x", "y")));
+        rawState.put("s-empty", RedisRuntimeCheckpointManager.RedisStateValue.ofSet(java.util.Set.of()));
+        rawState.put("s-full", RedisRuntimeCheckpointManager.RedisStateValue.ofSet(java.util.Set.of("e")));
         rawState.put("null-type", nullTypedStateValue());
         rawState.put("as-map", Map.of("k", "v"));
         Map<String, Object> snap = new HashMap<>();
@@ -214,6 +253,8 @@ class RedisRuntimeCheckpointManagerGapClosureTest {
         RScoredSortedSet<String> zset = mock(RScoredSortedSet.class);
         RMap<String, String> map = mock(RMap.class);
         RMap<String, String> asMap = mock(RMap.class);
+        RList<String> list = mock(RList.class);
+        RSet<String> set = mock(RSet.class);
         // RT-M4: data lands on the staged key first (name + ":rst:42") and is RENAMEd into
         // place; the final-name handle is still used for the post-swap TTL.
         when(redisson.getScoredSortedSet(eq("z-full:rst:42"), any(Codec.class))).thenReturn((RScoredSortedSet) zset);
@@ -222,6 +263,10 @@ class RedisRuntimeCheckpointManagerGapClosureTest {
         when(redisson.getMap(eq("m-full"), any(Codec.class))).thenReturn((RMap) map);
         when(redisson.getMap(eq("as-map:rst:42"), any(Codec.class))).thenReturn((RMap) asMap);
         when(redisson.getMap(eq("as-map"), any(Codec.class))).thenReturn((RMap) asMap);
+        when(redisson.getList(eq("l-full:rst:42"), any(Codec.class))).thenReturn((RList) list);
+        when(redisson.getList(eq("l-full"), any(Codec.class))).thenReturn((RList) list);
+        when(redisson.<String>getSet(eq("s-full:rst:42"), any(Codec.class))).thenReturn((RSet) set);
+        when(redisson.<String>getSet(eq("s-full"), any(Codec.class))).thenReturn((RSet) set);
         when(index.readAll()).thenReturn((java.util.Set) java.util.Set.of("stale"));
 
         RedisRuntimeCheckpointManager m = manager();
@@ -232,6 +277,10 @@ class RedisRuntimeCheckpointManagerGapClosureTest {
         verify(map).putAll(Map.of("a", "b"));
         verify(map).expire((Duration) Duration.ofSeconds(20));
         verify(asMap).putAll(Map.of("k", "v"));
+        verify(list).addAll(List.of("x", "y"));
+        verify(list).expire((Duration) Duration.ofSeconds(20));
+        verify(set).addAll(java.util.Set.of("e"));
+        verify(set).expire((Duration) Duration.ofSeconds(20));
         verify(rkeys).delete("stale");
         // the snapshot's index replaces the live one via rename; the snapshot carries no
         // schema entries, so the live schema key is dropped

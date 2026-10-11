@@ -9,6 +9,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RKeys;
+import org.redisson.api.RList;
 import org.redisson.api.RMap;
 import org.redisson.api.RSet;
 import org.redisson.api.RedissonClient;
@@ -18,6 +19,9 @@ import java.lang.reflect.Field;
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -163,8 +167,7 @@ class RedisKeyedStateStoreGapClosureTest {
     }
 
     @Test
-    void stateMetricsRecordersRequireValidPartitionId() {
-        RedisKeyedStateStore<String> s = store(Duration.ZERO, 0, 0, null);
+    void stateMetricsRecordersRequireValidPartitionId() {        RedisKeyedStateStore<String> s = store(Duration.ZERO, 0, 0, null);
 
         s.recordKeyedStateWrite("s", 1L);
         s.recordKeyedStateDelete("s");
@@ -183,5 +186,86 @@ class RedisKeyedStateStoreGapClosureTest {
         verify(collector, times(2)).incKeyedStateWrite("job", "topic", "group", "op", "s", 3);
         verify(collector).incKeyedStateDelete("job", "topic", "group", "op", "s", 3);
         verify(collector).recordKeyedStateWriteLatency(eq("job"), eq("topic"), eq("group"), eq("op"), eq("s"), eq(3), eq(1L));
+    }
+
+    @Test
+    void stateItemKeyRequiresPartitionIdAndLaysOutPerCurrentKey() {
+        RedisKeyedStateStore<String> s = store(Duration.ZERO, 0, 0, null);
+        assertThrows(IllegalStateException.class, () -> s.stateItemKey("m", "f"),
+                "no partitionId set yet");
+
+        s.setCurrentPartitionId(-2);
+        assertThrows(IllegalStateException.class, () -> s.stateItemKey("m", "f"),
+                "negative partitionId is invalid");
+
+        s.setCurrentPartitionId(3);
+        assertEquals("prefix:job:cg:group:topic:topic:p:3:state:op:m:f", s.stateItemKey("m", "f"));
+    }
+
+    @Test
+    void accessorsWrapTheCollectionStateImplementations() {
+        RedisKeyedStateStore<String> s = store(Duration.ZERO, 0, 0, null);
+        assertEquals(RedisKeyedMapState.class, s.getMapState("m", String.class, Integer.class).getClass());
+        assertEquals(RedisKeyedListState.class, s.getListState(new StateDescriptor<>("l", Integer.class)).getClass());
+        assertEquals(RedisKeyedSetState.class, s.getSetState(new StateDescriptor<>("s", String.class)).getClass());
+    }
+
+    @Test
+    void stateMapRefForKeyRegistersOnMissAndCachesTheHandle() throws Exception {
+        RedisKeyedStateStore<String> s = store(Duration.ofSeconds(30), 0, 0, null);
+        s.setCurrentPartitionId(0);
+        String key = "prefix:job:cg:group:topic:topic:p:0:state:op:m:f";
+        // the constructor already opened the schema map; verify counts from here on
+        org.mockito.Mockito.clearInvocations(redisson, rkeys);
+
+        RedisKeyedStateStore.StateMapRef ref = s.stateMapRefForKey("m", "f");
+        assertEquals(key, ref.redisKey());
+        verify(redisson).getMap(eq(key), any(Codec.class));
+        verify(rkeys).expire(Duration.ofSeconds(30), key); // stateKeys registration applies the TTL
+
+        s.stateMapRefForKey("m", "f");
+        verify(redisson, times(1)).getMap(anyString(), any(Codec.class));
+        verify(rkeys, times(1)).expire(any(Duration.class), anyString());
+    }
+
+    @Test
+    void stateListAndSetForKeyRegisterOnMissAndSlideTtlPerAccess() {
+        RedisKeyedStateStore<String> s = store(Duration.ofSeconds(30), 0, 0, null);
+        s.setCurrentPartitionId(0);
+        String listKey = "prefix:job:cg:group:topic:topic:p:0:state:op:l:f";
+        String setKey = "prefix:job:cg:group:topic:topic:p:0:state:op:s:f";
+        RList<String> list = mock(RList.class);
+        when(redisson.<String>getList(eq(listKey), any(Codec.class))).thenReturn(list);
+        RSet<String> set = mock(RSet.class);
+        when(redisson.<String>getSet(eq(setKey), any(Codec.class))).thenReturn(set);
+        org.mockito.Mockito.clearInvocations(redisson, rkeys);
+
+        assertSame(list, s.stateListForKey("l", "f"));
+        assertSame(set, s.stateSetForKey("s", "f"));
+        // miss: registerStateKey applies the TTL once, then the per-access sliding refresh once
+        verify(rkeys, times(2)).expire(Duration.ofSeconds(30), listKey);
+        verify(rkeys, times(2)).expire(Duration.ofSeconds(30), setKey);
+
+        // sliding TTL: every access refreshes, but the structure handle stays cached
+        assertSame(list, s.stateListForKey("l", "f"));
+        assertSame(set, s.stateSetForKey("s", "f"));
+        verify(rkeys, times(3)).expire(Duration.ofSeconds(30), listKey);
+        verify(rkeys, times(3)).expire(Duration.ofSeconds(30), setKey);
+        verify(redisson, times(1)).getList(anyString(), any(Codec.class));
+        verify(redisson, times(1)).<String>getSet(anyString(), any(Codec.class));
+    }
+
+    @Test
+    void stateListAndSetForKeySkipTtlWhenTtlIsNotPositive() {
+        RedisKeyedStateStore<String> s = store(Duration.ZERO, 0, 0, null);
+        s.setCurrentPartitionId(0);
+        RList<String> list = mock(RList.class);
+        when(redisson.<String>getList(anyString(), any(Codec.class))).thenReturn(list);
+        RSet<String> set = mock(RSet.class);
+        when(redisson.<String>getSet(anyString(), any(Codec.class))).thenReturn(set);
+
+        s.stateListForKey("l", "f");
+        s.stateSetForKey("s", "f");
+        verify(rkeys, never()).expire(any(Duration.class), anyString());
     }
 }
