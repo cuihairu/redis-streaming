@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
 /**
  * Redis-based configuration service implementation
  */
-public class RedisConfigService implements ConfigService, ConfigManager {
+public class RedisConfigService implements ConfigService {
     
     private static final Logger logger = LoggerFactory.getLogger(RedisConfigService.class);
     

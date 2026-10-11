@@ -15,7 +15,7 @@
 - `addListener` 时若配置已存在，会立刻用当前内容回调一次
 - 历史记录：每次发布/删除把旧版本压入 List 并按 `historySize` 修剪；`historySize=0` 表示不保存历史
 - 历史可用 `trimHistoryBySize` / `trimHistoryByAge` 手动修剪
-- `ConfigCenter.hasConfig` / `getConfigMetadata` 提供元数据查询（版本、描述、创建/更新时间、字节数）
+- `hasConfig`（接口默认方法）判断配置是否存在；元数据（版本、描述、时间）经历史记录查询获得
 
 ## 快速开始
 
@@ -176,17 +176,13 @@ int removedByAge = configService.trimHistoryByAge("app.config", "production",
         java.time.Duration.ofDays(30));
 ```
 
-## 配置中心视图（ConfigCenter）
+## 配置存在性检查
 
 ```java
-import io.github.cuihairu.redis.streaming.config.impl.RedisConfigCenter;
+configService.start();
 
-ConfigCenter center = new RedisConfigCenter(redissonClient);   // 内部委托 RedisConfigService
-center.start();
-
-boolean exists = center.hasConfig("app.properties", "dev");
-ConfigCenter.ConfigMetadata meta = center.getConfigMetadata("app.properties", "dev");
-// meta.getVersion() / getDescription() / getCreateTime() / getLastModified() / getSize()
+boolean exists = configService.hasConfig("app.properties", "dev");
+// 版本/描述/时间等元数据经 getConfigHistory(dataId, group, size) 查历史记录获得
 ```
 
 ## 架构设计
@@ -225,9 +221,10 @@ group 与 dataId 中的 `:` 会被替换为 `_`，避免键解析歧义。
 ### ConfigService 接口
 
 ```java
-public interface ConfigService extends ConfigManager {
+public interface ConfigService {
     String getConfig(String dataId, String group);
     default String getConfig(String dataId, String group, String defaultValue);
+    default boolean hasConfig(String dataId, String group);
     boolean publishConfig(String dataId, String group, String content);
     boolean publishConfig(String dataId, String group, String content, String description);
     boolean removeConfig(String dataId, String group);
@@ -242,7 +239,7 @@ public interface ConfigService extends ConfigManager {
 }
 ```
 
-`ConfigManager` 是 publisher/subscriber 两个视角的父接口（方法与上表一致）；`ConfigCenter` 在 `ConfigManager` 之上追加 `hasConfig` 与 `getConfigMetadata`。
+`ConfigService` 是本模块唯一接口（publisher/subscriber 两个视角都声明在这里；原 `ConfigManager`/`ConfigCenter` 已并入，2026-10-12 收敛）。
 
 ### ConfigChangeListener 接口
 

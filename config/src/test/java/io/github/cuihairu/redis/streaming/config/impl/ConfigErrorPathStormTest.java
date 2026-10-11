@@ -19,14 +19,4 @@ class ConfigErrorPathStormTest {
                 () -> new RedisConfigService(Storms.exploding(org.redisson.api.RedissonClient.class), new ConfigServiceConfig("storm-cfg", true)));
         assertTrue(Storms.storm(failing, null) > 5);
     }
-
-    @Test
-    void configCenterStorm() {
-        RedisConfigCenter center = Storms.constructing(
-                () -> new RedisConfigCenter(Storms.exploding(org.redisson.api.RedissonClient.class)));
-        assertTrue(Storms.storm(center, null) > 3);
-        RedisConfigCenter centerHappy = Storms.constructing(
-                () -> new RedisConfigCenter(Storms.deep(org.redisson.api.RedissonClient.class), new ConfigServiceConfig("storm-cc", true)));
-        assertTrue(Storms.storm(centerHappy, null) > 3);
-    }
 }

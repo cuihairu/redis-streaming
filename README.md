@@ -184,7 +184,7 @@ Responsibilities:
 - Config listeners (auto-update, hot reload)
 - Config history queries (last N versions retained)
 
-Key classes: `RedisConfigService.java`, `ConfigManager.java`, `ConfigChangeListener.java` (12 files)
+Key classes: `ConfigService.java`, `RedisConfigService.java`, `ConfigChangeListener.java` (9 files)
 
 Config management example:
 ```java

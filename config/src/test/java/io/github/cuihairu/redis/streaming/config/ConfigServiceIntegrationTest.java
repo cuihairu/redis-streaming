@@ -1,7 +1,7 @@
 package io.github.cuihairu.redis.streaming.config;
 
 import io.github.cuihairu.redis.streaming.config.event.ConfigChangeEvent;
-import io.github.cuihairu.redis.streaming.config.impl.RedisConfigCenter;
+import io.github.cuihairu.redis.streaming.config.impl.RedisConfigService;
 import io.github.cuihairu.redis.streaming.config.impl.RedisConfigService;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -105,15 +105,15 @@ public class ConfigServiceIntegrationTest {
         return Redisson.create(config);
     }
 
-    // ===== RedisConfigCenter Integration Tests =====
+    // ===== RedisConfigService Integration Tests =====
 
     @Test
-    void testRedisConfigCenterLifecycleAndPublish() {
+    void testConfigServiceLifecycleAndPublish() {
         RedissonClient client = createClient();
         String group = "g-" + UUID.randomUUID().toString().substring(0, 6);
         String dataId = "d-" + UUID.randomUUID().toString().substring(0, 6);
 
-        RedisConfigCenter configCenter = new RedisConfigCenter(client);
+        RedisConfigService configCenter = new RedisConfigService(client);
         try {
             assertFalse(configCenter.isRunning());
 
@@ -123,15 +123,6 @@ public class ConfigServiceIntegrationTest {
             assertTrue(configCenter.publishConfig(dataId, group, "test content", "test description"));
             assertEquals("test content", configCenter.getConfig(dataId, group));
             assertTrue(configCenter.hasConfig(dataId, group));
-
-            // Test metadata
-            ConfigCenter.ConfigMetadata metadata = configCenter.getConfigMetadata(dataId, group);
-            assertNotNull(metadata);
-            assertNotNull(metadata.getVersion());
-            assertEquals("test description", metadata.getDescription());
-            assertTrue(metadata.getCreateTime() > 0);
-            assertTrue(metadata.getLastModified() >= metadata.getCreateTime());
-            assertTrue(metadata.getSize() > 0);
 
             // Test history - publish again to create history (first publish doesn't create history)
             configCenter.publishConfig(dataId, group, "updated content", "updated description");
@@ -146,12 +137,12 @@ public class ConfigServiceIntegrationTest {
     }
 
     @Test
-    void testRedisConfigCenterRemoveConfig() {
+    void testConfigServiceRemoveConfig() {
         RedissonClient client = createClient();
         String group = "g-" + UUID.randomUUID().toString().substring(0, 6);
         String dataId = "d-" + UUID.randomUUID().toString().substring(0, 6);
 
-        RedisConfigCenter configCenter = new RedisConfigCenter(client);
+        RedisConfigService configCenter = new RedisConfigService(client);
         try {
             configCenter.start();
 
@@ -169,12 +160,12 @@ public class ConfigServiceIntegrationTest {
     }
 
     @Test
-    void testRedisConfigCenterListener() throws Exception {
+    void testConfigServiceListener() throws Exception {
         RedissonClient client = createClient();
         String group = "g-" + UUID.randomUUID().toString().substring(0, 6);
         String dataId = "d-" + UUID.randomUUID().toString().substring(0, 6);
 
-        RedisConfigCenter configCenter = new RedisConfigCenter(client);
+        RedisConfigService configCenter = new RedisConfigService(client);
         try {
             configCenter.start();
 
@@ -199,12 +190,12 @@ public class ConfigServiceIntegrationTest {
     }
 
     @Test
-    void testRedisConfigCenterPublishConfigWithoutDescription() {
+    void testConfigServicePublishConfigWithoutDescription() {
         RedissonClient client = createClient();
         String group = "g-" + UUID.randomUUID().toString().substring(0, 6);
         String dataId = "d-" + UUID.randomUUID().toString().substring(0, 6);
 
-        RedisConfigCenter configCenter = new RedisConfigCenter(client);
+        RedisConfigService configCenter = new RedisConfigService(client);
         try {
             configCenter.start();
 
@@ -218,12 +209,12 @@ public class ConfigServiceIntegrationTest {
     }
 
     @Test
-    void testRedisConfigCenterPublishNullContent() {
+    void testConfigServicePublishNullContent() {
         RedissonClient client = createClient();
         String group = "g-" + UUID.randomUUID().toString().substring(0, 6);
         String dataId = "d-" + UUID.randomUUID().toString().substring(0, 6);
 
-        RedisConfigCenter configCenter = new RedisConfigCenter(client);
+        RedisConfigService configCenter = new RedisConfigService(client);
         try {
             configCenter.start();
 
@@ -237,12 +228,12 @@ public class ConfigServiceIntegrationTest {
     }
 
     @Test
-    void testRedisConfigCenterPublishEmptyContent() {
+    void testConfigServicePublishEmptyContent() {
         RedissonClient client = createClient();
         String group = "g-" + UUID.randomUUID().toString().substring(0, 6);
         String dataId = "d-" + UUID.randomUUID().toString().substring(0, 6);
 
-        RedisConfigCenter configCenter = new RedisConfigCenter(client);
+        RedisConfigService configCenter = new RedisConfigService(client);
         try {
             configCenter.start();
 
@@ -256,12 +247,12 @@ public class ConfigServiceIntegrationTest {
     }
 
     @Test
-    void testRedisConfigCenterGetNonExistentConfig() {
+    void testConfigServiceGetNonExistentConfig() {
         RedissonClient client = createClient();
         String group = "g-" + UUID.randomUUID().toString().substring(0, 6);
         String dataId = "d-" + UUID.randomUUID().toString().substring(0, 6);
 
-        RedisConfigCenter configCenter = new RedisConfigCenter(client);
+        RedisConfigService configCenter = new RedisConfigService(client);
         try {
             configCenter.start();
 
@@ -275,12 +266,12 @@ public class ConfigServiceIntegrationTest {
     }
 
     @Test
-    void testRedisConfigCenterRemoveNonExistentConfig() {
+    void testConfigServiceRemoveNonExistentConfig() {
         RedissonClient client = createClient();
         String group = "g-" + UUID.randomUUID().toString().substring(0, 6);
         String dataId = "d-" + UUID.randomUUID().toString().substring(0, 6);
 
-        RedisConfigCenter configCenter = new RedisConfigCenter(client);
+        RedisConfigService configCenter = new RedisConfigService(client);
         try {
             configCenter.start();
 
@@ -294,12 +285,12 @@ public class ConfigServiceIntegrationTest {
     }
 
     @Test
-    void testRedisConfigCenterGetEmptyHistory() {
+    void testConfigServiceGetEmptyHistory() {
         RedissonClient client = createClient();
         String group = "g-" + UUID.randomUUID().toString().substring(0, 6);
         String dataId = "d-" + UUID.randomUUID().toString().substring(0, 6);
 
-        RedisConfigCenter configCenter = new RedisConfigCenter(client);
+        RedisConfigService configCenter = new RedisConfigService(client);
         try {
             configCenter.start();
 
@@ -313,12 +304,12 @@ public class ConfigServiceIntegrationTest {
     }
 
     @Test
-    void testRedisConfigCenterMultipleUpdates() {
+    void testConfigServiceMultipleUpdates() {
         RedissonClient client = createClient();
         String group = "g-" + UUID.randomUUID().toString().substring(0, 6);
         String dataId = "d-" + UUID.randomUUID().toString().substring(0, 6);
 
-        RedisConfigCenter configCenter = new RedisConfigCenter(client);
+        RedisConfigService configCenter = new RedisConfigService(client);
         try {
             configCenter.start();
 
@@ -341,22 +332,17 @@ public class ConfigServiceIntegrationTest {
     }
 
     @Test
-    void testRedisConfigCenterMetadataForNonExistent() {
+    void testConfigServiceHistoryForNonExistent() {
         RedissonClient client = createClient();
         String group = "g-" + UUID.randomUUID().toString().substring(0, 6);
         String dataId = "d-" + UUID.randomUUID().toString().substring(0, 6);
 
-        RedisConfigCenter configCenter = new RedisConfigCenter(client);
+        RedisConfigService configCenter = new RedisConfigService(client);
         try {
             configCenter.start();
 
-            ConfigCenter.ConfigMetadata metadata = configCenter.getConfigMetadata(dataId, group);
-            assertNotNull(metadata);
-            assertNull(metadata.getVersion());
-            assertNull(metadata.getDescription());
-            assertEquals(0, metadata.getSize());
-            assertEquals(0, metadata.getCreateTime());
-            assertEquals(0, metadata.getLastModified());
+            assertTrue(configCenter.getConfigHistory(dataId, group, 10).isEmpty(),
+                    "a config that was never published has no history");
 
         } finally {
             configCenter.stop();
@@ -365,10 +351,10 @@ public class ConfigServiceIntegrationTest {
     }
 
     @Test
-    void testRedisConfigCenterStartStopMultipleTimes() {
+    void testConfigServiceStartStopMultipleTimes() {
         RedissonClient client = createClient();
 
-        RedisConfigCenter configCenter = new RedisConfigCenter(client);
+        RedisConfigService configCenter = new RedisConfigService(client);
         try {
             configCenter.start();
             assertTrue(configCenter.isRunning());
@@ -388,12 +374,12 @@ public class ConfigServiceIntegrationTest {
     }
 
     @Test
-    void testRedisConfigCenterOperationBeforeStart() {
+    void testConfigServiceOperationBeforeStart() {
         RedissonClient client = createClient();
         String group = "g-" + UUID.randomUUID().toString().substring(0, 6);
         String dataId = "d-" + UUID.randomUUID().toString().substring(0, 6);
 
-        RedisConfigCenter configCenter = new RedisConfigCenter(client);
+        RedisConfigService configCenter = new RedisConfigService(client);
         try {
             // Operations before start should throw IllegalStateException
             assertThrows(IllegalStateException.class, () -> configCenter.publishConfig(dataId, group, "content"));
@@ -406,12 +392,12 @@ public class ConfigServiceIntegrationTest {
     }
 
     @Test
-    void testRedisConfigCenterGetConfigHistoryWithSizeLimit() {
+    void testConfigServiceGetConfigHistoryWithSizeLimit() {
         RedissonClient client = createClient();
         String group = "g-" + UUID.randomUUID().toString().substring(0, 6);
         String dataId = "d-" + UUID.randomUUID().toString().substring(0, 6);
 
-        RedisConfigCenter configCenter = new RedisConfigCenter(client);
+        RedisConfigService configCenter = new RedisConfigService(client);
         try {
             configCenter.start();
 

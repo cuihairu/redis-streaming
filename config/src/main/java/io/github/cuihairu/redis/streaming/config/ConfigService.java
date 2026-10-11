@@ -3,37 +3,20 @@ package io.github.cuihairu.redis.streaming.config;
 import java.util.List;
 
 /**
- * Configuration service interface
- * Provides configuration retrieval, publishing, deletion, and listening capabilities
+ * Configuration service interface: the single contract of the config module, covering
+ * both the publisher view (publish/remove/history) and the subscriber view (get/listen).
+ * Inspired by Nacos Config Center design.
  *
- * This interface extends ConfigManager, providing backward compatibility
+ * <p>Former sibling interfaces ({@code ConfigManager}, {@code ConfigCenter}) were merged
+ * here; {@code hasConfig} and the history trim defaults were their only survivors.
  */
-public interface ConfigService extends ConfigManager {
-    
-    /**
-     * Get configuration
-     *
-     * @param dataId configuration ID
-     * @param group configuration group
-     * @return configuration content, or null if not found
-     */
-    String getConfig(String dataId, String group);
+public interface ConfigService {
+
+    // ==================== Configuration Publisher Interface ====================
 
     /**
-     * Get configuration with default value
-     *
-     * @param dataId configuration ID
-     * @param group configuration group
-     * @param defaultValue default value
-     * @return configuration content, or default value if not found
-     */
-    default String getConfig(String dataId, String group, String defaultValue) {
-        String config = getConfig(dataId, group);
-        return config != null ? config : defaultValue;
-    }
-    
-    /**
      * Publish configuration
+     * Configuration publishers call this method to publish configurations to the config center
      *
      * @param dataId configuration ID
      * @param group configuration group
@@ -63,25 +46,7 @@ public interface ConfigService extends ConfigManager {
     boolean removeConfig(String dataId, String group);
 
     /**
-     * Add configuration listener
-     *
-     * @param dataId configuration ID
-     * @param group configuration group
-     * @param listener configuration change listener
-     */
-    void addListener(String dataId, String group, ConfigChangeListener listener);
-
-    /**
-     * Remove configuration listener
-     *
-     * @param dataId configuration ID
-     * @param group configuration group
-     * @param listener configuration change listener
-     */
-    void removeListener(String dataId, String group, ConfigChangeListener listener);
-
-    /**
-     * Get configuration history
+     * Get configuration history records
      *
      * @param dataId configuration ID
      * @param group configuration group
@@ -101,7 +66,64 @@ public interface ConfigService extends ConfigManager {
      * @return removed count
      */
     default int trimHistoryByAge(String dataId, String group, java.time.Duration maxAge) { return 0; }
-    
+
+    // ==================== Configuration Subscriber Interface ====================
+
+    /**
+     * Get configuration
+     * Configuration subscribers call this method to retrieve configuration content
+     *
+     * @param dataId configuration ID
+     * @param group configuration group
+     * @return configuration content, or null if not found
+     */
+    String getConfig(String dataId, String group);
+
+    /**
+     * Get configuration with default value
+     *
+     * @param dataId configuration ID
+     * @param group configuration group
+     * @param defaultValue default value
+     * @return configuration content, or default value if not found
+     */
+    default String getConfig(String dataId, String group, String defaultValue) {
+        String config = getConfig(dataId, group);
+        return config != null ? config : defaultValue;
+    }
+
+    /**
+     * Check if a configuration exists
+     *
+     * @param dataId configuration ID
+     * @param group configuration group
+     * @return true if the configuration exists, false otherwise
+     */
+    default boolean hasConfig(String dataId, String group) {
+        return getConfig(dataId, group) != null;
+    }
+
+    /**
+     * Add configuration change listener
+     * Configuration subscribers call this method to listen for configuration changes
+     *
+     * @param dataId configuration ID
+     * @param group configuration group
+     * @param listener configuration change listener
+     */
+    void addListener(String dataId, String group, ConfigChangeListener listener);
+
+    /**
+     * Remove configuration change listener
+     *
+     * @param dataId configuration ID
+     * @param group configuration group
+     * @param listener configuration change listener
+     */
+    void removeListener(String dataId, String group, ConfigChangeListener listener);
+
+    // ==================== Lifecycle Management ====================
+
     /**
      * Start the configuration service
      */

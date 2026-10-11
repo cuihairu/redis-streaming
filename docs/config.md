@@ -10,12 +10,13 @@ Module: `config/`（包根 `io.github.cuihairu.redis.streaming.config`）
 
 ### ConfigService
 
-配置服务的完整生命周期接口，继承 `ConfigManager`（publisher/subscriber 两个视角的方法都声明在这里）。
+配置服务的唯一接口，publisher/subscriber 两个视角的方法都声明在这里（原 `ConfigManager`/`ConfigCenter` 接口已并入，2026-10-12 收敛）。
 
 ```java
-public interface ConfigService extends ConfigManager {
+public interface ConfigService {
     String getConfig(String dataId, String group);
     default String getConfig(String dataId, String group, String defaultValue);
+    default boolean hasConfig(String dataId, String group);
     boolean publishConfig(String dataId, String group, String content);
     boolean publishConfig(String dataId, String group, String content, String description);
     boolean removeConfig(String dataId, String group);
@@ -61,25 +62,6 @@ public class ConfigChangeEvent {
 }
 ```
 
-### ConfigCenter
-
-在 `ConfigManager` 之上追加元数据查询，实现类 `impl.RedisConfigCenter`（内部委托 `RedisConfigService`）：
-
-```java
-public interface ConfigCenter extends ConfigManager {
-    boolean hasConfig(String dataId, String group);
-    ConfigMetadata getConfigMetadata(String dataId, String group);  // 需已 start
-
-    interface ConfigMetadata {
-        String getVersion();
-        String getDescription();
-        long getCreateTime();     // 毫秒
-        long getLastModified();   // 毫秒
-        long getSize();           // content 的 UTF-8 字节数
-    }
-}
-```
-
 ### 数据模型
 
 ```java
@@ -94,7 +76,7 @@ public class ConfigHistory {
     private String operator;
 }
 
-// 配置完整信息（getConfigMetadata 内部使用）
+// 配置 Hash 的内存视图（ConfigEntryCodec 解析，RedisConfigService 内部使用）
 public class ConfigInfo {
     private String dataId;
     private String group;
@@ -127,13 +109,11 @@ configService.stop();
 
 构造也可传入配置：`new RedisConfigService(redissonClient, new ConfigServiceConfig("myapp", true))`。
 
-### 2. 配置中心视图
+### 2. 配置存在性检查
 
 ```java
-ConfigCenter center = new RedisConfigCenter(redissonClient);
-center.start();
-boolean exists = center.hasConfig("app.properties", "dev");
-long size = center.getConfigMetadata("app.properties", "dev").getSize();
+configService.start();
+boolean exists = configService.hasConfig("app.properties", "dev");
 ```
 
 ### 3. 配置历史查询

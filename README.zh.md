@@ -186,7 +186,7 @@ List<ServiceInstance> instances =
 - 配置监听器（自动更新、热加载）
 - 配置历史查询（保留最近 N 个版本）
 
-关键类：`RedisConfigService.java`, `ConfigManager.java`, `ConfigChangeListener.java` (12 个文件)
+关键类：`ConfigService.java`, `RedisConfigService.java`, `ConfigChangeListener.java` (9 个文件)
 
 配置管理示例：
 ```java

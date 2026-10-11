@@ -545,7 +545,7 @@ void testRedisIntegration() {
 
 ### D. registry 瘦身(破坏公开 API,建议放到 1.0 周期)
 - [ ] `metrics/` APM 采集 14 类(与 metrics 模块重叠)、`client/` RPC 调用端(与 reliability 重叠)、`WebSocketHealthChecker`(实为裸 TCP,等价 TcpHealthChecker)、四套同义接口(Registry/Provider、Discovery/Consumer)与 `RedisNamingService` 纯委托门面
-- [ ] `config.RedisConfigCenter` 冗余门面;两个 `BaseRedisConfig` 已合并,继续收敛 `ConfigManager/ConfigService/ConfigCenter` 接口堆叠
+- [x] `config.RedisConfigCenter` 冗余门面;两个 `BaseRedisConfig` 已合并,继续收敛 `ConfigManager/ConfigService/ConfigCenter` 接口堆叠(已落地 2026-10-12):`ConfigService` 收敛为模块唯一接口(publisher/subscriber 双视角 + `hasConfig` 默认方法 + trim 默认方法);删除 `ConfigManager`(全部被 ConfigService 重复声明)、`ConfigCenter`、`impl.RedisConfigCenter` 门面(纯委托包装,零外部使用方;元数据视图经 `getConfigHistory` 获得,`hasConfig` 并入接口);`RedisConfigService` 只 `implements ConfigService`(原本同时 implements 两接口);外部面零破坏(starter/registry 例/examples 只用 ConfigService);测试:删 2 个门面测试与 center storm,集成测试改走 RedisConfigService(hasConfig/历史断言),接口默认方法测试改单接口并补 hasConfig 覆盖;docs/config.md、config/README.md、README/README.zh、CHANGELOG Unreleased 同步;`config:check` 全绿
 
 ### E. 其他
 - [x] examples 新增 `springboot.StarterExampleApplication` + 注释版 `application.yml`(registry/discovery/config/mq/ratelimit 全键样例)。**首次真实启动 starter 暴露并修复 4 个潜伏 bug**:logback 1.5.13 与 Spring Boot 3.2 不兼容(`LoggerContext.getConfigurationLock` 移除,降到 1.4.14)、默认空密码仍发送 AUTH 导致连接失败(改为仅非空才 set)、`MqHealthIndicator` bean 在无 actuator 时使配置类内省失败(下沉到类级 `@ConditionalOnClass` 嵌套配置)、5 个 micrometer collector/installer bean 缺 `@ConditionalOnBean(MeterRegistry/collector)` 守卫。示例已在本地 Redis 端到端跑通(注册/配置/MQ 全通)

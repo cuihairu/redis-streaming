@@ -7,8 +7,9 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Covers the default methods declared on {@code ConfigService} and {@code ConfigManager}. */
+/** Covers the default methods declared on {@code ConfigService}. */
 class ConfigInterfaceDefaultsCoverageTest {
 
     @Test
@@ -51,55 +52,10 @@ class ConfigInterfaceDefaultsCoverageTest {
         assertEquals(0, service.trimHistoryBySize("d", "g", 5));
         assertEquals(0, service.trimHistoryByAge("d", "g", Duration.ofDays(1)));
         assertFalse(service.isRunning());
+        assertTrue(service.hasConfig("present", "g"));
+        assertFalse(service.hasConfig("absent", "g"));
 
-        // ConfigService re-declares the 3-arg getConfig default (separate bytecode from
-        // ConfigManager's copy), so both branches need exercising through this reference
         assertEquals("value", service.getConfig("present", "g", "fallback"));
         assertEquals("fallback", service.getConfig("absent", "g", "fallback"));
-    }
-
-    @Test
-    void configManagerDefaultGetConfigFallsBackToDefault() {
-        ConfigManager manager = new ConfigManager() {
-            @Override
-            public boolean publishConfig(String dataId, String group, String content) {
-                return false;
-            }
-            @Override
-            public boolean publishConfig(String dataId, String group, String content, String description) {
-                return false;
-            }
-            @Override
-            public boolean removeConfig(String dataId, String group) {
-                return false;
-            }
-            @Override
-            public List<ConfigHistory> getConfigHistory(String dataId, String group, int size) {
-                return List.of();
-            }
-            @Override
-            public String getConfig(String dataId, String group) {
-                return dataId.equals("present") ? "value" : null;
-            }
-            @Override
-            public void addListener(String dataId, String group, ConfigChangeListener listener) {
-            }
-            @Override
-            public void removeListener(String dataId, String group, ConfigChangeListener listener) {
-            }
-            @Override
-            public void start() {
-            }
-            @Override
-            public void stop() {
-            }
-            @Override
-            public boolean isRunning() {
-                return true;
-            }
-        };
-
-        assertEquals("value", manager.getConfig("present", "g", "fallback"));
-        assertEquals("fallback", manager.getConfig("absent", "g", "fallback"));
     }
 }
