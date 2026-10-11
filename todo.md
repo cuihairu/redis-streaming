@@ -98,7 +98,7 @@
 - [x] Timer 回调抛异常 → 包装为 RuntimeException("Keyed process timer callback failed")、原异常为 cause、`finally` 恢复时间戳（`TimerQueue.fire` catch 臂语义钉住）
 - [x] `InMemoryCheckpointCoordinator.restoreFromCheckpoint` 跳过快照中无条目的后注册 store（不清空其状态；checkpoint 包分支残差同型修复）
 - 说明：包级分支 99% 为测试侧天花板——唯一漏分支是 `TimerQueue.fire` 枚举 switch 的合成 default 臂，计时器只可能以 PROCESSING_TIME/EVENT_TIME 注册，测试不可达，闭合需改生产代码（超出本轮"只补测试"边界）
-- [ ] ~~集成测试：端到端窗口处理 / 窗口状态恢复~~ —— redis 引擎侧已有 `RedisRuntimeWindowedStreamIntegrationTest`（6 用例）与 checkpoint/restore 集成套件，见 runtime/redis 清单
+- [x] ~~集成测试：端到端窗口处理 / 窗口状态恢复~~ —— redis 引擎侧已有 `RedisRuntimeWindowedStreamIntegrationTest`（6 用例）与 checkpoint/restore 集成套件，见 runtime/redis 清单
 
 ---
 
@@ -523,8 +523,8 @@ void testRedisIntegration() {
 - [x] `spring-boot-starter`:核心类改为 `@AutoConfiguration`(90 行,持有 RedissonClient)并按 feature 拆出 5 个顶层配置类(registry/discovery/config/mq/ratelimit),经 @Import 保持原求值顺序与 @EnableRedisStreaming 语义(提交 c84c5f5);starter 38 个装配测试全绿
 
 ### B. 双执行引擎统一(核心架构债)
-- [ ] 为 `StreamExecutionEnvironment` 与 `RedisStreamExecutionEnvironment` 定义公共 Environment 抽象(调查结论:两者公开面交集仅 fromCollection/fromElements/addSource,Redis 引擎无对应实现;空壳接口无价值,须与 B2/B4 一并设计)
-- [ ] InMemory 引擎支持无界源与增量窗口(现为"先跑完 source 物化成 List"的批式模型,无限源会 OOM;`InMemoryKeyedStream.window` 丢弃 watermarkState/coordinator,累加器不可快照)
+- [ ] 为 `StreamExecutionEnvironment` 与 `RedisStreamExecutionEnvironment` 定义公共 Environment 抽象(调查结论:两者公开面交集仅 fromCollection/fromElements/addSource,Redis 引擎无对应实现;空壳接口无价值,须与 B2/B4 一并设计)——B2 已落地(07539c7),交集判断仍成立;剩余是「是否值得为 3 方法定义公开接口」的设计决策,未派
+- [x] InMemory 引擎支持无界源与增量窗口(2026-10-11,commit `07539c7`):① `addSource` 改为生产者守护线程 + `ArrayBlockingQueue(256)` 有界交接队列 + END_OF_SOURCE 哨兵——source `collect()` 在 checkpoint lock 内入队,终端算子拉取驱动,无限源不再先物化成 List(背压替代物化,旧模型 OOM 缺陷消除);两个急切契约保留:`source.open()` 失败与 run() 立即失败仍从 `addSource` 同步抛出(producer join 轮询 20ms 步进),已产出后失败改为从终端算子迭代处重抛(已交付记录保留,队列中未交付记录丢弃);② 窗口增量累加:`reduce/sum/count/aggregate` 改 per-bucket 累加器(`FoldState/SumState/CountState/AggregateState`,内存按窗口数而非元素数计),`apply` 与 merging(session) assigner 保持 raw 元素路径(apply 需全窗口内容、merge 需重吸收被吞桶元素),raw 路径经 `rawFromStates` 复用同一批累加器(消除重复折叠逻辑);③ watermark 驱动中途关窗:`InMemoryKeyedStream.window` 携带上游 WatermarkState,窗口 end ≤ 当前水位线的桶在每条记录后按 onEventTime 回调关窗(FIRE_AND_PURGE/PURGE 移桶),无界输入的事件时间窗口可先于输入耗尽发射;端到输入 flush 语义不变(watermarkState==null 路径与旧引擎逐点等价,既有 659 测试不改全绿)。新增 15 测试:流式不超前于消费/latch 证明、10 万条有界队列顺序保真、产出后失败从消费端重抛、水位线中途关窗时序钉死(onEventTime 序列 [10..100],首关时仅见 11 事件)、四算子有无水位线等价、session 合并 raw 路径四算子。剩余:窗口累加器注册进 InMemoryCheckpointCoordinator(需 registerStore 泛化,归入 B4/state 统一);`onProcessingTime` 仍未接(与 Redis 引擎一致);手动弃用 Iterator 会留驻留守护线程(引擎内终端算子均全量排空,不触发)
 - [x] Redis 引擎接入 core `WatermarkGenerator`:`DataStream.assignTimestampsAndWatermarks(gen)` 现为真实算子(ctx.raiseWatermark 单调推进水位线),集成测试证明用户生成器能越过配置的 10s outOfOrderness 启发式提前触发窗口;`(TimestampAssigner, gen)` 重载仍未接入(需要 runner 改事件时间传播模型,归入 B2)
 - [x] 让 `WindowAssigner.getDefaultTrigger`/window 模块 Trigger 真正被调用(原死接口):Redis 引擎窗口算子按 (partition,key,window) 桶持触发器实例,`onElement`(FIRE 提前发射保留状态/FIRE_AND_PURGE 发射并清桶/PURGE 丢弃)与 `onEventTime`(CONTINUE 推迟关闭/PURGE 静默丢弃)均已接入执行路径,默认 `EventTimeTrigger` 行为与接入前逐点等价(等价用例钉住);`onProcessingTime` 仍未接(两引擎均无 processing-time 窗口定时器,与 docs/watermark.md 触发时机描述一致)。单测 `RedisWindowedStreamTriggerTest`(5 用例)、集成测试 `RedisWindowedStreamTriggerIntegrationTest`(窗口未关时 FIRE 提前发射端到端成立)
 - [ ] runtime 用 state 模块实现替换自行开发 `RedisKeyedStateStore`(消除两套 keyed state);评估移除 `WatermarkState` 与 watermark 模块的第三份水位线逻辑（方案设计已写 2026-10-10：[State-Unification-Design.md](docs/State-Unification-Design.md)——反向结论：以 runtime keyed store 为标准实现、state 模块退为 API 面+适配层（checkpoint stateKeys 契约/TTL/schema 在 runtime 侧），水位线以 watermark 模块 `max-ooo-1` 语义为准收敛 candidateFor 的 `-1` 分叉；待评审后实施）
@@ -549,6 +549,6 @@ void testRedisIntegration() {
 ### E. 其他
 - [x] examples 新增 `springboot.StarterExampleApplication` + 注释版 `application.yml`(registry/discovery/config/mq/ratelimit 全键样例)。**首次真实启动 starter 暴露并修复 4 个潜伏 bug**:logback 1.5.13 与 Spring Boot 3.2 不兼容(`LoggerContext.getConfigurationLock` 移除,降到 1.4.14)、默认空密码仍发送 AUTH 导致连接失败(改为仅非空才 set)、`MqHealthIndicator` bean 在无 actuator 时使配置类内省失败(下沉到类级 `@ConditionalOnClass` 嵌套配置)、5 个 micrometer collector/installer bean 缺 `@ConditionalOnBean(MeterRegistry/collector)` 守卫。示例已在本地 Redis 端到端跑通(注册/配置/MQ 全通)
 - [x] `StreamSource` 生命周期与 StreamSink 对称补齐:`open()/close()` 默认方法,InMemory 引擎 addSource 已接线(source.open → run → finally close)
-- [ ] `SourceContext.getCheckpointLock` 真实接入(in-memory 引擎返回的 `new Object()` 无任何 `synchronized` 使用者;Redis 引擎尚无 SourceContext 调用路径。需与检查点屏障协议一并设计)
+- [ ] `SourceContext.getCheckpointLock` 真实接入(in-memory 引擎现由 `StreamExecutionEnvironment.emit` 在该锁上同步发射(07539c7,生产者持锁入队、消费者不持锁故背压不会死锁),但尚无屏障协议方;Redis 引擎尚无 SourceContext 调用路径。需与检查点屏障协议一并设计)
 - [x] 发布说明记录 Redisson 4.7.0 升级与 API 迁移(README/docs 已同步版本号;CHANGELOG [Unreleased] 已含该条目,2026-10-05 另补齐 2PC sink/outbox/leader 选举/状态治理/可观测等未记录特性条目)
 - [ ] 覆盖率:延续上文"优先级 1-4"清单(15 条已全部收口,余 sink/source kafka 集成腿挂起待 broker);门禁现行为单测确定性口径 INSTRUCTION ≥ 0.95 且 CLASS ≥ 0.99(2026-10-05 起,见"成功标准"注),上调档视实测覆盖而定
