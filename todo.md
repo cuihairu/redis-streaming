@@ -109,7 +109,7 @@
 
 **建议添加的测试类型：**
 - [x] **单元测试**（本轮新增 `KafkaSourceLifecycleCoverageTest` 10 用例，接既有 `KafkaSourceTest` 12 用例）：三个真实 `KafkaConsumer` 构造器（bootstrapServers / ObjectMapper / Properties 三种入口）——**Kafka 客户端惰性连接**，构造器不拨 broker，故用不可达地址 `127.0.0.1:1` 即可真跑并断言 topic/isRunning/close；构造器 10 条 `requireNonNull` 守卫（Properties/topic/ObjectMapper/valueClass/Consumer/handler）；`autoSubscribe=true` 公开构造器订阅 vs 包私有构造器不订阅；consume 循环的**逐条失败隔离**（handler 抛异常只记日志跳过、后续记录继续投递，且 tombstone(null value) 不进 handler）；`ensureAssigned()` 三态（已分配→不 poll；未分配→poll(ZERO) 后再短 poll 的兜底；poll 抛异常→吞掉仍执行 seek）
-- [ ] **集成测试**（需要 Kafka 环境）——**本轮不派**：`docker-compose.test.yml` 未提供 Kafka broker、本机无 Kafka 容器；且 `**/kafka/**` 已从聚合覆盖率门禁 classDirs 中排除（build.gradle `covClassDirs`），故此条纯属"真 broker 端到端"收益，挂起不阻塞 99% 门禁。触发方式：起 Kafka 后以 `@Tag("integration")` + `KAFKA_BOOTSTRAP_SERVERS` 环境变量守卫新增用例
+- [x] **集成测试**（需要 Kafka 环境）——✅ 2026-10-12 闭合：`docker-compose.test.yml` 新增 `kafka` 服务（`apache/kafka:3.7.0` KRaft 单节点，host 9092，`KAFKA_TEST_PORT` 可改；CI healthy 计数 4→5、timeout 180→240）；新增 `KafkaSourceIntegrationTest`（`@Tag("integration")` + broker 不可达自动 skip，`KAFKA_BOOTSTRAP_SERVERS` 守卫）5 用例：poll→JSON 反序列化按序投递、consumeAsync 全量投递+stop 线程退出、offset 提交跨消费者重启恢复（已提交不重投）、seekToBeginning 依赖组分配后重读、坏 JSON 记录跳过不断流。本机真 broker 9 用例（source 5 + sink 4）全绿
   - Kafka 消息消费测试
   - 分区分配测试
   - Offset 提交测试
@@ -152,7 +152,7 @@
 **关键问题：** ~~Kafka Sink 测试不足~~（过期：52% 为旧数据；2026-10-05 新鲜 `:sink:test :sink:jacocoTestReport` 实测 `sink.kafka` **100%/91%**，非 0%/52%——既有 `KafkaSinkTest` 系列已饱和）
 
 **建议添加的测试类型：**
-- [ ] **集成测试**（需要 Kafka 环境）——**不派**：`docker-compose.test.yml` 未提供 Kafka broker，本机无 Kafka；且 `**/kafka/**` 已从聚合覆盖率门禁 classDirs 中排除，此条纯属"真 broker 端到端"收益。触发方式：起 Kafka 后以 `@Tag("integration")` + `KAFKA_BOOTSTRAP_SERVERS` 环境变量守卫新增用例（同第 6 条 source.kafka 口径）
+- [x] **集成测试**（需要 Kafka 环境）——✅ 2026-10-12 闭合：broker 由 `docker-compose.test.yml` 的 `kafka` 服务提供（见第 6 条），既有 `KafkaSinkIntegrationTest` 4 用例（键值往返、显式分区路由、幂等 producer、未知分区包装错误）在本机真 broker 实跑全绿；`@Tag("integration")` + broker 不可达自动 skip 守卫保持（同 source.kafka 口径）
   - Kafka 消息发送测试
   - 分区路由测试
   - 序列化测试

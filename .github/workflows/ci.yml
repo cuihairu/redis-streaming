@@ -47,14 +47,14 @@ jobs:
           java -version
           javac -version
 
-      - name: Start test environment (Redis, MySQL, PostgreSQL, Elasticsearch)
+      - name: Start test environment (Redis, MySQL, PostgreSQL, Elasticsearch, Kafka)
         run: |
           set -euo pipefail
           docker compose -f docker-compose.test.yml up -d
-          # 等待全部 4 个服务 healthy（grep 到任意一个 healthy 就放行会让慢启动的
-          # MySQL/PG/ES 未就绪就开跑集成测试——CI 偶发连接拒绝红）；
+          # 等待全部 5 个服务 healthy（grep 到任意一个 healthy 就放行会让慢启动的
+          # MySQL/PG/ES/Kafka 未就绪就开跑集成测试——CI 偶发连接拒绝红）；
           # 计数法对 ps 表格输出稳定（状态列形如 "Up 5 seconds (healthy)"）
-          timeout 180 bash -c 'until [ "$(docker compose -f docker-compose.test.yml ps | grep -c "(healthy)")" -ge 4 ]; do sleep 2; done'
+          timeout 240 bash -c 'until [ "$(docker compose -f docker-compose.test.yml ps | grep -c "(healthy)")" -ge 5 ]; do sleep 2; done'
           docker compose -f docker-compose.test.yml ps
 
       - name: Build & Test (unit + integration)
@@ -68,6 +68,7 @@ jobs:
           MYSQL_PASSWORD: test_password
           POSTGRES_URL: jdbc:postgresql://127.0.0.1:5432/test_db
           POSTGRES_USER: test_user
+          KAFKA_BOOTSTRAP_SERVERS: localhost:9092
           POSTGRES_PASSWORD: test_password
           ELASTICSEARCH_URL: http://127.0.0.1:9200
 

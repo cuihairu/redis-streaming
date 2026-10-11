@@ -235,6 +235,7 @@ export POSTGRES_URL=jdbc:postgresql://localhost:5432/test_db
 export POSTGRES_USER=test_user
 export POSTGRES_PASSWORD=test_password
 export ELASTICSEARCH_URL=http://localhost:9200
+export KAFKA_BOOTSTRAP_SERVERS=localhost:9092
 
 # Run tests with custom configuration
 ./gradlew integrationTest
@@ -275,6 +276,7 @@ The project includes comprehensive test infrastructure:
 - **MySQL** (3306): CDC (Change Data Capture) testing with binlog enabled
 - **PostgreSQL** (5432): Alternative database testing with logical replication
 - **Elasticsearch** (9200/9300): Sink connector testing
+- **Kafka** (9092, KRaft single-node): Kafka source/sink connector integration tests (`apache/kafka:3.7.0`, port via `KAFKA_TEST_PORT`); tests auto-skip when no broker is reachable
 
 #### Key Features
 - [**No data persistence** - All data stored in memory (`tmpfs`)]
