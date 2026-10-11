@@ -60,7 +60,7 @@
   - RateLimit 自动配置测试（**无 matchIfMissing，默认禁用**，显式 enabled=true 才装配；policies Map 绑定 → NamedRateLimiter 注册表，未知算法回退 sliding）
   - 条件注解（@ConditionalOnProperty）测试（mq/registry/discovery/config 默认启用可独立关闭；ratelimit 默认禁用）
   - 自动配置属性绑定测试（mq worker-threads/default-partition-count/key-prefix/retry-max-attempts/lease-ttl-seconds → MqOptions；broker.type=jdbc + 用户 DataSource → JdbcBrokerFactory）
-  - Bean 覆盖测试（用户 NamingService/ServiceDiscovery/ConfigService/MqOptions/RateLimiter 抑制自动 bean；NamingService 单独即可抑制 discovery 的元组条件 @ConditionalOnMissingBean({NamingService, ServiceDiscovery})）
+  - Bean 覆盖测试（用户 NamingService/ServiceConsumer/ConfigService/MqOptions/RateLimiter 抑制自动 bean；NamingService 单独即可抑制 discovery 的元组条件 @ConditionalOnMissingBean({NamingService, ServiceConsumer})；2026-10-12 registry 接口合并——ServiceRegistry/ServiceDiscovery 删除、旧方法名转为 NamingService default 别名——后同步更新）
   - micrometer 装配（有 MeterRegistry bean → RateLimit/Mq/Reliability 采集器创建；无 → 全部缺席）
   - 真实 redissonClient 工厂方法（Redisson.create 会**急切连接**非惰性——按可达性假设门控，本地有 Redis 才执行并 shutdown，CI 无 Redis 自动跳过）
 
@@ -544,7 +544,7 @@ void testRedisIntegration() {
 - [x] `DatabasePollingCDCConnector.initializeLastPolledValues` 跳过存量行问题已与 `snapshot.enabled`/`snapshot.mode` 语义对齐:`snapshot.enabled=true` 且 mode≠never 时启动捕获存量行为 INSERT 事件(`onSnapshotStarted`/`onSnapshotCompleted`),否则基线取 MAX 跳过存量(默认,已文档化)。含 3 个行为测试;见 docs/CDC.md「Polling 语义」。
 
 ### D. registry 瘦身(破坏公开 API,建议放到 1.0 周期)
-- [ ] `metrics/` APM 采集 14 类(与 metrics 模块重叠)、`client/` RPC 调用端(与 reliability 重叠)、`WebSocketHealthChecker`(实为裸 TCP,等价 TcpHealthChecker)、四套同义接口(Registry/Provider、Discovery/Consumer)与 `RedisNamingService` 纯委托门面
+- [x] `metrics/` APM 采集 14 类(与 metrics 模块重叠)、`client/` RPC 调用端(与 reliability 重叠)、`WebSocketHealthChecker`(实为裸 TCP,等价 TcpHealthChecker)、四套同义接口(Registry/Provider、Discovery/Consumer)与 `RedisNamingService` 纯委托门面——✅ 2026-10-12 分批落地：增量 A `46288b9` 删 `client/` RPC 调用端与 `WebSocketHealthChecker`；增量 C `c82dc40` 删 `metrics/` APM 采集 14 类 + smart-heartbeat metrics 档位（UpdateDecision 三值化）；增量 D（本次）删 `ServiceRegistry`/`ServiceDiscovery` 两接口：`NamingService extends ServiceProvider, ServiceConsumer`，旧词汇以 6 个 default 别名保留（heartbeat/batchHeartbeat/discover/discoverHealthy/discoverByMetadata/discoverHealthyByMetadata），`RedisServiceProvider`/`RedisServiceConsumer` 各实现单接口（consumer 真实现改用 get* 词汇并删除 discover* 别名；provider 删 heartbeat 别名段），starter processor/discovery bean 改用 `ServiceConsumer`。**如实备注**：`RedisNamingService` 保留为组合式实现（聚合 provider+consumer+统一生命周期+LB 便捷方法），非原条目所设想的"纯委托门面删除"——门面有真实价值（Lifecycle 聚合与 choose* 便捷），按组合保留。registry:check + starter:check + examples 编译 + 门禁全绿
 - [x] `config.RedisConfigCenter` 冗余门面;两个 `BaseRedisConfig` 已合并,继续收敛 `ConfigManager/ConfigService/ConfigCenter` 接口堆叠(已落地 2026-10-12):`ConfigService` 收敛为模块唯一接口(publisher/subscriber 双视角 + `hasConfig` 默认方法 + trim 默认方法);删除 `ConfigManager`(全部被 ConfigService 重复声明)、`ConfigCenter`、`impl.RedisConfigCenter` 门面(纯委托包装,零外部使用方;元数据视图经 `getConfigHistory` 获得,`hasConfig` 并入接口);`RedisConfigService` 只 `implements ConfigService`(原本同时 implements 两接口);外部面零破坏(starter/registry 例/examples 只用 ConfigService);测试:删 2 个门面测试与 center storm,集成测试改走 RedisConfigService(hasConfig/历史断言),接口默认方法测试改单接口并补 hasConfig 覆盖;docs/config.md、config/README.md、README/README.zh、CHANGELOG Unreleased 同步;`config:check` 全绿
 
 ### E. 其他

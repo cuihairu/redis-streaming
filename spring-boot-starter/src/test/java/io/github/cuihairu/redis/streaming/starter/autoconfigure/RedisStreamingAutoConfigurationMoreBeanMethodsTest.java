@@ -9,7 +9,7 @@ import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
 import io.github.cuihairu.redis.streaming.mq.metrics.MqMetrics;
 import io.github.cuihairu.redis.streaming.mq.metrics.RetentionMetrics;
 import io.github.cuihairu.redis.streaming.registry.NamingService;
-import io.github.cuihairu.redis.streaming.registry.ServiceDiscovery;
+import io.github.cuihairu.redis.streaming.registry.ServiceConsumer;
 import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterService;
 import io.github.cuihairu.redis.streaming.reliability.metrics.RateLimitMetrics;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
@@ -53,15 +53,15 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
     }
 
     @Test
-    void discoveryServiceIsStartedByBeanMethod() {
+    void consumerServiceIsStartedByBeanMethod() {
         RedissonClient redisson = mock(RedissonClient.class);
         RedisStreamingDiscoveryAutoConfiguration cfg = new RedisStreamingDiscoveryAutoConfiguration();
         RedisStreamingProperties props = new RedisStreamingProperties();
         props.getDiscovery().setHealthyOnly(true);
 
-        ServiceDiscovery discovery = cfg.serviceDiscovery(redisson, props);
-        assertTrue(discovery.isRunning());
-        discovery.stop();
+        ServiceConsumer consumer = cfg.serviceConsumer(redisson, props);
+        assertTrue(consumer.isRunning());
+        consumer.stop();
     }
 
     @Test

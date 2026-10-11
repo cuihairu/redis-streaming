@@ -190,7 +190,7 @@ public class MetadataStorageTest {
         Thread.sleep(500);
 
         // Read instance through service discovery
-        List<ServiceInstance> discoveredInstances = serviceConsumer.discover("discovery-test-service");
+        List<ServiceInstance> discoveredInstances = serviceConsumer.getAllInstances("discovery-test-service");
         assertEquals(1, discoveredInstances.size());
 
         ServiceInstance discoveredInstance = discoveredInstances.get(0);
@@ -241,7 +241,7 @@ public class MetadataStorageTest {
                 "Should have no metadata_ fields when metadata is empty");
 
         // Verify metadata is an empty Map during service discovery
-        List<ServiceInstance> discoveredInstances = serviceConsumer.discover("empty-meta-service");
+        List<ServiceInstance> discoveredInstances = serviceConsumer.getAllInstances("empty-meta-service");
         assertEquals(1, discoveredInstances.size());
 
         ServiceInstance discoveredInstance = discoveredInstances.get(0);
@@ -291,7 +291,7 @@ public class MetadataStorageTest {
         Thread.sleep(500);
 
         // Read through service discovery
-        List<ServiceInstance> discoveredInstances = serviceConsumer.discover("update-test-service");
+        List<ServiceInstance> discoveredInstances = serviceConsumer.getAllInstances("update-test-service");
         assertEquals(1, discoveredInstances.size());
 
         ServiceInstance discoveredInstance = discoveredInstances.get(0);
@@ -330,7 +330,7 @@ public class MetadataStorageTest {
         Thread.sleep(500);
 
         // Verify through service discovery (no longer checking Redis internal format)
-        List<ServiceInstance> discoveredInstances = serviceConsumer.discover("special-char-service");
+        List<ServiceInstance> discoveredInstances = serviceConsumer.getAllInstances("special-char-service");
         assertEquals(1, discoveredInstances.size());
 
         ServiceInstance discoveredInstance = discoveredInstances.get(0);
@@ -383,7 +383,7 @@ public class MetadataStorageTest {
         Thread.sleep(500);
 
         // Discover all instances
-        List<ServiceInstance> instances = serviceConsumer.discover("isolation-service");
+        List<ServiceInstance> instances = serviceConsumer.getAllInstances("isolation-service");
         assertEquals(2, instances.size());
 
         // Verify each instance's metadata is independent and correct
@@ -428,7 +428,7 @@ public class MetadataStorageTest {
         Thread.sleep(500);
 
         // Verify through service discovery (no longer checking Redis internal storage format)
-        List<ServiceInstance> discoveredInstances = serviceConsumer.discover("many-fields-service");
+        List<ServiceInstance> discoveredInstances = serviceConsumer.getAllInstances("many-fields-service");
         assertEquals(1, discoveredInstances.size());
 
         ServiceInstance discoveredInstance = discoveredInstances.get(0);

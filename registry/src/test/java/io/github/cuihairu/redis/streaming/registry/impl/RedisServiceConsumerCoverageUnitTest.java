@@ -104,11 +104,11 @@ class RedisServiceConsumerCoverageUnitTest {
                 eq(new ServiceConsumerConfig().getServiceInstanceKey("svc", "i2")),
                 any(StringCodec.class))).thenReturn(emptyMap);
 
-        List<ServiceInstance> found = consumer.discover("svc");
+        List<ServiceInstance> found = consumer.getAllInstances("svc");
         assertEquals(1, found.size());
         assertEquals("i1", found.get(0).getInstanceId());
         assertEquals(1, consumer.getDiscoveredInstanceCount());
-        assertFalse(consumer.discoverHealthy("svc").isEmpty());
+        assertFalse(consumer.getHealthyInstances("svc").isEmpty());
 
         // per-instance load failure -> warn and continue
         RMap<String, String> badMap = mock(RMap.class);
@@ -118,13 +118,13 @@ class RedisServiceConsumerCoverageUnitTest {
                 any(StringCodec.class))).thenReturn(badMap);
         when(heartbeats.valueRange(anyDouble(), anyBoolean(), anyDouble(), anyBoolean()))
                 .thenReturn(List.of("i3"));
-        assertTrue(consumer.discover("svc").isEmpty());
+        assertTrue(consumer.getAllInstances("svc").isEmpty());
 
         // invalid instance data (no host) -> buildServiceInstance null -> skipped
         when(heartbeats.valueRange(anyDouble(), anyBoolean(), anyDouble(), anyBoolean()))
                 .thenReturn(List.of("i4"));
         stubInstance("svc", "i4", Map.of("port", "1"));
-        assertTrue(consumer.discover("svc").isEmpty());
+        assertTrue(consumer.getAllInstances("svc").isEmpty());
 
         // unhealthy/disabled instances are rejected by the healthy predicates
         Map<String, String> unhealthy = new HashMap<>(instanceData());
@@ -133,12 +133,12 @@ class RedisServiceConsumerCoverageUnitTest {
         when(heartbeats.valueRange(anyDouble(), anyBoolean(), anyDouble(), anyBoolean()))
                 .thenReturn(List.of("i1", "i5"));
         assertFalse(consumer.isInstanceHealthy("i5"));
-        assertEquals(1, consumer.discoverHealthy("svc").size());
+        assertEquals(1, consumer.getHealthyInstances("svc").size());
 
         // outer failure -> empty list
         when(heartbeats.valueRange(anyDouble(), anyBoolean(), anyDouble(), anyBoolean()))
                 .thenThrow(new IllegalStateException("redis gone"));
-        assertTrue(consumer.discover("svc").isEmpty());
+        assertTrue(consumer.getAllInstances("svc").isEmpty());
 
         consumer.stop();
     }
@@ -146,7 +146,7 @@ class RedisServiceConsumerCoverageUnitTest {
     @Test
     void discoverThrowsWhenNotRunning() {
         RedisServiceConsumer consumer = new RedisServiceConsumer(redisson, config());
-        assertThrows(IllegalStateException.class, () -> consumer.discover("svc"));
+        assertThrows(IllegalStateException.class, () -> consumer.getAllInstances("svc"));
     }
 
     @Test
@@ -160,19 +160,19 @@ class RedisServiceConsumerCoverageUnitTest {
 
         // missing score -> invalid
         when(heartbeats.getScore("i1")).thenReturn(null);
-        assertTrue(consumer.discoverHealthy("svc").isEmpty());
+        assertTrue(consumer.getHealthyInstances("svc").isEmpty());
 
         // stale score -> invalid
         when(heartbeats.getScore("i1")).thenReturn((double) (System.currentTimeMillis() - 120_000L));
-        assertTrue(consumer.discoverHealthy("svc").isEmpty());
+        assertTrue(consumer.getHealthyInstances("svc").isEmpty());
 
         // fresh score -> valid
         when(heartbeats.getScore("i1")).thenReturn((double) System.currentTimeMillis());
-        assertFalse(consumer.discoverHealthy("svc").isEmpty());
+        assertFalse(consumer.getHealthyInstances("svc").isEmpty());
 
         // score lookup failure -> invalid
         when(heartbeats.getScore("i1")).thenThrow(new IllegalStateException("zset gone"));
-        assertTrue(consumer.discoverHealthy("svc").isEmpty());
+        assertTrue(consumer.getHealthyInstances("svc").isEmpty());
 
         consumer.stop();
     }
@@ -197,7 +197,7 @@ class RedisServiceConsumerCoverageUnitTest {
         when(heartbeats.valueRange(anyDouble(), anyBoolean(), anyDouble(), anyBoolean()))
                 .thenReturn(List.of("i1"));
         stubInstance("svc", "i1", instanceData());
-        consumer.discover("svc");
+        consumer.getAllInstances("svc");
         assertTrue(consumer.isInstanceHealthy("i1"));
 
         consumer.stop();
@@ -236,18 +236,18 @@ class RedisServiceConsumerCoverageUnitTest {
 
         // empty filters short-circuit to discover()
         when(heartbeats.valueRange(anyDouble(), anyBoolean(), anyDouble(), anyBoolean())).thenReturn(List.of());
-        assertTrue(consumer.discoverByMetadata("svc", Map.of()).isEmpty());
-        assertTrue(consumer.discoverByMetadata("svc", null).isEmpty());
+        assertTrue(consumer.getInstancesByMetadata("svc", Map.of()).isEmpty());
+        assertTrue(consumer.getInstancesByMetadata("svc", null).isEmpty());
 
         // metadata filters with one bad entry
-        List<ServiceInstance> byMeta = consumer.discoverByMetadata("svc", Map.of("region", "cn"));
+        List<ServiceInstance> byMeta = consumer.getInstancesByMetadata("svc", Map.of("region", "cn"));
         assertEquals(1, byMeta.size());
 
         // filters combination (metadata + metrics)
         List<ServiceInstance> byFilters = consumer.discoverByFilters("svc", Map.of("a", "1"), Map.of("cpu", "1"));
         assertEquals(1, byFilters.size());
         assertFalse(consumer.discoverHealthyByFilters("svc", Map.of("a", "1"), Map.of("cpu", "1")).isEmpty());
-        assertFalse(consumer.discoverHealthyByMetadata("svc", Map.of("region", "cn")).isEmpty());
+        assertFalse(consumer.getHealthyInstancesByMetadata("svc", Map.of("region", "cn")).isEmpty());
 
         // unhealthy instance matched by filters is rejected by discoverHealthyByFilters
         Map<String, String> unhealthyData = new HashMap<>(instanceData());
@@ -261,14 +261,14 @@ class RedisServiceConsumerCoverageUnitTest {
         // lua failure -> empty list
         when(script.evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.LIST), anyList(),
                 any(), any(), any(), any(), any())).thenThrow(new IllegalStateException("lua broken"));
-        assertTrue(consumer.discoverByMetadata("svc", Map.of("region", "cn")).isEmpty());
+        assertTrue(consumer.getInstancesByMetadata("svc", Map.of("region", "cn")).isEmpty());
         assertTrue(consumer.discoverByFilters("svc", Map.of("a", "1"), null).isEmpty());
 
         consumer.stop();
 
         RedisServiceConsumer idle = new RedisServiceConsumer(redisson, config());
         assertThrows(IllegalStateException.class, () -> idle.discoverByFilters("x", null, null));
-        assertThrows(IllegalStateException.class, () -> idle.discoverByMetadata("x", Map.of("a", "1")));
+        assertThrows(IllegalStateException.class, () -> idle.getInstancesByMetadata("x", Map.of("a", "1")));
 
         // health-check registration branch of the filter discovery loops
         ServiceConsumerConfig healthCfg = new ServiceConsumerConfig();
@@ -280,7 +280,7 @@ class RedisServiceConsumerCoverageUnitTest {
                 any(), any(), any(), any(), any())).thenReturn(List.of("i1", "i5", "i6"));
         stubInstance("svc", "i5", Map.of());
         stubInstance("svc", "i6", Map.of("port", "1"));
-        assertEquals(1, healthConsumer.discoverByMetadata("svc", Map.of("region", "cn")).size());
+        assertEquals(1, healthConsumer.getInstancesByMetadata("svc", Map.of("region", "cn")).size());
         assertEquals(1, healthConsumer.discoverByFilters("svc", Map.of("region", "cn"), null).size());
         healthConsumer.stop();
     }
@@ -388,7 +388,7 @@ class RedisServiceConsumerCoverageUnitTest {
                 .thenReturn(List.of("i1"));
         stubInstance("svc", "i1", instanceData());
         stubInstance("other", "o1", instanceData());
-        consumer.discover("svc");
+        consumer.getAllInstances("svc");
 
         // seed a foreign service entry directly to cover the predicate false branch
         // (B-45: the cache is keyed by uniqueId)
@@ -439,7 +439,7 @@ class RedisServiceConsumerCoverageUnitTest {
         when(heartbeats.valueRange(anyDouble(), anyBoolean(), anyDouble(), anyBoolean()))
                 .thenReturn(List.of("i1"));
         stubInstance("svc", "i1", instanceData());
-        consumer.discover("svc");
+        consumer.getAllInstances("svc");
 
         Method report = RedisServiceConsumer.class.getDeclaredMethod("reportHealthStatus", String.class, boolean.class);
         report.setAccessible(true);

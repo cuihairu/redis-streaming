@@ -63,7 +63,7 @@ public class ScoredLoadBalancerThresholdTest {
             m1.put("metrics", "{\"cpu\":40,\"latency\":80,\"memory\":50,\"inflight\":2,\"queue\":5,\"errorRate\":1}");
             m2.put("metrics", "{\"cpu\":95,\"latency\":500,\"memory\":95,\"inflight\":100,\"queue\":500,\"errorRate\":50}");
 
-            List<ServiceInstance> all = consumer.discoverHealthy(svc);
+            List<ServiceInstance> all = consumer.getHealthyInstances(svc);
             LoadBalancerConfig cfg = new LoadBalancerConfig();
             cfg.setMaxCpuPercent(80);
             cfg.setMaxLatencyMs(200);

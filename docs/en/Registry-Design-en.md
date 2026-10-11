@@ -12,7 +12,7 @@ A Redis-based service registration and discovery module. Key structures and oper
 
 ### 1. Service Provider
 
-Implementation class `RedisServiceProvider` (implements both `ServiceProvider` and `ServiceRegistry`):
+Implementation class `RedisServiceProvider` (implements `ServiceProvider`):
 
 - Service registration: writes the instance Hash, adds the heartbeat ZSet entry and the service-index Set entry — all atomically via Lua scripts
 - Heartbeat handling: each heartbeat writes what `HeartbeatStateManager` decides (timestamp only, or timestamp + metadata)
@@ -21,14 +21,14 @@ Implementation class `RedisServiceProvider` (implements both `ServiceProvider` a
 
 ### 2. Service Consumer
 
-Implementation class `RedisServiceConsumer` (implements `ServiceConsumer` and `ServiceDiscovery`):
+Implementation class `RedisServiceConsumer` (implements `ServiceConsumer`):
 
 - Service discovery: takes active instance IDs from the heartbeat window, then reads each instance Hash to assemble `ServiceInstance`
 - Change subscription: subscribes to the `RTopic` channel `{prefix}:services:{serviceName}:changes`
 - Metadata/metrics filtering: pushed down to Lua for server-side filtering
 - Optional health probing: with `enableHealthCheck=true`, probes by protocol and reports `HEALTH_RECOVERY` / `HEALTH_FAILURE` on flips
 
-`RedisNamingService` aggregates Provider and Consumer and implements `NamingService`, `ServiceRegistry`, and `ServiceDiscovery` at once.
+`RedisNamingService` aggregates Provider and Consumer (composition with a shared lifecycle) and implements `NamingService`.
 
 ### 3. Admin
 
@@ -36,10 +36,9 @@ Implementation class `RedisServiceConsumer` (implements `ServiceConsumer` and `S
 
 ## Interface Design
 
-The four interfaces are two views of the same operations; `NamingService` extends all of them:
+The two business-role interfaces are both extended by `NamingService` (the former `ServiceRegistry`/`ServiceDiscovery` technical-view interfaces were removed; their method names survive as `NamingService` default aliases):
 
 ```java
-// Business-role view
 public interface ServiceProvider {
     void register(ServiceInstance instance);
     void deregister(ServiceInstance instance);
@@ -63,33 +62,18 @@ public interface ServiceConsumer {
     boolean isRunning();
 }
 
-// Technical-operation view
-public interface ServiceRegistry {
-    void register(ServiceInstance instance);
-    void deregister(ServiceInstance instance);
-    void heartbeat(ServiceInstance instance);             // alias of sendHeartbeat
-    void batchHeartbeat(List<ServiceInstance> instances); // alias of batchSendHeartbeats
-    void start();
-    void stop();
-    boolean isRunning();
-}
-
-public interface ServiceDiscovery {
-    List<ServiceInstance> discover(String serviceName);
-    List<ServiceInstance> discoverHealthy(String serviceName);
-    List<ServiceInstance> discoverByMetadata(String serviceName, Map<String, String> metadataFilters);
-    List<ServiceInstance> discoverHealthyByMetadata(String serviceName, Map<String, String> metadataFilters);
-    void subscribe(String serviceName, ServiceChangeListener listener);
-    void unsubscribe(String serviceName, ServiceChangeListener listener);
-    void start();
-    void stop();
-    boolean isRunning();
-}
-
-public interface NamingService extends ServiceProvider, ServiceConsumer, ServiceRegistry, ServiceDiscovery {
+public interface NamingService extends ServiceProvider, ServiceConsumer {
     default List<ServiceInstance> getHealthyInstances(String serviceName); // alias of getInstances(name, true)
     List<ServiceInstance> getInstancesByMetadata(String serviceName, Map<String, String> metadataFilters);
     List<ServiceInstance> getHealthyInstancesByMetadata(String serviceName, Map<String, String> metadataFilters);
+
+    // Legacy-vocabulary default aliases (existing call sites keep compiling)
+    default void heartbeat(ServiceInstance instance);                        // -> sendHeartbeat
+    default void batchHeartbeat(List<ServiceInstance> instances);            // -> batchSendHeartbeats
+    default List<ServiceInstance> discover(String serviceName);              // -> getAllInstances
+    default List<ServiceInstance> discoverHealthy(String serviceName);       // -> getHealthyInstances
+    default List<ServiceInstance> discoverByMetadata(String, Map<String, String>);       // -> getInstancesByMetadata
+    default List<ServiceInstance> discoverHealthyByMetadata(String, Map<String, String>); // -> getHealthyInstancesByMetadata
 }
 ```
 

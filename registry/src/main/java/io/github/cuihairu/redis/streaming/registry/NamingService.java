@@ -8,24 +8,84 @@ import java.util.Map;
  * Naming service interface
  * Designed with reference to Nacos NamingService, provides unified service registration and discovery capabilities
  *
- * Core concepts:
- * - Service Provider: registers service instances, sends heartbeats to maintain health status
- * - Service Consumer: queries service instances, subscribes to service changes
+ * <p>Extends the two business-role interfaces:</p>
+ * <ul>
+ *   <li>{@link ServiceProvider} — register/deregister/heartbeat</li>
+ *   <li>{@link ServiceConsumer} — discovery/subscription/filtering</li>
+ * </ul>
  *
- * <p>Two perspectives of interface design:</p>
- * <pre>
- * Business role perspective:         Technical operation perspective:
- * ServiceProvider              <->   ServiceRegistry
- * ServiceConsumer              <->   ServiceDiscovery
- *
- * NamingService is a unified interface that inherits both perspectives
- * </pre>
- *
- * This interface extends both ServiceProvider and ServiceConsumer (business role perspective),
- * as well as ServiceRegistry and ServiceDiscovery (technical operation perspective)
- * to provide a unified interface while maintaining clear separation of concerns.
+ * <p>The former technical-perspective siblings ({@code ServiceRegistry}, {@code ServiceDiscovery})
+ * were removed; their vocabulary survives as default aliases below so existing call sites keep
+ * compiling unchanged.</p>
  */
-public interface NamingService extends ServiceProvider, ServiceConsumer, ServiceRegistry, ServiceDiscovery {
+public interface NamingService extends ServiceProvider, ServiceConsumer {
+
+    // ==================== Legacy ServiceRegistry vocabulary (aliases) ====================
+
+    /**
+     * Alias for {@link #sendHeartbeat(ServiceInstance)} (former ServiceRegistry vocabulary)
+     *
+     * @param instance the service instance to send heartbeat for
+     */
+    default void heartbeat(ServiceInstance instance) {
+        sendHeartbeat(instance);
+    }
+
+    /**
+     * Alias for {@link #batchSendHeartbeats(List)} (former ServiceRegistry vocabulary)
+     *
+     * @param instances the list of service instances to send heartbeats for
+     */
+    default void batchHeartbeat(List<ServiceInstance> instances) {
+        batchSendHeartbeats(instances);
+    }
+
+    // ==================== Legacy ServiceDiscovery vocabulary (aliases) ====================
+
+    /**
+     * Alias for {@link #getAllInstances(String)} (former ServiceDiscovery vocabulary)
+     *
+     * @param serviceName the service name
+     * @return list of service instances
+     */
+    default List<ServiceInstance> discover(String serviceName) {
+        return getAllInstances(serviceName);
+    }
+
+    /**
+     * Alias for {@link #getHealthyInstances(String)} (former ServiceDiscovery vocabulary)
+     *
+     * @param serviceName the service name
+     * @return list of healthy service instances
+     */
+    default List<ServiceInstance> discoverHealthy(String serviceName) {
+        return getHealthyInstances(serviceName);
+    }
+
+    /**
+     * Alias for {@link #getInstancesByMetadata(String, Map)} (former ServiceDiscovery vocabulary)
+     *
+     * @param serviceName the service name
+     * @param metadataFilters metadata filter conditions (AND relationship)
+     * @return list of matching service instances
+     */
+    default List<ServiceInstance> discoverByMetadata(String serviceName, Map<String, String> metadataFilters) {
+        return getInstancesByMetadata(serviceName, metadataFilters);
+    }
+
+    /**
+     * Alias for {@link #getHealthyInstancesByMetadata(String, Map)} (former ServiceDiscovery vocabulary)
+     *
+     * @param serviceName the service name
+     * @param metadataFilters metadata filter conditions (AND relationship)
+     * @return list of matching and healthy service instances
+     */
+    default List<ServiceInstance> discoverHealthyByMetadata(String serviceName, Map<String, String> metadataFilters) {
+        return getHealthyInstancesByMetadata(serviceName, metadataFilters);
+    }
+
+    // ==================== NamingService members ====================
+
     /**
      * Get healthy instances of a service for load balancing
      * This is an alias for getInstances(serviceName, true)
@@ -47,8 +107,8 @@ public interface NamingService extends ServiceProvider, ServiceConsumer, Service
      *   <li>"field": "value" - equals (default)</li>
      *   <li>"field:==": "value" - equals (explicit)</li>
      *   <li>"field:!=": "value" - not equals</li>
-     *   <li>"field:>": "value" - greater than</li>
-     *   <li>"field:>=": "value" - greater than or equals</li>
+     *   <li>"field:&gt;": "value" - greater than</li>
+     *   <li>"field:&gt;=": "value" - greater than or equals</li>
      *   <li>"field:&lt;": "value" - less than</li>
      *   <li>"field:&lt;=": "value" - less than or equals</li>
      * </ul>
@@ -63,7 +123,7 @@ public interface NamingService extends ServiceProvider, ServiceConsumer, Service
      * <pre>
      * // Recommended: numeric comparison
      * Map&lt;String, String&gt; filters = new HashMap&lt;&gt;();
-     * filters.put("weight:>=", "10");      // weight >= 10
+     * filters.put("weight:&gt;=", "10");      // weight &gt;= 10
      * filters.put("cpu_usage:&lt;", "80");    // CPU usage &lt; 80
      *
      * // Recommended: string equality
@@ -83,4 +143,13 @@ public interface NamingService extends ServiceProvider, ServiceConsumer, Service
      * @return list of matching and healthy service instances
      */
     List<ServiceInstance> getHealthyInstancesByMetadata(String serviceName, Map<String, String> metadataFilters);
+
+    /**
+     * Subscribe to service changes
+     *
+     * @param serviceName the name of the service to subscribe to
+     * @param listener the listener to notify of changes
+     */
+    @Override
+    void subscribe(String serviceName, ServiceChangeListener listener);
 }

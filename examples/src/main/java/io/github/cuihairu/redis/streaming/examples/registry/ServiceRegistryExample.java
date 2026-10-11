@@ -66,13 +66,13 @@ public class ServiceRegistryExample {
         startServices(services);
 
         // 4. Demonstrate service discovery and communication
-        int[] discovery = demonstrateServiceDiscovery((ServiceDiscovery) namingService);
+        int[] discovery = demonstrateServiceConsumer((ServiceConsumer) namingService);
 
         // 5. Simulate service failures and recovery
-        int[] failure = simulateServiceFailures(services, (ServiceDiscovery) namingService);
+        int[] failure = simulateServiceFailures(services, (ServiceConsumer) namingService);
 
         // 6. Demonstrate load balancing
-        int lbDistinct = demonstrateLoadBalancing((ServiceDiscovery) namingService);
+        int lbDistinct = demonstrateLoadBalancing((ServiceConsumer) namingService);
 
         // Clean up
         stopServices(services);
@@ -256,11 +256,11 @@ public class ServiceRegistryExample {
         Thread.sleep(2000); // Allow registration to complete
     }
 
-    int[] demonstrateServiceDiscovery(ServiceDiscovery discovery) throws Exception {
+    int[] demonstrateServiceConsumer(ServiceConsumer discovery) throws Exception {
         log.info("=== Demonstrating Service Discovery ===");
 
         // Discover all services
-        List<ServiceInstance> userServices = discovery.discover(svc("user-service"));
+        List<ServiceInstance> userServices = discovery.getAllInstances(svc("user-service"));
         log.info("Discovered {} user service instances:", userServices.size());
         userServices.forEach(service ->
             log.info("  - {} at {}:{} (enabled: {})",
@@ -270,7 +270,7 @@ public class ServiceRegistryExample {
                 service.isEnabled())
         );
 
-        List<ServiceInstance> paymentServices = discovery.discover(svc("payment-service"));
+        List<ServiceInstance> paymentServices = discovery.getAllInstances(svc("payment-service"));
         log.info("Payment service instances: {}", paymentServices.size());
 
         Thread.sleep(1000);
@@ -278,7 +278,7 @@ public class ServiceRegistryExample {
         return new int[]{userServices.size(), paymentServices.size()};
     }
 
-    int[] simulateServiceFailures(List<MicroService> services, ServiceDiscovery discovery) throws Exception {
+    int[] simulateServiceFailures(List<MicroService> services, ServiceConsumer discovery) throws Exception {
         log.info("=== Simulating Service Failures and Recovery ===");
 
         // Simulate payment service failure
@@ -294,7 +294,7 @@ public class ServiceRegistryExample {
         Thread.sleep(3000);
 
         // Check service status
-        List<ServiceInstance> healthyPaymentServices = discovery.discoverHealthy(svc("payment-service"));
+        List<ServiceInstance> healthyPaymentServices = discovery.getHealthyInstances(svc("payment-service"));
         log.info("Healthy payment services after failure: {}", healthyPaymentServices.size());
         int afterFailure = healthyPaymentServices.size();
 
@@ -305,13 +305,13 @@ public class ServiceRegistryExample {
         // Wait for health check to detect recovery
         Thread.sleep(3000);
 
-        healthyPaymentServices = discovery.discoverHealthy(svc("payment-service"));
+        healthyPaymentServices = discovery.getHealthyInstances(svc("payment-service"));
         log.info("Healthy payment services after recovery: {}", healthyPaymentServices.size());
 
         return new int[]{afterFailure, healthyPaymentServices.size()};
     }
 
-    int demonstrateLoadBalancing(ServiceDiscovery discovery) throws Exception {
+    int demonstrateLoadBalancing(ServiceConsumer discovery) throws Exception {
         log.info("=== Demonstrating Load Balancing ===");
 
         // Register multiple instances of the same service
@@ -341,7 +341,7 @@ public class ServiceRegistryExample {
         Set<Integer> selectedInstances = new HashSet<>();
         log.info("Demonstrating load balancing across user service instances:");
         for (int i = 0; i < 10; i++) {
-            List<ServiceInstance> instances = discovery.discoverHealthy(svc("user-service"));
+            List<ServiceInstance> instances = discovery.getHealthyInstances(svc("user-service"));
             if (!instances.isEmpty()) {
                 // Simple round-robin selection
                 ServiceInstance selected = instances.get(i % instances.size());

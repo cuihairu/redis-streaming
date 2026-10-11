@@ -1,7 +1,7 @@
 package io.github.cuihairu.redis.streaming.starter.processor;
 
 import io.github.cuihairu.redis.streaming.registry.ServiceChangeAction;
-import io.github.cuihairu.redis.streaming.registry.ServiceDiscovery;
+import io.github.cuihairu.redis.streaming.registry.ServiceConsumer;
 import io.github.cuihairu.redis.streaming.registry.ServiceInstance;
 import io.github.cuihairu.redis.streaming.starter.annotation.ServiceChangeListener;
 import lombok.extern.slf4j.Slf4j;
@@ -44,10 +44,10 @@ import java.util.Set;
 @Slf4j
 public class ServiceChangeListenerProcessor implements BeanPostProcessor {
 
-    private final ServiceDiscovery serviceDiscovery;
+    private final ServiceConsumer serviceConsumer;
 
-    public ServiceChangeListenerProcessor(ServiceDiscovery serviceDiscovery) {
-        this.serviceDiscovery = serviceDiscovery;
+    public ServiceChangeListenerProcessor(ServiceConsumer serviceConsumer) {
+        this.serviceConsumer = serviceConsumer;
     }
 
     @Override
@@ -92,13 +92,13 @@ public class ServiceChangeListenerProcessor implements BeanPostProcessor {
                     }
                 };
 
-        // Register to ServiceDiscovery (for each service or global subscription)
+        // Register to the service consumer (for each service or global subscription)
         if (serviceSet.isEmpty()) {
             // If no service is specified, subscribe to all services (requires special handling, currently subscribes to "*" as a workaround)
             log.warn("Global service listener not fully supported yet, consider specifying services explicitly");
         } else {
             for (String serviceName : serviceSet) {
-                serviceDiscovery.subscribe(serviceName, listener);
+                serviceConsumer.subscribe(serviceName, listener);
                 log.info("Registered service change listener: {} on bean: {} for service: {}, actions: {}",
                         method.getName(), bean.getClass().getSimpleName(),
                         serviceName, actionSet.isEmpty() ? "all" : actionSet);

@@ -63,7 +63,7 @@ public class ExtendedProtocolsTest {
             provider.register(grpcsInst);
 
             Thread.sleep(400);
-            List<ServiceInstance> list = consumer.discover("proto-service");
+            List<ServiceInstance> list = consumer.getAllInstances("proto-service");
             assertEquals(2, list.size());
 
             boolean hasWs = list.stream().anyMatch(i -> i.getProtocol() == StandardProtocol.WS);

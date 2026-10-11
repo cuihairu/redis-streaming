@@ -34,7 +34,7 @@ public class ComprehensiveStreamingExample {
     private final ObjectMapper objectMapper;
     private RedissonClient redissonClient;
     private NamingService namingService;
-    private ServiceDiscovery discovery;
+    private ServiceConsumer discovery;
     private MessageQueueFactory mqFactory;
     private final List<MessageConsumer> consumers = new ArrayList<>();
     private final List<MessageProducer> producers = new ArrayList<>();
@@ -253,18 +253,18 @@ public class ComprehensiveStreamingExample {
         log.info("Events sinked: {}", sinkCount.get());
 
         // Show service discovery in action
-        int[] discoveryCounts = demonstrateServiceDiscovery();
+        int[] discoveryCounts = demonstrateServiceConsumer();
 
         return new int[]{processedCount.get(), sinkCount.get(), discoveryCounts[0], discoveryCounts[1]};
     }
 
-    int[] demonstrateServiceDiscovery() {
+    int[] demonstrateServiceConsumer() {
         log.info("=== Service Discovery ===");
 
-        List<ServiceInstance> producers = discovery.discover(svc("event-producer"));
+        List<ServiceInstance> producers = discovery.getAllInstances(svc("event-producer"));
         log.info("Found {} producer services", producers.size());
 
-        List<ServiceInstance> processors = discovery.discover(svc("event-processor"));
+        List<ServiceInstance> processors = discovery.getAllInstances(svc("event-processor"));
         log.info("Found {} processor services", processors.size());
 
         for (ServiceInstance instance : processors) {

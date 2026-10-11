@@ -106,8 +106,8 @@ class RedisNamingServiceChooseIntegrationTest {
 
         assertEquals(2, naming.getInstancesByFilters(svc, Map.of(), Map.of()).size());
         assertEquals(2, naming.getHealthyInstancesByFilters(svc, Map.of(), null).size());
-        assertEquals(1, naming.discoverByMetadata(svc, Map.of("region", "us")).size());
-        assertEquals(1, naming.discoverHealthyByMetadata(svc, Map.of("region", "cn")).size());
+        assertEquals(1, naming.getInstancesByMetadata(svc, Map.of("region", "us")).size());
+        assertEquals(1, naming.getHealthyInstancesByMetadata(svc, Map.of("region", "cn")).size());
     }
 
     @Test

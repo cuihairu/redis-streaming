@@ -59,7 +59,7 @@ server:
 |---|---|---|
 | `RedisStreamingAutoConfiguration` | 类级 `@ConditionalOnClass(RedissonClient)` | 兜底 `RedissonClient`(`@ConditionalOnMissingBean`;单机简化配置,`password` 为空/空白时不设置密码)、`RateLimitMicrometerCollector` + `installRateLimitCollector` |
 | `RedisStreamingRegistryAutoConfiguration` | `redis-streaming.registry.enabled`(默认 `true`) | `NamingService`、`ServiceChangeListenerProcessor`、`LoadBalancer`、`ClientSelector`、`RetryPolicy`、`RedisClientMetricsReporter`、`ClientInvoker`、`ClientInvokerMetricsBinder` |
-| `RedisStreamingDiscoveryAutoConfiguration` | `redis-streaming.discovery.enabled`(默认 `true`) | `ServiceDiscovery`——仅当 classpath 无 `NamingService`/`ServiceDiscovery` Bean 时兜底 |
+| `RedisStreamingDiscoveryAutoConfiguration` | `redis-streaming.discovery.enabled`(默认 `true`) | `ServiceConsumer`（`RedisNamingService`）——仅当容器无 `NamingService`/`ServiceConsumer` Bean 时兜底 |
 | `RedisStreamingConfigServiceAutoConfiguration` | `redis-streaming.config.enabled`(默认 `true`) | `ConfigService`(启动即 `start()`) |
 | `RedisStreamingMqAutoConfiguration` | `redis-streaming.mq.enabled`(默认 `true`) | `MqOptions`、`BrokerFactory`/`BrokerRouter`、`MessageQueueFactory`、`MessageQueueAdmin`、`dlqReplayProducer`、`dlqReplayHandler`、`DeadLetterService`/`DeadLetterAdmin`/`DeadLetterConsumer`/`DeadLetterQueueManager`、保留治理 `StreamRetentionHousekeeper`(destroyMethod=close)、Micrometer 桥(见「指标导出」)、`MqHealthIndicator` |
 | `RedisStreamingRateLimitAutoConfiguration` | `redis-streaming.ratelimit.enabled`(默认 **`false`**) | `RateLimiterRegistry`、`@Primary RateLimiter`(按 `default-name` 取) |
@@ -357,17 +357,17 @@ redis-streaming:
         version: 2.0.0
 ```
 
-手动注册外部服务(`NamingService` 同时实现 `ServiceRegistry`/`ServiceDiscovery`,两个视角都可注入):
+手动注册外部服务(`NamingService` 同时实现 `ServiceProvider`/`ServiceConsumer`,两个视角都可注入):
 
 ```java
 @Service
 public class UserService {
 
     @Autowired
-    private ServiceRegistry serviceRegistry;
+    private ServiceProvider serviceProvider;
 
     @Autowired
-    private ServiceDiscovery serviceDiscovery;
+    private ServiceConsumer serviceConsumer;
 
     public void registerExternalService() {
         ServiceInstance instance = DefaultServiceInstance.builder()
@@ -378,11 +378,11 @@ public class UserService {
                 .protocol(StandardProtocol.HTTPS)
                 .weight(3)
                 .build();
-        serviceRegistry.register(instance);
+        serviceProvider.register(instance);
     }
 
     public List<ServiceInstance> findPaymentServices() {
-        return serviceDiscovery.discoverHealthy("payment-service");
+        return serviceConsumer.getHealthyInstances("payment-service");
     }
 }
 ```

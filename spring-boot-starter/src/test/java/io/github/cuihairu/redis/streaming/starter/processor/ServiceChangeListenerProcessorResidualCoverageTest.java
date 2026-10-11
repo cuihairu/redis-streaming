@@ -1,7 +1,7 @@
 package io.github.cuihairu.redis.streaming.starter.processor;
 
 import io.github.cuihairu.redis.streaming.registry.ServiceChangeAction;
-import io.github.cuihairu.redis.streaming.registry.ServiceDiscovery;
+import io.github.cuihairu.redis.streaming.registry.ServiceConsumer;
 import io.github.cuihairu.redis.streaming.registry.ServiceInstance;
 import io.github.cuihairu.redis.streaming.starter.annotation.ServiceChangeListener;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,12 +44,12 @@ class ServiceChangeListenerProcessorResidualCoverageTest {
         }
     }
 
-    private ServiceDiscovery discovery;
+    private ServiceConsumer discovery;
     private ServiceChangeListenerProcessor processor;
 
     @BeforeEach
     void setUp() {
-        discovery = mock(ServiceDiscovery.class);
+        discovery = mock(ServiceConsumer.class);
         processor = new ServiceChangeListenerProcessor(discovery);
     }
 

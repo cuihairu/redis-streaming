@@ -111,7 +111,7 @@ class RedisServiceConsumerTest {
     void testDiscoverWhenNotRunningThrowsException() {
         RedisServiceConsumer consumer = new RedisServiceConsumer(mockRedissonClient);
 
-        assertThrows(IllegalStateException.class, () -> consumer.discover("test-service"));
+        assertThrows(IllegalStateException.class, () -> consumer.getAllInstances("test-service"));
     }
 
     @Test
@@ -139,7 +139,7 @@ class RedisServiceConsumerTest {
     void testDiscoverHealthyWhenNotRunningThrowsException() {
         RedisServiceConsumer consumer = new RedisServiceConsumer(mockRedissonClient);
 
-        assertThrows(IllegalStateException.class, () -> consumer.discoverHealthy("test-service"));
+        assertThrows(IllegalStateException.class, () -> consumer.getHealthyInstances("test-service"));
     }
 
     @Test
@@ -155,7 +155,7 @@ class RedisServiceConsumerTest {
         RedisServiceConsumer consumer = new RedisServiceConsumer(mockRedissonClient);
 
         assertThrows(IllegalStateException.class, () ->
-                consumer.discoverByMetadata("test-service", Map.of())
+                consumer.getInstancesByMetadata("test-service", Map.of())
         );
     }
 
@@ -164,7 +164,7 @@ class RedisServiceConsumerTest {
         RedisServiceConsumer consumer = new RedisServiceConsumer(mockRedissonClient);
 
         assertThrows(IllegalStateException.class, () ->
-                consumer.discoverHealthyByMetadata("test-service", Map.of())
+                consumer.getHealthyInstancesByMetadata("test-service", Map.of())
         );
     }
 
@@ -293,7 +293,7 @@ class RedisServiceConsumerTest {
         RedisServiceConsumer consumer = new RedisServiceConsumer(mockRedissonClient, config);
         consumer.start();
 
-        List<ServiceInstance> discoverResult = consumer.discover("test-service");
+        List<ServiceInstance> discoverResult = consumer.getAllInstances("test-service");
         List<ServiceInstance> getAllResult = consumer.getAllInstances("test-service");
 
         // Both should return empty lists (no instances registered)
@@ -310,7 +310,7 @@ class RedisServiceConsumerTest {
         consumer.start();
 
         List<ServiceInstance> getResult = consumer.getHealthyInstances("test-service");
-        List<ServiceInstance> discoverResult = consumer.discoverHealthy("test-service");
+        List<ServiceInstance> discoverResult = consumer.getHealthyInstances("test-service");
 
         // Both should return empty lists (no instances registered)
         assertNotNull(getResult);
@@ -348,7 +348,7 @@ class RedisServiceConsumerTest {
 
         Map<String, String> filters = Map.of("env", "test");
         List<ServiceInstance> getByMetadataResult = consumer.getInstancesByMetadata("test-service", filters);
-        List<ServiceInstance> discoverByMetadataResult = consumer.discoverByMetadata("test-service", filters);
+        List<ServiceInstance> discoverByMetadataResult = consumer.getInstancesByMetadata("test-service", filters);
 
         // Both should return empty lists (no instances registered)
         assertNotNull(getByMetadataResult);
@@ -364,7 +364,7 @@ class RedisServiceConsumerTest {
 
         Map<String, String> filters = Map.of("env", "test");
         List<ServiceInstance> getHealthyResult = consumer.getHealthyInstancesByMetadata("test-service", filters);
-        List<ServiceInstance> discoverHealthyResult = consumer.discoverHealthyByMetadata("test-service", filters);
+        List<ServiceInstance> discoverHealthyResult = consumer.getHealthyInstancesByMetadata("test-service", filters);
 
         // Both should return empty lists (no instances registered)
         assertNotNull(getHealthyResult);
@@ -611,7 +611,7 @@ class RedisServiceConsumerTest {
         consumer.start();
 
         // Empty filters should delegate to discover
-        List<ServiceInstance> result = consumer.discoverByMetadata("test-service", Map.of());
+        List<ServiceInstance> result = consumer.getInstancesByMetadata("test-service", Map.of());
 
         assertNotNull(result);
         assertTrue(result.isEmpty());
@@ -626,7 +626,7 @@ class RedisServiceConsumerTest {
         consumer.start();
 
         // Null filters should delegate to discover
-        List<ServiceInstance> result = consumer.discoverByMetadata("test-service", null);
+        List<ServiceInstance> result = consumer.getInstancesByMetadata("test-service", null);
 
         assertNotNull(result);
         assertTrue(result.isEmpty());
@@ -641,7 +641,7 @@ class RedisServiceConsumerTest {
         consumer.start();
 
         // discoverHealthy should filter instances
-        List<ServiceInstance> result = consumer.discoverHealthy("test-service");
+        List<ServiceInstance> result = consumer.getHealthyInstances("test-service");
 
         assertNotNull(result);
         assertTrue(result.isEmpty());
@@ -656,7 +656,7 @@ class RedisServiceConsumerTest {
         consumer.start();
 
         Map<String, String> filters = Map.of("env", "test");
-        List<ServiceInstance> result = consumer.discoverHealthyByMetadata("test-service", filters);
+        List<ServiceInstance> result = consumer.getHealthyInstancesByMetadata("test-service", filters);
 
         assertNotNull(result);
         assertTrue(result.isEmpty());
@@ -964,7 +964,7 @@ class RedisServiceConsumerTest {
         RedisServiceConsumer consumer = new RedisServiceConsumer(mockRedissonClient, config);
         consumer.start();
 
-        List<ServiceInstance> result = consumer.discover("non-existent-service");
+        List<ServiceInstance> result = consumer.getAllInstances("non-existent-service");
 
         assertNotNull(result);
         assertTrue(result.isEmpty());
@@ -978,7 +978,7 @@ class RedisServiceConsumerTest {
         RedisServiceConsumer consumer = new RedisServiceConsumer(mockRedissonClient, config);
         consumer.start();
 
-        List<ServiceInstance> result = consumer.discoverHealthy("non-existent-service");
+        List<ServiceInstance> result = consumer.getHealthyInstances("non-existent-service");
 
         assertNotNull(result);
         assertTrue(result.isEmpty());
@@ -993,7 +993,7 @@ class RedisServiceConsumerTest {
         consumer.start();
 
         Map<String, String> filters = Map.of("non-existent-key", "value");
-        List<ServiceInstance> result = consumer.discoverByMetadata("test-service", filters);
+        List<ServiceInstance> result = consumer.getInstancesByMetadata("test-service", filters);
 
         assertNotNull(result);
         assertTrue(result.isEmpty());

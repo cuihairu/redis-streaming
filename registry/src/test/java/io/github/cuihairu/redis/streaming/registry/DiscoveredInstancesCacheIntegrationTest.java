@@ -85,14 +85,14 @@ class DiscoveredInstancesCacheIntegrationTest {
         RedisServiceConsumer consumer = new RedisServiceConsumer(redis, config);
         consumer.start();
         try {
-            assertEquals(1, consumer.discover(svcA).size());
-            assertEquals(1, consumer.discover(svcB).size());
+            assertEquals(1, consumer.getAllInstances(svcA).size());
+            assertEquals(1, consumer.getAllInstances(svcB).size());
             assertEquals(2, consumer.getDiscoveredInstanceCount(),
                     "two services sharing an instanceId must both stay cached");
 
             naming.deregister(a);
-            assertEquals(0, consumer.discover(svcA).size());
-            assertEquals(1, consumer.discover(svcB).size());
+            assertEquals(0, consumer.getAllInstances(svcA).size());
+            assertEquals(1, consumer.getAllInstances(svcB).size());
             assertEquals(1, consumer.getDiscoveredInstanceCount(),
                     "the deregistered instance must leave the cache after reconciliation");
             assertTrue(consumer.isInstanceHealthy("host-1"),

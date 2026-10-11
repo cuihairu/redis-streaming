@@ -76,7 +76,7 @@ server:
 |---|---|---|
 | `RedisStreamingAutoConfiguration` | class-level `@ConditionalOnClass(RedissonClient)` | fallback `RedissonClient` (`@ConditionalOnMissingBean`; simplified single-server config, `password` blank/empty is not set), `RateLimitMicrometerCollector` + `installRateLimitCollector` |
 | `RedisStreamingRegistryAutoConfiguration` | `redis-streaming.registry.enabled` (default `true`) | `NamingService`, `ServiceChangeListenerProcessor`, `LoadBalancer`, `ClientSelector`, `RetryPolicy`, `RedisClientMetricsReporter`, `ClientInvoker`, `ClientInvokerMetricsBinder` |
-| `RedisStreamingDiscoveryAutoConfiguration` | `redis-streaming.discovery.enabled` (default `true`) | `ServiceDiscovery` — only as a fallback when no `NamingService`/`ServiceDiscovery` bean is present |
+| `RedisStreamingDiscoveryAutoConfiguration` | `redis-streaming.discovery.enabled` (default `true`) | `ServiceConsumer` (`RedisNamingService`) — only as a fallback when no `NamingService`/`ServiceConsumer` bean is present |
 | `RedisStreamingConfigServiceAutoConfiguration` | `redis-streaming.config.enabled` (default `true`) | `ConfigService` (started at `start()`) |
 | `RedisStreamingMqAutoConfiguration` | `redis-streaming.mq.enabled` (default `true`) | `MqOptions`, `BrokerFactory`/`BrokerRouter`, `MessageQueueFactory`, `MessageQueueAdmin`, `dlqReplayProducer`, `dlqReplayHandler`, `DeadLetterService`/`DeadLetterAdmin`/`DeadLetterConsumer`/`DeadLetterQueueManager`, the retained housekeeping `StreamRetentionHousekeeper` (destroyMethod=close), the Micrometer bridge (see "Metrics Export"), `MqHealthIndicator` |
 | `RedisStreamingRateLimitAutoConfiguration` | `redis-streaming.ratelimit.enabled` (default **`false`**) | `RateLimiterRegistry`, the `@Primary` `RateLimiter` (selected by `default-name`) |
@@ -348,17 +348,17 @@ redis-streaming:
         version: 2.0.0
 ```
 
-手动注册外部服务(`NamingService` 同时实现 `ServiceRegistry`/`ServiceDiscovery`,两个视角都可注入):
+手动注册外部服务(`NamingService` 同时实现 `ServiceProvider`/`ServiceConsumer`,两个视角都可注入):
 
 ```java
 @Service
 public class UserService {
 
     @Autowired
-    private ServiceRegistry serviceRegistry;
+    private ServiceProvider serviceProvider;
 
     @Autowired
-    private ServiceDiscovery serviceDiscovery;
+    private ServiceConsumer serviceConsumer;
 
     public void registerExternalService() {
         ServiceInstance instance = DefaultServiceInstance.builder()
@@ -369,11 +369,11 @@ public class UserService {
                 .protocol(StandardProtocol.HTTPS)
                 .weight(3)
                 .build();
-        serviceRegistry.register(instance);
+        serviceProvider.register(instance);
     }
 
     public List<ServiceInstance> findPaymentServices() {
-        return serviceDiscovery.discoverHealthy("payment-service");
+        return serviceConsumer.getHealthyInstances("payment-service");
     }
 }
 ```

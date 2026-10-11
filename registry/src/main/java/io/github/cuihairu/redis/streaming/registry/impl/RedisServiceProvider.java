@@ -8,7 +8,6 @@ import io.github.cuihairu.redis.streaming.registry.Protocol;
 import io.github.cuihairu.redis.streaming.registry.StandardProtocol;
 import io.github.cuihairu.redis.streaming.registry.ServiceInstance;
 import io.github.cuihairu.redis.streaming.registry.ServiceProvider;
-import io.github.cuihairu.redis.streaming.registry.ServiceRegistry;
 import io.github.cuihairu.redis.streaming.registry.ServiceProviderConfig;
 import io.github.cuihairu.redis.streaming.registry.heartbeat.HeartbeatConfig;
 import io.github.cuihairu.redis.streaming.registry.heartbeat.HeartbeatStateManager;
@@ -31,13 +30,12 @@ import java.util.concurrent.TimeUnit;
  * Redis-based service provider implementation
  * Supports three-level storage structure + smart heartbeat strategy (enabled via configuration)
  *
- * <p>Implements two interfaces:</p>
- * <ul>
- *   <li>{@link ServiceProvider} - Business role perspective</li>
- *   <li>{@link ServiceRegistry} - Technical operation perspective</li>
- * </ul>
+ * <p>Implements the {@link ServiceProvider} business-role interface (the former
+ * {@code ServiceRegistry} technical-perspective sibling was removed; its
+ * {@code heartbeat}/{@code batchHeartbeat} vocabulary lives on as
+ * {@link NamingService} default aliases).</p>
  */
-public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
+public class RedisServiceProvider implements ServiceProvider {
 
     private static final Logger logger = LoggerFactory.getLogger(RedisServiceProvider.class);
 
@@ -79,7 +77,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
     @Override
     public void register(ServiceInstance instance) {
         if (!running) {
-            throw new IllegalStateException("ServiceRegistry is not running");
+            throw new IllegalStateException("ServiceProvider is not running");
         }
 
         try {
@@ -152,7 +150,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
     @Override
     public void deregister(ServiceInstance instance) {
         if (!running) {
-            throw new IllegalStateException("ServiceRegistry is not running");
+            throw new IllegalStateException("ServiceProvider is not running");
         }
 
         try {
@@ -215,27 +213,6 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
         }
     }
 
-    // ==================== ServiceRegistry interface implementation (alias methods) ====================
-
-    /**
-     * Alias for sendHeartbeat (ServiceRegistry interface)
-     *
-     * @param instance the service instance to send heartbeat for
-     */
-    @Override
-    public void heartbeat(ServiceInstance instance) {
-        sendHeartbeat(instance);
-    }
-
-    /**
-     * Alias for batchSendHeartbeats (ServiceRegistry interface)
-     *
-     * @param instances the list of service instances to send heartbeats for
-     */
-    @Override
-    public void batchHeartbeat(List<ServiceInstance> instances) {
-        batchSendHeartbeats(instances);
-    }
 
     // ==================== Lifecycle management ====================
 

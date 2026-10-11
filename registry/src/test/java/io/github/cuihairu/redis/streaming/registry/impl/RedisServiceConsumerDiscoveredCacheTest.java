@@ -105,8 +105,8 @@ class RedisServiceConsumerDiscoveredCacheTest {
             active("svc-b", "host-1");
             stubInstance("svc-b", "host-1", true);
 
-            assertEquals(1, consumer.discover("svc-a").size());
-            assertEquals(1, consumer.discover("svc-b").size());
+            assertEquals(1, consumer.getAllInstances("svc-a").size());
+            assertEquals(1, consumer.getAllInstances("svc-b").size());
 
             assertEquals(2, consumer.getDiscoveredInstanceCount(),
                     "two services sharing an instanceId (e.g. the hostname) are two instances");
@@ -123,13 +123,13 @@ class RedisServiceConsumerDiscoveredCacheTest {
             active("svc", "i1", "i2");
             stubInstance("svc", "i1", true);
             stubInstance("svc", "i2", true);
-            consumer.discover("svc");
+            consumer.getAllInstances("svc");
             assertEquals(2, consumer.getDiscoveredInstanceCount());
 
             // i2's heartbeat window elapses: the next discovery must drop it from the
             // cache too, not only from the returned list
             active("svc", "i1");
-            assertEquals(1, consumer.discover("svc").size());
+            assertEquals(1, consumer.getAllInstances("svc").size());
 
             assertEquals(1, consumer.getDiscoveredInstanceCount(),
                     "an expired instance must not stay cached forever");
@@ -148,7 +148,7 @@ class RedisServiceConsumerDiscoveredCacheTest {
         try {
             active("svc", "i1");
             stubInstance("svc", "i1", true);
-            consumer.discover("svc");
+            consumer.getAllInstances("svc");
             assertEquals(1, consumer.getDiscoveredInstanceCount());
 
             consumer.subscribe("svc", (serviceName, action, instance, instances) -> { });
@@ -177,8 +177,8 @@ class RedisServiceConsumerDiscoveredCacheTest {
             stubInstance("svc-a", "host-1", false);
             active("svc-b", "host-1");
             stubInstance("svc-b", "host-1", true);
-            consumer.discover("svc-a");
-            consumer.discover("svc-b");
+            consumer.getAllInstances("svc-a");
+            consumer.getAllInstances("svc-b");
 
             assertFalse(consumer.isInstanceHealthy("host-1"),
                     "a bare id shared by an unhealthy and a healthy instance must not "
@@ -198,8 +198,8 @@ class RedisServiceConsumerDiscoveredCacheTest {
             stubInstance("svc-a", "host-1", true);
             stubInstance("svc-b", "host-1", true);
 
-            assertEquals(1, consumer.discoverByMetadata("svc-a", Map.of("region", "cn")).size());
-            assertEquals(1, consumer.discoverByMetadata("svc-b", Map.of("region", "cn")).size());
+            assertEquals(1, consumer.getInstancesByMetadata("svc-a", Map.of("region", "cn")).size());
+            assertEquals(1, consumer.getInstancesByMetadata("svc-b", Map.of("region", "cn")).size());
 
             assertEquals(2, consumer.getDiscoveredInstanceCount(),
                     "the metadata-filtered discovery path must key the cache per service too");
@@ -215,7 +215,7 @@ class RedisServiceConsumerDiscoveredCacheTest {
         try {
             active("svc", "i1");
             stubInstance("svc", "i1", true);
-            List<ServiceInstance> found = consumer.discover("svc");
+            List<ServiceInstance> found = consumer.getAllInstances("svc");
 
             assertEquals(1, consumer.getDiscoveredInstanceCount());
             assertEquals(DefaultServiceInstance.class, found.get(0).getClass());

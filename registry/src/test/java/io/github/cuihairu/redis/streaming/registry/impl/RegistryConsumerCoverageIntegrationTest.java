@@ -93,14 +93,14 @@ class RegistryConsumerCoverageIntegrationTest {
         RedisServiceConsumer consumer = new RedisServiceConsumer(redis);
         consumer.start();
         try {
-            assertEquals(2, consumer.discover(svc).size());
-            assertEquals(2, consumer.discoverHealthy(svc).size());
-            assertEquals(2, consumer.discoverByMetadata(svc, Map.of("region", "cn")).size()
-                    + consumer.discoverByMetadata(svc, Map.of("region", "us")).size());
-            assertEquals(1, consumer.discoverByMetadata(svc, Map.of("region", "cn")).size());
+            assertEquals(2, consumer.getAllInstances(svc).size());
+            assertEquals(2, consumer.getHealthyInstances(svc).size());
+            assertEquals(2, consumer.getInstancesByMetadata(svc, Map.of("region", "cn")).size()
+                    + consumer.getInstancesByMetadata(svc, Map.of("region", "us")).size());
+            assertEquals(1, consumer.getInstancesByMetadata(svc, Map.of("region", "cn")).size());
             assertEquals(1, consumer.discoverByFilters(svc, Map.of("region", "us"), Map.of()).size());
             assertEquals(1, consumer.discoverHealthyByFilters(svc, Map.of("region", "cn"), null).size());
-            assertEquals(1, consumer.discoverHealthyByMetadata(svc, Map.of("region", "us")).size());
+            assertEquals(1, consumer.getHealthyInstancesByMetadata(svc, Map.of("region", "us")).size());
             assertTrue(consumer.listServices().contains(svc));
             assertTrue(consumer.isInstanceHealthy("a"));
             assertFalse(consumer.isInstanceHealthy("absent"));
@@ -110,12 +110,12 @@ class RegistryConsumerCoverageIntegrationTest {
                     new ServiceConsumerConfig().getRegistryKeys().getServiceHeartbeatsKey(svc),
                     StringCodec.INSTANCE);
             hb.add(System.currentTimeMillis() - 3_600_000L, "a");
-            assertEquals(1, consumer.discoverHealthy(svc).size());
-            assertEquals(1, consumer.discover(svc).size());
+            assertEquals(1, consumer.getHealthyInstances(svc).size());
+            assertEquals(1, consumer.getAllInstances(svc).size());
 
             // missing heartbeat score -> invalid too
             hb.remove("b");
-            assertTrue(consumer.discoverHealthy(svc).isEmpty());
+            assertTrue(consumer.getHealthyInstances(svc).isEmpty());
         } finally {
             consumer.stop();
             naming.deregister(a);
@@ -140,7 +140,7 @@ class RegistryConsumerCoverageIntegrationTest {
             List<ServiceChangeAction> actions = new CopyOnWriteArrayList<>();
             ServiceChangeListener listener = (serviceName, action, instance, instances) -> actions.add(action);
             consumer.subscribe(svc, listener);
-            assertFalse(consumer.discover(svc).isEmpty());
+            assertFalse(consumer.getAllInstances(svc).isEmpty());
 
             // B-45: the manager callback key (uniqueId) IS the cache key now — drive the
             // private entry point exactly the way the manager does.

@@ -227,7 +227,7 @@ class RedisServiceProviderCoverageIntegrationTest {
                     StringCodec.INSTANCE).readAllMap();
             assertEquals("false", stored.get("healthy"),
                     "an expired persistent instance must be flagged unhealthy");
-            assertTrue(consumer.discoverHealthy(svc).isEmpty(),
+            assertTrue(consumer.getHealthyInstances(svc).isEmpty(),
                     "the flagged instance must drop out of healthy discovery");
 
             // a resumed heartbeat must revive it — previously the flag stuck forever
@@ -236,7 +236,7 @@ class RedisServiceProviderCoverageIntegrationTest {
                     new ServiceProviderConfig().getRegistryKeys().getServiceInstanceKey(svc, "p1"),
                     StringCodec.INSTANCE).readAllMap();
             assertEquals("true", stored.get("healthy"), "a live heartbeat must restore health");
-            assertEquals(1, consumer.discoverHealthy(svc).size(),
+            assertEquals(1, consumer.getHealthyInstances(svc).size(),
                     "the revived instance must serve healthy discovery again");
 
             provider.deregister(persistent);

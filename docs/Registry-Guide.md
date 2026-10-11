@@ -50,10 +50,10 @@ redis-streaming:
 public class OrderClient {
 
     @Autowired
-    private ServiceDiscovery serviceDiscovery;   // starter 自动创建并 start 的 RedisNamingService
+    private NamingService namingService;   // starter 自动创建并 start 的 RedisNamingService
 
     public List<ServiceInstance> pick() {
-        return serviceDiscovery.discoverHealthy("payment-service");
+        return namingService.getHealthyInstances("payment-service");
     }
 }
 ```
@@ -91,9 +91,9 @@ naming.stop();
 | 视角 | 接口 | 方法 |
 |------|------|------|
 | 服务提供者 | `ServiceProvider` | `register` / `deregister` / `sendHeartbeat` / `batchSendHeartbeats` / `start` / `stop` / `isRunning` |
-| 技术注册 | `ServiceRegistry` | `register` / `deregister` / `heartbeat` / `batchHeartbeat`（后两个是 sendHeartbeat 的别名） |
 | 服务消费者 | `ServiceConsumer` | `getAllInstances` / `getHealthyInstances` / `getInstances(name, healthy)` / `getInstancesByMetadata` / `getHealthyInstancesByMetadata` / `subscribe` / `unsubscribe` |
-| 技术发现 | `ServiceDiscovery` | `discover` / `discoverHealthy` / `discoverByMetadata` / `discoverHealthyByMetadata` / `subscribe` / `unsubscribe` |
+
+兼容别名（`NamingService` default 方法，2026-10-12 起旧的 `ServiceRegistry`/`ServiceDiscovery` 接口已删除）：`heartbeat`→`sendHeartbeat`、`batchHeartbeat`→`batchSendHeartbeats`、`discover`→`getAllInstances`、`discoverHealthy`→`getHealthyInstances`、`discoverByMetadata`→`getInstancesByMetadata`、`discoverHealthyByMetadata`→`getHealthyInstancesByMetadata`。
 
 `getInstancesByFilters`、`getHealthyInstancesByFilters`、`chooseHealthyInstance`、`chooseHealthyInstanceByFilters`、`getConfig` 只在 `RedisNamingService` 上（不在 `NamingService` 接口里），按实现类型声明变量或显式转型。
 
@@ -154,9 +154,6 @@ Map<String, String> filters = Map.of(
 
 List<ServiceInstance> matched = naming.getInstancesByMetadata("order-service", filters);
 List<ServiceInstance> healthy  = naming.getHealthyInstancesByMetadata("order-service", filters);
-
-// Discovery 视角的等价方法
-List<ServiceInstance> d = serviceDiscovery.discoverByMetadata("order-service", filters);
 ```
 
 `FilterBuilder` 生成同样的过滤串，并支持 metadata 与 metrics 两套条件：

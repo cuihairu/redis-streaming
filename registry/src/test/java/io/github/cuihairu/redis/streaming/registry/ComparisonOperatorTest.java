@@ -79,7 +79,7 @@ public class ComparisonOperatorTest {
         );
 
         Map<String, String> filters = Map.of("weight:>", "15");
-        List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filters);
+        List<ServiceInstance> filtered = serviceConsumer.getInstancesByMetadata("test-service", filters);
 
         assertEquals(2, filtered.size());
         assertTrue(filtered.stream().allMatch(i ->
@@ -97,7 +97,7 @@ public class ComparisonOperatorTest {
         );
 
         Map<String, String> filters = Map.of("age:>=", "18");
-        List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filters);
+        List<ServiceInstance> filtered = serviceConsumer.getInstancesByMetadata("test-service", filters);
 
         assertEquals(2, filtered.size());
         assertTrue(filtered.stream().allMatch(i ->
@@ -115,7 +115,7 @@ public class ComparisonOperatorTest {
         );
 
         Map<String, String> filters = Map.of("cpu_usage:<", "80");
-        List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filters);
+        List<ServiceInstance> filtered = serviceConsumer.getInstancesByMetadata("test-service", filters);
 
         assertEquals(2, filtered.size());
         assertTrue(filtered.stream().allMatch(i ->
@@ -133,7 +133,7 @@ public class ComparisonOperatorTest {
         );
 
         Map<String, String> filters = Map.of("latency:<=", "100");
-        List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filters);
+        List<ServiceInstance> filtered = serviceConsumer.getInstancesByMetadata("test-service", filters);
 
         assertEquals(2, filtered.size());
         assertTrue(filtered.stream().allMatch(i ->
@@ -151,7 +151,7 @@ public class ComparisonOperatorTest {
         );
 
         Map<String, String> filters = Map.of("status:!=", "maintenance");
-        List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filters);
+        List<ServiceInstance> filtered = serviceConsumer.getInstancesByMetadata("test-service", filters);
 
         assertEquals(2, filtered.size());
         assertTrue(filtered.stream().allMatch(i ->
@@ -169,7 +169,7 @@ public class ComparisonOperatorTest {
         );
 
         Map<String, String> filters = Map.of("version:==", "1.0.0");
-        List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filters);
+        List<ServiceInstance> filtered = serviceConsumer.getInstancesByMetadata("test-service", filters);
 
         assertEquals(2, filtered.size());
         assertTrue(filtered.stream().allMatch(i ->
@@ -191,7 +191,7 @@ public class ComparisonOperatorTest {
         filters.put("cpu:<", "70");
         filters.put("region", "us-east-1");
 
-        List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filters);
+        List<ServiceInstance> filtered = serviceConsumer.getInstancesByMetadata("test-service", filters);
 
         assertEquals(1, filtered.size());
         ServiceInstance instance = filtered.get(0);
@@ -211,7 +211,7 @@ public class ComparisonOperatorTest {
         );
 
         Map<String, String> filters = Map.of("price:<", "25.00");
-        List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filters);
+        List<ServiceInstance> filtered = serviceConsumer.getInstancesByMetadata("test-service", filters);
 
         assertEquals(2, filtered.size());
         assertTrue(filtered.stream().allMatch(i ->
@@ -230,7 +230,7 @@ public class ComparisonOperatorTest {
 
         // Lexicographic comparison
         Map<String, String> filters = Map.of("zone:>", "zone-a");
-        List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filters);
+        List<ServiceInstance> filtered = serviceConsumer.getInstancesByMetadata("test-service", filters);
 
         assertEquals(2, filtered.size());
         assertTrue(filtered.stream().noneMatch(i ->
@@ -250,7 +250,7 @@ public class ComparisonOperatorTest {
         // If lexicographic: "10" < "2" < "100" (wrong)
         // If numeric: 2 < 10 < 100 (correct)
         Map<String, String> filters = Map.of("count:>", "10");
-        List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filters);
+        List<ServiceInstance> filtered = serviceConsumer.getInstancesByMetadata("test-service", filters);
 
         assertEquals(1, filtered.size());
         assertEquals("instance-3", filtered.get(0).getInstanceId());
@@ -269,7 +269,7 @@ public class ComparisonOperatorTest {
 
         // Use the last colon as the separator
         Map<String, String> filters = Map.of("my:field:>=", "15");
-        List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filters);
+        List<ServiceInstance> filtered = serviceConsumer.getInstancesByMetadata("test-service", filters);
 
         assertEquals(1, filtered.size());
         assertEquals("20", filtered.get(0).getMetadata().get("my:field"));
@@ -339,11 +339,11 @@ public class ComparisonOperatorTest {
         Map<String, String> filters = Map.of("weight:>=", "15");
 
         // All matching instances (including unhealthy ones)
-        List<ServiceInstance> all = serviceConsumer.discoverByMetadata("test-service", filters);
+        List<ServiceInstance> all = serviceConsumer.getInstancesByMetadata("test-service", filters);
         assertEquals(2, all.size());
 
         // Get only healthy matching instances
-        List<ServiceInstance> healthy = serviceConsumer.discoverHealthyByMetadata("test-service", filters);
+        List<ServiceInstance> healthy = serviceConsumer.getHealthyInstancesByMetadata("test-service", filters);
         assertEquals(1, healthy.size());
         assertEquals("instance-3", healthy.get(0).getInstanceId());
 
@@ -364,7 +364,7 @@ public class ComparisonOperatorTest {
         );
 
         Map<String, String> filters = Map.of("temperature:>", "0");
-        List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filters);
+        List<ServiceInstance> filtered = serviceConsumer.getInstancesByMetadata("test-service", filters);
 
         assertEquals(1, filtered.size());
         assertEquals("10", filtered.get(0).getMetadata().get("temperature"));

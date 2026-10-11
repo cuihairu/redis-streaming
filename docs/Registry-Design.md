@@ -12,7 +12,7 @@
 
 ### 1. Service Provider（服务提供者）
 
-实现类 `RedisServiceProvider`（实现 `ServiceProvider` 与 `ServiceRegistry` 两个接口），负责：
+实现类 `RedisServiceProvider`（实现 `ServiceProvider`），负责：
 
 - 服务注册：写实例 Hash、加入心跳 ZSet 与服务索引 Set，全部由 Lua 脚本原子完成
 - 心跳处理：按 `HeartbeatStateManager` 的决策决定本次写什么（时间戳 / metrics / metadata）
@@ -21,14 +21,14 @@
 
 ### 2. Service Consumer（服务消费者）
 
-实现类 `RedisServiceConsumer`（实现 `ServiceConsumer` 与 `ServiceDiscovery`），负责：
+实现类 `RedisServiceConsumer`（实现 `ServiceConsumer`），负责：
 
 - 服务发现：按心跳窗口取活跃实例 ID，再逐个读实例 Hash 组装 `ServiceInstance`
 - 变更订阅：`RTopic` 订阅 `{prefix}:services:{serviceName}:changes` 通道
 - metadata/metrics 过滤：下发 Lua 脚本在服务端过滤
 - 可选健康探测：`enableHealthCheck=true` 时按协议探测并回调 `HEALTH_RECOVERY` / `HEALTH_FAILURE`
 
-`RedisNamingService` 聚合 Provider 与 Consumer，并同时实现 `NamingService`、`ServiceRegistry`、`ServiceDiscovery`。
+`RedisNamingService` 聚合 Provider 与 Consumer（组合 + 统一生命周期），实现 `NamingService`。
 
 ### 3. Admin（管理）
 
@@ -36,10 +36,9 @@
 
 ## 接口设计
 
-四个接口是同一组操作的两个视角，`NamingService` 同时继承：
+两个业务角色接口由 `NamingService` 同时继承（原 `ServiceRegistry`/`ServiceDiscovery` 技术视角接口已删除，其方法名以 `NamingService` default 别名保留）：
 
 ```java
-// 业务角色视角
 public interface ServiceProvider {
     void register(ServiceInstance instance);
     void deregister(ServiceInstance instance);
@@ -63,33 +62,18 @@ public interface ServiceConsumer {
     boolean isRunning();
 }
 
-// 技术操作视角
-public interface ServiceRegistry {
-    void register(ServiceInstance instance);
-    void deregister(ServiceInstance instance);
-    void heartbeat(ServiceInstance instance);          // sendHeartbeat 别名
-    void batchHeartbeat(List<ServiceInstance> instances); // batchSendHeartbeats 别名
-    void start();
-    void stop();
-    boolean isRunning();
-}
-
-public interface ServiceDiscovery {
-    List<ServiceInstance> discover(String serviceName);
-    List<ServiceInstance> discoverHealthy(String serviceName);
-    List<ServiceInstance> discoverByMetadata(String serviceName, Map<String, String> metadataFilters);
-    List<ServiceInstance> discoverHealthyByMetadata(String serviceName, Map<String, String> metadataFilters);
-    void subscribe(String serviceName, ServiceChangeListener listener);
-    void unsubscribe(String serviceName, ServiceChangeListener listener);
-    void start();
-    void stop();
-    boolean isRunning();
-}
-
-public interface NamingService extends ServiceProvider, ServiceConsumer, ServiceRegistry, ServiceDiscovery {
+public interface NamingService extends ServiceProvider, ServiceConsumer {
     default List<ServiceInstance> getHealthyInstances(String serviceName);   // getInstances(name, true) 别名
     List<ServiceInstance> getInstancesByMetadata(String serviceName, Map<String, String> metadataFilters);
     List<ServiceInstance> getHealthyInstancesByMetadata(String serviceName, Map<String, String> metadataFilters);
+
+    // 旧词汇 default 别名（兼容既有调用方）
+    default void heartbeat(ServiceInstance instance);                        // -> sendHeartbeat
+    default void batchHeartbeat(List<ServiceInstance> instances);            // -> batchSendHeartbeats
+    default List<ServiceInstance> discover(String serviceName);              // -> getAllInstances
+    default List<ServiceInstance> discoverHealthy(String serviceName);       // -> getHealthyInstances
+    default List<ServiceInstance> discoverByMetadata(String, Map<String, String>);       // -> getInstancesByMetadata
+    default List<ServiceInstance> discoverHealthyByMetadata(String, Map<String, String>); // -> getHealthyInstancesByMetadata
 }
 ```
 

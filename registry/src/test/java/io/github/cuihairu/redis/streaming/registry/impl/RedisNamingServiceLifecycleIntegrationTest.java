@@ -77,14 +77,14 @@ class RedisNamingServiceLifecycleIntegrationTest {
             naming.register(a);
             naming.register(b);
             naming.register(a);                 // re-register is fine
-            naming.heartbeat(a);
-            naming.batchHeartbeat(List.of(a, b));
+            naming.sendHeartbeat(a);
+            naming.batchSendHeartbeats(List.of(a, b));
 
             List<ServiceInstance> all = naming.getInstances(svc, true);
             assertEquals(2, all.size());
             assertEquals(2, naming.getHealthyInstances(svc).size());
-            assertEquals(2, naming.discoverHealthy(svc).size());
-            assertTrue(naming.discover(svc).size() >= 2);
+            assertEquals(2, naming.getHealthyInstances(svc).size());
+            assertTrue(naming.getAllInstances(svc).size() >= 2);
 
             Thread.sleep(1500); // let heartbeat/index settle before filtered queries
             // metadata filters (key=field[:op], value=operand; metadata fields only)
@@ -94,7 +94,7 @@ class RedisNamingServiceLifecycleIntegrationTest {
             assertEquals(1, naming.getInstancesByMetadata(svc, Map.of("region:!=", "east")).size());
             assertEquals(1, naming.getHealthyInstancesByMetadata(svc, Map.of("version:<", "2.0")).size());
             assertEquals(1, naming.getHealthyInstancesByMetadata(svc, Map.of("version:>=", "2.0")).size());
-            assertTrue(naming.discoverHealthyByMetadata(svc + "-none", Map.of("region", "x")).isEmpty());
+            assertTrue(naming.getHealthyInstancesByMetadata(svc + "-none", Map.of("region", "x")).isEmpty());
 
             // deregister + REMOVED notification
             CountDownLatch removed = new CountDownLatch(1);
@@ -144,7 +144,7 @@ class RedisNamingServiceLifecycleIntegrationTest {
             naming.deregister(c1);
             assertTrue(gone.await(10, TimeUnit.SECONDS), "consumer listener should observe removal");
             assertTrue(consumer.getHealthyInstances(svc).isEmpty());
-            assertTrue(consumer.discover(svc + "-missing").isEmpty());
+            assertTrue(consumer.getAllInstances(svc + "-missing").isEmpty());
             CopyOnWriteArrayList<ServiceInstance> polled = new CopyOnWriteArrayList<>(consumer.getAllInstances(svc));
             // getAllInstances may return empty after removal; just ensure no throw
             assertNotNull(polled);

@@ -22,8 +22,12 @@ import java.util.stream.Collectors;
 /**
  * Redis-based service consumer implementation
  * Supports health checking and status reporting (enabled via configuration)
+ *
+ * <p>Implements the {@link ServiceConsumer} business-role interface (the former
+ * {@code ServiceDiscovery} technical-perspective sibling was removed; its
+ * {@code discover*} vocabulary lives on as {@link NamingService} default aliases).</p>
  */
-public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
+public class RedisServiceConsumer implements ServiceConsumer {
 
     private static final Logger logger = LoggerFactory.getLogger(RedisServiceConsumer.class);
 
@@ -165,7 +169,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                 ServiceChangeAction.HEALTH_RECOVERY : ServiceChangeAction.HEALTH_FAILURE;
 
             // Get all current instances
-            List<ServiceInstance> allInstances = discover(serviceName);
+            List<ServiceInstance> allInstances = getAllInstances(serviceName);
 
             for (ServiceChangeListener listener : serviceListeners) {
                 try {
@@ -178,9 +182,9 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
     }
 
     @Override
-    public List<ServiceInstance> discover(String serviceName) {
+    public List<ServiceInstance> getAllInstances(String serviceName) {
         if (!running) {
-            throw new IllegalStateException("ServiceDiscovery is not running");
+            throw new IllegalStateException("ServiceConsumer is not running");
         }
 
         try {
@@ -242,27 +246,17 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
     }
 
     @Override
-    public List<ServiceInstance> getAllInstances(String serviceName) {
-        return discover(serviceName);
-    }
-
-    @Override
-    public List<ServiceInstance> getHealthyInstances(String serviceName) {
-        return discoverHealthy(serviceName);
-    }
-
-    @Override
     public List<ServiceInstance> getInstances(String serviceName, boolean healthy) {
         if (healthy) {
-            return discoverHealthy(serviceName);
+            return getHealthyInstances(serviceName);
         } else {
-            return discover(serviceName);
+            return getAllInstances(serviceName);
         }
     }
 
     @Override
-    public List<ServiceInstance> discoverHealthy(String serviceName) {
-        List<ServiceInstance> allInstances = discover(serviceName);
+    public List<ServiceInstance> getHealthyInstances(String serviceName) {
+        List<ServiceInstance> allInstances = getAllInstances(serviceName);
 
         // Filter healthy and enabled instances
         return allInstances.stream()
@@ -274,7 +268,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
     @Override
     public void subscribe(String serviceName, ServiceChangeListener listener) {
         if (!running) {
-            throw new IllegalStateException("ServiceDiscovery is not running");
+            throw new IllegalStateException("ServiceConsumer is not running");
         }
 
         // Add listener
@@ -299,7 +293,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
 
         // Immediately notify current service instance list
         try {
-            List<ServiceInstance> currentInstances = discoverHealthy(serviceName);
+            List<ServiceInstance> currentInstances = getHealthyInstances(serviceName);
             if (!currentInstances.isEmpty()) {
                 // Notify each instance as a "current" event
                 for (ServiceInstance instance : currentInstances) {
@@ -420,7 +414,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
             ServiceChangeAction action = message.getAction();
 
             // Get all current healthy instance list
-            List<ServiceInstance> allInstances = discoverHealthy(serviceName);
+            List<ServiceInstance> allInstances = getHealthyInstances(serviceName);
 
             // Build changed instance
             ServiceInstance changedInstance = null;
@@ -539,7 +533,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
      */
     public List<String> listServices() {
         if (!running) {
-            throw new IllegalStateException("ServiceDiscovery is not running");
+            throw new IllegalStateException("ServiceConsumer is not running");
         }
 
         try {
@@ -557,7 +551,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
      */
     public void refreshServiceInstances(String serviceName) {
         if (running) {
-            discover(serviceName);
+            getAllInstances(serviceName);
         }
     }
 
@@ -657,13 +651,13 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
      * @return list of matching service instances
      */
     @Override
-    public List<ServiceInstance> discoverByMetadata(String serviceName, Map<String, String> metadataFilters) {
+    public List<ServiceInstance> getInstancesByMetadata(String serviceName, Map<String, String> metadataFilters) {
         if (!running) {
-            throw new IllegalStateException("ServiceDiscovery is not running");
+            throw new IllegalStateException("ServiceConsumer is not running");
         }
 
         if (metadataFilters == null || metadataFilters.isEmpty()) {
-            return discover(serviceName);
+            return getAllInstances(serviceName);
         }
 
         try {
@@ -731,8 +725,8 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
      * @return list of matching and healthy service instances
      */
     @Override
-    public List<ServiceInstance> discoverHealthyByMetadata(String serviceName, Map<String, String> metadataFilters) {
-        List<ServiceInstance> allMatched = discoverByMetadata(serviceName, metadataFilters);
+    public List<ServiceInstance> getHealthyInstancesByMetadata(String serviceName, Map<String, String> metadataFilters) {
+        List<ServiceInstance> allMatched = getInstancesByMetadata(serviceName, metadataFilters);
 
         // Filter healthy and enabled instances
         return allMatched.stream()
@@ -750,7 +744,7 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                                                    Map<String, String> metadataFilters,
                                                    Map<String, String> metricsFilters) {
         if (!running) {
-            throw new IllegalStateException("ServiceDiscovery is not running");
+            throw new IllegalStateException("ServiceConsumer is not running");
         }
 
         try {
@@ -805,32 +799,5 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                 .filter(instance -> instance.isEnabled() && instance.isHealthy())
                 .filter(this::isInstanceHeartbeatValid)
                 .collect(Collectors.toList());
-    }
-    // ==================== ServiceConsumer interface implementation (delegate methods) ====================
-
-    /**
-     * Get instances filtered by metadata (supports comparison operators)
-     * This is an alias for discoverByMetadata
-     *
-     * @param serviceName the name of the service to discover
-     * @param metadataFilters metadata filter conditions (AND relationship)
-     * @return list of matching service instances
-     */
-    @Override
-    public List<ServiceInstance> getInstancesByMetadata(String serviceName, Map<String, String> metadataFilters) {
-        return discoverByMetadata(serviceName, metadataFilters);
-    }
-
-    /**
-     * Get healthy instances filtered by metadata
-     * This is an alias for discoverHealthyByMetadata
-     *
-     * @param serviceName the name of the service to discover
-     * @param metadataFilters metadata filter conditions (AND relationship)
-     * @return list of matching and healthy service instances
-     */
-    @Override
-    public List<ServiceInstance> getHealthyInstancesByMetadata(String serviceName, Map<String, String> metadataFilters) {
-        return discoverHealthyByMetadata(serviceName, metadataFilters);
     }
 }

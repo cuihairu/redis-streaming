@@ -66,7 +66,7 @@ public class LoadBalancerIntegrationTest {
             m1.put("metrics", "{\"cpu\":30,\"latency\":40}");
             m2.put("metrics", "{\"cpu\":80,\"latency\":90}");
 
-            List<ServiceInstance> all = consumer.discoverHealthy(svc);
+            List<ServiceInstance> all = consumer.getHealthyInstances(svc);
             LoadBalancerConfig cfg = new LoadBalancerConfig();
             cfg.setPreferredRegion("us-east-1");
             cfg.setCpuWeight(1.0);

@@ -37,7 +37,7 @@ class RegistryBatchOpsIntegrationTest {
             naming.register(b1);
             naming.register(b2);
             assertEquals(2, naming.getInstances(svc, false).size());
-            naming.batchHeartbeat(List.of(b1, b2));
+            naming.batchSendHeartbeats(List.of(b1, b2));
             naming.sendHeartbeat(b1);
             naming.batchSendHeartbeats(List.of(b1, b2));
 

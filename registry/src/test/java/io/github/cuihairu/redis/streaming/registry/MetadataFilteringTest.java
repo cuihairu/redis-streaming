@@ -118,7 +118,7 @@ public class MetadataFilteringTest {
         Map<String, String> filter = new HashMap<>();
         filter.put("version", "1.0.0");
 
-        List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filter);
+        List<ServiceInstance> filtered = serviceConsumer.getInstancesByMetadata("test-service", filter);
 
         assertEquals(2, filtered.size());
         assertTrue(filtered.stream().allMatch(i -> "1.0.0".equals(i.getMetadata().get("version"))));
@@ -183,7 +183,7 @@ public class MetadataFilteringTest {
         filter.put("version", "1.0.0");
         filter.put("zone", "zone-a");
 
-        List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filter);
+        List<ServiceInstance> filtered = serviceConsumer.getInstancesByMetadata("test-service", filter);
 
         assertEquals(1, filtered.size());
         assertEquals("instance-1", filtered.get(0).getInstanceId());
@@ -225,12 +225,12 @@ public class MetadataFilteringTest {
 
         // Empty filter condition
         Map<String, String> emptyFilter = new HashMap<>();
-        List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", emptyFilter);
+        List<ServiceInstance> filtered = serviceConsumer.getInstancesByMetadata("test-service", emptyFilter);
 
         assertEquals(2, filtered.size());
 
         // Null filter condition
-        filtered = serviceConsumer.discoverByMetadata("test-service", null);
+        filtered = serviceConsumer.getInstancesByMetadata("test-service", null);
         assertEquals(2, filtered.size());
 
         // Clean up
@@ -262,7 +262,7 @@ public class MetadataFilteringTest {
         Map<String, String> filter = new HashMap<>();
         filter.put("version", "2.0.0");
 
-        List<ServiceInstance> filtered = serviceConsumer.discoverByMetadata("test-service", filter);
+        List<ServiceInstance> filtered = serviceConsumer.getInstancesByMetadata("test-service", filter);
 
         assertEquals(0, filtered.size());
 
@@ -358,11 +358,11 @@ public class MetadataFilteringTest {
         filter.put("version", "1.0.0");
 
         // Get all matching instances (including unhealthy ones)
-        List<ServiceInstance> all = serviceConsumer.discoverByMetadata("test-service", filter);
+        List<ServiceInstance> all = serviceConsumer.getInstancesByMetadata("test-service", filter);
         assertEquals(2, all.size());
 
         // Get only healthy matching instances
-        List<ServiceInstance> healthy = serviceConsumer.discoverHealthyByMetadata("test-service", filter);
+        List<ServiceInstance> healthy = serviceConsumer.getHealthyInstancesByMetadata("test-service", filter);
         assertEquals(1, healthy.size());
         assertTrue(healthy.get(0).isHealthy());
 

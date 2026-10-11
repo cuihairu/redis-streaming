@@ -6,10 +6,11 @@ Module: `registry/`（包根 `io.github.cuihairu.redis.streaming.registry`）
 
 ## Key Concepts
 
-- 四个视角的接口，同一个实现 `RedisNamingService` 全部实现：
-  - 业务角色视角：`ServiceProvider`（注册/心跳/注销）、`ServiceConsumer`（发现/订阅/过滤）
-  - 技术操作视角：`ServiceRegistry`（register/deregister/heartbeat/batchHeartbeat）、`ServiceDiscovery`（discover/discoverHealthy/discoverByMetadata/subscribe）
-- `NamingService extends ServiceProvider, ServiceConsumer, ServiceRegistry, ServiceDiscovery`，另有两个 metadata 过滤方法
+- 两个业务角色接口，同一个实现 `RedisNamingService` 全部实现：
+  - `ServiceProvider`（register/deregister/sendHeartbeat/batchSendHeartbeats）
+  - `ServiceConsumer`（getAllInstances/getHealthyInstances/getInstancesByMetadata/subscribe）
+- `NamingService extends ServiceProvider, ServiceConsumer`，另有两个 metadata 过滤方法；原 `ServiceRegistry`/`ServiceDiscovery` 技术视角接口已删除（2026-10-12），其方法名（`heartbeat`/`discover` 等）以 `NamingService` default 别名形式保留
+- 旧词汇 → 新词汇：`heartbeat`→`sendHeartbeat`、`batchHeartbeat`→`batchSendHeartbeats`、`discover`→`getAllInstances`、`discoverHealthy`→`getHealthyInstances`、`discoverByMetadata`→`getInstancesByMetadata`、`discoverHealthyByMetadata`→`getHealthyInstancesByMetadata`
 - 数据结构：服务索引 Set + 心跳 ZSet + 实例详情 Hash（键由 `RegistryKeys` 统一生成）
 - 变更动作 `ServiceChangeAction`：`ADDED` / `REMOVED` / `UPDATED` / `CURRENT` / `HEALTH_RECOVERY` / `HEALTH_FAILURE`
 

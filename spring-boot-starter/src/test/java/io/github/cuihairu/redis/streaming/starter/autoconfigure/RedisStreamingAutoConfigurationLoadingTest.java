@@ -7,7 +7,7 @@ import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
 import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterService;
 import io.github.cuihairu.redis.streaming.mq.dlq.ReplayHandler;
 import io.github.cuihairu.redis.streaming.registry.NamingService;
-import io.github.cuihairu.redis.streaming.registry.ServiceDiscovery;
+import io.github.cuihairu.redis.streaming.registry.ServiceConsumer;
 import io.github.cuihairu.redis.streaming.registry.loadbalancer.LoadBalancer;
 import io.github.cuihairu.redis.streaming.registry.loadbalancer.WeightedRoundRobinLoadBalancer;
 import io.github.cuihairu.redis.streaming.reliability.ratelimit.NamedRateLimiter;
@@ -82,9 +82,9 @@ class RedisStreamingAutoConfigurationLoadingTest {
                     // Registry / Discovery / Config meta-beans are the user's mocks
                     assertThat(context.getBean(NamingService.class).getClass().getSimpleName())
                             .contains("MockitoMock");
-                    // getBean(ServiceDiscovery.class) is ambiguous here: the NamingService
-                    // interface extends ServiceDiscovery, so the naming mock matches both
-                    assertThat(context.getBean("userServiceDiscovery").getClass().getSimpleName())
+                    // getBean(ServiceConsumer.class) is ambiguous here: the NamingService
+                    // interface extends ServiceConsumer, so the naming mock matches both
+                    assertThat(context.getBean("userServiceConsumer").getClass().getSimpleName())
                             .contains("MockitoMock");
                     assertThat(context.getBean(ConfigService.class).getClass().getSimpleName())
                             .contains("MockitoMock");
@@ -130,7 +130,7 @@ class RedisStreamingAutoConfigurationLoadingTest {
     @Test
     void discoveryFeatureGatingSuppressesItsOwnBeanOnly() {
         // enabled (default): the auto bean named "serviceDiscovery" is present (alongside
-        // the user's mock) because nothing of the tuple {NamingService, ServiceDiscovery}
+        // the user's mock) because nothing of the tuple {NamingService, ServiceConsumer}
         // was missing at condition time… the user mocks suppress it, so flip the flag:
         base().withUserConfiguration(UserCoreBeans.class)
                 .run(context -> assertThat(context).doesNotHaveBean("serviceDiscovery"));
@@ -247,9 +247,9 @@ class RedisStreamingAutoConfigurationLoadingTest {
                     assertThat(context.getBean(MqOptions.class).getRetryMaxAttempts()).isEqualTo(99);
                     assertThat(context.getBean(NamingService.class).getClass().getSimpleName())
                             .contains("MockitoMock");
-                    // getBean(ServiceDiscovery.class) is ambiguous here: the NamingService
-                    // interface extends ServiceDiscovery, so the naming mock matches both
-                    assertThat(context.getBean("userServiceDiscovery").getClass().getSimpleName())
+                    // getBean(ServiceConsumer.class) is ambiguous here: the NamingService
+                    // interface extends ServiceConsumer, so the naming mock matches both
+                    assertThat(context.getBean("userServiceConsumer").getClass().getSimpleName())
                             .contains("MockitoMock");
                     assertThat(context.getBean(ConfigService.class).getClass().getSimpleName())
                             .contains("MockitoMock");
@@ -258,22 +258,22 @@ class RedisStreamingAutoConfigurationLoadingTest {
                             .contains("MockitoMock");
                     assertThat(context).hasSingleBean(RateLimiterRegistry.class);
                     // NamingService present ⇒ the discovery auto bean must be skipped
-                    // (@ConditionalOnMissingBean lists both NamingService and ServiceDiscovery)
+                    // (@ConditionalOnMissingBean lists both NamingService and ServiceConsumer)
                     assertThat(context).doesNotHaveBean("serviceDiscovery");
                 });
     }
 
     @Test
-    void aUserServiceDiscoveryAloneSuppressesTheDiscoveryDefault() {
+    void aUserServiceConsumerAloneSuppressesTheDiscoveryDefault() {
         // no NamingService mock here: the registry's own namingService comes up (its start()
         // only schedules daemon executors), yet its presence in the tuple still suppresses
         // the discovery-scoped bean
-        base().withUserConfiguration(ServiceDiscoveryOnlyConfig.class)
+        base().withUserConfiguration(ServiceConsumerOnlyConfig.class)
                 .run(context -> {
                     assertThat(context).hasSingleBean(NamingService.class);
                     assertThat(context).doesNotHaveBean("serviceDiscovery");
-                    // namingService (NamingService extends ServiceDiscovery) + the user mock
-                    assertThat(context.getBeansOfType(ServiceDiscovery.class)).hasSize(2);
+                    // namingService (NamingService extends ServiceConsumer) + the user mock
+                    assertThat(context.getBeansOfType(ServiceConsumer.class)).hasSize(2);
                 });
     }
 
@@ -352,8 +352,8 @@ class RedisStreamingAutoConfigurationLoadingTest {
         }
 
         @Bean
-        static ServiceDiscovery userServiceDiscovery() {
-            return mock(ServiceDiscovery.class);
+        static ServiceConsumer userServiceConsumer() {
+            return mock(ServiceConsumer.class);
         }
 
         @Bean
@@ -385,11 +385,11 @@ class RedisStreamingAutoConfigurationLoadingTest {
 
     /** Only a discovery mock — exercises the {@code NamingService} leg of the tuple condition. */
     @Configuration(proxyBeanMethods = false)
-    static class ServiceDiscoveryOnlyConfig {
+    static class ServiceConsumerOnlyConfig {
 
         @Bean
-        static ServiceDiscovery userServiceDiscovery() {
-            return mock(ServiceDiscovery.class);
+        static ServiceConsumer userServiceConsumer() {
+            return mock(ServiceConsumer.class);
         }
     }
 }

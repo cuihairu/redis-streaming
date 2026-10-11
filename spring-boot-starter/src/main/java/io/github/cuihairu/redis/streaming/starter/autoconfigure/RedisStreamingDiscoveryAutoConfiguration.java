@@ -4,7 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import io.github.cuihairu.redis.streaming.registry.NamingService;
-import io.github.cuihairu.redis.streaming.registry.ServiceDiscovery;
+import io.github.cuihairu.redis.streaming.registry.ServiceConsumer;
 import io.github.cuihairu.redis.streaming.registry.impl.RedisNamingService;
 import io.github.cuihairu.redis.streaming.starter.properties.RedisStreamingProperties;
 import org.redisson.api.RedissonClient;
@@ -20,13 +20,13 @@ import org.springframework.context.annotation.Bean;
 public class RedisStreamingDiscoveryAutoConfiguration {
 
     @Bean
-    @ConditionalOnMissingBean({NamingService.class, ServiceDiscovery.class})
-    public ServiceDiscovery serviceDiscovery(RedissonClient redissonClient, RedisStreamingProperties properties) {
-        log.info("Initializing ServiceDiscovery with healthy-only: {}",
+    @ConditionalOnMissingBean({NamingService.class, ServiceConsumer.class})
+    public ServiceConsumer serviceConsumer(RedissonClient redissonClient, RedisStreamingProperties properties) {
+        log.info("Initializing service consumer (NamingService) with healthy-only: {}",
                 properties.getDiscovery().isHealthyOnly());
 
-        ServiceDiscovery discovery = new RedisNamingService(redissonClient);
-        discovery.start();
-        return discovery;
+        NamingService namingService = new RedisNamingService(redissonClient);
+        namingService.start();
+        return namingService;
     }
 }

@@ -83,9 +83,9 @@ class RedisNamingServiceCoverageUnitTest {
         naming.register(instance("svc", "i1"));
         naming.deregister(instance("svc", "i1"));
 
-        List<ServiceInstance> byMeta = naming.discoverByMetadata("svc", Map.of("region", "cn"));
+        List<ServiceInstance> byMeta = naming.getInstancesByMetadata("svc", Map.of("region", "cn"));
         assertEquals(1, byMeta.size());
-        assertEquals(1, naming.discoverHealthyByMetadata("svc", Map.of("region", "cn")).size());
+        assertEquals(1, naming.getHealthyInstancesByMetadata("svc", Map.of("region", "cn")).size());
         assertEquals(1, naming.getInstancesByMetadata("svc", Map.of("region", "cn")).size());
         assertEquals(1, naming.getHealthyInstancesByMetadata("svc", Map.of("region", "cn")).size());
 
@@ -107,8 +107,8 @@ class RedisNamingServiceCoverageUnitTest {
         naming.stop(); // warn only
         naming.sendHeartbeat(instance("svc", "i1")); // not running -> silent
         naming.batchSendHeartbeats(List.of());
-        naming.batchHeartbeat(List.of(instance("svc", "i1")));
-        naming.heartbeat(instance("svc", "i1"));
+        naming.batchSendHeartbeats(List.of(instance("svc", "i1")));
+        naming.sendHeartbeat(instance("svc", "i1"));
     }
 
     private static ServiceInstance instance(String serviceName, String instanceId) {

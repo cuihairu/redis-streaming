@@ -102,7 +102,7 @@ class ConsumerHealthEventIntegrationTest {
         // discover registers the health checker; since B-08 the first check runs
         // asynchronously, and a discovery CURRENT event may be queued ahead of it —
         // drain until the first probe's HEALTH_FAILURE arrives
-        assertEquals(1, consumer.discover(SERVICE).size());
+        assertEquals(1, consumer.getAllInstances(SERVICE).size());
 
         ServiceChangeAction action = null;
         long healthDeadline = System.currentTimeMillis() + 20_000;

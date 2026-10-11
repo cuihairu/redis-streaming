@@ -71,7 +71,7 @@ public class RedisRegistryIntegrationExample {
             
             // Discover services
             System.out.println("=== 发现服务实例 ===");
-            List<ServiceInstance> instances = serviceConsumer.discover("user-service");
+            List<ServiceInstance> instances = serviceConsumer.getAllInstances("user-service");
             System.out.println("发现 " + instances.size() + " 个服务实例:");
             for (ServiceInstance instance : instances) {
                 System.out.println("  - " + instance.getInstanceId() + " @ " + instance.getHost() + ":" + instance.getPort() + 
@@ -116,7 +116,7 @@ public class RedisRegistryIntegrationExample {
             
             // Discover services again
             System.out.println("=== 变更后的服务实例 ===");
-            instances = serviceConsumer.discoverHealthy("user-service");
+            instances = serviceConsumer.getHealthyInstances("user-service");
             System.out.println("发现 " + instances.size() + " 个健康的服务实例:");
             for (ServiceInstance instance : instances) {
                 System.out.println("  - " + instance.getInstanceId() + " @ " + instance.getHost() + ":" + instance.getPort() + 
@@ -254,7 +254,7 @@ public class RedisRegistryIntegrationExample {
             serviceProvider.register(serviceInstance);
             
             // 3. Service consumer discovers services and retrieves configuration
-            List<ServiceInstance> instances = serviceConsumer.discoverHealthy("user-service");
+            List<ServiceInstance> instances = serviceConsumer.getHealthyInstances("user-service");
             System.out.println("发现服务实例: " + instances.size() + " 个");
             
             for (ServiceInstance instance : instances) {

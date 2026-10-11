@@ -54,10 +54,10 @@ Inject and use:
 public class OrderClient {
 
     @Autowired
-    private ServiceDiscovery serviceDiscovery;   // RedisNamingService, created and started by the starter
+    private NamingService namingService;   // RedisNamingService, created and started by the starter
 
     public List<ServiceInstance> pick() {
-        return serviceDiscovery.discoverHealthy("payment-service");
+        return namingService.getHealthyInstances("payment-service");
     }
 }
 ```
@@ -90,14 +90,14 @@ naming.deregister(instance);
 naming.stop();
 ```
 
-Role interfaces and their relation to `NamingService` (one implementation, four views):
+Role interfaces and their relation to `NamingService` (one implementation):
 
 | View | Interface | Methods |
 |------|-----------|---------|
 | Service provider | `ServiceProvider` | `register` / `deregister` / `sendHeartbeat` / `batchSendHeartbeats` / `start` / `stop` / `isRunning` |
-| Technical registration | `ServiceRegistry` | `register` / `deregister` / `heartbeat` / `batchHeartbeat` (the last two are aliases of sendHeartbeat) |
 | Service consumer | `ServiceConsumer` | `getAllInstances` / `getHealthyInstances` / `getInstances(name, healthy)` / `getInstancesByMetadata` / `getHealthyInstancesByMetadata` / `subscribe` / `unsubscribe` |
-| Technical discovery | `ServiceDiscovery` | `discover` / `discoverHealthy` / `discoverByMetadata` / `discoverHealthyByMetadata` / `subscribe` / `unsubscribe` |
+
+Compatibility aliases (`NamingService` default methods; the former `ServiceRegistry`/`ServiceDiscovery` interfaces were removed on 2026-10-12): `heartbeat`→`sendHeartbeat`, `batchHeartbeat`→`batchSendHeartbeats`, `discover`→`getAllInstances`, `discoverHealthy`→`getHealthyInstances`, `discoverByMetadata`→`getInstancesByMetadata`, `discoverHealthyByMetadata`→`getHealthyInstancesByMetadata`.
 
 `getInstancesByFilters`, `getHealthyInstancesByFilters`, `chooseHealthyInstance`, `chooseHealthyInstanceByFilters` and `getConfig` live on `RedisNamingService` only (not on the `NamingService` interface) — declare the variable with the implementation type or cast explicitly.
 
@@ -158,9 +158,6 @@ Map<String, String> filters = Map.of(
 
 List<ServiceInstance> matched = naming.getInstancesByMetadata("order-service", filters);
 List<ServiceInstance> healthy  = naming.getHealthyInstancesByMetadata("order-service", filters);
-
-// same capability from the Discovery view
-List<ServiceInstance> d = serviceDiscovery.discoverByMetadata("order-service", filters);
 ```
 
 `FilterBuilder` produces the same filter maps and supports both metadata and metrics conditions:

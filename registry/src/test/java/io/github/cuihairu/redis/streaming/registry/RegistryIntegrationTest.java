@@ -84,7 +84,7 @@ public class RegistryIntegrationTest {
         Thread.sleep(500);
 
         // Discover services
-        List<ServiceInstance> instances = serviceConsumer.discover("test-service");
+        List<ServiceInstance> instances = serviceConsumer.getAllInstances("test-service");
         assertEquals(1, instances.size());
 
         ServiceInstance discovered = instances.get(0);
@@ -98,7 +98,7 @@ public class RegistryIntegrationTest {
         Thread.sleep(500);
 
         // Verify deregistered
-        instances = serviceConsumer.discover("test-service");
+        instances = serviceConsumer.getAllInstances("test-service");
         assertEquals(0, instances.size());
     }
 
@@ -121,7 +121,7 @@ public class RegistryIntegrationTest {
         Thread.sleep(500);
 
         // Verify all instances are registered
-        List<ServiceInstance> instances = serviceConsumer.discover("multi-service");
+        List<ServiceInstance> instances = serviceConsumer.getAllInstances("multi-service");
         assertEquals(5, instances.size());
 
         // Verify weight settings
@@ -165,7 +165,7 @@ public class RegistryIntegrationTest {
         Thread.sleep(500);
 
         // Verify both instances registered successfully
-        List<ServiceInstance> instances = serviceConsumer.discover("mixed-service");
+        List<ServiceInstance> instances = serviceConsumer.getAllInstances("mixed-service");
         assertEquals(2, instances.size());
 
         // Verify ephemeral property
@@ -203,7 +203,7 @@ public class RegistryIntegrationTest {
         }
 
         // Verify instance is still active
-        List<ServiceInstance> instances = serviceConsumer.discoverHealthy("heartbeat-service");
+        List<ServiceInstance> instances = serviceConsumer.getHealthyInstances("heartbeat-service");
         assertEquals(1, instances.size());
 
         // Clean up
@@ -274,7 +274,7 @@ public class RegistryIntegrationTest {
         Thread.sleep(500);
 
         // Discover service and verify metadata
-        List<ServiceInstance> instances = serviceConsumer.discover("metadata-service");
+        List<ServiceInstance> instances = serviceConsumer.getAllInstances("metadata-service");
         assertEquals(1, instances.size());
 
         ServiceInstance discovered = instances.get(0);
@@ -311,7 +311,7 @@ public class RegistryIntegrationTest {
         serviceProvider.register(instance1);
         Thread.sleep(500);
 
-        List<ServiceInstance> instances = serviceConsumer.discover("reregister-service");
+        List<ServiceInstance> instances = serviceConsumer.getAllInstances("reregister-service");
         assertEquals(1, instances.size());
         assertEquals("192.168.1.100", instances.get(0).getHost());
 
@@ -319,7 +319,7 @@ public class RegistryIntegrationTest {
         serviceProvider.register(instance2);
         Thread.sleep(500);
 
-        instances = serviceConsumer.discover("reregister-service");
+        instances = serviceConsumer.getAllInstances("reregister-service");
         assertEquals(1, instances.size());
         ServiceInstance discovered = instances.get(0);
         assertEquals("192.168.1.101", discovered.getHost());
@@ -355,7 +355,7 @@ public class RegistryIntegrationTest {
         Thread.sleep(500);
 
         // Discover all instances
-        List<ServiceInstance> instances = serviceConsumer.discover("protocol-service");
+        List<ServiceInstance> instances = serviceConsumer.getAllInstances("protocol-service");
         assertEquals(2, instances.size());
 
         // Verify protocols
@@ -393,7 +393,7 @@ public class RegistryIntegrationTest {
         Thread.sleep(500);
 
         // Verify service exists
-        List<ServiceInstance> instances = serviceConsumer.discover(serviceName);
+        List<ServiceInstance> instances = serviceConsumer.getAllInstances(serviceName);
         assertEquals(1, instances.size());
 
         // Deregister the last instance
@@ -401,7 +401,7 @@ public class RegistryIntegrationTest {
         Thread.sleep(500);
 
         // Verify service index is cleaned up
-        instances = serviceConsumer.discover(serviceName);
+        instances = serviceConsumer.getAllInstances(serviceName);
         assertEquals(0, instances.size());
     }
 
@@ -443,7 +443,7 @@ public class RegistryIntegrationTest {
         Thread.sleep(1000); // Wait for all registrations to complete
 
         // Verify all instances registered successfully
-        List<ServiceInstance> instances = serviceConsumer.discover("concurrent-service");
+        List<ServiceInstance> instances = serviceConsumer.getAllInstances("concurrent-service");
         assertEquals(threadCount, instances.size());
 
         // Clean up

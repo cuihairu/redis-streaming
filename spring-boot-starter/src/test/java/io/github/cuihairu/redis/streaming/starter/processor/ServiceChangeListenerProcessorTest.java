@@ -1,7 +1,7 @@
 package io.github.cuihairu.redis.streaming.starter.processor;
 
 import io.github.cuihairu.redis.streaming.registry.ServiceChangeAction;
-import io.github.cuihairu.redis.streaming.registry.ServiceDiscovery;
+import io.github.cuihairu.redis.streaming.registry.ServiceConsumer;
 import io.github.cuihairu.redis.streaming.registry.ServiceInstance;
 import io.github.cuihairu.redis.streaming.starter.annotation.ServiceChangeListener;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,24 +21,24 @@ import static org.mockito.Mockito.*;
  */
 class ServiceChangeListenerProcessorTest {
 
-    private ServiceDiscovery mockServiceDiscovery;
+    private ServiceConsumer mockServiceConsumer;
     private ServiceChangeListenerProcessor processor;
 
     @BeforeEach
     void setUp() {
-        mockServiceDiscovery = mock(ServiceDiscovery.class);
-        processor = new ServiceChangeListenerProcessor(mockServiceDiscovery);
+        mockServiceConsumer = mock(ServiceConsumer.class);
+        processor = new ServiceChangeListenerProcessor(mockServiceConsumer);
     }
 
     // ===== Constructor Tests =====
 
     @Test
-    void testConstructorWithValidServiceDiscovery() {
+    void testConstructorWithValidServiceConsumer() {
         assertNotNull(processor);
     }
 
     @Test
-    void testConstructorWithNullServiceDiscovery() {
+    void testConstructorWithNullServiceConsumer() {
         assertDoesNotThrow(() -> new ServiceChangeListenerProcessor(null));
     }
 
@@ -51,7 +51,7 @@ class ServiceChangeListenerProcessorTest {
         Object result = processor.postProcessAfterInitialization(bean, "testBean");
 
         assertSame(bean, result);
-        verifyNoInteractions(mockServiceDiscovery);
+        verifyNoInteractions(mockServiceConsumer);
     }
 
     @Test
@@ -61,7 +61,7 @@ class ServiceChangeListenerProcessorTest {
         Object result = processor.postProcessAfterInitialization(bean, "testBean");
 
         assertSame(bean, result);
-        verify(mockServiceDiscovery).subscribe(eq("test-service"), any());
+        verify(mockServiceConsumer).subscribe(eq("test-service"), any());
     }
 
     @Test
@@ -71,7 +71,7 @@ class ServiceChangeListenerProcessorTest {
         Object result = processor.postProcessAfterInitialization(bean, "testBean");
 
         assertSame(bean, result);
-        verify(mockServiceDiscovery, times(2)).subscribe(any(), any());
+        verify(mockServiceConsumer, times(2)).subscribe(any(), any());
     }
 
     @Test
@@ -81,7 +81,7 @@ class ServiceChangeListenerProcessorTest {
         Object result = processor.postProcessAfterInitialization(bean, "testBean");
 
         assertSame(bean, result);
-        verify(mockServiceDiscovery).subscribe(eq("test-service"), any());
+        verify(mockServiceConsumer).subscribe(eq("test-service"), any());
     }
 
     @Test
@@ -110,7 +110,7 @@ class ServiceChangeListenerProcessorTest {
 
         ArgumentCaptor<io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListener> captor =
                 ArgumentCaptor.forClass(io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListener.class);
-        verify(mockServiceDiscovery).subscribe(eq("test-service"), captor.capture());
+        verify(mockServiceConsumer).subscribe(eq("test-service"), captor.capture());
 
         // Simulate service change
         ServiceInstance mockInstance = mock(ServiceInstance.class);
@@ -133,7 +133,7 @@ class ServiceChangeListenerProcessorTest {
 
         ArgumentCaptor<io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListener> captor =
                 ArgumentCaptor.forClass(io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListener.class);
-        verify(mockServiceDiscovery).subscribe(eq("test-service"), captor.capture());
+        verify(mockServiceConsumer).subscribe(eq("test-service"), captor.capture());
 
         // Simulate service change
         ServiceInstance mockInstance = mock(ServiceInstance.class);
@@ -152,7 +152,7 @@ class ServiceChangeListenerProcessorTest {
 
         ArgumentCaptor<io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListener> captor =
                 ArgumentCaptor.forClass(io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListener.class);
-        verify(mockServiceDiscovery).subscribe(eq("test-service"), captor.capture());
+        verify(mockServiceConsumer).subscribe(eq("test-service"), captor.capture());
 
         // Simulate service change
         ServiceInstance mockInstance = mock(ServiceInstance.class);
@@ -172,7 +172,7 @@ class ServiceChangeListenerProcessorTest {
 
         ArgumentCaptor<io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListener> captor =
                 ArgumentCaptor.forClass(io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListener.class);
-        verify(mockServiceDiscovery).subscribe(eq("specific-service"), captor.capture());
+        verify(mockServiceConsumer).subscribe(eq("specific-service"), captor.capture());
 
         ServiceInstance mockInstance = mock(ServiceInstance.class);
         List<ServiceInstance> allInstances = new ArrayList<>();
@@ -193,7 +193,7 @@ class ServiceChangeListenerProcessorTest {
 
         ArgumentCaptor<io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListener> captor =
                 ArgumentCaptor.forClass(io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListener.class);
-        verify(mockServiceDiscovery).subscribe(eq("test-service"), captor.capture());
+        verify(mockServiceConsumer).subscribe(eq("test-service"), captor.capture());
 
         ServiceInstance mockInstance = mock(ServiceInstance.class);
         List<ServiceInstance> allInstances = new ArrayList<>();
@@ -214,7 +214,7 @@ class ServiceChangeListenerProcessorTest {
 
         ArgumentCaptor<io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListener> captor =
                 ArgumentCaptor.forClass(io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListener.class);
-        verify(mockServiceDiscovery).subscribe(eq("test-service"), captor.capture());
+        verify(mockServiceConsumer).subscribe(eq("test-service"), captor.capture());
 
         ServiceInstance mockInstance = mock(ServiceInstance.class);
         List<ServiceInstance> allInstances = new ArrayList<>();
@@ -231,7 +231,7 @@ class ServiceChangeListenerProcessorTest {
 
         ArgumentCaptor<io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListener> captor =
                 ArgumentCaptor.forClass(io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListener.class);
-        verify(mockServiceDiscovery).subscribe(eq("test-service"), captor.capture());
+        verify(mockServiceConsumer).subscribe(eq("test-service"), captor.capture());
 
         ServiceInstance mockInstance = mock(ServiceInstance.class);
         List<ServiceInstance> allInstances = new ArrayList<>();

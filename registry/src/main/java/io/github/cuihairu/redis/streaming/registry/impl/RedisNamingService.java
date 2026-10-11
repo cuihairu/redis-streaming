@@ -16,13 +16,10 @@ import java.util.List;
  * Integrates service registration and discovery, provides unified NamingService interface
  *
  * This implementation clearly separates service provider and consumer responsibilities
- * while maintaining backward compatibility with the legacy API.
- *
- * Implements multiple interfaces to support both perspectives:
- * - Business role: ServiceProvider, ServiceConsumer
- * - Technical operation: ServiceRegistry, ServiceDiscovery
+ * (composition over {@link RedisServiceProvider} + {@link RedisServiceConsumer} with a
+ * shared lifecycle) behind the unified {@link NamingService} interface.
  */
-public class RedisNamingService implements NamingService, ServiceDiscovery, ServiceRegistry {
+public class RedisNamingService implements NamingService {
 
     private static final Logger logger = LoggerFactory.getLogger(RedisNamingService.class);
 
@@ -112,14 +109,9 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
             throw new IllegalStateException("NamingService is not running");
         }
 
-        List<ServiceInstance> instances = serviceConsumer.discover(serviceName);
+        List<ServiceInstance> instances = serviceConsumer.getAllInstances(serviceName);
         logger.debug("Retrieved {} instances for service: {}", instances.size(), serviceName);
         return instances;
-    }
-
-    @Override
-    public List<ServiceInstance> discover(String serviceName) {
-        return getAllInstances(serviceName);
     }
 
     @Override
@@ -128,14 +120,9 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
             throw new IllegalStateException("NamingService is not running");
         }
 
-        List<ServiceInstance> instances = serviceConsumer.discoverHealthy(serviceName);
+        List<ServiceInstance> instances = serviceConsumer.getHealthyInstances(serviceName);
         logger.debug("Retrieved {} healthy instances for service: {}", instances.size(), serviceName);
         return instances;
-    }
-
-    @Override
-    public List<ServiceInstance> discoverHealthy(String serviceName) {
-        return getHealthyInstances(serviceName);
     }
 
     @Override
@@ -146,10 +133,10 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
 
         List<ServiceInstance> instances;
         if (healthy) {
-            instances = serviceConsumer.discoverHealthy(serviceName);
+            instances = serviceConsumer.getHealthyInstances(serviceName);
             logger.debug("Selected {} healthy instances for service: {}", instances.size(), serviceName);
         } else {
-            instances = serviceConsumer.discover(serviceName);
+            instances = serviceConsumer.getAllInstances(serviceName);
             logger.debug("Selected {} instances for service: {}", instances.size(), serviceName);
         }
 
@@ -220,7 +207,7 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
             throw new IllegalStateException("NamingService is not running");
         }
 
-        List<ServiceInstance> instances = serviceConsumer.discoverByMetadata(serviceName, metadataFilters);
+        List<ServiceInstance> instances = serviceConsumer.getInstancesByMetadata(serviceName, metadataFilters);
         logger.debug("Retrieved {} instances for service: {} with metadata filters: {}",
                 instances.size(), serviceName, metadataFilters);
         return instances;
@@ -239,22 +226,10 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
             throw new IllegalStateException("NamingService is not running");
         }
 
-        List<ServiceInstance> instances = serviceConsumer.discoverHealthyByMetadata(serviceName, metadataFilters);
+        List<ServiceInstance> instances = serviceConsumer.getHealthyInstancesByMetadata(serviceName, metadataFilters);
         logger.debug("Retrieved {} healthy instances for service: {} with metadata filters: {}",
                 instances.size(), serviceName, metadataFilters);
         return instances;
-    }
-
-    // ==================== ServiceDiscovery interface implementation ====================
-
-    @Override
-    public List<ServiceInstance> discoverByMetadata(String serviceName, java.util.Map<String, String> metadataFilters) {
-        return getInstancesByMetadata(serviceName, metadataFilters);
-    }
-
-    @Override
-    public List<ServiceInstance> discoverHealthyByMetadata(String serviceName, java.util.Map<String, String> metadataFilters) {
-        return getHealthyInstancesByMetadata(serviceName, metadataFilters);
     }
 
     // ==================== Extension: support metrics filtering ====================
@@ -302,28 +277,6 @@ public class RedisNamingService implements NamingService, ServiceDiscovery, Serv
                                                           java.util.Map<String, Object> context) {
         java.util.List<ServiceInstance> instances = getHealthyInstancesByFilters(serviceName, metadataFilters, metricsFilters);
         return lb.choose(serviceName, instances, context);
-    }
-
-    // ==================== ServiceRegistry interface implementation ====================
-
-    /**
-     * Alias for sendHeartbeat (ServiceRegistry interface)
-     *
-     * @param instance the service instance to send heartbeat for
-     */
-    @Override
-    public void heartbeat(ServiceInstance instance) {
-        sendHeartbeat(instance);
-    }
-
-    /**
-     * Alias for batchSendHeartbeats (ServiceRegistry interface)
-     *
-     * @param instances the list of service instances to send heartbeats for
-     */
-    @Override
-    public void batchHeartbeat(List<ServiceInstance> instances) {
-        batchSendHeartbeats(instances);
     }
 
     // ==================== Lifecycle management ====================

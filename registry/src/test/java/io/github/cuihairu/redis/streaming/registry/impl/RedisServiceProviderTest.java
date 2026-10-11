@@ -249,7 +249,7 @@ class RedisServiceProviderTest {
                 .build();
 
         // Should not throw when not running
-        assertDoesNotThrow(() -> provider.heartbeat(instance));
+        assertDoesNotThrow(() -> provider.sendHeartbeat(instance));
     }
 
     @Test
@@ -266,7 +266,7 @@ class RedisServiceProviderTest {
                 .build();
 
         // Should not throw when not running
-        assertDoesNotThrow(() -> provider.batchHeartbeat(java.util.List.of(instance)));
+        assertDoesNotThrow(() -> provider.batchSendHeartbeats(java.util.List.of(instance)));
     }
 
     @Test
@@ -579,11 +579,11 @@ class RedisServiceProviderTest {
     }
 
     @Test
-    void testRegistryInterfaceMethods() {
-        io.github.cuihairu.redis.streaming.registry.ServiceRegistry registry =
+    void testServiceProviderInterfaceMethods() {
+        io.github.cuihairu.redis.streaming.registry.ServiceProvider provider =
             new RedisServiceProvider(mockRedissonClient);
 
-        registry.start();
+        provider.start();
 
         ServiceInstance instance = DefaultServiceInstance.builder()
             .serviceName("test-service")
@@ -593,17 +593,17 @@ class RedisServiceProviderTest {
             .build();
 
         // Test register throws when not running
-        registry.stop();
-        assertThrows(IllegalStateException.class, () -> registry.register(instance));
+        provider.stop();
+        assertThrows(IllegalStateException.class, () -> provider.register(instance));
 
         // Test deregister throws when not running
-        assertThrows(IllegalStateException.class, () -> registry.deregister(instance));
+        assertThrows(IllegalStateException.class, () -> provider.deregister(instance));
 
         // Test heartbeat silently fails when not running
-        assertDoesNotThrow(() -> registry.heartbeat(instance));
+        assertDoesNotThrow(() -> provider.sendHeartbeat(instance));
 
-        // Test batchHeartbeat silently fails when not running
-        assertDoesNotThrow(() -> registry.batchHeartbeat(java.util.List.of(instance)));
+        // Test batch heartbeat silently fails when not running
+        assertDoesNotThrow(() -> provider.batchSendHeartbeats(java.util.List.of(instance)));
     }
 
     @Test
@@ -626,9 +626,9 @@ class RedisServiceProviderTest {
 
     @Test
     void testBatchHeartbeatAliasMethod() {
-        io.github.cuihairu.redis.streaming.registry.ServiceRegistry registry =
-            new RedisServiceProvider(mockRedissonClient);
-        registry.start();
+        // batchHeartbeat survives as a NamingService default alias
+        io.github.cuihairu.redis.streaming.registry.NamingService namingService =
+            new RedisNamingService(mockRedissonClient);
 
         ServiceInstance instance = DefaultServiceInstance.builder()
             .serviceName("test-service")
@@ -637,17 +637,15 @@ class RedisServiceProviderTest {
             .port(8080)
             .build();
 
-        // Test batchHeartbeat alias
-        assertDoesNotThrow(() -> registry.batchHeartbeat(java.util.List.of(instance)));
-
-        registry.stop();
+        // Silently ignored while not running
+        assertDoesNotThrow(() -> namingService.batchHeartbeat(java.util.List.of(instance)));
     }
 
     @Test
     void testHeartbeatAliasMethod() {
-        io.github.cuihairu.redis.streaming.registry.ServiceRegistry registry =
-            new RedisServiceProvider(mockRedissonClient);
-        registry.start();
+        // heartbeat survives as a NamingService default alias
+        io.github.cuihairu.redis.streaming.registry.NamingService namingService =
+            new RedisNamingService(mockRedissonClient);
 
         ServiceInstance instance = DefaultServiceInstance.builder()
             .serviceName("test-service")
@@ -656,10 +654,8 @@ class RedisServiceProviderTest {
             .port(8080)
             .build();
 
-        // Test heartbeat alias
-        assertDoesNotThrow(() -> registry.heartbeat(instance));
-
-        registry.stop();
+        // Silently ignored while not running
+        assertDoesNotThrow(() -> namingService.heartbeat(instance));
     }
 
     @Test

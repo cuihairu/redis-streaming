@@ -145,7 +145,7 @@ class RedisNamingServiceTest {
     void testDiscoverWhenNotRunningThrowsException() {
         RedisNamingService service = createNamingService();
 
-        assertThrows(IllegalStateException.class, () -> service.discover("test-service"));
+        assertThrows(IllegalStateException.class, () -> service.getAllInstances("test-service"));
     }
 
     @Test
@@ -270,7 +270,7 @@ class RedisNamingServiceTest {
         service.start();
 
         List<ServiceInstance> allResult = service.getAllInstances("test-service");
-        List<ServiceInstance> discoverResult = service.discover("test-service");
+        List<ServiceInstance> discoverResult = service.getAllInstances("test-service");
 
         // Both should return empty lists (no instances registered)
         assertNotNull(allResult);
@@ -285,7 +285,7 @@ class RedisNamingServiceTest {
         service.start();
 
         List<ServiceInstance> getResult = service.getHealthyInstances("test-service");
-        List<ServiceInstance> discoverResult = service.discoverHealthy("test-service");
+        List<ServiceInstance> discoverResult = service.getHealthyInstances("test-service");
 
         // Both should return empty lists (no instances registered)
         assertNotNull(getResult);
@@ -305,7 +305,7 @@ class RedisNamingServiceTest {
                 .port(8080)
                 .build();
 
-        assertDoesNotThrow(() -> service.heartbeat(instance));
+        assertDoesNotThrow(() -> service.sendHeartbeat(instance));
     }
 
     @Test
@@ -320,7 +320,7 @@ class RedisNamingServiceTest {
                 .port(8080)
                 .build();
 
-        assertDoesNotThrow(() -> service.batchHeartbeat(java.util.List.of(instance)));
+        assertDoesNotThrow(() -> service.batchSendHeartbeats(java.util.List.of(instance)));
     }
 
     @Test
@@ -498,7 +498,7 @@ class RedisNamingServiceTest {
                 .port(8080)
                 .build();
 
-        assertDoesNotThrow(() -> service.heartbeat(instance));
+        assertDoesNotThrow(() -> service.sendHeartbeat(instance));
     }
 
     @Test
@@ -512,7 +512,7 @@ class RedisNamingServiceTest {
                 .port(8080)
                 .build();
 
-        assertDoesNotThrow(() -> service.batchHeartbeat(java.util.List.of(instance)));
+        assertDoesNotThrow(() -> service.batchSendHeartbeats(java.util.List.of(instance)));
     }
 
     @Test

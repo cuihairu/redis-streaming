@@ -6,7 +6,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import io.github.cuihairu.redis.streaming.registry.NamingService;
 import io.github.cuihairu.redis.streaming.registry.impl.RedisNamingService;
 import io.github.cuihairu.redis.streaming.registry.ServiceConsumerConfig;
-import io.github.cuihairu.redis.streaming.registry.ServiceDiscovery;
+import io.github.cuihairu.redis.streaming.registry.ServiceConsumer;
 import io.github.cuihairu.redis.streaming.registry.loadbalancer.ConsistentHashLoadBalancer;
 import io.github.cuihairu.redis.streaming.registry.loadbalancer.LoadBalancer;
 import io.github.cuihairu.redis.streaming.registry.loadbalancer.LoadBalancerConfig;
@@ -51,8 +51,8 @@ public class RedisStreamingRegistryAutoConfiguration {
     @ConditionalOnBean(NamingService.class)
     public ServiceChangeListenerProcessor serviceChangeListenerProcessor(NamingService namingService) {
         log.info("Initializing ServiceChangeListenerProcessor for @ServiceChangeListener annotation");
-        // NamingService extends ServiceConsumer, which extends ServiceDiscovery
-        return new ServiceChangeListenerProcessor((ServiceDiscovery) namingService);
+        // NamingService extends ServiceConsumer
+        return new ServiceChangeListenerProcessor((ServiceConsumer) namingService);
     }
 
     // ===== LoadBalancer & Selector & Invoker =====

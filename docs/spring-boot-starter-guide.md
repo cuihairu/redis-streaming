@@ -7,7 +7,7 @@
 `spring-boot-starter` 把 core/runtime/mq/registry/config/reliability 组件装配成 Spring Bean:
 
 - 兜底 `RedissonClient`(项目里已有 `RedissonClient` Bean 时自动让位)
-- 服务注册/发现:`NamingService`、`ServiceDiscovery`、`LoadBalancer`、`ClientSelector`/`ClientInvoker`
+- 服务注册/发现:`NamingService`、`ServiceConsumer`、`LoadBalancer`、`ClientSelector`/`ClientInvoker`
 - 配置中心:`ConfigService`
 - 消息队列与死信:`MessageQueueFactory`、`MessageQueueAdmin`、`DeadLetterService` 等
 - 限流:`RateLimiter` / `RateLimiterRegistry`(`redis-streaming.ratelimit.enabled=true` 时,默认关闭)

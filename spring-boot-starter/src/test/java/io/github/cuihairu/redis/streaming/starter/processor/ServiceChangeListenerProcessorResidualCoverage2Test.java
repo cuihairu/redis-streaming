@@ -1,7 +1,7 @@
 package io.github.cuihairu.redis.streaming.starter.processor;
 
 import io.github.cuihairu.redis.streaming.registry.ServiceChangeAction;
-import io.github.cuihairu.redis.streaming.registry.ServiceDiscovery;
+import io.github.cuihairu.redis.streaming.registry.ServiceConsumer;
 import io.github.cuihairu.redis.streaming.registry.ServiceInstance;
 import io.github.cuihairu.redis.streaming.registry.listener.ServiceChangeListener;
 import org.junit.jupiter.api.Test;
@@ -37,7 +37,7 @@ class ServiceChangeListenerProcessorResidualCoverage2Test {
     }
 
     @SuppressWarnings("unchecked")
-    private static ServiceChangeListener captureListener(ServiceDiscovery discovery) {
+    private static ServiceChangeListener captureListener(ServiceConsumer discovery) {
         ArgumentCaptor<ServiceChangeListener> captor = ArgumentCaptor.forClass(ServiceChangeListener.class);
         verify(discovery, times(2)).subscribe(eq("svc-a"), captor.capture());
         List<ServiceChangeListener> listeners = captor.getAllValues();
@@ -53,7 +53,7 @@ class ServiceChangeListenerProcessorResidualCoverage2Test {
     @Test
     void listenerMethodsReceiveMappedArguments() {
         Bean bean = new Bean();
-        ServiceDiscovery discovery = mock(ServiceDiscovery.class);
+        ServiceConsumer discovery = mock(ServiceConsumer.class);
         new ServiceChangeListenerProcessor(discovery).postProcessAfterInitialization(bean, "bean");
 
         ServiceChangeListener both = captureListener(discovery);
@@ -67,7 +67,7 @@ class ServiceChangeListenerProcessorResidualCoverage2Test {
     @Test
     void foreignServiceNameIsFilteredOut() {
         Bean bean = new Bean();
-        ServiceDiscovery discovery = mock(ServiceDiscovery.class);
+        ServiceConsumer discovery = mock(ServiceConsumer.class);
         new ServiceChangeListenerProcessor(discovery).postProcessAfterInitialization(bean, "bean");
 
         ServiceChangeListener both = captureListener(discovery);
@@ -79,7 +79,7 @@ class ServiceChangeListenerProcessorResidualCoverage2Test {
     @Test
     void unlistedActionIsFilteredOut() {
         Bean bean = new Bean();
-        ServiceDiscovery discovery = mock(ServiceDiscovery.class);
+        ServiceConsumer discovery = mock(ServiceConsumer.class);
         new ServiceChangeListenerProcessor(discovery).postProcessAfterInitialization(bean, "bean");
 
         ServiceChangeListener both = captureListener(discovery);
