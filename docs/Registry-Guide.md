@@ -220,7 +220,7 @@ ServiceInstance chosen = ((RedisNamingService) naming)
         .chooseHealthyInstanceByFilters("order-service", md, mt, scored, Map.of());
 ```
 
-metrics 键说明：`ScoredLoadBalancer` 默认读 `cpu`、`latency`、`memory`、`inflight`、`queue`、`errorRate`（可用 `cfg.setCpuKey(...)` 等改）。内置采集器产出的是 `processCpuLoad`（0~1）、`heap_usagePercent`、`threadCount` 等键；客户端上报写入 `clientInflight`、`clientLatencyMs`、`clientErrorRate`。两边键名默认不一致，需要通过 `LoadBalancerConfig.setXxxKey(...)` 对齐或由业务方补充同键名数据。
+metrics 键说明：`ScoredLoadBalancer` 默认读 `cpu`、`latency`、`memory`、`inflight`、`queue`、`errorRate`（可用 `cfg.setCpuKey(...)` 等改）。provider 侧内置指标采集（原 `registry.metrics` 包，产出 `processCpuLoad`、`heap_usagePercent`、`threadCount` 等键）已于 2026-10-12 删除；实例 Hash 的 `metrics` 字段现在是数据驱动的——由业务方/外部 agent（或原客户端上报逻辑，写 `clientInflight`、`clientLatencyMs`、`clientErrorRate`）自行写入，读取端（`RedisMetricsProvider`、metrics 过滤）不变。写入键名需与 `LoadBalancerConfig.setXxxKey(...)` 对齐。
 
 ## 6) 客户端调用（已删除 client 包）
 

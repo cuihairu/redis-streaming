@@ -15,11 +15,6 @@ import io.github.cuihairu.redis.streaming.registry.heartbeat.HeartbeatStateManag
 import io.github.cuihairu.redis.streaming.registry.heartbeat.UpdateDecision;
 import io.github.cuihairu.redis.streaming.registry.keys.RegistryKeys;
 import io.github.cuihairu.redis.streaming.registry.lua.RegistryLuaScriptExecutor;
-import io.github.cuihairu.redis.streaming.registry.metrics.MetricsCollectionManager;
-import io.github.cuihairu.redis.streaming.registry.metrics.MetricsConfig;
-import io.github.cuihairu.redis.streaming.registry.metrics.CpuMetricCollector;
-import io.github.cuihairu.redis.streaming.registry.metrics.MemoryMetricCollector;
-import io.github.cuihairu.redis.streaming.registry.metrics.ApplicationMetricCollector;
 import org.redisson.api.*;
 import org.redisson.codec.JsonJacksonCodec;
 import io.github.cuihairu.redis.streaming.registry.event.ServiceChangeEvent;
@@ -54,7 +49,6 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
     private final ServiceProviderConfig config;
     private final HeartbeatConfig heartbeatConfig;
     private final HeartbeatStateManager stateManager;
-    private final MetricsCollectionManager metricsManager;
     private final RegistryLuaScriptExecutor luaExecutor;
     private final ObjectMapper objectMapper;
     private final RegistryKeys registryKeys;
@@ -64,39 +58,19 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
     private ScheduledFuture<?> cleanupTask;
 
     public RedisServiceProvider(RedissonClient redissonClient) {
-        this(redissonClient, new ServiceProviderConfig(), new HeartbeatConfig(), null);
+        this(redissonClient, new ServiceProviderConfig(), new HeartbeatConfig());
     }
 
     public RedisServiceProvider(RedissonClient redissonClient, ServiceProviderConfig config) {
-        this(redissonClient, config, new HeartbeatConfig(), null);
+        this(redissonClient, config, new HeartbeatConfig());
     }
 
     public RedisServiceProvider(RedissonClient redissonClient, ServiceProviderConfig config,
-                                HeartbeatConfig heartbeatConfig, MetricsCollectionManager metricsManager) {
+                                HeartbeatConfig heartbeatConfig) {
         this.redissonClient = redissonClient;
         this.config = config != null ? config : new ServiceProviderConfig();
         this.heartbeatConfig = heartbeatConfig != null ? heartbeatConfig : new HeartbeatConfig();
         this.stateManager = new HeartbeatStateManager(this.heartbeatConfig);
-        // default metrics manager if none provided
-        if (metricsManager == null) {
-            java.util.List<io.github.cuihairu.redis.streaming.registry.metrics.MetricCollector> collectors = new java.util.ArrayList<>();
-            collectors.add(new CpuMetricCollector());
-            collectors.add(new MemoryMetricCollector());
-            collectors.add(new ApplicationMetricCollector());
-            // GC metrics (low cost)
-            collectors.add(new io.github.cuihairu.redis.streaming.registry.metrics.GcMetricCollector());
-            // disk collector (low cost)
-            collectors.add(new io.github.cuihairu.redis.streaming.registry.metrics.DiskMetricCollector());
-            // optional network collector if available (Linux /proc)
-            try {
-                Class<?> nc = Class.forName("io.github.cuihairu.redis.streaming.registry.metrics.NetworkMetricCollector");
-                collectors.add((io.github.cuihairu.redis.streaming.registry.metrics.MetricCollector) nc.getDeclaredConstructor().newInstance());
-            } catch (Throwable ignore) {}
-            MetricsConfig mc = io.github.cuihairu.redis.streaming.registry.metrics.MetricsGlobal.getOrDefault();
-            this.metricsManager = new MetricsCollectionManager(collectors, mc);
-        } else {
-            this.metricsManager = metricsManager;
-        }
         this.luaExecutor = new RegistryLuaScriptExecutor(redissonClient);
         this.objectMapper = new ObjectMapper();
         this.registryKeys = this.config.getRegistryKeys();
@@ -132,12 +106,6 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
 
             // Prepare instance data
             Map<String, Object> instanceData = InstanceEntryCodec.buildInstanceData(instance, currentTime);
-
-            // Collect initial metrics
-            if (metricsManager != null) {
-                Map<String, Object> metrics = metricsManager.collectMetrics(true);
-                instanceData.put("metrics", metrics);
-            }
 
             // Use Lua script for atomic registration
             String servicesKey = registryKeys.getServicesIndexKey();
@@ -324,7 +292,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
     }
 
     /**
-     * Process instance heartbeat (using smart heartbeat strategy, distinguishes metadata and metrics)
+     * Process instance heartbeat (heartbeat refresh plus rare metadata propagation)
      */
     private void processInstanceHeartbeat(ServiceInstance instance) {
         String serviceName = instance.getServiceName();
@@ -334,72 +302,26 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
         String safeServiceName = RegistryKeys.validateAndSanitizeServiceName(serviceName);
         String safeInstanceId = RegistryKeys.validateAndSanitizeInstanceId(instanceId);
 
-        // ========== 1. Collect current data ==========
-        Map<String, Object> currentMetrics = metricsManager != null ?
-                metricsManager.collectMetrics(false) : Collections.emptyMap();
-
+        // ========== 1. Decision: whether metadata changed (rarely triggered) ==========
         Map<String, Object> currentMetadata = new HashMap<>(instance.getMetadata());
-
-        // ========== 2. Decision: whether to update metrics ==========
-        // B-05: an empty collection (collector failure, timeout, everything disabled) used to
-        // short-circuit to NO_UPDATE, which also skipped the heartbeat — under load (exactly
-        // when collection struggles) the instance's Redis TTL/score stopped refreshing and
-        // the cleanup reaped a live instance after heartbeatTimeoutSeconds.
-        UpdateDecision metricsDecision = currentMetrics.isEmpty() ?
-                stateManager.shouldHeartbeatOnly(safeServiceName, safeInstanceId) :
-                stateManager.shouldUpdateMetrics(safeServiceName, safeInstanceId, currentMetrics);
-
-        // ========== 3. Decision: whether to update metadata (rarely triggered) ==========
         UpdateDecision metadataDecision = stateManager.shouldUpdateMetadata(
                 safeServiceName, safeInstanceId, currentMetadata);
 
-        // ========== 4. Merge decisions and execute ==========
-        UpdateDecision finalDecision = mergeDecisions(metricsDecision, metadataDecision);
+        // ========== 2. Decision: whether a bare heartbeat touch is due ==========
+        // A metadata update always refreshes the heartbeat too (the update script and
+        // markMetadataUpdateCompleted both advance the heartbeat timestamp), so it wins.
+        UpdateDecision finalDecision =
+                metadataDecision == UpdateDecision.METADATA_UPDATE ?
+                        UpdateDecision.METADATA_UPDATE :
+                        stateManager.shouldHeartbeatOnly(safeServiceName, safeInstanceId);
 
         if (finalDecision != UpdateDecision.NO_UPDATE) {
             executeUpdate(instance, safeServiceName, safeInstanceId,
-                    finalDecision, currentMetadata, currentMetrics);
+                    finalDecision, currentMetadata);
         } else {
             // No update needed at all (neither heartbeat nor data update)
             logger.trace("No update needed for {}:{}", safeServiceName, safeInstanceId);
         }
-    }
-
-    /**
-     * Merge metrics and metadata update decisions
-     *
-     * @param metricsDecision metrics update decision
-     * @param metadataDecision metadata update decision
-     * @return merged decision
-     */
-    private UpdateDecision mergeDecisions(UpdateDecision metricsDecision,
-                                          UpdateDecision metadataDecision) {
-        // Priority: FULL_UPDATE > METADATA_UPDATE > METRICS_UPDATE > HEARTBEAT_ONLY > NO_UPDATE
-
-        // If both metadata and metrics need to be updated
-        if (metadataDecision == UpdateDecision.METADATA_UPDATE &&
-                (metricsDecision == UpdateDecision.METRICS_UPDATE ||
-                        metricsDecision == UpdateDecision.HEARTBEAT_ONLY)) {
-            return UpdateDecision.FULL_UPDATE;
-        }
-
-        // Metadata takes priority (because it changes less, more important)
-        if (metadataDecision == UpdateDecision.METADATA_UPDATE) {
-            return UpdateDecision.METADATA_UPDATE;
-        }
-
-        // Metrics update
-        if (metricsDecision == UpdateDecision.METRICS_UPDATE) {
-            return UpdateDecision.METRICS_UPDATE;
-        }
-
-        // Only heartbeat needed
-        if (metricsDecision == UpdateDecision.HEARTBEAT_ONLY ||
-                metadataDecision == UpdateDecision.HEARTBEAT_ONLY) {
-            return UpdateDecision.HEARTBEAT_ONLY;
-        }
-
-        return UpdateDecision.NO_UPDATE;
     }
 
     /**
@@ -409,8 +331,7 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
                                String safeServiceName,
                                String safeInstanceId,
                                UpdateDecision decision,
-                               Map<String, Object> metadata,
-                               Map<String, Object> metrics) {
+                               Map<String, Object> metadata) {
         try {
             long currentTime = System.currentTimeMillis();
 
@@ -420,27 +341,15 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
             // ========== Determine update mode and data ==========
             String updateMode;
             String metadataJson = null;
-            String metricsJson = null;
 
             switch (decision) {
                 case HEARTBEAT_ONLY:
                     updateMode = "heartbeat_only";
                     break;
 
-                case METRICS_UPDATE:
-                    updateMode = "metrics_update";
-                    metricsJson = objectMapper.writeValueAsString(metrics);
-                    break;
-
                 case METADATA_UPDATE:
                     updateMode = "metadata_update";
                     metadataJson = objectMapper.writeValueAsString(metadata);
-                    break;
-
-                case FULL_UPDATE:
-                    updateMode = "full_update";
-                    metadataJson = objectMapper.writeValueAsString(metadata);
-                    metricsJson = objectMapper.writeValueAsString(metrics);
                     break;
 
                 default:
@@ -450,25 +359,15 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
             // ========== Execute update script (and refresh TTL, only for ephemeral instances) ==========
             luaExecutor.executeHeartbeatUpdate(
                     heartbeatKey, instanceKey, safeInstanceId,
-                    currentTime, updateMode, metadataJson, metricsJson,
+                    currentTime, updateMode, metadataJson,
                     config.getHeartbeatTimeoutSeconds()
             );
 
             // ========== Update local state ==========
-            switch (decision) {
-                case METRICS_UPDATE:
-                    stateManager.markMetricsUpdateCompleted(safeServiceName, safeInstanceId, metrics);
-                    break;
-                case METADATA_UPDATE:
-                    stateManager.markMetadataUpdateCompleted(safeServiceName, safeInstanceId, metadata);
-                    break;
-                case FULL_UPDATE:
-                    stateManager.markMetricsUpdateCompleted(safeServiceName, safeInstanceId, metrics);
-                    stateManager.markMetadataUpdateCompleted(safeServiceName, safeInstanceId, metadata);
-                    break;
-                case HEARTBEAT_ONLY:
-                    stateManager.markHeartbeatOnlyCompleted(safeServiceName, safeInstanceId);
-                    break;
+            if (decision == UpdateDecision.METADATA_UPDATE) {
+                stateManager.markMetadataUpdateCompleted(safeServiceName, safeInstanceId, metadata);
+            } else {
+                stateManager.markHeartbeatOnlyCompleted(safeServiceName, safeInstanceId);
             }
 
             logger.debug("Heartbeat processed for {}:{} with mode: {}",
@@ -685,13 +584,6 @@ public class RedisServiceProvider implements ServiceProvider, ServiceRegistry {
      */
     public HeartbeatStateManager getStateManager() {
         return stateManager;
-    }
-
-    /**
-     * Get metrics manager
-     */
-    public MetricsCollectionManager getMetricsManager() {
-        return metricsManager;
     }
 
     /**

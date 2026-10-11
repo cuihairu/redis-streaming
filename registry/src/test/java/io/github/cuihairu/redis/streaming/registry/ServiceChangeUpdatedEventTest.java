@@ -96,7 +96,7 @@ public class ServiceChangeUpdatedEventTest {
         hb.setEnableMetadataChangeDetection(true);
         hb.setMetadataUpdateIntervalSeconds(0); // allow immediate updates
 
-        RedisServiceProvider provider = new RedisServiceProvider(redissonClient, cfg, hb, null);
+        RedisServiceProvider provider = new RedisServiceProvider(redissonClient, cfg, hb);
         RedisServiceConsumer consumer = new RedisServiceConsumer(redissonClient);
         provider.start();
         consumer.start();

@@ -28,14 +28,14 @@ class RegistryLuaScriptExecutorTest {
                 .doReturn(null)
                 .when(script)
                 .evalSha(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.VALUE), anyList(),
-                        any(), any(), any(), any(), any(), any());
+                        any(), any(), any(), any(), any());
 
         RegistryLuaScriptExecutor exec = new RegistryLuaScriptExecutor(redisson);
-        exec.executeHeartbeatUpdate("hb", "inst", "id", 1L, "heartbeat_only", null, null, 10);
+        exec.executeHeartbeatUpdate("hb", "inst", "id", 1L, "heartbeat_only", null, 10);
 
         verify(script, atLeast(8)).scriptLoad(anyString());
         verify(script, times(2)).evalSha(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.VALUE), anyList(),
-                any(), any(), any(), any(), any(), any());
+                any(), any(), any(), any(), any());
     }
 
     @Test

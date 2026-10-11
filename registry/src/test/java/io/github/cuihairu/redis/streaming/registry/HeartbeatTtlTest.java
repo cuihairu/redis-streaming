@@ -47,7 +47,12 @@ public class HeartbeatTtlTest {
         ServiceProviderConfig cfg = new ServiceProviderConfig();
         cfg.setHeartbeatTimeoutSeconds(2); // short TTL for test
 
-        RedisServiceProvider provider = new RedisServiceProvider(redissonClient, cfg);
+        // zero heartbeat interval so every sendHeartbeat actually fires the refresh script
+        io.github.cuihairu.redis.streaming.registry.heartbeat.HeartbeatConfig heartbeatCfg =
+                new io.github.cuihairu.redis.streaming.registry.heartbeat.HeartbeatConfig();
+        heartbeatCfg.setHeartbeatInterval(java.time.Duration.ZERO);
+
+        RedisServiceProvider provider = new RedisServiceProvider(redissonClient, cfg, heartbeatCfg);
         provider.start();
 
         try {

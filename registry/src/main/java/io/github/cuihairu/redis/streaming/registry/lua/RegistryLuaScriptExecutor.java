@@ -33,17 +33,16 @@ public class RegistryLuaScriptExecutor {
     private volatile String deregisterInstanceScriptSha;
     private volatile String getInstancesByMetadataScriptSha;
 
-    // Heartbeat update script (supports separate metadata and metrics updates)
+    // Heartbeat update script (heartbeat timestamp refresh plus optional metadata write)
     private static final String HEARTBEAT_UPDATE_SCRIPT = """
-            -- Multi-mode heartbeat update script
+            -- Heartbeat update script
             local heartbeat_key = KEYS[1]    -- ZSet
             local instance_key = KEYS[2]     -- Hash
             local instance_id = ARGV[1]
             local heartbeat_time = ARGV[2]
-            local update_mode = ARGV[3]      -- "heartbeat_only" | "metrics_update" | "metadata_update" | "full_update"
-            local metadata_json = ARGV[4]    -- Optional, metadata JSON
-            local metrics_json = ARGV[5]     -- Optional, metrics JSON
-            local ttl_seconds = ARGV[6]      -- Optional, instance Hash TTL (only for ephemeral instances)
+            local update_mode = ARGV[3]      -- "heartbeat_only" | "metadata_update"
+            local metadata_json = ARGV[4]    -- Optional, metadata JSON (metadata_update mode)
+            local ttl_seconds = ARGV[5]      -- Optional, instance Hash TTL (only for ephemeral instances)
 
             -- Parameter validation
             if not heartbeat_key or not instance_key or not instance_id or not heartbeat_time then
@@ -81,35 +80,9 @@ public class RegistryLuaScriptExecutor {
                 end
             end
 
-            -- Merge the incoming metrics JSON into the existing document instead of replacing
-            -- the field: client-side metrics (clientInflight etc., written by
-            -- external client processes) and server-side metrics (cpu/memory, written by the
-            -- provider heartbeat) share one hash field and must not clobber each other's keys.
-            local function merge_metrics(new_json)
-                local merged = {}
-                local existing = redis.call('HGET', instance_key, 'metrics')
-                if existing and existing ~= '' then
-                    local ok, decoded = pcall(cjson.decode, existing)
-                    if ok and type(decoded) == 'table' then merged = decoded end
-                end
-                local ok_in, incoming = pcall(cjson.decode, new_json)
-                if ok_in and type(incoming) == 'table' then
-                    for k, v in pairs(incoming) do merged[k] = v end
-                end
-                redis.call('HSET', instance_key, 'metrics', cjson.encode(merged))
-                redis.call('HSET', instance_key, 'lastMetricsUpdate', heartbeat_time)
-            end
-
-            -- Execute corresponding updates based on different modes
+            -- Execute corresponding updates based on mode
             if update_mode == 'heartbeat_only' then
                 -- Only update timestamp, done
-                return 1
-
-            elseif update_mode == 'metrics_update' then
-                -- Only update metrics
-                if metrics_json and metrics_json ~= '' then
-                    merge_metrics(metrics_json)
-                end
                 return 1
 
             elseif update_mode == 'metadata_update' then
@@ -117,17 +90,6 @@ public class RegistryLuaScriptExecutor {
                 if metadata_json and metadata_json ~= '' then
                     redis.call('HSET', instance_key, 'metadata', metadata_json)
                     redis.call('HSET', instance_key, 'lastMetadataUpdate', heartbeat_time)
-                end
-                return 1
-
-            elseif update_mode == 'full_update' then
-                -- Update both metadata and metrics
-                if metadata_json and metadata_json ~= '' then
-                    redis.call('HSET', instance_key, 'metadata', metadata_json)
-                    redis.call('HSET', instance_key, 'lastMetadataUpdate', heartbeat_time)
-                end
-                if metrics_json and metrics_json ~= '' then
-                    merge_metrics(metrics_json)
                 end
                 return 1
             end
@@ -586,20 +548,19 @@ public class RegistryLuaScriptExecutor {
     }
 
     /**
-     * Execute heartbeat update (with SHA caching optimization, supports separate metadata and metrics updates)
+     * Execute heartbeat update (with SHA caching optimization)
      *
      * @param heartbeatKey heartbeat key (ZSet)
      * @param instanceKey instance key (Hash)
      * @param instanceId instance ID
      * @param heartbeatTime heartbeat timestamp
-     * @param updateMode update mode: "heartbeat_only", "metrics_update", "metadata_update", "full_update"
+     * @param updateMode update mode: "heartbeat_only", "metadata_update"
      * @param metadataJson metadata JSON (can be null)
-     * @param metricsJson metrics JSON (can be null)
      * @param ttlSeconds TTL in seconds (only effective for ephemeral instances)
      */
     public void executeHeartbeatUpdate(String heartbeatKey, String instanceKey, String instanceId,
                                          long heartbeatTime, String updateMode,
-                                         String metadataJson, String metricsJson,
+                                         String metadataJson,
                                          int ttlSeconds) {
         try {
             // Prefer evalSha (transmits 40-byte SHA vs ~800-byte script)
@@ -609,7 +570,6 @@ public class RegistryLuaScriptExecutor {
                             List.of(heartbeatKey, instanceKey),
                             instanceId, String.valueOf(heartbeatTime), updateMode,
                             metadataJson != null ? metadataJson : "",
-                            metricsJson != null ? metricsJson : "",
                             String.valueOf(ttlSeconds));
                     return;
                 } catch (RedisException e) {
@@ -622,7 +582,6 @@ public class RegistryLuaScriptExecutor {
                                 List.of(heartbeatKey, instanceKey),
                                 instanceId, String.valueOf(heartbeatTime), updateMode,
                                 metadataJson != null ? metadataJson : "",
-                                metricsJson != null ? metricsJson : "",
                                 String.valueOf(ttlSeconds));
                         return;
                     }
@@ -636,7 +595,6 @@ public class RegistryLuaScriptExecutor {
                     List.of(heartbeatKey, instanceKey),
                     instanceId, String.valueOf(heartbeatTime), updateMode,
                     metadataJson != null ? metadataJson : "",
-                    metricsJson != null ? metricsJson : "",
                     String.valueOf(ttlSeconds));
         } catch (Exception e) {
             logger.error("Failed to execute heartbeat update script", e);

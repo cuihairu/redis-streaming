@@ -6,9 +6,6 @@ import io.github.cuihairu.redis.streaming.registry.ServiceInstance;
 import io.github.cuihairu.redis.streaming.registry.ServiceProviderConfig;
 import io.github.cuihairu.redis.streaming.registry.StandardProtocol;
 import io.github.cuihairu.redis.streaming.registry.heartbeat.HeartbeatConfig;
-import io.github.cuihairu.redis.streaming.registry.metrics.MetricCollector;
-import io.github.cuihairu.redis.streaming.registry.metrics.MetricsCollectionManager;
-import io.github.cuihairu.redis.streaming.registry.metrics.MetricsConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -28,7 +25,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -60,37 +56,11 @@ class RedisServiceProviderCoverageIntegrationTest {
                 .protocol(StandardProtocol.TCP).metadata(meta).healthy(true).build();
     }
 
-    private static MetricsCollectionManager controllable(AtomicReference<Object> value) {
-        MetricsConfig cfg = new MetricsConfig();
-        cfg.setEnabledMetrics(Set.of("cpu"));
-        cfg.setCollectionIntervals(Map.of());
-        cfg.setDefaultCollectionInterval(Duration.ZERO);
-        MetricCollector collector = new MetricCollector() {
-            @Override
-            public String getMetricType() {
-                return "cpu";
-            }
-
-            @Override
-            public boolean isAvailable() {
-                return true;
-            }
-
-            @Override
-            public Object collectMetric() {
-                return value.get();
-            }
-        };
-        return new MetricsCollectionManager(List.of(collector), cfg);
-    }
-
     private static HeartbeatConfig fastConfig() {
         HeartbeatConfig cfg = new HeartbeatConfig();
-        cfg.setMetricsInterval(Duration.ZERO);
         cfg.setHeartbeatInterval(Duration.ZERO);
         cfg.setEnableMetadataChangeDetection(true);
         cfg.setMetadataUpdateIntervalSeconds(0);
-        cfg.setChangeThresholds(Map.of());
         return cfg;
     }
 
@@ -117,9 +87,8 @@ class RedisServiceProviderCoverageIntegrationTest {
     @Test
     void heartbeatUpdateModesWriteThroughRealLua() throws Exception {
         String svc = uniqueService();
-        AtomicReference<Object> metrics = new AtomicReference<>(Map.of("k", 1));
         RedisServiceProvider provider = new RedisServiceProvider(
-                redis, new ServiceProviderConfig(), fastConfig(), controllable(metrics));
+                redis, new ServiceProviderConfig(), fastConfig());
 
         List<ServiceChangeAction> actions = new CopyOnWriteArrayList<>();
         RedisNamingService watcher = new RedisNamingService(redis);
@@ -130,12 +99,9 @@ class RedisServiceProviderCoverageIntegrationTest {
 
             ServiceInstance a = ins(svc, "a", Map.of("r", "1"));
             provider.register(a);
-            provider.sendHeartbeat(a); // FULL_UPDATE first cycle
+            provider.sendHeartbeat(a); // metadata first sight -> METADATA_UPDATE
             provider.sendHeartbeat(a); // HEARTBEAT_ONLY steady state
-
-            metrics.set(Map.of("k", 2));
-            provider.sendHeartbeat(a); // METRICS_UPDATE on significant change
-            provider.sendHeartbeat(ins(svc, "a", Map.of("r", "2"))); // METADATA/FULL update
+            provider.sendHeartbeat(ins(svc, "a", Map.of("r", "2"))); // METADATA_UPDATE
             provider.batchSendHeartbeats(List.of(ins(svc, "a", Map.of("r", "2"))));
 
             long deadline = System.currentTimeMillis() + 10_000;
@@ -144,7 +110,7 @@ class RedisServiceProviderCoverageIntegrationTest {
             }
             assertTrue(actions.contains(ServiceChangeAction.UPDATED));
 
-            // instance hash reflects the later metadata/metrics updates
+            // instance hash reflects the later metadata updates
             Map<String, String> stored = redis.<String, String>getMap(
                     new ServiceProviderConfig().getRegistryKeys().getServiceInstanceKey(svc, "a"),
                     StringCodec.INSTANCE).readAllMap();
@@ -162,8 +128,7 @@ class RedisServiceProviderCoverageIntegrationTest {
     void cleanupRebuildsSnapshotsAndNotifiesRemovals() throws Exception {
         String svc = uniqueService();
         RedisServiceProvider provider = new RedisServiceProvider(
-                redis, new ServiceProviderConfig(), new HeartbeatConfig(),
-                controllable(new AtomicReference<>(Map.of("k", 1))));
+                redis, new ServiceProviderConfig(), new HeartbeatConfig());
 
         List<ServiceChangeAction> actions = new CopyOnWriteArrayList<>();
         RedisNamingService watcher = new RedisNamingService(redis);
@@ -229,8 +194,7 @@ class RedisServiceProviderCoverageIntegrationTest {
         // fastConfig (zero intervals): back-to-back sendHeartbeat calls must not be
         // throttled to NO_UPDATE by the smart-heartbeat interval window
         RedisServiceProvider provider = new RedisServiceProvider(
-                redis, new ServiceProviderConfig(), fastConfig(),
-                controllable(new AtomicReference<>(Map.of("k", 1))));
+                redis, new ServiceProviderConfig(), fastConfig());
         RedisServiceConsumer consumer = new RedisServiceConsumer(redis);
         provider.start();
         consumer.start();
@@ -282,49 +246,4 @@ class RedisServiceProviderCoverageIntegrationTest {
         }
     }
 
-    @Test
-    void metricsMergePreservesClientAndServerKeys() throws Exception {
-        String svc = uniqueService();
-        AtomicReference<Object> serverMetrics = new AtomicReference<>(Map.of("cpu", 80));
-        RedisServiceProvider provider = new RedisServiceProvider(
-                redis, new ServiceProviderConfig(), new HeartbeatConfig(), controllable(serverMetrics));
-        provider.start();
-        try {
-            ServiceInstance a = ins(svc, "m1", Map.of("r", "1"));
-            provider.register(a);
-            provider.sendHeartbeat(a); // server metrics {"cpu":80} into the shared field
-
-            // a "client process" writes its own keys into the shared metrics JSON via a plain
-            // read-modify-write — exactly the external writes the deleted
-            // RedisClientMetricsReporter used to perform
-            String instanceKey = new ServiceProviderConfig().getRegistryKeys().getServiceInstanceKey(svc, "m1");
-            java.util.Map<String, String> clientWritten = new java.util.HashMap<>(redis.<String, String>getMap(
-                    instanceKey, StringCodec.INSTANCE).readAllMap());
-            String clientJson = clientWritten.get("metrics");
-            assertNotNull(clientJson);
-            clientJson = clientJson.substring(0, clientJson.length() - 1)
-                    + ", \"clientInflight\":1,\"clientLatencyMs\":25}";
-            redis.getMap(instanceKey, StringCodec.INSTANCE).put("metrics", clientJson);
-
-            // a later provider heartbeat must overlay server keys without erasing client keys
-            serverMetrics.set(Map.of("cpu", 90));
-            provider.sendHeartbeat(ins(svc, "m1", Map.of("r", "1")));
-
-            Map<String, String> stored = redis.<String, String>getMap(
-                    new ServiceProviderConfig().getRegistryKeys().getServiceInstanceKey(svc, "m1"),
-                    StringCodec.INSTANCE).readAllMap();
-            String metricsJson = stored.get("metrics");
-            assertNotNull(metricsJson);
-            assertTrue(metricsJson.contains("clientInflight"),
-                    "client keys must survive a provider heartbeat: " + metricsJson);
-            assertTrue(metricsJson.contains("clientLatencyMs"),
-                    "client keys must survive a provider heartbeat: " + metricsJson);
-            assertTrue(metricsJson.contains("cpu"),
-                    "server keys must survive client writes: " + metricsJson);
-
-            provider.deregister(a);
-        } finally {
-            provider.stop();
-        }
-    }
 }

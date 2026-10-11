@@ -4,8 +4,6 @@ import io.github.cuihairu.redis.streaming.registry.heartbeat.HeartbeatConfig;
 import io.github.cuihairu.redis.streaming.registry.heartbeat.HeartbeatStateManager;
 import io.github.cuihairu.redis.streaming.registry.impl.RedisServiceProvider;
 import io.github.cuihairu.redis.streaming.registry.lua.RegistryLuaScriptExecutor;
-import io.github.cuihairu.redis.streaming.registry.metrics.MetricsCollectionManager;
-import io.github.cuihairu.redis.streaming.registry.metrics.MetricsConfig;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.redisson.api.RScript;
@@ -52,9 +50,7 @@ class ProviderServiceIndexAtomicCleanupTest {
     void emptyHeartbeatSetDropsServiceIndexEntryAtomically() throws Exception {
         RedissonClient redisson = mock(RedissonClient.class);
         ServiceProviderConfig config = new ServiceProviderConfig();
-        RedisServiceProvider provider = new RedisServiceProvider(
-                redisson, config, new HeartbeatConfig(),
-                new MetricsCollectionManager(Collections.emptyList(), new MetricsConfig()));
+        RedisServiceProvider provider = new RedisServiceProvider(redisson, config, new HeartbeatConfig());
         set(provider, "stateManager", mock(HeartbeatStateManager.class));
         RegistryLuaScriptExecutor luaExecutor = mock(RegistryLuaScriptExecutor.class);
         set(provider, "luaExecutor", luaExecutor);

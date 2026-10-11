@@ -106,7 +106,7 @@ public interface NamingService extends ServiceProvider, ServiceConsumer, Service
 {prefix}:services:{serviceName}:changes                  # Pub/Sub 服务变更通知通道
 ```
 
-实例 Hash 字段（`InstanceEntryCodec.buildInstanceData`）：`host`、`port`、`protocol`、`enabled`、`healthy`、`weight`、`ephemeral`、`registrationTime`、`lastHeartbeatTime`、`lastMetadataUpdate`、`metadata`（JSON 字符串）、`metrics`（JSON 字符串，客户端与服务端指标合并写入）、`lastMetricsUpdate`（心跳带 metrics 时写入）。
+实例 Hash 字段（`InstanceEntryCodec.buildInstanceData`）：`host`、`port`、`protocol`、`enabled`、`healthy`、`weight`、`ephemeral`、`registrationTime`、`lastHeartbeatTime`、`lastMetadataUpdate`、`metadata`（JSON 字符串）、`metrics`（JSON 字符串，数据驱动字段——框架不再写入，由外部进程按需写入，供 metrics 过滤与 `ScoredLoadBalancer` 读取）。
 
 `RegistryKeys` 同时提供名称清洗与校验：service name / instance ID 中的 `:`、空格、制表符、换行会被替换为 `_` 或 `-`（`sanitizeServiceName` / `sanitizeInstanceId`）；注册与注销前统一走 `validateAndSanitizeXxx`，含 `:` 的 instance ID 会抛 `IllegalArgumentException`。
 
@@ -119,12 +119,10 @@ public interface NamingService extends ServiceProvider, ServiceConsumer, Service
 | 决策 | Lua update_mode | 写入内容 |
 |------|-----------------|----------|
 | `HEARTBEAT_ONLY` | `heartbeat_only` | 心跳时间戳（ZSet score + Hash `lastHeartbeatTime`） |
-| `METRICS_UPDATE` | `metrics_update` | 时间戳 + metrics JSON（与已有 metrics 合并，不清空对方键） |
 | `METADATA_UPDATE` | `metadata_update` | 时间戳 + metadata JSON |
-| `FULL_UPDATE` | `full_update` | 时间戳 + metadata + metrics |
 | `NO_UPDATE` | — | 完全跳过 |
 
-决策依据（`HeartbeatConfig` 默认值）：距上次 metrics 更新不足 `metricsInterval`（60s）时只发时间戳；metrics 命中 `changeThresholds` 阈值（如 heap 内存变化 10%、进程 CPU 变化 0.20、磁盘用量变化 5%、线程数变化 100、健康状态任意变化）立即更新；连续 `heartbeat_only` 达 `forceMetricsUpdateThreshold`（20 次）强制刷一次 metrics；metadata 变更检测默认关闭（`enableMetadataChangeDetection=false`）。
+决策依据（`HeartbeatConfig` 默认值）：metadata 变更检测默认关闭（`enableMetadataChangeDetection=false`），开启后内容 hash 变化且距上次更新超过 `metadataUpdateIntervalSeconds`（600s）产出 `METADATA_UPDATE`；metadata 更新同时推进心跳时间戳，否则距上次心跳达到 `heartbeatInterval`（3s）产出 `HEARTBEAT_ONLY`。（原 metrics 分级更新——`metricsInterval`/`changeThresholds`/`forceMetricsUpdateThreshold`/`metrics_update`/`full_update`——随 provider 侧指标采集 `metrics` 包于 2026-10-12 删除，`UpdateDecision` 只剩上述三值。）
 
 临时实例每次心跳都会滑动续期实例 Hash 的 TTL（TTL = `heartbeatTimeoutSeconds`，默认 90 秒）；持久实例不设 TTL。
 
@@ -161,7 +159,7 @@ public interface NamingService extends ServiceProvider, ServiceConsumer, Service
 |------|--------|------|
 | HTTP / HTTPS | `HttpHealthChecker` | GET `{uri}/health`，状态码 2xx~3xx 为健康；请求异常回退 TCP 连通性 |
 | TCP / UDP | `TcpHealthChecker` | Socket 连接测试 |
-| WS / WSS | `WebSocketHealthChecker` | TCP 连通性测试 |
+| WS / WSS | `StandardHealthChecker` | TCP 连通性测试（原 `WebSocketHealthChecker` 已删除，语义相同） |
 | 其他（含 GRPC/GRPCS、DUBBO 等） | `StandardHealthChecker` 默认分支 | TCP 连通性测试 |
 | 自定义 | 继承 `CustomHealthChecker` | 先 TCP 连通性（3 秒超时），再执行子类 `doCheck` |
 
@@ -177,11 +175,8 @@ public interface NamingService extends ServiceProvider, ServiceConsumer, Service
 | `NamingServiceConfig` | enableHealthCheck=false、healthCheckInterval=30（SECONDS）、healthCheckTimeout=5000ms、enableAdminService=true |
 | `ServiceProviderConfig` | heartbeatTimeoutSeconds=90 |
 | `ServiceConsumerConfig` | enableHealthCheck=false、healthCheckInterval=30、healthCheckTimeout=5000、heartbeatTimeoutSeconds=90、enableAdminService=true |
-| `HeartbeatConfig` | heartbeatInterval=3s、metricsInterval=60s、enableMetadataChangeDetection=false、metadataUpdateIntervalSeconds=600、forceMetricsUpdateThreshold=20、forceUpdateOnHealthChange=true、forceUpdateOnStartup=true |
-| `MetricsConfig` | enabledMetrics=[memory,cpu,application]、defaultCollectionInterval=1min、collectionTimeout=5s、immediateUpdateOnSignificantChange=true |
+| `HeartbeatConfig` | heartbeatInterval=3s、enableMetadataChangeDetection=false、metadataUpdateIntervalSeconds=600 |
 | `LoadBalancerConfig` | cpuWeight=1.0、latencyWeight=1.0、targetLatencyMs=50.0、regionBoost=1.1、zoneBoost=1.05、其余权重默认 0、硬阈值默认 -1（禁用） |
-| `ClientSelectorConfig` | enableFallback 及三个分步开关均默认 true |
-| `RetryPolicy` | 无默认构造；`ClientInvoker` 内部默认 (3, 10ms, 2.0, 200ms, 10ms) |
 
 Lua 脚本缓存：`RegistryLuaScriptExecutor` 通过 Redisson `RScript` 执行脚本（注册、注销、心跳更新、过期清理、活跃实例查询、过滤查询）。
 

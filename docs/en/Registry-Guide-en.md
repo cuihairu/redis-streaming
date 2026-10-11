@@ -224,7 +224,7 @@ ServiceInstance chosen = ((RedisNamingService) naming)
         .chooseHealthyInstanceByFilters("order-service", md, mt, scored, Map.of());
 ```
 
-Metrics keys: `ScoredLoadBalancer` reads `cpu`, `latency`, `memory`, `inflight`, `queue`, `errorRate` by default (change with `cfg.setCpuKey(...)` etc.). The built-in collectors produce keys such as `processCpuLoad` (0~1), `heap_usagePercent`, `threadCount`; client-side reporting writes `clientInflight`, `clientLatencyMs`, `clientErrorRate`. The two sides do not share key names by default — align them through `LoadBalancerConfig.setXxxKey(...)` or supply data under matching names from your own code.
+Metrics keys: `ScoredLoadBalancer` reads `cpu`, `latency`, `memory`, `inflight`, `queue`, `errorRate` by default (change with `cfg.setCpuKey(...)` etc.). The provider-side built-in collection (the former `registry.metrics` package, producing `processCpuLoad`, `heap_usagePercent`, `threadCount`) was removed on 2026-10-12; the instance-hash `metrics` field is now data-driven — business code or an external agent writes it (former client reporters wrote `clientInflight`, `clientLatencyMs`, `clientErrorRate`), while the read side (`RedisMetricsProvider`, metrics filters) is unchanged. Align written key names through `LoadBalancerConfig.setXxxKey(...)`.
 
 ## 6) ClientSelector / ClientInvoker (selection and invocation wrapper)
 

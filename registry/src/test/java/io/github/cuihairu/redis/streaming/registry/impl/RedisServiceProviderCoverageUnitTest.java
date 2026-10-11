@@ -6,9 +6,6 @@ import io.github.cuihairu.redis.streaming.registry.ServiceInstance;
 import io.github.cuihairu.redis.streaming.registry.ServiceProviderConfig;
 import io.github.cuihairu.redis.streaming.registry.StandardProtocol;
 import io.github.cuihairu.redis.streaming.registry.heartbeat.HeartbeatConfig;
-import io.github.cuihairu.redis.streaming.registry.metrics.MetricCollector;
-import io.github.cuihairu.redis.streaming.registry.metrics.MetricsCollectionManager;
-import io.github.cuihairu.redis.streaming.registry.metrics.MetricsConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RMap;
@@ -21,11 +18,9 @@ import org.redisson.client.codec.StringCodec;
 
 import java.lang.reflect.Method;
 import java.time.Duration;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -33,7 +28,7 @@ import static org.mockito.Mockito.*;
 
 /**
  * Branch-complete unit coverage for RedisServiceProvider update/cleanup/notify paths
- * using a mocked Redisson and a controllable metrics manager.
+ * using a mocked Redisson.
  */
 class RedisServiceProviderCoverageUnitTest {
 
@@ -68,52 +63,18 @@ class RedisServiceProviderCoverageUnitTest {
                 .protocol(StandardProtocol.TCP).metadata(metadata).healthy(true).build();
     }
 
-    private static MetricsCollectionManager controllableManager(AtomicReference<Object> value) {
-        MetricsConfig cfg = new MetricsConfig();
-        cfg.setEnabledMetrics(Set.of("cpu"));
-        cfg.setCollectionIntervals(Map.of());
-        cfg.setDefaultCollectionInterval(Duration.ZERO);
-        MetricCollector collector = new MetricCollector() {
-            @Override
-            public String getMetricType() {
-                return "cpu";
-            }
-
-            @Override
-            public boolean isAvailable() {
-                return true;
-            }
-
-            @Override
-            public Object collectMetric() {
-                return value.get();
-            }
-        };
-        return new MetricsCollectionManager(List.of(collector), cfg);
-    }
-
-    private static MetricsCollectionManager emptyManager() {
-        MetricsConfig cfg = new MetricsConfig();
-        cfg.setEnabledMetrics(Set.of());
-        return new MetricsCollectionManager(List.of(), cfg);
-    }
-
     private static HeartbeatConfig fastConfig() {
         HeartbeatConfig cfg = new HeartbeatConfig();
-        cfg.setMetricsInterval(Duration.ZERO);
         cfg.setHeartbeatInterval(Duration.ZERO);
         cfg.setEnableMetadataChangeDetection(true);
         cfg.setMetadataUpdateIntervalSeconds(0);
-        cfg.setChangeThresholds(Map.of());
-        cfg.setForceMetricsUpdateThreshold(100);
         return cfg;
     }
 
     @Test
-    void fourArgConstructorAcceptsExplicitMetricsManager() {
+    void threeArgConstructorWiresDefaults() {
         RedisServiceProvider provider = new RedisServiceProvider(
-                redisson, new ServiceProviderConfig(), new HeartbeatConfig(), emptyManager());
-        assertNotNull(provider.getMetricsManager());
+                redisson, new ServiceProviderConfig(), new HeartbeatConfig());
         assertNotNull(provider.getStateManager());
         assertNotNull(provider.getConfig());
         assertNotNull(provider.getHeartbeatConfig());
@@ -123,7 +84,7 @@ class RedisServiceProviderCoverageUnitTest {
     @Test
     void registerDeregisterAndNotifyCoverMainAndErrorPaths() {
         RedisServiceProvider provider = new RedisServiceProvider(redisson, new ServiceProviderConfig(),
-                new HeartbeatConfig(), emptyManager());
+                new HeartbeatConfig());
 
         assertThrows(IllegalStateException.class,
                 () -> provider.register(instance("svc", "i1", Map.of())));
@@ -147,44 +108,36 @@ class RedisServiceProviderCoverageUnitTest {
 
     @Test
     void sendHeartbeatCoversAllUpdateModesAndDecisions() {
-        AtomicReference<Object> metrics = new AtomicReference<>(Map.of("k", 1));
-        MetricsCollectionManager manager = controllableManager(metrics);
         RedisServiceProvider provider = new RedisServiceProvider(
-                redisson, new ServiceProviderConfig(), fastConfig(), manager);
+                redisson, new ServiceProviderConfig(), fastConfig());
         provider.start();
 
         ServiceInstance ins = instance("svc", "i1", Map.of("r", "1"));
 
-        // 1) first heartbeat: metrics first collection + metadata first sight -> FULL_UPDATE
+        // 1) first heartbeat: metadata first sight -> METADATA_UPDATE (UPDATED notify)
         provider.sendHeartbeat(ins);
 
-        // 2) unchanged data, heartbeat due -> HEARTBEAT_ONLY (no UPDATED notify)
+        // 2) unchanged metadata, heartbeat due -> HEARTBEAT_ONLY (no UPDATED notify)
         provider.sendHeartbeat(ins);
 
-        // 3) metadata changed only, heartbeat not due -> METADATA_UPDATE
+        // 3) metadata changed with a slow heartbeat interval -> METADATA_UPDATE wins
         HeartbeatConfig slowHeartbeat = fastConfig();
         slowHeartbeat.setHeartbeatInterval(Duration.ofHours(1));
         RedisServiceProvider provider2 = new RedisServiceProvider(
-                redisson, new ServiceProviderConfig(), slowHeartbeat, controllableManager(metrics));
+                redisson, new ServiceProviderConfig(), slowHeartbeat);
         provider2.start();
-        // fresh provider with seeded state to reach NO_UPDATE/METADATA-only merges
-        provider2.getStateManager().markMetricsUpdateCompleted("svc", "i1", Map.of("k", 1));
         provider2.getStateManager().markMetadataUpdateCompleted("svc", "i1", Map.of("r", "1"));
         provider2.sendHeartbeat(instance("svc", "i1", Map.of("r", "2")));
-
-        // 4) metrics changed only -> METRICS_UPDATE
-        metrics.set(Map.of("k", 2));
-        provider2.sendHeartbeat(instance("svc", "i1", Map.of("r", "2")));
-
-        // 5) nothing changed and heartbeat not due -> NO_UPDATE (no executeUpdate)
-        provider2.sendHeartbeat(instance("svc", "i1", Map.of("r", "2")));
-
         provider2.stop();
 
-        // 6) empty metrics map -> metrics decision short-circuits to NO_UPDATE
+        // 4) metadata detection off and heartbeat not due -> NO_UPDATE (no executeUpdate)
+        HeartbeatConfig noDetection = fastConfig();
+        noDetection.setEnableMetadataChangeDetection(false);
+        noDetection.setHeartbeatInterval(Duration.ofHours(1));
         RedisServiceProvider provider3 = new RedisServiceProvider(
-                redisson, new ServiceProviderConfig(), slowHeartbeat, emptyManager());
+                redisson, new ServiceProviderConfig(), noDetection);
         provider3.start();
+        provider3.getStateManager().markHeartbeatOnlyCompleted("svc", "i1");
         provider3.sendHeartbeat(instance("svc", "i1", Map.of("r", "1")));
         provider3.stop();
 
@@ -193,7 +146,7 @@ class RedisServiceProviderCoverageUnitTest {
         doThrow(new IllegalStateException("network down"))
                 .when(script)
                 .evalSha(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.VALUE), anyList(),
-                        any(), any(), any(), any(), any(), any());
+                        any(), any(), any(), any(), any());
         provider.sendHeartbeat(ins);
         provider.batchSendHeartbeats(List.of(ins));
 
@@ -206,7 +159,7 @@ class RedisServiceProviderCoverageUnitTest {
     @Test
     @SuppressWarnings("unchecked")
     void cleanupExpiredInstancesOuterFailureIsSwallowed() throws Exception {
-        RedisServiceProvider provider = new RedisServiceProvider(redisson, null, null, emptyManager());
+        RedisServiceProvider provider = new RedisServiceProvider(redisson, null, null);
         provider.start();
         when(redisson.<String>getSet(anyString(), any(StringCodec.class)))
                 .thenThrow(new IllegalStateException("index gone"));
@@ -219,11 +172,11 @@ class RedisServiceProviderCoverageUnitTest {
     @Test
     void stopWithoutStartIsANoOpAndInterruptedStopReinterrupts() {
         RedisServiceProvider provider = new RedisServiceProvider(redisson, new ServiceProviderConfig(),
-                new HeartbeatConfig(), emptyManager());
+                new HeartbeatConfig());
         provider.stop(); // not running
 
         RedisServiceProvider running = new RedisServiceProvider(redisson, new ServiceProviderConfig(),
-                new HeartbeatConfig(), emptyManager());
+                new HeartbeatConfig());
         running.start();
         Thread.currentThread().interrupt();
         try {
@@ -238,7 +191,7 @@ class RedisServiceProviderCoverageUnitTest {
     @SuppressWarnings("unchecked")
     void cleanupBuildsSnapshotsNotifiesAndFallsBackToIdOnly() throws Exception {
         RedisServiceProvider provider = new RedisServiceProvider(redisson, new ServiceProviderConfig(),
-                new HeartbeatConfig(), emptyManager());
+                new HeartbeatConfig());
         provider.start();
 
         when(redisson.<String>getSet(anyString(), any(StringCodec.class))).thenReturn(servicesSet);
@@ -295,7 +248,7 @@ class RedisServiceProviderCoverageUnitTest {
     @Test
     void notifyServiceChangeFailureIsSwallowed() {
         RedisServiceProvider provider = new RedisServiceProvider(redisson, new ServiceProviderConfig(),
-                new HeartbeatConfig(), emptyManager());
+                new HeartbeatConfig());
         provider.start();
         doThrow(new IllegalStateException("pubsub down")).when(topic).publish(any());
         when(anyInstanceMap.isExists()).thenReturn(false);
@@ -307,7 +260,7 @@ class RedisServiceProviderCoverageUnitTest {
     @SuppressWarnings("unchecked")
     void registerSanitizesUnsafeNames() {
         RedisServiceProvider provider = new RedisServiceProvider(redisson, new ServiceProviderConfig(),
-                new HeartbeatConfig(), emptyManager());
+                new HeartbeatConfig());
         provider.start();
         ServiceInstance dirty = instance("bad:name with space", "id:1", Map.of());
         assertDoesNotThrow(() -> provider.register(dirty));

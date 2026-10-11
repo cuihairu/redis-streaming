@@ -10,8 +10,6 @@ import io.github.cuihairu.redis.streaming.mq.metrics.MqMetrics;
 import io.github.cuihairu.redis.streaming.mq.metrics.RetentionMetrics;
 import io.github.cuihairu.redis.streaming.registry.NamingService;
 import io.github.cuihairu.redis.streaming.registry.ServiceDiscovery;
-import io.github.cuihairu.redis.streaming.registry.metrics.MetricsConfig;
-import io.github.cuihairu.redis.streaming.registry.metrics.MetricsGlobal;
 import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterService;
 import io.github.cuihairu.redis.streaming.reliability.metrics.RateLimitMetrics;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
@@ -43,33 +41,15 @@ import static org.mockito.Mockito.when;
 class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
 
     @Test
-    void registryNamingServiceStartsAndAppliesMetricsGlobalConfig() {
-        MetricsGlobal.setDefaultConfig(null);
+    void registryNamingServiceStartsFromBeanMethod() {
         RedissonClient redisson = mock(RedissonClient.class);
         RedisStreamingRegistryAutoConfiguration cfg = new RedisStreamingRegistryAutoConfiguration();
         RedisStreamingProperties props = new RedisStreamingProperties();
 
-        props.getRegistry().getMetrics().setEnabled(Set.of("cpu"));
-        props.getRegistry().getMetrics().setIntervals(Map.of("cpu", Duration.ofSeconds(3)));
-        props.getRegistry().getMetrics().setDefaultInterval(Duration.ofSeconds(9));
-        props.getRegistry().getMetrics().setImmediateUpdateOnSignificantChange(false);
-        props.getRegistry().getMetrics().setTimeout(Duration.ofMillis(123));
+        NamingService namingService = cfg.namingService(redisson, props);
+        assertTrue(namingService.isRunning());
 
-        try {
-            NamingService namingService = cfg.namingService(redisson, props);
-            assertTrue(namingService.isRunning());
-
-            MetricsConfig mc = MetricsGlobal.getOrDefault();
-            assertEquals(Set.of("cpu"), mc.getEnabledMetrics());
-            assertEquals(Duration.ofSeconds(3), mc.getCollectionIntervals().get("cpu"));
-            assertEquals(Duration.ofSeconds(9), mc.getDefaultCollectionInterval());
-            assertEquals(Duration.ofMillis(123), mc.getCollectionTimeout());
-            assertEquals(false, mc.isImmediateUpdateOnSignificantChange());
-
-            namingService.stop();
-        } finally {
-            MetricsGlobal.setDefaultConfig(null);
-        }
+        namingService.stop();
     }
 
     @Test

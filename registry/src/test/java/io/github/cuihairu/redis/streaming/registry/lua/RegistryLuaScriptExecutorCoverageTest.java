@@ -102,7 +102,7 @@ class RegistryLuaScriptExecutorCoverageTest {
         doThrow(new RedisException((String) null))
                 .when(script)
                 .evalSha(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.VALUE), anyList(),
-                        any(), any(), any(), any(), any(), any());
+                        any(), any(), any(), any(), any());
         doThrow(new RedisException((String) null))
                 .when(script)
                 .evalSha(eq(RScript.Mode.READ_ONLY), anyString(), eq(RScript.ReturnType.LIST), anyList(),
@@ -110,7 +110,7 @@ class RegistryLuaScriptExecutorCoverageTest {
 
         RegistryLuaScriptExecutor exec = new RegistryLuaScriptExecutor(redisson);
         assertThrows(RuntimeException.class,
-                () -> exec.executeHeartbeatUpdate("hb", "inst", "id", 1L, "heartbeat_only", null, null, 10));
+                () -> exec.executeHeartbeatUpdate("hb", "inst", "id", 1L, "heartbeat_only", null, 10));
         assertThrows(RuntimeException.class,
                 () -> exec.executeGetInstancesByFilters("hb", "pfx", "svc", 1L, 2L, "{}", null));
     }
@@ -122,9 +122,9 @@ class RegistryLuaScriptExecutorCoverageTest {
         when(script.scriptLoad(anyString())).thenThrow(new RuntimeException("redis down"));
 
         RegistryLuaScriptExecutor exec = new RegistryLuaScriptExecutor(redisson);
-        exec.executeHeartbeatUpdate("hb", "inst", "id", 1L, "heartbeat_only", null, null, 10);
+        exec.executeHeartbeatUpdate("hb", "inst", "id", 1L, "heartbeat_only", null, 10);
         verify(script).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.VALUE), anyList(),
-                eq("id"), eq("1"), eq("heartbeat_only"), eq(""), eq(""), eq("10"));
+                eq("id"), eq("1"), eq("heartbeat_only"), eq(""), eq("10"));
     }
 
     @Test
@@ -135,11 +135,11 @@ class RegistryLuaScriptExecutorCoverageTest {
         doThrow(new IllegalStateException("broken"))
                 .when(script)
                 .evalSha(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.VALUE), anyList(),
-                        any(), any(), any(), any(), any(), any());
+                        any(), any(), any(), any(), any());
 
         RegistryLuaScriptExecutor exec = new RegistryLuaScriptExecutor(redisson);
         RuntimeException ex = assertThrows(RuntimeException.class,
-                () -> exec.executeHeartbeatUpdate("hb", "inst", "id", 1L, "metrics_update", null, "{}", 10));
+                () -> exec.executeHeartbeatUpdate("hb", "inst", "id", 1L, "metadata_update", "{}", 10));
         assertTrue(ex.getMessage().contains("Heartbeat update failed"));
     }
 }

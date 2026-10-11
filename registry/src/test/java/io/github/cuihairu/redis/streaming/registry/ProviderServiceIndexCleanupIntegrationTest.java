@@ -2,8 +2,6 @@ package io.github.cuihairu.redis.streaming.registry;
 
 import io.github.cuihairu.redis.streaming.registry.heartbeat.HeartbeatConfig;
 import io.github.cuihairu.redis.streaming.registry.impl.RedisServiceProvider;
-import io.github.cuihairu.redis.streaming.registry.metrics.MetricsCollectionManager;
-import io.github.cuihairu.redis.streaming.registry.metrics.MetricsConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -46,8 +44,7 @@ class ProviderServiceIndexCleanupIntegrationTest {
 
         prefix = "rgfix-" + UUID.randomUUID().toString().substring(0, 6);
         config = new ServiceProviderConfig(prefix);
-        provider = new RedisServiceProvider(redisson, config, new HeartbeatConfig(),
-                new MetricsCollectionManager(Collections.emptyList(), new MetricsConfig()));
+        provider = new RedisServiceProvider(redisson, config, new HeartbeatConfig());
     }
 
     @AfterEach

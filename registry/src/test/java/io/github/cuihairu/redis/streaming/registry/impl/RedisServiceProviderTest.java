@@ -5,7 +5,6 @@ import io.github.cuihairu.redis.streaming.registry.ServiceInstance;
 import io.github.cuihairu.redis.streaming.registry.ServiceProviderConfig;
 import io.github.cuihairu.redis.streaming.registry.heartbeat.HeartbeatConfig;
 import io.github.cuihairu.redis.streaming.registry.keys.RegistryKeys;
-import io.github.cuihairu.redis.streaming.registry.metrics.MetricsCollectionManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
@@ -26,9 +25,6 @@ class RedisServiceProviderTest {
     @Mock
     private org.redisson.api.RedissonClient mockRedissonClient;
 
-    @Mock
-    private MetricsCollectionManager mockMetricsManager;
-
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
@@ -42,7 +38,6 @@ class RedisServiceProviderTest {
         assertNotNull(provider.getConfig());
         assertNotNull(provider.getHeartbeatConfig());
         assertNotNull(provider.getStateManager());
-        assertNotNull(provider.getMetricsManager());
         assertNotNull(provider.getRegistryKeys());
         assertFalse(provider.isRunning());
     }
@@ -72,16 +67,14 @@ class RedisServiceProviderTest {
         config.setKeyPrefix("my-registry");
 
         RedisServiceProvider provider = new RedisServiceProvider(
-            mockRedissonClient, 
-            config, 
-            null,  // heartbeatConfig - should use default
-            null   // metricsManager - should use default
+            mockRedissonClient,
+            config,
+            null  // heartbeatConfig - should use default
         );
 
         assertNotNull(provider);
         assertEquals("my-registry", provider.getConfig().getKeyPrefix());
         assertNotNull(provider.getHeartbeatConfig());
-        assertNotNull(provider.getMetricsManager());
     }
 
     @Test
@@ -111,12 +104,6 @@ class RedisServiceProviderTest {
         assertNotNull(provider.getStateManager());
     }
 
-    @Test
-    void testGetMetricsManager() {
-        RedisServiceProvider provider = new RedisServiceProvider(mockRedissonClient);
-
-        assertNotNull(provider.getMetricsManager());
-    }
 
     @Test
     void testGetRegistryKeys() {
@@ -309,42 +296,24 @@ class RedisServiceProviderTest {
     void testConstructorWithCustomHeartbeatConfig() {
         HeartbeatConfig heartbeatConfig = new HeartbeatConfig();
         heartbeatConfig.setMetadataUpdateIntervalSeconds(300);
-        heartbeatConfig.setMetricsInterval(java.time.Duration.ofSeconds(120));
 
         RedisServiceProvider provider = new RedisServiceProvider(
             mockRedissonClient,
             new ServiceProviderConfig(),
-            heartbeatConfig,
-            null
+            heartbeatConfig
         );
 
         assertNotNull(provider);
         assertEquals(300, provider.getHeartbeatConfig().getMetadataUpdateIntervalSeconds());
-        assertEquals(120, provider.getHeartbeatConfig().getMetricsInterval().toSeconds());
     }
 
-    @Test
-    void testConstructorWithCustomMetricsManager() {
-        MetricsCollectionManager customManager = mockMetricsManager;
-
-        RedisServiceProvider provider = new RedisServiceProvider(
-            mockRedissonClient,
-            new ServiceProviderConfig(),
-            new HeartbeatConfig(),
-            customManager
-        );
-
-        assertNotNull(provider);
-        assertSame(customManager, provider.getMetricsManager());
-    }
 
     @Test
     void testConstructorWithNullHeartbeatConfig() {
         RedisServiceProvider provider = new RedisServiceProvider(
             mockRedissonClient,
             new ServiceProviderConfig(),
-            null,  // heartbeatConfig - should use default
-            null
+            null  // heartbeatConfig - should use default
         );
 
         assertNotNull(provider);
@@ -356,14 +325,12 @@ class RedisServiceProviderTest {
         RedisServiceProvider provider = new RedisServiceProvider(
             mockRedissonClient,
             null,  // config
-            null,  // heartbeatConfig
-            null   // metricsManager
+            null   // heartbeatConfig
         );
 
         assertNotNull(provider);
         assertNotNull(provider.getConfig());
         assertNotNull(provider.getHeartbeatConfig());
-        assertNotNull(provider.getMetricsManager());
     }
 
     @Test
@@ -583,14 +550,12 @@ class RedisServiceProviderTest {
     @Test
     void testStateManagerInitialization() {
         HeartbeatConfig heartbeatConfig = new HeartbeatConfig();
-        heartbeatConfig.setMetricsInterval(java.time.Duration.ofSeconds(60));
         heartbeatConfig.setMetadataUpdateIntervalSeconds(300);
 
         RedisServiceProvider provider = new RedisServiceProvider(
             mockRedissonClient,
             new ServiceProviderConfig(),
-            heartbeatConfig,
-            null
+            heartbeatConfig
         );
 
         assertNotNull(provider.getStateManager());
@@ -598,14 +563,6 @@ class RedisServiceProviderTest {
         assertNotNull(provider.getStateManager());
     }
 
-    @Test
-    void testMetricsManagerInitialization() {
-        RedisServiceProvider provider = new RedisServiceProvider(mockRedissonClient);
-
-        assertNotNull(provider.getMetricsManager());
-        // Default metrics manager should be initialized
-        assertNotNull(provider.getMetricsManager());
-    }
 
     @Test
     void testStartStopWithProviderInterface() {
@@ -723,8 +680,7 @@ class RedisServiceProviderTest {
         RedisServiceProvider provider = new RedisServiceProvider(
             mockRedissonClient,
             new ServiceProviderConfig(),
-            heartbeatConfig,
-            null
+            heartbeatConfig
         );
 
         assertSame(heartbeatConfig, provider.getHeartbeatConfig());
@@ -738,19 +694,6 @@ class RedisServiceProviderTest {
         assertSame(provider.getStateManager(), provider.getStateManager());
     }
 
-    @Test
-    void testGetMetricsManagerReturnsSameInstance() {
-        MetricsCollectionManager customManager = mockMetricsManager;
-
-        RedisServiceProvider provider = new RedisServiceProvider(
-            mockRedissonClient,
-            new ServiceProviderConfig(),
-            new HeartbeatConfig(),
-            customManager
-        );
-
-        assertSame(customManager, provider.getMetricsManager());
-    }
 
     @Test
     void testGetRegistryKeysReturnsSameInstance() {

@@ -2,7 +2,7 @@
 
 Module: `registry/`（包根 `io.github.cuihairu.redis.streaming.registry`）
 
-基于 Redis 的服务注册与发现：注册/注销实例、心跳维持健康状态、服务发现与变更订阅（Redis Pub/Sub）、metadata/metrics 过滤（含比较运算符）、客户端负载均衡、多协议健康检查（原 `client` RPC 调用封装包已于 2026-10-12 删除）。
+基于 Redis 的服务注册与发现：注册/注销实例、心跳维持健康状态、服务发现与变更订阅（Redis Pub/Sub）、metadata/metrics 过滤（含比较运算符）、客户端负载均衡、多协议健康检查（原 `client` RPC 调用封装包已于 2026-10-12 删除；provider 侧指标采集 `metrics` 包同日删除，实例 `metrics` 字段转为数据驱动——由外部进程按需写入，消费端过滤与负载均衡读取保持不变）。
 
 ## Key Concepts
 
@@ -21,13 +21,12 @@ Module: `registry/`（包根 `io.github.cuihairu.redis.streaming.registry`）
 | 协议 | `Protocol` / `StandardProtocol` / `MessagingProtocol` | `StandardProtocol` 含 HTTP/HTTPS/TCP/UDP/WS/WSS/KCP/GRPC/GRPCS/DUBBO/DUBBO2；`MessagingProtocol` 仅含 Redis 四种（stream/pubsub 及 TLS 变体） |
 | 实现 | `impl.RedisNamingService` / `impl.RedisServiceProvider` / `impl.RedisServiceConsumer` | Provider/Consumer 角色，NamingService 聚合两者 |
 | 键管理 | `keys.RegistryKeys` | 键模板、service name / instance ID 清洗与校验 |
-| 心跳 | `heartbeat.HeartbeatConfig` / `HeartbeatStateManager` / `UpdateDecision` | 区分 metadata / metrics 的分级心跳更新决策 |
+| 心跳 | `heartbeat.HeartbeatConfig` / `HeartbeatStateManager` / `UpdateDecision` | 心跳定时刷新 + metadata 变更传播（`HEARTBEAT_ONLY` / `METADATA_UPDATE`） |
 | 健康检查 | `health.HealthChecker` 及 `StandardHealthChecker`、`HttpHealthChecker`、`TcpHealthChecker`、`CustomHealthChecker`、`ClientHealthChecker`、`HealthCheckManager` | 消费端按协议探测 |
 | 过滤 | `NamingService.getInstancesByMetadata`、`RedisNamingService.getInstancesByFilters`、`filter.FilterBuilder` | 服务端 Lua 过滤，支持 `==` `!=` `>` `>=` `<` `<=` |
 | 负载均衡 | `loadbalancer.LoadBalancer`、`WeightedRoundRobinLoadBalancer`、`WeightedRandomLoadBalancer`、`ConsistentHashLoadBalancer`、`ScoredLoadBalancer` | SPI + 三种内置策略 |
 | 管理 | `admin.RegistryAdminService`、`ServiceDetails`、`InstanceDetails` | 服务/实例明细、聚合指标、手动清理过期实例 |
 | 配置 | `BaseRedisConfig` / `NamingServiceConfig` / `ServiceProviderConfig` / `ServiceConsumerConfig` | 见下表 |
-| 指标采集 | `metrics.MetricsConfig` / `MetricsCollectionManager` / 各 `MetricCollector` | cpu/memory/application/gc/disk/network |
 
 ## 配置项（源码默认值）
 
@@ -49,22 +48,10 @@ Module: `registry/`（包根 `io.github.cuihairu.redis.streaming.registry`）
 | 字段 | 类型 | 默认值 |
 |------|------|--------|
 | heartbeatInterval | Duration | 3s |
-| metricsInterval | Duration | 60s |
 | enableMetadataChangeDetection | boolean | false |
 | metadataUpdateIntervalSeconds | int | 600 |
-| forceUpdateOnHealthChange | boolean | true |
-| forceUpdateOnStartup | boolean | true |
-| forceMetricsUpdateThreshold | int | 20 |
 
-`metrics.MetricsConfig`：
-
-| 字段 | 类型 | 默认值 |
-|------|------|--------|
-| enabledMetrics | Set&lt;String&gt; | memory, cpu, application |
-| collectionIntervals | Map&lt;String,Duration&gt; | memory 30s / cpu 60s / disk 5min / network 10min |
-| defaultCollectionInterval | Duration | 1min |
-| immediateUpdateOnSignificantChange | boolean | true |
-| collectionTimeout | Duration | 5s |
+> 原 provider 侧指标采集配置（`metricsInterval`、`changeThresholds`、`forceMetricsUpdateThreshold` 等）与 `metrics` 包已于 2026-10-12 删除；实例 Hash 的 `metrics` 字段不再由框架写入，外部进程可直接读写该字段，消费端 `getInstancesByFilters` 与 `ScoredLoadBalancer` 的读取路径不变。
 
 ## Minimal Sample
 

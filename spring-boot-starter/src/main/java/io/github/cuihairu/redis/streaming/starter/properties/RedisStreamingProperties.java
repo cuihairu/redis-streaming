@@ -138,11 +138,6 @@ public class RedisStreamingProperties {
          * Service instance configuration
          */
         private InstanceProperties instance = new InstanceProperties();
-
-        /**
-         * Provider metrics configuration
-         */
-        private MetricsProperties metrics = new MetricsProperties();
     }
 
     @Data
@@ -387,34 +382,6 @@ public class RedisStreamingProperties {
         private String url;
         private String username;
         private String password;
-    }
-
-    @Data
-    public static class MetricsProperties {
-        /**
-         * Enabled metric types, e.g. [memory, cpu, application, disk, network]
-         */
-        private java.util.Set<String> enabled = new java.util.HashSet<>(java.util.Set.of("memory","cpu","application","disk","network"));
-
-        /**
-         * Metric collection intervals (keyed by metric type), e.g. memory: 30s, cpu: 60s
-         */
-        private java.util.Map<String, java.time.Duration> intervals = new java.util.HashMap<>();
-
-        /**
-         * Default collection interval
-         */
-        private java.time.Duration defaultInterval = java.time.Duration.ofMinutes(1);
-
-        /**
-         * Whether to update immediately on significant changes
-         */
-        private boolean immediateUpdateOnSignificantChange = true;
-
-        /**
-         * Collection timeout
-         */
-        private java.time.Duration timeout = java.time.Duration.ofSeconds(5);
     }
 
     @lombok.Data

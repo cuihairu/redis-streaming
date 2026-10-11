@@ -15,7 +15,7 @@ class UpdateDecisionTest {
         UpdateDecision[] values = UpdateDecision.values();
 
         // Then
-        assertEquals(5, values.length);
+        assertEquals(3, values.length);
     }
 
     @Test
@@ -26,9 +26,7 @@ class UpdateDecisionTest {
         // Then
         assertTrue(java.util.Arrays.asList(values).contains(UpdateDecision.NO_UPDATE));
         assertTrue(java.util.Arrays.asList(values).contains(UpdateDecision.HEARTBEAT_ONLY));
-        assertTrue(java.util.Arrays.asList(values).contains(UpdateDecision.METRICS_UPDATE));
         assertTrue(java.util.Arrays.asList(values).contains(UpdateDecision.METADATA_UPDATE));
-        assertTrue(java.util.Arrays.asList(values).contains(UpdateDecision.FULL_UPDATE));
     }
 
     @Test
@@ -50,30 +48,12 @@ class UpdateDecisionTest {
     }
 
     @Test
-    void testValueOfMetricsUpdate() {
-        // Given & When
-        UpdateDecision decision = UpdateDecision.valueOf("METRICS_UPDATE");
-
-        // Then
-        assertSame(UpdateDecision.METRICS_UPDATE, decision);
-    }
-
-    @Test
     void testValueOfMetadataUpdate() {
         // Given & When
         UpdateDecision decision = UpdateDecision.valueOf("METADATA_UPDATE");
 
         // Then
         assertSame(UpdateDecision.METADATA_UPDATE, decision);
-    }
-
-    @Test
-    void testValueOfFullUpdate() {
-        // Given & When
-        UpdateDecision decision = UpdateDecision.valueOf("FULL_UPDATE");
-
-        // Then
-        assertSame(UpdateDecision.FULL_UPDATE, decision);
     }
 
     @Test
@@ -90,9 +70,7 @@ class UpdateDecisionTest {
         // Then - verify the order is as declared
         assertEquals(UpdateDecision.NO_UPDATE, values[0]);
         assertEquals(UpdateDecision.HEARTBEAT_ONLY, values[1]);
-        assertEquals(UpdateDecision.METRICS_UPDATE, values[2]);
-        assertEquals(UpdateDecision.METADATA_UPDATE, values[3]);
-        assertEquals(UpdateDecision.FULL_UPDATE, values[4]);
+        assertEquals(UpdateDecision.METADATA_UPDATE, values[2]);
     }
 
     @Test
@@ -122,16 +100,6 @@ class UpdateDecisionTest {
     }
 
     @Test
-    void testMetricsUpdateSemantic() {
-        // Given & When
-        UpdateDecision decision = UpdateDecision.METRICS_UPDATE;
-
-        // Then - represents metrics + heartbeat update
-        assertNotNull(decision);
-        assertEquals("METRICS_UPDATE", decision.name());
-    }
-
-    @Test
     void testMetadataUpdateSemantic() {
         // Given & When
         UpdateDecision decision = UpdateDecision.METADATA_UPDATE;
@@ -139,16 +107,6 @@ class UpdateDecisionTest {
         // Then - represents metadata + heartbeat update
         assertNotNull(decision);
         assertEquals("METADATA_UPDATE", decision.name());
-    }
-
-    @Test
-    void testFullUpdateSemantic() {
-        // Given & When
-        UpdateDecision decision = UpdateDecision.FULL_UPDATE;
-
-        // Then - represents metadata + metrics + heartbeat update
-        assertNotNull(decision);
-        assertEquals("FULL_UPDATE", decision.name());
     }
 
     @Test
@@ -164,8 +122,8 @@ class UpdateDecisionTest {
     @Test
     void testAllDecisionsAreComparable() {
         // Given & When
-        UpdateDecision decision1 = UpdateDecision.HEARTBEAT_ONLY;
-        UpdateDecision decision2 = UpdateDecision.METRICS_UPDATE;
+        UpdateDecision decision1 = UpdateDecision.NO_UPDATE;
+        UpdateDecision decision2 = UpdateDecision.HEARTBEAT_ONLY;
 
         // Then - enums implement Comparable
         assertNotNull(decision1.compareTo(decision2));
@@ -175,7 +133,7 @@ class UpdateDecisionTest {
     @Test
     void testEnumCanBeUsedInSwitch() {
         // Given
-        UpdateDecision decision = UpdateDecision.METRICS_UPDATE;
+        UpdateDecision decision = UpdateDecision.HEARTBEAT_ONLY;
         int result = 0;
 
         // When
@@ -186,19 +144,13 @@ class UpdateDecisionTest {
             case HEARTBEAT_ONLY:
                 result = 2;
                 break;
-            case METRICS_UPDATE:
-                result = 3;
-                break;
             case METADATA_UPDATE:
-                result = 4;
-                break;
-            case FULL_UPDATE:
-                result = 5;
+                result = 3;
                 break;
         }
 
         // Then
-        assertEquals(3, result);
+        assertEquals(2, result);
     }
 
     @Test
@@ -211,7 +163,7 @@ class UpdateDecisionTest {
         }
 
         // Then
-        assertEquals(5, count);
+        assertEquals(3, count);
     }
 
     @Test
@@ -219,9 +171,7 @@ class UpdateDecisionTest {
         // Given & When
         assertEquals(0, UpdateDecision.NO_UPDATE.ordinal());
         assertEquals(1, UpdateDecision.HEARTBEAT_ONLY.ordinal());
-        assertEquals(2, UpdateDecision.METRICS_UPDATE.ordinal());
-        assertEquals(3, UpdateDecision.METADATA_UPDATE.ordinal());
-        assertEquals(4, UpdateDecision.FULL_UPDATE.ordinal());
+        assertEquals(2, UpdateDecision.METADATA_UPDATE.ordinal());
 
         // Then - ordinal starts at 0
     }
@@ -234,10 +184,9 @@ class UpdateDecisionTest {
         // When
         decisions.add(UpdateDecision.NO_UPDATE);
         decisions.add(UpdateDecision.HEARTBEAT_ONLY);
-        decisions.add(UpdateDecision.METRICS_UPDATE);
 
         // Then
-        assertEquals(3, decisions.size());
+        assertEquals(2, decisions.size());
         assertTrue(decisions.contains(UpdateDecision.NO_UPDATE));
         assertFalse(decisions.contains(UpdateDecision.METADATA_UPDATE));
     }
@@ -250,12 +199,10 @@ class UpdateDecisionTest {
         // When
         descriptions.put(UpdateDecision.NO_UPDATE, "No update needed");
         descriptions.put(UpdateDecision.HEARTBEAT_ONLY, "Heartbeat only");
-        descriptions.put(UpdateDecision.FULL_UPDATE, "Full update");
 
         // Then
         assertEquals("No update needed", descriptions.get(UpdateDecision.NO_UPDATE));
         assertEquals("Heartbeat only", descriptions.get(UpdateDecision.HEARTBEAT_ONLY));
-        assertEquals("Full update", descriptions.get(UpdateDecision.FULL_UPDATE));
         assertNull(descriptions.get(UpdateDecision.METADATA_UPDATE));
     }
 }

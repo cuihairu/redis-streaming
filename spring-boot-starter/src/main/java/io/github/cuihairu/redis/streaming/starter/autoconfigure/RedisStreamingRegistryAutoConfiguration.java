@@ -37,24 +37,6 @@ public class RedisStreamingRegistryAutoConfiguration {
         log.info("Initializing NamingService with heartbeat interval: {}s",
                 properties.getRegistry().getHeartbeatInterval());
 
-        // Wire provider metrics global config
-        var mp = properties.getRegistry().getMetrics();
-        io.github.cuihairu.redis.streaming.registry.metrics.MetricsConfig mc = new io.github.cuihairu.redis.streaming.registry.metrics.MetricsConfig();
-        if (mp.getEnabled() != null && !mp.getEnabled().isEmpty()) {
-            mc.setEnabledMetrics(mp.getEnabled());
-        }
-        if (mp.getIntervals() != null && !mp.getIntervals().isEmpty()) {
-            mc.setCollectionIntervals(mp.getIntervals());
-        }
-        if (mp.getDefaultInterval() != null) {
-            mc.setDefaultCollectionInterval(mp.getDefaultInterval());
-        }
-        mc.setImmediateUpdateOnSignificantChange(mp.isImmediateUpdateOnSignificantChange());
-        if (mp.getTimeout() != null) {
-            mc.setCollectionTimeout(mp.getTimeout());
-        }
-        io.github.cuihairu.redis.streaming.registry.metrics.MetricsGlobal.setDefaultConfig(mc);
-
         NamingService registry = new RedisNamingService(redissonClient);
         registry.start();
         return registry;

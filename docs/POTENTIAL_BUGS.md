@@ -52,6 +52,7 @@
 - 影响：负载高峰（恰恰最需要心跳时）ZSet score 与 hash TTL 停止刷新，`heartbeatTimeoutSeconds` 后实例被清除、消费者掉线。仅 TRACE 级日志。
 - 审计置信度：高
 - 验证与修复：`HeartbeatStateManager` 新增 `shouldHeartbeatOnly(serviceName, instanceId)`（按心跳间隔判定）；`processInstanceHeartbeat` 对空采集结果改走该判定而非直接 `NO_UPDATE`——到期即产生 `HEARTBEAT_ONLY`，`executeUpdate` 的 Lua 路径照常刷新 TTL/score；心跳未到期则仍 NO_UPDATE（不产生多余写）。回归测试 `ProviderEmptyMetricsHeartbeatTest`（把决策行还原为旧短路后 2/2 复现失败）与 `HeartbeatStateManagerTest.testShouldHeartbeatOnlyDecidesByHeartbeatInterval`。
+- 后记（2026-10-12）：provider 侧指标采集（`registry.metrics` 包）已整体删除，心跳决策只剩 heartbeat/metadata 两轨，「空采集短路心跳」的触发面不复存在；`ProviderEmptyMetricsHeartbeatTest` 随之删除，`shouldHeartbeatOnly` 保留为心跳间隔判定原语（`HeartbeatStateManagerTest.testShouldHeartbeatOnlyDecidesByHeartbeatInterval` 仍在守护）。
 
 ### B-06 配置中心监听器纯 pub/sub 无重同步：断连期间错过的通知永久丢失 [已修复]
 - 位置：`config/.../impl/RedisConfigService.java:196-237,440-463`
@@ -326,6 +327,7 @@
 - 影响：公共池线程堆积，与 B-05 叠加。
 - 验证与修复：双重修复——(1) 采集调用改跑专用守护线程池（`newCachedThreadPool`，线程名 `metrics-collector-N`，空闲 60s 自灭，无需显式生命周期），挂死的采集器不再占用公共 ForkJoinPool 线程（common pool 容量 = cores−1，几个挂死探针即可饿死全 JVM 的并行流/异步任务）；(2) `future.get` 超时路径补 `future.cancel(true)` 中断采集器，任务不再滞留。超时语义不变：TimeoutException 仍由调用方按 WARN 吞掉。测试踩坑记录：`MetricsConfig.getEnabledMetrics()` 返回不可变 `Set.of(...)`，须用 `setEnabledMetrics` 整体替换。
 - 回归测试：`MetricsCollectionTimeoutTest`（只用公共 API + 线程栈扫描，可对旧代码编译）——旧代码失败理由精确匹配：`a timed-out collector must not linger on the common ForkJoinPool (B-43) ==> expected: <null> but was: <Unsafe.park 栈含 collectMetric 帧>`（超时探针卡死在 common-pool worker 上）；新代码全绿：采集在专用池执行、超时后中断、公共池无残留 collectMetric 帧。既有 MetricsCollectionManager 覆盖测试全绿。
+- 后记（2026-10-12）：provider 侧指标采集（`registry.metrics` 包，含 `MetricsCollectionManager`）已整体删除，B-43 的触发面随之消失；两条教训（采集须专用池+超时必 cancel）对任何后续接入的采集型组件依然适用。
 
 ### B-44 publishConfig 降级路径非原子且换版本号重写 ✅已修复
 - 位置：`config/.../impl/RedisConfigService.java`（publishConfig + 新 fallbackPublish）

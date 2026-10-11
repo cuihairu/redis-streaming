@@ -5,8 +5,6 @@ import io.github.cuihairu.redis.streaming.registry.heartbeat.HeartbeatConfig;
 import io.github.cuihairu.redis.streaming.registry.ServiceInstance;
 import io.github.cuihairu.redis.streaming.registry.ServiceProviderConfig;
 import io.github.cuihairu.redis.streaming.registry.StandardProtocol;
-import io.github.cuihairu.redis.streaming.registry.metrics.MetricsCollectionManager;
-import io.github.cuihairu.redis.streaming.registry.metrics.MetricsConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RMap;
@@ -65,12 +63,6 @@ class RedisServiceProviderResidualCoverageTest {
         when(heartbeats.size()).thenReturn(1);
     }
 
-    private static MetricsCollectionManager emptyManager() {
-        MetricsConfig cfg = new MetricsConfig();
-        cfg.setEnabledMetrics(java.util.Set.of());
-        return new MetricsCollectionManager(List.of(), cfg);
-    }
-
     private static ServiceInstance instance() {
         return DefaultServiceInstance.builder()
                 .serviceName("svc").instanceId("i1").host("127.0.0.1").port(1)
@@ -87,7 +79,7 @@ class RedisServiceProviderResidualCoverageTest {
     void cleanupNotifiesIdOnlyWithFailuresAndParsesSnapshotDefaults() throws Exception {
         ServiceProviderConfig cfg = new ServiceProviderConfig();
         cfg.setKeyPrefix(null);
-        RedisServiceProvider provider = new RedisServiceProvider(redisson, cfg, new HeartbeatConfig(), emptyManager());
+        RedisServiceProvider provider = new RedisServiceProvider(redisson, cfg, new HeartbeatConfig());
         doThrow(new IllegalStateException("pubsub down")).when(topic).publish(any());
 
         // i1: broken json -> id-only notify whose publish fails (catch of notifyServiceChangeById)
@@ -109,7 +101,7 @@ class RedisServiceProviderResidualCoverageTest {
     @Test
     void stopForcesShutdownNowWhenTerminationTimesOut() throws Exception {
         RedisServiceProvider provider = new RedisServiceProvider(redisson, new ServiceProviderConfig(),
-                new HeartbeatConfig(), emptyManager());
+                new HeartbeatConfig());
         ScheduledExecutorService executor = mock(ScheduledExecutorService.class);
         when(executor.awaitTermination(anyLong(), any(TimeUnit.class))).thenReturn(false);
         setField(provider, RedisServiceProvider.class, "running", true);
@@ -118,17 +110,4 @@ class RedisServiceProviderResidualCoverageTest {
         verify(executor).shutdownNow();
     }
 
-    @Test
-    void processInstanceHeartbeatToleratesNullMetricsManager() throws Exception {
-        RedisServiceProvider provider = new RedisServiceProvider(redisson, new ServiceProviderConfig(),
-                new HeartbeatConfig(), emptyManager());
-        setField(provider, RedisServiceProvider.class, "metricsManager", null);
-        Method m = RedisServiceProvider.class.getDeclaredMethod("processInstanceHeartbeat", ServiceInstance.class);
-        m.setAccessible(true);
-        try {
-            m.invoke(provider, instance());
-        } catch (Exception ignore) {
-            // downstream bookkeeping may fail on mocks; the null-metrics branch is the target
-        }
-    }
 }
