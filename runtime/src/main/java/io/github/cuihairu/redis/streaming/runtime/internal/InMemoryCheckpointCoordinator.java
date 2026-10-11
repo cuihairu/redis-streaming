@@ -21,22 +21,42 @@ import java.util.concurrent.atomic.AtomicLong;
  * callers do not share an external lock (B-22): iterating {@code storesById} while a
  * store registers used to throw ConcurrentModificationException, and concurrent
  * registration could silently drop stores.</p>
+ *
+ * <p>Snapshots additionally run under {@link #checkpointLock()}, the same monitor every
+ * registered store synchronizes its mutations on (P1): a snapshot taken while the pipeline
+ * thread was mid-write used to race the store's plain {@code HashMap} (CME / torn copies).
+ * The coordinator holds the lock across all stores' snapshots, so one checkpoint is a
+ * single consistent cut. This lock is deliberately disjoint from the emission lock handed
+ * out by {@code SourceContext.getCheckpointLock()}: a producer may block on a full hand-off
+ * queue while holding that lock, and a consumer blocked on the checkpoint lock could then
+ * never drain it (deadlock). The checkpoint lock is only ever held for bounded, non-blocking
+ * in-memory work.</p>
  */
 public final class InMemoryCheckpointCoordinator implements CheckpointCoordinator {
 
     private final AtomicLong nextCheckpointId = new AtomicLong(1);
     private final AtomicLong nextStoreId = new AtomicLong(1);
 
+    private final Object checkpointLock = new Object();
     private final Map<String, InMemoryKeyedStateStore<?>> storesById = new LinkedHashMap<>();
     private final Map<Long, Checkpoint> checkpointsById = new HashMap<>();
     private final Map<String, Object> latestRestoredStateByStoreId = new HashMap<>();
     private Checkpoint latestCheckpoint;
+
+    /**
+     * The monitor every registered store synchronizes its mutations on and every snapshot runs
+     * under: holding it excludes state writes and checkpoint snapshots from each other.
+     */
+    public Object checkpointLock() {
+        return checkpointLock;
+    }
 
     public synchronized String registerStore(InMemoryKeyedStateStore<?> store) {
         if (store == null) {
             throw new NullPointerException("store");
         }
         String storeId = "store-" + nextStoreId.getAndIncrement();
+        store.bindCheckpointLock(checkpointLock);
         storesById.put(storeId, store);
 
         Object restored = latestRestoredStateByStoreId.get(storeId);
@@ -51,10 +71,12 @@ public final class InMemoryCheckpointCoordinator implements CheckpointCoordinato
         long checkpointId = nextCheckpointId.getAndIncrement();
         DefaultCheckpoint checkpoint = new DefaultCheckpoint(checkpointId, System.currentTimeMillis());
 
-        for (Map.Entry<String, InMemoryKeyedStateStore<?>> entry : storesById.entrySet()) {
-            String storeId = entry.getKey();
-            InMemoryKeyedStateStore<?> store = entry.getValue();
-            checkpoint.getStateSnapshot().putState(storeId, store.snapshot());
+        synchronized (checkpointLock) {
+            for (Map.Entry<String, InMemoryKeyedStateStore<?>> entry : storesById.entrySet()) {
+                String storeId = entry.getKey();
+                InMemoryKeyedStateStore<?> store = entry.getValue();
+                checkpoint.getStateSnapshot().putState(storeId, store.snapshot());
+            }
         }
 
         checkpoint.markCompleted();
@@ -87,10 +109,12 @@ public final class InMemoryCheckpointCoordinator implements CheckpointCoordinato
         latestRestoredStateByStoreId.clear();
         latestRestoredStateByStoreId.putAll(restored);
 
-        for (Map.Entry<String, InMemoryKeyedStateStore<?>> entry : storesById.entrySet()) {
-            Object snapshot = restored.get(entry.getKey());
-            if (snapshot != null) {
-                entry.getValue().restoreFromSnapshot(snapshot);
+        synchronized (checkpointLock) {
+            for (Map.Entry<String, InMemoryKeyedStateStore<?>> entry : storesById.entrySet()) {
+                Object snapshot = restored.get(entry.getKey());
+                if (snapshot != null) {
+                    entry.getValue().restoreFromSnapshot(snapshot);
+                }
             }
         }
     }

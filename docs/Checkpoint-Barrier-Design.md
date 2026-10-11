@@ -36,7 +36,7 @@
 
 理由:① 是在已验证模型上修真缺陷;② Redis 状态本就是外置现值(快照=拷贝,不是序列化算子堆),异步快照收益天然低,全面屏障工程量大收益小;③ v2 只在"消费停顿不可接受"场景才值得做。
 
-**① in-memory 锁真实化(P1,小批可做)**:同一把 `checkpointLock` 变成真流水线锁——生产者 put 持锁(现状)、消费者**逐条处理**持锁(`take()` 仍在锁外,阻塞不持锁,背压死锁前提不变)、协调器快照持锁。`InMemoryCheckpointCoordinator` 增加 `registerCheckpointLock(Object)`(由 `enableCheckpointing()` 的 env 注册每把 addSource 锁);`triggerCheckpoint` 顺序取全部锁后快照。效果:快照与逐条处理互斥,撕裂消除;`getCheckpointLock` 从死契约变为真实栅栏,取锁的用户代码从此真被保护。
+**① in-memory 快照屏障(P1,已落地 2026-10-11)**:落地时修正了本文初版方案——「消费者逐条处理持锁」会引入死锁:用户按 Flink 习惯把 `collect()` 包在 `getCheckpointLock()` 里时,生产者可持该锁阻塞于满队列;若消费者的状态写入也要等同一把锁,队列永不腾空。真实屏障因此是**双锁契约**:协调器新增 `checkpointLock()`(独立监视器),注册 store 的全部变更(put/remove/setCurrentKey/snapshot/restore)与协调器的快照/恢复都同步在它上,`triggerCheckpoint` 跨全部 store 持锁 → 一次检查点是单一一致切面,撕裂(CME/脏拷贝)消除;该锁只在有界非阻塞内存操作上持有。`SourceContext.getCheckpointLock()` 保持返回源级发射锁(生产者可跨满队列阻塞持有,消费者绝不取)——两锁不相交,背压永不死锁。残余:同一记录的多次 state 写入仍可被快照劈开(逐记录屏障属 ③ 的检查点协议);窗口累加器注册(②)后其整表快照天然原子。测试钉死:持锁写入期间快照必等且见写入值、并发写+连拍 200 快照零撕裂、活流水线旁路并发检查点 2 万条零丢失。
 
 **② registerStore 泛化(P2,归 B4/state 统一)**:注册面从 `registerStore(InMemoryKeyedStateStore)` 泛化为按 `(名称, snapshot, restore)` 注册快照源,窗口累加器表与 `WatermarkState` 注册进来(勾掉 L527 的剩余项);它们与 keyed store 同受 ① 的锁保护。
 
@@ -52,7 +52,7 @@
 
 ## 迁移路径(方案 A 分期)
 
-1. **P1 锁真实化**(单批):`enableCheckpointing()` 注册锁;消费循环逐条处理持锁、`take()` 锁外;`triggerCheckpoint` 全锁快照。测试:生产者持续发射 + 第三线程反复触发检查点,断言快照不含半条记录/不 CME;背压场景(慢 sink)检查点仍能在单条记录粒度内插入(不死锁)。
+1. **P1 快照屏障**(已落地 2026-10-11,见方案 A① 的修正记录):协调器 `checkpointLock()` + 注册 store 绑定 + 快照/恢复持锁切面;3 个并发测试钉死,背压场景由既有流式测试(慢 sink/10 万条顺序)覆盖。
 2. **P2 注册面泛化**(随 B4):窗口累加器、WatermarkState 注册为快照源。
 3. **P3 unaligned v2**(独立评审):两级 CAS 门 + epoch 对齐 + frontier 重放去重,默认关,`RedisRuntimeConfig` 新开关;与 metrics 的 checkpoint 时延指标同批观察收益。
 4. 文档同步:`docs/checkpoint.md` 补"in-memory 快照与流水线互斥"语义;`docs/Deployment.md:97` 的 stop-theWorld 记载在 P3 落地前保持不变。

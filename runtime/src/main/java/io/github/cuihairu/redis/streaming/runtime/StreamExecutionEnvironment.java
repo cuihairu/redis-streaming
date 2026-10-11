@@ -226,9 +226,14 @@ public final class StreamExecutionEnvironment {
     private <T> void emit(T element, long timestamp, ArrayBlockingQueue<Object> queue,
                          Object checkpointLock, AtomicBoolean produced) {
         try {
-            // Emission holds the checkpoint lock: this is the seam a checkpoint barrier will
-            // synchronize on (docs/todo: SourceContext.getCheckpointLock). The consumer never
-            // takes this lock, so backpressure can never deadlock it.
+            // Emission holds the source's checkpoint lock — the seam SourceContext.getCheckpointLock()
+            // hands out. It deliberately stays disjoint from the coordinator's checkpoint barrier
+            // (the lock state mutations and snapshots synchronize on, see
+            // InMemoryCheckpointCoordinator#checkpointLock): a producer may block on this full queue
+            // while holding the emission lock (also when user code wraps collect() in
+            // getCheckpointLock()), and a consumer waiting on the barrier for its next state write
+            // could then never drain the queue. The consumer never takes the emission lock, so
+            // backpressure can never deadlock the pipeline.
             synchronized (checkpointLock) {
                 queue.put(new InMemoryRecord<>(element, timestamp));
             }
