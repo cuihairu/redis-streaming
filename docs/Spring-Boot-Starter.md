@@ -237,16 +237,16 @@ public class ConfigWatch {
 
 ## 指标导出
 
-`micrometer-core` 为 `api` 依赖、`actuator` 为 `compileOnly`。桥接链路:模块内单例(`RedisRuntimeMetrics`/`MqMetrics`/`RetentionMetrics`/`ReliabilityMetrics`/`RateLimitMetrics`)→ `*MicrometerCollector` → `MeterRegistry`。实际指标名(取自各 collector 源码):
+`micrometer-core` 为 `api` 依赖、`actuator` 为 `compileOnly`。桥接链路:模块内单例(`RedisRuntimeMetrics`/`MqMetrics`/`RetentionMetrics`/`RateLimitMetrics`)→ `*MicrometerCollector` → `MeterRegistry`。实际指标名(取自各 collector 源码):
 
 | 来源 | 指标名 |
 |---|---|
 | `RedisRuntimeMicrometerCollector` | `redis_streaming_runtime_*`:`job_started_total`/`job_canceled_total`、`pipeline_started_total`/`pipeline_start_failed_total`、`handle_success_total`/`handle_error_total`/`handle_latency_ms`、`checkpoint_triggered_total`/`checkpoint_completed_total`/`checkpoint_failed_total`、`checkpoint_duration_ms` 与 `checkpoint_drain/store/sink_commit_duration_ms`、`keyed_state_read/write/delete_total`、`keyed_state_read/write_latency_ms`、`keyed_state_size_fields`、`keyed_state_hot_key_total`、`event_time_timer_queue_size`、`watermark_ms`、`window_fired_total`/`window_late_dropped_total` |
-| `MqMicrometerCollector` | `redis_streaming_mq_produced/consumed/acked/retried/dead/payload_missing_total`、`handle_latency_ms`、`inflight`/`max_inflight`、`backpressure_wait_total`/`backpressure_wait_ms`、`eligible_partitions`/`leased_partitions`/`max_leased_partitions` |
+| `MqMicrometerCollector` | `redis_streaming_mq_produced/consumed/acked/retried/dead/payload_missing_total`、`handle_latency_ms`、`inflight`/`max_inflight`、`backpressure_wait_total`/`backpressure_wait_ms`、`eligible_partitions`/`leased_partitions`/`max_leased_partitions`、DLQ 重放 `redis_streaming_dlq_replay_success_total`/`replay_failure_total`/`replay_latency_ms`、`redis_streaming_dlq_deleted_total`/`dlq_cleared_total`(tags: `topic`、`partition`) |
 | `MqMetricsBinder` | `redis_streaming_mq_topics_total`/`messages_total`/`dlq_total`(Gauge) |
 | `RetentionFrontierMetricsBinder` | `redis_streaming_mq_frontier_age_ms` |
 | `RetentionMicrometerCollector` | `redis_streaming_mq_trim_attempts_total`/`trim_deleted_total` |
-| `ReliabilityMicrometerCollector` | `redis_streaming_dlq_replay_success_total`/`replay_failure_total`/`replay_latency_ms`、`dlq_deleted_total`/`dlq_cleared_total` |
+| `CDCMetricsMicrometerBinder` | `redis.streaming.cdc.*`(11 个 gauge,tag `connector=<name>`;需 cdc 模块在 classpath 且应用注册了 `CDCManager` Bean) |
 | `RateLimitMicrometerCollector` | `redis_streaming_rl_allowed_total`/`rl_denied_total` |
 | `ClientInvokerMetricsBinder` | `client.invoker.total.{attempts,successes,failures,retries,cbOpenSkips}` |
 

@@ -232,16 +232,16 @@ public class ConfigWatch {
 
 ## Metrics Export
 
-`micrometer-core` is an `api` dependency and `actuator` is `compileOnly`. Bridge chain: per-module singletons (`RedisRuntimeMetrics`/`MqMetrics`/`RetentionMetrics`/`ReliabilityMetrics`/`RateLimitMetrics`) → `*MicrometerCollector` → `MeterRegistry`. The actual meter names (taken from each collector's source):
+`micrometer-core` is an `api` dependency and `actuator` is `compileOnly`. Bridge chain: per-module singletons (`RedisRuntimeMetrics`/`MqMetrics`/`RetentionMetrics`/`RateLimitMetrics`) → `*MicrometerCollector` → `MeterRegistry`. The actual meter names (taken from each collector's source):
 
 | Source | Meter names |
 |---|---|
 | `RedisRuntimeMicrometerCollector` | `redis_streaming_runtime_*`: `job_started_total`/`job_canceled_total`, `pipeline_started_total`/`pipeline_start_failed_total`, `handle_success_total`/`handle_error_total`/`handle_latency_ms`, `checkpoint_triggered_total`/`checkpoint_completed_total`/`checkpoint_failed_total`, `checkpoint_duration_ms` plus `checkpoint_drain/store/sink_commit_duration_ms`, `keyed_state_read/write/delete_total`, `keyed_state_read/write_latency_ms`, `keyed_state_size_fields`, `keyed_state_hot_key_total`, `event_time_timer_queue_size`, `watermark_ms`, `window_fired_total`/`window_late_dropped_total` |
-| `MqMicrometerCollector` | `redis_streaming_mq_produced/consumed/acked/retried/dead/payload_missing_total`, `handle_latency_ms`, `inflight`/`max_inflight`, `backpressure_wait_total`/`backpressure_wait_ms`, `eligible_partitions`/`leased_partitions`/`max_leased_partitions` |
+| `MqMicrometerCollector` | `redis_streaming_mq_produced/consumed/acked/retried/dead/payload_missing_total`, `handle_latency_ms`, `inflight`/`max_inflight`, `backpressure_wait_total`/`backpressure_wait_ms`, `eligible_partitions`/`leased_partitions`/`max_leased_partitions`, DLQ replay `redis_streaming_dlq_replay_success_total`/`replay_failure_total`/`replay_latency_ms`, `redis_streaming_dlq_deleted_total`/`dlq_cleared_total` (tags: `topic`, `partition`) |
 | `MqMetricsBinder` | `redis_streaming_mq_topics_total`/`messages_total`/`dlq_total` (Gauge) |
 | `RetentionFrontierMetricsBinder` | `redis_streaming_mq_frontier_age_ms` |
 | `RetentionMicrometerCollector` | `redis_streaming_mq_trim_attempts_total`/`trim_deleted_total` |
-| `ReliabilityMicrometerCollector` | `redis_streaming_dlq_replay_success_total`/`replay_failure_total`/`replay_latency_ms`, `dlq_deleted_total`/`dlq_cleared_total` |
+| `CDCMetricsMicrometerBinder` | `redis.streaming.cdc.*` (11 gauges, tag `connector=<name>`; requires the cdc module on the classpath and a user-registered `CDCManager` bean) |
 | `RateLimitMicrometerCollector` | `redis_streaming_rl_allowed_total`/`rl_denied_total` |
 | `ClientInvokerMetricsBinder` | `client.invoker.total.{attempts,successes,failures,retries,cbOpenSkips}` |
 

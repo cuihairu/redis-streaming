@@ -19,7 +19,7 @@ Module: `metrics/`
 边界说明：
 
 - Prometheus client 在本模块 `build.gradle` 中是 **`compileOnly`** 依赖（`libs.prometheus.client` / `libs.prometheus.httpserver`），使用 `prometheus.*` 类时需要自行把 simpleclient 加进运行时 classpath。
-- Micrometer 集成不在本模块：采集器在 `spring-boot-starter` 的 `starter.metrics.*MicrometerCollector`，通过各模块的静态单例（`MqMetrics` / `RedisRuntimeMetrics` / `ReliabilityMetrics` / `RateLimitMetrics` 等）挂接。
+- Micrometer 集成不在本模块：采集器在 `spring-boot-starter` 的 `starter.metrics.*MicrometerCollector`，通过各模块的静态单例（`MqMetrics` / `RedisRuntimeMetrics` / `RateLimitMetrics` 等）挂接。
 - 本模块的类是通用工具：除示例和测试外，仓内主源码没有强绑定 `MetricRegistry` 的调用方。
 
 ## MetricCollector 接口
@@ -140,13 +140,22 @@ try (PrometheusExporter exporter = new PrometheusExporter(9090)) {   // AutoClos
 
 | 门面 | 采集器接口 | starter 安装的实现 | 指标前缀 |
 |---|---|---|---|
-| `mq.metrics.MqMetrics` | `MqMetricsCollector` | `starter.metrics.MqMicrometerCollector` | `redis_streaming_mq_*` |
+| `mq.metrics.MqMetrics` | `MqMetricsCollector` | `starter.metrics.MqMicrometerCollector` | `redis_streaming_mq_*` / `redis_streaming_dlq_*` |
 | `runtime...metrics.RedisRuntimeMetrics` | `RedisRuntimeMetricsCollector` | `starter.metrics.RedisRuntimeMicrometerCollector` | `redis_streaming_runtime_*` |
-| `reliability.metrics.ReliabilityMetrics` | `ReliabilityMetricsCollector` | `starter.metrics.ReliabilityMicrometerCollector` | `redis_streaming_dlq_*` |
 | `reliability.metrics.RateLimitMetrics` | `RateLimitMetricsCollector` | `starter.metrics.RateLimitMicrometerCollector` | `redis_streaming_rl_*` |
-| `mq.metrics.RetentionMetrics` | `RetentionMetricsCollector` | `starter.metrics.RetentionMicrometerCollector` | `redis_streaming_retention_*` |
+| `mq.metrics.RetentionMetrics` | `RetentionMetricsCollector` | `starter.metrics.RetentionMicrometerCollector` | `redis_streaming_retention_*` / `redis_streaming_mq_trim_*` |
 
 安装条件：classpath 有 `io.micrometer.core.instrument.MeterRegistry` 且容器中存在该 Bean（`RedisStreamingAutoConfiguration` / `RedisStreamingMqAutoConfiguration` 中的 `@ConditionalOnClass` + `@ConditionalOnBean` 安装 Bean）。也可手动调用 `XxxMetrics.setCollector(...)`。
+
+CDC 是另一条通路：`CDCManager` 直接暴露 `CDCMetrics` 快照（无静态门面），由 `starter.metrics.CDCMetricsMicrometerBinder` 读快照导出 gauge——需 cdc 模块在 classpath 且应用自己注册了 `CDCManager` Bean，框架不会替用户创建连接器。
+
+## 命名规范（docs/Metrics-Unification-Design.md 方案 A v1）
+
+新指标一律使用 `redis.streaming.<module>.<metric>`（点分、Micrometer 原生风格），维度 tag 沿用 `job` / `topic` / `group` 等；多租户批后新增的 `tenant` 维度保留给控制面指标，业务指标暂不携带。
+
+存量指标名（`redis_streaming_mq_*`、`redis_streaming_rl_*` 等蛇形前缀）**保持不变**，避免打爆已有 dashboard/告警；只有为它们补齐的缺口指标也沿用旧前缀（如 DLQ 重放 `redis_streaming_dlq_replay_success_total`）。两套名字的现状与 v2（`metrics` 模块删除、prometheus 输出交给 `micrometer-registry-prometheus`，走 major 版本）见 `Metrics-Unification-Design.md`。
+
+目前按新规范命名的只有 CDC 导出器（`redis.streaming.cdc.*`，tag `connector`）。
 
 ### MQ 指标（Micrometer）
 
@@ -157,6 +166,7 @@ try (PrometheusExporter exporter = new PrometheusExporter(9090)) {   // AutoClos
 - `redis_streaming_mq_inflight` / `redis_streaming_mq_max_inflight` / `redis_streaming_mq_max_leased_partitions`（gauge，tag：`consumer`）
 - `redis_streaming_mq_backpressure_wait_total`（counter）/ `redis_streaming_mq_backpressure_wait_ms`（timer），tag：`consumer`
 - `redis_streaming_mq_eligible_partitions` / `redis_streaming_mq_leased_partitions`（gauge，tags：`consumer`、`topic`、`group`）
+- DLQ 重放/清理（tags：`topic`、`partition`；delete/clear 无 partition tag）：`redis_streaming_dlq_replay_success_total` / `redis_streaming_dlq_replay_failure_total`（counter）、`redis_streaming_dlq_replay_latency_ms`（timer）、`redis_streaming_dlq_deleted_total`（counter）、`redis_streaming_dlq_cleared_total`（counter，按删除条数步进）
 
 另有 `MqMetricsBinder`（基于 `MessageQueueAdmin`/`DeadLetterService` 的函数式 gauge）：`redis_streaming_mq_topics_total`、`redis_streaming_mq_messages_total`（各 topic 长度求和）、`redis_streaming_mq_dlq_total`（各 topic DLQ 求和）；`RetentionFrontierMetricsBinder` 暴露 `redis_streaming_mq_frontier_age_ms`。
 
@@ -170,6 +180,21 @@ try (PrometheusExporter exporter = new PrometheusExporter(9090)) {   // AutoClos
 - keyed state：`redis_streaming_runtime_keyed_state_read_total` / `write_total` / `delete_total` / `hot_key_total`（counter）与 `read_latency_ms` / `write_latency_ms`（timer）、`size_fields`（DistributionSummary），tags：`job`、`topic`、`group`、`operator`、`state`、`partition`
 - 事件时间/水位线：`event_time_timer_queue_size`（gauge）、`watermark_ms`（gauge），tags：`job`、`topic`、`group`
 - 窗口：`window_fired_total` / `window_late_dropped_total`（counter），tags：`job`、`topic`、`group`、`operator`、`state`、`partition`（注意：tag 键为 `state`，值取的是窗口名参数）
+
+### CDC 指标（Micrometer，`redis.streaming.cdc.*`）
+
+`CDCMetricsMicrometerBinder` 构造即绑定、`bind()` 幂等可重调（新注册的连接器补绑，已绑的不重复）。每个 gauge 带 `connector=<name>` tag，值在抓取时实时读 `CDCManager.getMetrics(name)`（连接器已移除则回 0）：
+
+| 指标 | 来源（CDCMetrics） |
+|---|---|
+| `redis.streaming.cdc.events.total` | `totalEventsCaptured` |
+| `redis.streaming.cdc.events.inserted` / `.updated` / `.deleted` / `.schema_changed` | insert/update/delete/schemaChange 事件数 |
+| `redis.streaming.cdc.snapshot.records` | 快照记录数 |
+| `redis.streaming.cdc.errors.total` | 错误计数 |
+| `redis.streaming.cdc.latency.avg.milliseconds` | 平均事件时延 |
+| `redis.streaming.cdc.event.rate.per.second` | 事件速率 |
+| `redis.streaming.cdc.event.time.epoch.milliseconds` | 最近事件时间（epoch 毫秒，null → 0） |
+| `redis.streaming.cdc.commit.time.epoch.milliseconds` | 最近提交时间（epoch 毫秒，null → 0） |
 
 ## 最小示例（Prometheus）
 

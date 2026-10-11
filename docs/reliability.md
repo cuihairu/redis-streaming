@@ -288,21 +288,17 @@ public class RateLimitingSink<T> implements StreamSink<T> {
 
 ## 指标挂钩
 
-两组静态门面，默认实现均为 Noop，`setCollector` 忽略 null：
+静态门面，默认实现为 Noop，`setCollector` 忽略 null：
 
 ```java
 RateLimitMetrics.get().incAllowed(name);   // RateLimitMetricsCollector：incAllowed(name) / incDenied(name)
 RateLimitMetrics.get().incDenied(name);
-ReliabilityMetrics.get().recordDlqReplay(topic, partitionId, success, durationNanos); // ReliabilityMetricsCollector
-ReliabilityMetrics.get().incDlqDelete(topic);            // default 空实现
-ReliabilityMetrics.get().incDlqClear(topic, count);      // default 空实现
 ```
 
 - `RateLimitMetrics` 的唯一产数点是 `NamedRateLimiter`（包装后每次判定都上报）。
-- `ReliabilityMetricsCollector` 在仓内主源码中暂无调用点（mq 模块的 DLQ 重放/删除/清空走 `mq.metrics.MqMetrics` 的同名方法）。
-- Spring Boot starter 在 classpath 存在 Micrometer 且有 `MeterRegistry` 时自动安装 `RateLimitMicrometerCollector` 与 `ReliabilityMicrometerCollector`，指标名：
+- DLQ 的重放/删除/清空指标不走本模块：mq 模块的 DLQ 操作统一产数到 `mq.metrics.MqMetrics`，由 starter 的 `MqMicrometerCollector` 桥接到 Micrometer（`redis_streaming_dlq_replay_success_total` 等，见 docs/Metrics.md）。曾有独立的 `ReliabilityMetrics` 死桥（零调用者），已在指标统一 v1 中删除。
+- Spring Boot starter 在 classpath 存在 Micrometer 且有 `MeterRegistry` 时自动安装 `RateLimitMicrometerCollector`，指标名：
   - `redis_streaming_rl_allowed_total` / `redis_streaming_rl_denied_total`（tag：`name` = 限流器名）
-  - `redis_streaming_dlq_replay_success_total` / `redis_streaming_dlq_replay_failure_total` / `redis_streaming_dlq_replay_latency_ms` / `redis_streaming_dlq_deleted_total` / `redis_streaming_dlq_cleared_total`（tags：`topic`、`partition`）
 
 ## Spring Boot 配置（starter）
 
