@@ -7,6 +7,7 @@ import java.util.Collection;
 /**
  * Count aggregation function
  */
+@SuppressWarnings("deprecation") // implements the deprecated batch interface; removed with it (v2)
 public class CountFunction implements AggregationFunction<Object, Long> {
 
     private static final CountFunction INSTANCE = new CountFunction();

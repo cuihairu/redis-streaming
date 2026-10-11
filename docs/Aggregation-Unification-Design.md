@@ -43,8 +43,10 @@
 
 ## 迁移路径（方案 A 分期）
 
-1. **v1（兼容期）**：`analytics/` 高阶聚合逐个补 `AggregateFunction` 实现（新代码，不动旧类）；补齐文档指向 core 接口；`AggregationFunction`、`aggregation.TimeWindow` 标记 `@Deprecated`。
-2. **v2**：`examples` 全部改用新接口；删除 deprecated 类（走 major 版本）；`aggregation` 模块 javadoc 明确"core 接口的实现库"定位。
+1. **v1（兼容期，已落地 2026-10-11）**：`analytics/` 高阶聚合逐个补 `AggregateFunction` 实现（新代码，不动旧类）；补齐文档指向 core 接口；`AggregationFunction`、`aggregation.TimeWindow` 标记 `@Deprecated`。
+
+   落地记录：新增 `aggregation.incremental` 包四个 core `AggregateFunction` 实现——`TopKAggregateFunction`（HashMap 精确计数 + 触发时排序，tie 政策与 `TopKAnalyzer` 一致：分数降序、item 升序，结果 `TopKEntry(item,count)`）、`QuantileAggregateFunction`（nearest-rank `floor(q×(n-1))`，与 `QuantileAnalyzer.quantile` 同一定义，空窗口返回 `null`）、`PVAggregateFunction`（计数）、`UVAggregateFunction`（HashSet 精确去重）。设计修正一处事实偏差：analytics 四类并非经典累加器（Sketch/Heap）而是 Redis 持久化滚动窗口服务（自带存储/查询 API/TTL/清理线程），按方案 A 的括号备选"提供增量 accumulator 的经典结构"落地为窗口内精确计算的新实现，而非改造 Redis 服务本身——两者定位互补：窗口内走 incremental 包，跨进程/可恢复查询走 analytics 包。批式接口退役：`AggregationFunction` 与 `aggregation.TimeWindow` 标记 `@Deprecated`（javadoc 指向 core `AggregateFunction` 与 `window` 模块 assigners）；使用 deprecated API 的存量代码（`functions/` 五类、`WindowAggregator`、`TumblingWindow/SlidingWindow`、examples 的 `StreamAggregationExample`）按类级 `@SuppressWarnings("deprecation")` 压警（-Werror 门禁下必须），注释标注随 v2 一并处理。测试：四个函数单测（含 tie 政策/nearest-rank 等值/merge 语义/序列化往返）+ `IncrementalAggregatePipelineTest` 4 用例经公开 `InMemoryKeyedStream` + `window.assigners.TumblingWindow` 真实喂进 `WindowedStream.aggregate`（钉死"批式接口喂不进窗口管线"这一统一动机）；`aggregation:check`（单测+集成）全绿。v2（examples 迁移、删 deprecated 类、WindowAggregator 改造）随 major 周期。
+2. **v2（major）**：`examples` 全部改用新接口；删除 deprecated 类；`aggregation` 模块 javadoc 明确"core 接口的实现库"定位。
 
 ## 非目标
 

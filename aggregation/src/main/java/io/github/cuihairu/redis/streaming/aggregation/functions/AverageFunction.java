@@ -9,6 +9,7 @@ import java.util.Collection;
 /**
  * Average aggregation function for numeric values
  */
+@SuppressWarnings("deprecation") // implements the deprecated batch interface; removed with it (v2)
 public class AverageFunction implements AggregationFunction<Number, BigDecimal> {
 
     private static final AverageFunction INSTANCE = new AverageFunction();

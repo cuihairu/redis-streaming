@@ -5,7 +5,15 @@ import java.time.Instant;
 
 /**
  * Time window specification for aggregation operations
+ *
+ * @deprecated same name, different type than the pipeline window
+ *     {@link io.github.cuihairu.redis.streaming.window.TimeWindow} (millisecond interval,
+ *     produced by the window module's assigners). Pipeline code should use the window
+ *     module (assigners/triggers) so windows feed into {@code WindowedStream}; the
+ *     Duration-based specs here are schedule descriptions only. Slated for removal after
+ *     the deprecation period.
  */
+@Deprecated
 public interface TimeWindow {
 
     /**

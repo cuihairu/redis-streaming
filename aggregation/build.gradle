@@ -12,4 +12,7 @@ dependencies {
 
     testImplementation libs.junit.jupiter
     testImplementation libs.mockito.core
+    // Pipeline test: the incremental AggregateFunction impls feed WindowedStream.aggregate
+    testImplementation project(':window')
+    testImplementation project(':runtime')
 }

@@ -9,6 +9,7 @@ import java.time.Instant;
  * Tumbling time window implementation
  */
 @Data
+@SuppressWarnings("deprecation") // implements the deprecated Duration-window spec; removed with it (v2)
 public class TumblingWindow implements TimeWindow {
 
     private final Duration size;

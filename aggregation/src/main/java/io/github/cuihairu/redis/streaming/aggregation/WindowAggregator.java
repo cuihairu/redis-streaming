@@ -19,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Window aggregator that performs aggregations over time windows using Redis data structures
  */
 @Slf4j
+@SuppressWarnings("deprecation") // built on the deprecated batch API; reworked or removed with it (v2)
 public class WindowAggregator {
 
     private final RedissonClient redissonClient;

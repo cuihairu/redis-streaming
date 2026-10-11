@@ -8,6 +8,7 @@ import java.util.Comparator;
 /**
  * Maximum aggregation function for comparable values
  */
+@SuppressWarnings("deprecation") // implements the deprecated batch interface; removed with it (v2)
 public class MaxFunction<T extends Comparable<T>> implements AggregationFunction<T, T> {
 
     @Override

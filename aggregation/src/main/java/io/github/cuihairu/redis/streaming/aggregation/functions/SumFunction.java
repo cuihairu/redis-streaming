@@ -8,6 +8,7 @@ import java.util.Collection;
 /**
  * Sum aggregation function for numeric values
  */
+@SuppressWarnings("deprecation") // implements the deprecated batch interface; removed with it (v2)
 public class SumFunction implements AggregationFunction<Number, BigDecimal> {
 
     private static final SumFunction INSTANCE = new SumFunction();

@@ -28,6 +28,7 @@ import io.github.cuihairu.redis.streaming.aggregation.functions.SumFunction;
  * Requires Redis running (default `redis://127.0.0.1:6379`, override via `REDIS_URL`).
  */
 @Slf4j
+@SuppressWarnings("deprecation") // demonstrates the batch WindowAggregator API until it is reworked (v2)
 public class StreamAggregationExample {
 
     private final Random random = new Random();

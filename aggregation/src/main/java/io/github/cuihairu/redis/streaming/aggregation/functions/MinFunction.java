@@ -8,6 +8,7 @@ import java.util.Comparator;
 /**
  * Minimum aggregation function for comparable values
  */
+@SuppressWarnings("deprecation") // implements the deprecated batch interface; removed with it (v2)
 public class MinFunction<T extends Comparable<T>> implements AggregationFunction<T, T> {
 
     @Override

@@ -11,6 +11,7 @@ import java.util.List;
  * Sliding time window implementation
  */
 @Data
+@SuppressWarnings("deprecation") // implements the deprecated Duration-window spec; removed with it (v2)
 public class SlidingWindow implements TimeWindow {
 
     private final Duration size;
