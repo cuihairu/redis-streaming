@@ -24,6 +24,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -264,9 +265,10 @@ class RedisRuntimeCheckpointManagerGapClosureTest {
 
     private static Object nullTypedStateValue() throws Exception {
         Constructor<?> ctor = RedisRuntimeCheckpointManager.RedisStateValue.class
-                .getDeclaredConstructors()[0];
+                .getDeclaredConstructor(RedisRuntimeCheckpointManager.RedisStateType.class,
+                        Map.class, Map.class, List.class, Set.class);
         ctor.setAccessible(true);
-        return ctor.newInstance(new Object[]{null, null, null});
+        return ctor.newInstance(new Object[]{null, null, null, null, null});
     }
 
     @Test

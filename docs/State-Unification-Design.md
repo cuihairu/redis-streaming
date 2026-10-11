@@ -62,7 +62,9 @@
 ## 迁移路径（方案 A 分期）
 
 1. **第 1 步（最小，已落地 2026-10-11）**：水位线收敛（上面的独立小项），纯 runtime 内部 + watermark 模块，无外部兼容性影响。
-2. **第 2 步**：keyed store 补 Map/List/Set 状态类型 + schema 登记；补单测（含 checkpoint 枚举新状态类型）。
+2. **第 2 步（已落地 2026-10-11）**：keyed store 补 Map/List/Set 状态类型 + schema 登记；补单测（含 checkpoint 枚举新状态类型）。
+
+   落地记录：`RedisKeyedStateStore` 新增 `getMapState(name, keyType, valueType)`、`getListState(StateDescriptor)`、`getSetState(StateDescriptor)`——`RedisKeyedMapState/RedisKeyedListState/RedisKeyedSetState`（核心 `MapState/ListState/SetState` 接口），布局为每当前 key 一个 Redis Hash/List/Set，键 = keyed 状态布局 + `:{序列化当前key}`（不分片——每 key 结构本身就是扇出单元），字段/元素 JSON 序列化；`stateKeys` 索引登记 + TTL 继承（Map 走 `touch` 得到 TTL+热键+容量采样，List/Set 访问时滑动续期 EXPIRE，热键按 hash 字段数检测故不适用）；Map/List/Set schema 按 value/元素类型登记（`ensureSchemaForKey`）。checkpoint 侧 `RedisStateType` 增 `LIST/SET`：`snapshotState` 枚举 `RType.LIST/SET`、restore 走同一 stage-then-rename 流程并应用 TTL。测试：三个 GapClosure 单测（30 用例）+ `RedisKeyedCollectionStatesIntegrationTest`（布局/索引/TTL/clear + 检查点 LIST/SET 快照恢复与漂移清除）。
 3. **第 3 步（major）**：`RedisStateBackend` 改为适配层委托 keyed store；删除 `RedisValueState/RedisMapState/RedisListState/RedisSetState` 旧实现；迁移文档给 key/codec 对照表。
 
 ## 非目标

@@ -1,8 +1,12 @@
 package io.github.cuihairu.redis.streaming.runtime.redis.internal;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.cuihairu.redis.streaming.api.state.ListState;
+import io.github.cuihairu.redis.streaming.api.state.MapState;
+import io.github.cuihairu.redis.streaming.api.state.SetState;
 import io.github.cuihairu.redis.streaming.api.state.StateDescriptor;
 import io.github.cuihairu.redis.streaming.api.state.ValueState;
+import org.redisson.api.RList;
 import org.redisson.api.RMap;
 import org.redisson.api.RedissonClient;
 import org.redisson.api.RKeys;
@@ -50,6 +54,8 @@ public final class RedisKeyedStateStore<K> {
     private final RedisRuntimeConfig.StateSchemaMismatchPolicy stateSchemaMismatchPolicy;
     private final AtomicLong stateWriteCount = new AtomicLong();
     private final ConcurrentHashMap<String, RMap<String, String>> maps = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, RList<String>> lists = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, RSet<String>> sets = new ConcurrentHashMap<>();
     private final String stateKeyIndexKey;
     private final RSet<String> stateKeyIndex;
     private final String stateSchemaKey;
@@ -138,6 +144,24 @@ public final class RedisKeyedStateStore<K> {
         return new RedisKeyedValueState<>(this, descriptor, objectMapper);
     }
 
+    /**
+     * Map state under the current key: one Redis Hash per (current key), fields are the
+     * serialized map keys. Unlike value state (many keys share one sharded hash), the
+     * per-key structure is its own fan-out unit, so no sharding applies and the key is
+     * registered in the {@code stateKeys} checkpoint index directly.
+     */
+    public <MK, MV> MapState<MK, MV> getMapState(String name, Class<MK> keyType, Class<MV> valueType) {
+        return new RedisKeyedMapState<>(this, name, keyType, valueType, objectMapper);
+    }
+
+    public <T> ListState<T> getListState(StateDescriptor<T> descriptor) {
+        return new RedisKeyedListState<>(this, descriptor, objectMapper);
+    }
+
+    public <T> SetState<T> getSetState(StateDescriptor<T> descriptor) {
+        return new RedisKeyedSetState<>(this, descriptor, objectMapper);
+    }
+
     StateMapRef stateMapRef(String stateName, String stateField) {
         Integer pid = currentPartitionId();
         if (pid == null) {
@@ -171,14 +195,81 @@ public final class RedisKeyedStateStore<K> {
         return stateMapRef(stateName, stateField).map();
     }
 
+    /**
+     * Full redis key of a per-current-key state structure (Map/List/Set state): the keyed
+     * state layout with the serialized current key appended — no sharding, because the
+     * per-key structure is already the fan-out unit.
+     */
+    String stateItemKey(String stateName, String stateField) {
+        Integer pid = currentPartitionId();
+        if (pid == null) {
+            throw new IllegalStateException("No current partitionId is set for keyed state access");
+        }
+        if (pid < 0) {
+            throw new IllegalStateException("Invalid current partitionId for keyed state access: " + pid);
+        }
+        return stateKeyPrefix + ":" + jobName +
+                ":cg:" + consumerGroup +
+                ":topic:" + topic +
+                ":p:" + pid +
+                ":state:" + operatorId + ":" + stateName + ":" + stateField;
+    }
+
+    StateMapRef stateMapRefForKey(String stateName, String stateField) {
+        String redisKey = stateItemKey(stateName, stateField);
+        RMap<String, String> map = maps.computeIfAbsent(redisKey, k -> {
+            registerStateKey(k);
+            return redissonClient.getMap(k, StringCodec.INSTANCE);
+        });
+        return new StateMapRef(redisKey, map);
+    }
+
+    RList<String> stateListForKey(String stateName, String stateField) {
+        String redisKey = stateItemKey(stateName, stateField);
+        RList<String> list = lists.computeIfAbsent(redisKey, k -> {
+            registerStateKey(k);
+            return redissonClient.getList(k, StringCodec.INSTANCE);
+        });
+        refreshStateKeyTtl(redisKey); // sliding TTL, the list/set counterpart of touch()
+        return list;
+    }
+
+    RSet<String> stateSetForKey(String stateName, String stateField) {
+        String redisKey = stateItemKey(stateName, stateField);
+        RSet<String> set = sets.computeIfAbsent(redisKey, k -> {
+            registerStateKey(k);
+            return redissonClient.getSet(k, StringCodec.INSTANCE);
+        });
+        refreshStateKeyTtl(redisKey);
+        return set;
+    }
+
+    private void refreshStateKeyTtl(String redisKey) {
+        Duration ttl = stateTtl;
+        if (ttl == null || ttl.isZero() || ttl.isNegative()) {
+            return;
+        }
+        try {
+            redissonClient.getKeys().expire(ttl, redisKey);
+        } catch (Exception ex) {
+            log.debug("Keyed state operation failed", ex);
+        }
+    }
+
     void ensureSchema(StateMapRef ref, StateDescriptor<?> descriptor) {
+        if (ref == null) {
+            return;
+        }
+        ensureSchemaForKey(ref.redisKey(), descriptor);
+    }
+
+    void ensureSchemaForKey(String redisKey, StateDescriptor<?> descriptor) {
         if (!stateSchemaEvolutionEnabled) {
             return;
         }
-        if (ref == null || descriptor == null) {
+        if (descriptor == null) {
             return;
         }
-        String redisKey = ref.redisKey();
         if (redisKey == null || redisKey.isBlank()) {
             return;
         }
@@ -335,16 +426,7 @@ public final class RedisKeyedStateStore<K> {
         } catch (Exception ex) {
             log.warn("Keyed state operation failed", ex);
         }
-        Duration ttl = stateTtl;
-        if (ttl == null || ttl.isZero() || ttl.isNegative()) {
-            return;
-        }
-        try {
-            RKeys keys = redissonClient.getKeys();
-            keys.expire(ttl, redisKey);
-        } catch (Exception ex) {
-            log.debug("Keyed state operation failed", ex);
-        }
+        refreshStateKeyTtl(redisKey);
     }
 
     void recordKeyedStateRead(String stateName, long millis) {

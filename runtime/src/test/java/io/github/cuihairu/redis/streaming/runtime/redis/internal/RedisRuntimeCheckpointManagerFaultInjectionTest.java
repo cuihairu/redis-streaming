@@ -23,6 +23,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -125,9 +126,10 @@ class RedisRuntimeCheckpointManagerFaultInjectionTest {
     private static RedisRuntimeCheckpointManager.RedisStateValue nullTypedStateValue() throws Exception {
         Constructor<RedisRuntimeCheckpointManager.RedisStateValue> ctor =
                 RedisRuntimeCheckpointManager.RedisStateValue.class.getDeclaredConstructor(
-                        RedisRuntimeCheckpointManager.RedisStateType.class, Map.class, Map.class);
+                        RedisRuntimeCheckpointManager.RedisStateType.class, Map.class, Map.class,
+                        List.class, Set.class);
         ctor.setAccessible(true);
-        return ctor.newInstance(null, Map.of("a", "b"), null);
+        return ctor.newInstance(null, Map.of("a", "b"), null, null, null);
     }
 
     @Test

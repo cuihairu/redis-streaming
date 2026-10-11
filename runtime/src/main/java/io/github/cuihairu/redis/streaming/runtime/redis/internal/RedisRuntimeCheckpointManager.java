@@ -7,6 +7,7 @@ import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisRuntimeConfig;
 import org.redisson.api.RKeys;
+import org.redisson.api.RList;
 import org.redisson.api.RMap;
 import org.redisson.api.RBucket;
 import org.redisson.api.RScript;
@@ -26,6 +27,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -55,7 +57,9 @@ public final class RedisRuntimeCheckpointManager {
 
     public enum RedisStateType {
         MAP,
-        ZSET
+        ZSET,
+        LIST,
+        SET
     }
 
     public static final class RedisStateValue implements Serializable {
@@ -64,19 +68,32 @@ public final class RedisRuntimeCheckpointManager {
         private final RedisStateType type;
         private final Map<String, String> map;
         private final Map<String, Double> zset;
+        private final List<String> list;
+        private final Set<String> set;
 
-        private RedisStateValue(RedisStateType type, Map<String, String> map, Map<String, Double> zset) {
+        private RedisStateValue(RedisStateType type, Map<String, String> map, Map<String, Double> zset,
+                                List<String> list, Set<String> set) {
             this.type = type;
             this.map = map;
             this.zset = zset;
+            this.list = list;
+            this.set = set;
         }
 
         public static RedisStateValue ofMap(Map<String, String> map) {
-            return new RedisStateValue(RedisStateType.MAP, map, null);
+            return new RedisStateValue(RedisStateType.MAP, map, null, null, null);
         }
 
         public static RedisStateValue ofZset(Map<String, Double> zset) {
-            return new RedisStateValue(RedisStateType.ZSET, null, zset);
+            return new RedisStateValue(RedisStateType.ZSET, null, zset, null, null);
+        }
+
+        public static RedisStateValue ofList(List<String> list) {
+            return new RedisStateValue(RedisStateType.LIST, null, null, list, null);
+        }
+
+        public static RedisStateValue ofSet(Set<String> set) {
+            return new RedisStateValue(RedisStateType.SET, null, null, null, set);
         }
 
         public RedisStateType type() {
@@ -89,6 +106,14 @@ public final class RedisRuntimeCheckpointManager {
 
         public Map<String, Double> zset() {
             return zset;
+        }
+
+        public List<String> list() {
+            return list;
+        }
+
+        public Set<String> set() {
+            return set;
         }
     }
 
@@ -646,6 +671,30 @@ public final class RedisRuntimeCheckpointManager {
                             log.debug("Checkpoint state operation failed", ex);
                         }
                     }
+                } else if (type == RType.LIST) {
+                    RList<String> list = redissonClient.getList(k, StringCodec.INSTANCE);
+                    List<String> data = list.readAll();
+                    if (data != null && !data.isEmpty()) {
+                        out.put(k, RedisStateValue.ofList(new ArrayList<>(data)));
+                    } else {
+                        try {
+                            index.remove(k);
+                        } catch (Exception ex) {
+                            log.debug("Checkpoint state operation failed", ex);
+                        }
+                    }
+                } else if (type == RType.SET) {
+                    RSet<String> set = redissonClient.<String>getSet(k, StringCodec.INSTANCE);
+                    Set<String> data = set.readAll();
+                    if (data != null && !data.isEmpty()) {
+                        out.put(k, RedisStateValue.ofSet(new java.util.HashSet<>(data)));
+                    } else {
+                        try {
+                            index.remove(k);
+                        } catch (Exception ex) {
+                            log.debug("Checkpoint state operation failed", ex);
+                        }
+                    }
                 } else {
                     log.debug("Skip snapshot for unsupported state key type {}: {}", String.valueOf(type), k);
                 }
@@ -819,6 +868,38 @@ public final class RedisRuntimeCheckpointManager {
                     set.addAll(data);
                     stagedPairs.add(new String[]{stagedName, redisKey});
                     stagedNames.add(stagedName);
+                } else if (value.type() == RedisStateType.LIST) {
+                    List<String> data = value.list();
+                    if (data == null || data.isEmpty()) {
+                        clearedKeys.add(redisKey);
+                        continue;
+                    }
+                    String stagedName = redisKey + stage;
+                    RList<String> list = redissonClient.getList(stagedName, StringCodec.INSTANCE);
+                    try {
+                        rkeysDeleteQuietly(stagedName);
+                    } catch (Exception ex) {
+                        log.debug("Checkpoint state operation failed", ex);
+                    }
+                    list.addAll(data);
+                    stagedPairs.add(new String[]{stagedName, redisKey});
+                    stagedNames.add(stagedName);
+                } else if (value.type() == RedisStateType.SET) {
+                    Set<String> data = value.set();
+                    if (data == null || data.isEmpty()) {
+                        clearedKeys.add(redisKey);
+                        continue;
+                    }
+                    String stagedName = redisKey + stage;
+                    RSet<String> set = redissonClient.<String>getSet(stagedName, StringCodec.INSTANCE);
+                    try {
+                        rkeysDeleteQuietly(stagedName);
+                    } catch (Exception ex) {
+                        log.debug("Checkpoint state operation failed", ex);
+                    }
+                    set.addAll(data);
+                    stagedPairs.add(new String[]{stagedName, redisKey});
+                    stagedNames.add(stagedName);
                 } else {
                     Map<String, String> data = value.map();
                     if (data == null || data.isEmpty()) {
@@ -918,8 +999,13 @@ public final class RedisRuntimeCheckpointManager {
         if (ttl != null && !ttl.isZero() && !ttl.isNegative()) {
             for (String[] pair : stagedPairs) {
                 try {
-                    if (state.get(pair[1]).type() == RedisStateType.ZSET) {
+                    RedisStateType t = state.get(pair[1]).type();
+                    if (t == RedisStateType.ZSET) {
                         redissonClient.getScoredSortedSet(pair[1], StringCodec.INSTANCE).expire(ttl);
+                    } else if (t == RedisStateType.LIST) {
+                        redissonClient.getList(pair[1], StringCodec.INSTANCE).expire(ttl);
+                    } else if (t == RedisStateType.SET) {
+                        redissonClient.<String>getSet(pair[1], StringCodec.INSTANCE).expire(ttl);
                     } else {
                         redissonClient.<String, String>getMap(pair[1], StringCodec.INSTANCE).expire(ttl);
                     }
