@@ -128,4 +128,23 @@ public class RedisStreamingAutoConfiguration {
         RateLimitMetrics.setCollector(collector);
         return new Object();
     }
+
+
+    /**
+     * CDC metrics to Micrometer (optional bridge, docs/Metrics-Unification-Design.md).
+     * Requires the cdc module on the classpath and a user-registered {@code CDCManager}
+     * bean — the framework never creates connectors on its own.
+     */
+    @Bean
+    @ConditionalOnClass(name = "io.github.cuihairu.redis.streaming.cdc.CDCManager")
+    @ConditionalOnBean(io.micrometer.core.instrument.MeterRegistry.class)
+    public io.github.cuihairu.redis.streaming.starter.metrics.CDCMetricsMicrometerBinder cdcMetricsMicrometerBinder(
+            io.micrometer.core.instrument.MeterRegistry registry,
+            org.springframework.beans.factory.ObjectProvider<io.github.cuihairu.redis.streaming.cdc.CDCManager> cdcManager) {
+        io.github.cuihairu.redis.streaming.cdc.CDCManager manager = cdcManager.getIfAvailable();
+        if (manager == null) {
+            return null; // no connectors registered by the application; nothing to export
+        }
+        return new io.github.cuihairu.redis.streaming.starter.metrics.CDCMetricsMicrometerBinder(manager, registry);
+    }
 }

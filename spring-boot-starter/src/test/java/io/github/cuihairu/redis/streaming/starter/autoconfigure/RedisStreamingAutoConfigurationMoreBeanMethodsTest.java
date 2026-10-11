@@ -14,7 +14,6 @@ import io.github.cuihairu.redis.streaming.registry.metrics.MetricsConfig;
 import io.github.cuihairu.redis.streaming.registry.metrics.MetricsGlobal;
 import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterService;
 import io.github.cuihairu.redis.streaming.reliability.metrics.RateLimitMetrics;
-import io.github.cuihairu.redis.streaming.reliability.metrics.ReliabilityMetrics;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
 import io.github.cuihairu.redis.streaming.reliability.ratelimit.InMemorySlidingWindowRateLimiter;
 import io.github.cuihairu.redis.streaming.reliability.ratelimit.RateLimiter;
@@ -158,7 +157,6 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
     void mqBeansCanBeCreatedAndMetricsCollectorsInstalled() {
         var oldMq = MqMetrics.get();
         var oldRetention = RetentionMetrics.get();
-        var oldReliability = ReliabilityMetrics.get();
         var oldRateLimit = RateLimitMetrics.get();
         var oldRuntime = RedisRuntimeMetrics.get();
 
@@ -181,17 +179,12 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
             cfg.installRetentionCollector(retentionCollector);
             assertEquals(retentionCollector, RetentionMetrics.get());
 
-            var reliabilityCollector = cfg.reliabilityMicrometerCollector(reg);
-            cfg.installReliabilityCollector(reliabilityCollector);
-            assertEquals(reliabilityCollector, ReliabilityMetrics.get());
-
             var rateLimitCollector = auto.rateLimitMicrometerCollector(reg);
             auto.installRateLimitCollector(rateLimitCollector);
             assertEquals(rateLimitCollector, RateLimitMetrics.get());
         } finally {
             MqMetrics.setCollector(oldMq);
             RetentionMetrics.setCollector(oldRetention);
-            ReliabilityMetrics.setCollector(oldReliability);
             RateLimitMetrics.setCollector(oldRateLimit);
             RedisRuntimeMetrics.setCollector(oldRuntime);
         }

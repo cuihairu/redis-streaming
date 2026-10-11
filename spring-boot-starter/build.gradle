@@ -9,6 +9,9 @@ dependencies {
     api project(':mq')
     api project(':runtime')
     api project(':reliability')
+    // CDC metrics bridge is optional: connector module on the classpath enables it
+    compileOnly project(':cdc')
+    testImplementation project(':cdc')
     api libs.springboot.starter
     api libs.springboot.config.processor
     // For HealthIndicator compile-time visibility (do not force runtime)

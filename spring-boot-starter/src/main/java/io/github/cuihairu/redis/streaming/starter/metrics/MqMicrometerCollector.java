@@ -22,6 +22,11 @@ public class MqMicrometerCollector implements MqMetricsCollector {
     private final Map<String, Counter> retried = new ConcurrentHashMap<>();
     private final Map<String, Counter> dead = new ConcurrentHashMap<>();
     private final Map<String, Counter> payloadMissing = new ConcurrentHashMap<>();
+    private final Map<String, Counter> dlqReplaySuccess = new ConcurrentHashMap<>();
+    private final Map<String, Counter> dlqReplayFailure = new ConcurrentHashMap<>();
+    private final Map<String, Timer> dlqReplayLatency = new ConcurrentHashMap<>();
+    private final Map<String, Counter> dlqDeleted = new ConcurrentHashMap<>();
+    private final Map<String, Counter> dlqCleared = new ConcurrentHashMap<>();
     private final Map<String, Timer> handleLatency = new ConcurrentHashMap<>();
     private final Map<String, Timer> backpressureWait = new ConcurrentHashMap<>();
     private final Map<String, Counter> backpressureWaitCount = new ConcurrentHashMap<>();
@@ -71,6 +76,28 @@ public class MqMicrometerCollector implements MqMetricsCollector {
     public void setInFlight(String consumerName, long inFlight, int maxInFlight) {
         gauge("redis_streaming_mq_inflight", "consumer", consumerName).set(Math.max(0L, inFlight));
         gauge("redis_streaming_mq_max_inflight", "consumer", consumerName).set(Math.max(0L, maxInFlight));
+    }
+
+    @Override
+    public void recordDlqReplay(String topic, int partitionId, boolean success, long durationNanos) {
+        if (success) {
+            counter(dlqReplaySuccess, "redis_streaming_dlq_replay_success_total", topic, partitionId).increment();
+        } else {
+            counter(dlqReplayFailure, "redis_streaming_dlq_replay_failure_total", topic, partitionId).increment();
+        }
+        timer(dlqReplayLatency, "redis_streaming_dlq_replay_latency_ms", topic, partitionId)
+                .record(durationNanos, java.util.concurrent.TimeUnit.NANOSECONDS);
+    }
+
+    @Override
+    public void incDlqDelete(String topic) {
+        counter(dlqDeleted, "redis_streaming_dlq_deleted_total", topic, -1).increment();
+    }
+
+    @Override
+    public void incDlqClear(String topic, long count) {
+        Counter c = counter(dlqCleared, "redis_streaming_dlq_cleared_total", topic, -1);
+        if (count > 0) c.increment(count);
     }
 
     @Override

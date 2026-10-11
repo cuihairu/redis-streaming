@@ -208,6 +208,19 @@ public class CDCManager {
     }
 
     /**
+     * Get the latest metrics snapshot of one connector (live view; a new immutable
+     * snapshot is published on every connector round, so the returned object reflects
+     * the current counters when read).
+     *
+     * @param name connector name
+     * @return metrics, or null when no connector is registered under that name
+     */
+    public CDCMetrics getMetrics(String name) {
+        CDCConnector connector = connectors.get(name);
+        return connector != null ? connector.getMetrics() : null;
+    }
+
+    /**
      * Get current positions for all connectors
      *
      * @return map of connector name to current position; connectors that have not advanced to a

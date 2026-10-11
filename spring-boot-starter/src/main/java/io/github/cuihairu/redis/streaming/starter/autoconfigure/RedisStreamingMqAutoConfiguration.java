@@ -15,7 +15,6 @@ import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterService;
 import io.github.cuihairu.redis.streaming.mq.dlq.RedisDeadLetterAdmin;
 import io.github.cuihairu.redis.streaming.mq.dlq.RedisDeadLetterConsumer;
 import io.github.cuihairu.redis.streaming.mq.dlq.RedisDeadLetterService;
-import io.github.cuihairu.redis.streaming.reliability.metrics.ReliabilityMetrics;
 import io.github.cuihairu.redis.streaming.starter.properties.RedisStreamingProperties;
 import org.redisson.api.RedissonClient;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -254,22 +253,6 @@ public class RedisStreamingMqAutoConfiguration {
             MessageQueueAdmin admin,
             MqOptions opts) {
         return new io.github.cuihairu.redis.streaming.starter.metrics.RetentionFrontierMetricsBinder(redissonClient, admin, opts);
-    }
-
-    @Bean
-    @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
-    @ConditionalOnBean(io.micrometer.core.instrument.MeterRegistry.class)
-    public io.github.cuihairu.redis.streaming.starter.metrics.ReliabilityMicrometerCollector reliabilityMicrometerCollector(
-            io.micrometer.core.instrument.MeterRegistry registry) {
-        return new io.github.cuihairu.redis.streaming.starter.metrics.ReliabilityMicrometerCollector(registry);
-    }
-
-    @Bean
-    @ConditionalOnBean(io.github.cuihairu.redis.streaming.starter.metrics.ReliabilityMicrometerCollector.class)
-    @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
-    public Object installReliabilityCollector(io.github.cuihairu.redis.streaming.starter.metrics.ReliabilityMicrometerCollector collector) {
-        ReliabilityMetrics.setCollector(collector);
-        return new Object();
     }
 
     /**

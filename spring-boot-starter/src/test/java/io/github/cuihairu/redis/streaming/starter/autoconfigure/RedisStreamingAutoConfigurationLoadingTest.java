@@ -16,7 +16,6 @@ import io.github.cuihairu.redis.streaming.reliability.ratelimit.RateLimiter;
 import io.github.cuihairu.redis.streaming.reliability.ratelimit.RateLimiterRegistry;
 import io.github.cuihairu.redis.streaming.starter.metrics.MqMicrometerCollector;
 import io.github.cuihairu.redis.streaming.starter.metrics.RateLimitMicrometerCollector;
-import io.github.cuihairu.redis.streaming.starter.metrics.ReliabilityMicrometerCollector;
 import io.github.cuihairu.redis.streaming.starter.maintenance.StreamRetentionHousekeeper;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -327,7 +326,6 @@ class RedisStreamingAutoConfigurationLoadingTest {
                 .run(context -> {
                     assertThat(context).hasSingleBean(RateLimitMicrometerCollector.class);
                     assertThat(context).hasSingleBean(MqMicrometerCollector.class);
-                    assertThat(context).hasSingleBean(ReliabilityMicrometerCollector.class);
                 });
     }
 
@@ -340,7 +338,6 @@ class RedisStreamingAutoConfigurationLoadingTest {
                 .run(context -> {
                     assertThat(context).doesNotHaveBean(RateLimitMicrometerCollector.class);
                     assertThat(context).doesNotHaveBean(MqMicrometerCollector.class);
-                    assertThat(context).doesNotHaveBean(ReliabilityMicrometerCollector.class);
                 });
     }
 

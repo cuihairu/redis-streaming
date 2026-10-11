@@ -11,17 +11,6 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 class StaticMetricsCollectorNullCoverageTest {
 
     @Test
-    void reliabilityMetricsIgnoresNullCollector() {
-        ReliabilityMetricsCollector before = ReliabilityMetrics.get();
-        try {
-            ReliabilityMetrics.setCollector(null);
-            assertSame(before, ReliabilityMetrics.get(), "null must not replace the collector");
-        } finally {
-            ReliabilityMetrics.setCollector(before);
-        }
-    }
-
-    @Test
     void rateLimitMetricsIgnoresNullCollector() {
         RateLimitMetricsCollector before = RateLimitMetrics.get();
         try {

@@ -151,9 +151,9 @@ class StarterMetricsTest {
     }
 
     @Test
-    void reliabilityCollectorMapsDlqOps() {
+    void mqCollectorMapsDlqReplayOps() {
         SimpleMeterRegistry reg = new SimpleMeterRegistry();
-        ReliabilityMicrometerCollector c = new ReliabilityMicrometerCollector(reg);
+        MqMicrometerCollector c = new MqMicrometerCollector(reg);
         c.recordDlqReplay("t", 1, true, 100L);
         c.recordDlqReplay("t", 1, false, 300L);
         c.incDlqDelete("t");
