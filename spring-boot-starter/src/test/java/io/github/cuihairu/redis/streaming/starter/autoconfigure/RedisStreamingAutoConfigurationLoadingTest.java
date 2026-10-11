@@ -8,7 +8,6 @@ import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterService;
 import io.github.cuihairu.redis.streaming.mq.dlq.ReplayHandler;
 import io.github.cuihairu.redis.streaming.registry.NamingService;
 import io.github.cuihairu.redis.streaming.registry.ServiceDiscovery;
-import io.github.cuihairu.redis.streaming.registry.client.ClientInvoker;
 import io.github.cuihairu.redis.streaming.registry.loadbalancer.LoadBalancer;
 import io.github.cuihairu.redis.streaming.registry.loadbalancer.WeightedRoundRobinLoadBalancer;
 import io.github.cuihairu.redis.streaming.reliability.ratelimit.NamedRateLimiter;
@@ -91,7 +90,6 @@ class RedisStreamingAutoConfigurationLoadingTest {
                             .contains("MockitoMock");
                     // …but the registry feature still wires its own lower-level beans
                     // (the default load-balancer strategy is "scored", not WRR)
-                    assertThat(context).hasSingleBean(ClientInvoker.class);
                     assertThat(context).hasSingleBean(LoadBalancer.class);
 
                     // RateLimit must be explicitly enabled (no matchIfMissing)
@@ -114,7 +112,6 @@ class RedisStreamingAutoConfigurationLoadingTest {
                     // by name: the user mock bean is also of this type and stays
                     assertThat(context).doesNotHaveBean("streamRetentionHousekeeper");
                     // the other features are untouched
-                    assertThat(context).hasSingleBean(ClientInvoker.class);
                     assertThat(context).hasSingleBean(ConfigService.class);
                 });
     }
@@ -124,9 +121,7 @@ class RedisStreamingAutoConfigurationLoadingTest {
         base().withUserConfiguration(UserCoreBeans.class)
                 .withPropertyValues("redis-streaming.registry.enabled=false")
                 .run(context -> {
-                    assertThat(context).doesNotHaveBean(ClientInvoker.class);
                     assertThat(context).doesNotHaveBean(LoadBalancer.class);
-                    assertThat(context).doesNotHaveBean("clientSelector");
                     // MQ is untouched
                     assertThat(context).hasSingleBean(MqOptions.class);
                 });
@@ -203,7 +198,6 @@ class RedisStreamingAutoConfigurationLoadingTest {
                 .run(context -> {
                     assertThat(context.getBean(LoadBalancer.class))
                             .isInstanceOf(WeightedRoundRobinLoadBalancer.class);
-                    assertThat(context).hasSingleBean(ClientInvoker.class);
                 });
     }
 
@@ -347,7 +341,7 @@ class RedisStreamingAutoConfigurationLoadingTest {
      * The user side of the context: mock services that would otherwise start Redis-backed
      * schedulers, proving the {@code @ConditionalOnMissingBean} overrides take precedence.
      * The naming mock is deliberately named {@code namingService} — the registry config's
-     * {@code clientSelector}/{@code clientInvoker} inject it via {@code @Qualifier}.
+     * beans inject it via {@code @Qualifier}.
      */
     @Configuration(proxyBeanMethods = false)
     static class UserCoreBeans {

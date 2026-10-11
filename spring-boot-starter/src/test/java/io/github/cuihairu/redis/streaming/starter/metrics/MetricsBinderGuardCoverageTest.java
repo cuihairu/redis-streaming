@@ -3,11 +3,8 @@ package io.github.cuihairu.redis.streaming.starter.metrics;
 import io.github.cuihairu.redis.streaming.mq.admin.MessageQueueAdmin;
 import io.github.cuihairu.redis.streaming.mq.admin.model.QueueInfo;
 import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterService;
-import io.github.cuihairu.redis.streaming.registry.client.ClientInvoker;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
-
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -17,7 +14,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * Covers the negative-input guards of the micrometer collectors and the null/fallback outcomes of
- * the MQ and ClientInvoker gauge functions.
+ * the MQ gauge functions.
  */
 class MetricsBinderGuardCoverageTest {
 
@@ -79,22 +76,5 @@ class MetricsBinderGuardCoverageTest {
         new MqMetricsBinder(admin, dlq).bindTo(registry);
 
         assertEquals(5.0, registry.get("redis_streaming_mq_messages_total").gauge().value());
-    }
-
-    @Test
-    void clientInvokerGaugesFallBackToZeroWithoutSnapshots() {
-        SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        ClientInvoker invoker = mock(ClientInvoker.class);
-        ClientInvokerMetricsBinder binder = new ClientInvokerMetricsBinder(invoker);
-        binder.bindTo(registry);
-
-        when(invoker.getMetricsSnapshot()).thenReturn(Map.of());
-        assertEquals(0.0, registry.get("client.invoker.total.attempts").gauge().value());
-
-        when(invoker.getMetricsSnapshot()).thenReturn(Map.of("other", Map.of("attempts", 42L)));
-        assertEquals(0.0, registry.get("client.invoker.total.attempts").gauge().value());
-
-        when(invoker.getMetricsSnapshot()).thenReturn(Map.of("total", Map.of("attempts", 7L)));
-        assertEquals(7.0, registry.get("client.invoker.total.attempts").gauge().value());
     }
 }

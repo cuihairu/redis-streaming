@@ -222,36 +222,9 @@ ServiceInstance chosen = ((RedisNamingService) naming)
 
 metrics 键说明：`ScoredLoadBalancer` 默认读 `cpu`、`latency`、`memory`、`inflight`、`queue`、`errorRate`（可用 `cfg.setCpuKey(...)` 等改）。内置采集器产出的是 `processCpuLoad`（0~1）、`heap_usagePercent`、`threadCount` 等键；客户端上报写入 `clientInflight`、`clientLatencyMs`、`clientErrorRate`。两边键名默认不一致，需要通过 `LoadBalancerConfig.setXxxKey(...)` 对齐或由业务方补充同键名数据。
 
-## 6) ClientSelector / ClientInvoker（选择与调用封装）
+## 6) 客户端调用（已删除 client 包）
 
-```java
-import io.github.cuihairu.redis.streaming.registry.client.*;
-import io.github.cuihairu.redis.streaming.registry.client.metrics.RedisClientMetricsReporter;
-
-// 选择：严格过滤(metadata+metrics) → 去掉 metrics 过滤 → 去掉 metadata 过滤 → 全量健康实例
-// 顺序与开关由 ClientSelectorConfig 控制，均默认开启
-ClientSelector selector = new ClientSelector(naming, new ClientSelectorConfig());
-ServiceInstance picked = selector.select("order-service", md, mt,
-        new WeightedRoundRobinLoadBalancer(), Map.of());     // 无候选时返回 null
-
-// 调用：选择 + 单实例熔断 + 指数回退重试 + 客户端指标上报
-RetryPolicy retry = new RetryPolicy(3, 20, 2.0, 200, 20);    // attempts, initialDelayMs, factor, maxDelayMs, jitterMs
-RedisClientMetricsReporter reporter =
-        new RedisClientMetricsReporter(redissonClient, consumerConfig);
-
-ClientInvoker invoker = new ClientInvoker(naming, scored, retry, reporter);
-
-String body = invoker.invoke("order-service", md, mt, Map.of(), ins -> {
-    String url = ins.getScheme() + "://" + ins.getHost() + ":" + ins.getPort() + "/api/orders";
-    // 发起 HTTP 调用并返回结果；抛异常会触发重试/熔断计数
-    return "ok";
-});
-
-// 调用计数快照：total + per service，键为 attempts/successes/failures/retries/cbOpenSkips
-Map<String, Map<String, Long>> stats = invoker.getMetricsSnapshot();
-```
-
-实现细节：`ClientInvoker` 为每个 `serviceName:instanceId` 维护一个 `CircuitBreaker`（窗口 20 次、失败率阈值 0.5、打开 5s、半开 1 次探测）；`RetryPolicy` 为 null 时使用 `new RetryPolicy(3, 10, 2.0, 200, 10)`。`invoke` 声明 `throws Exception`。
+原 `registry.client` 包（`ClientSelector` / `ClientInvoker` / `RetryPolicy` / `CircuitBreaker` / `client.metrics.RedisClientMetricsReporter`）是一层选择+熔断+重试+上报的 RPC 调用封装，与业务侧通用 HTTP/RPC 客户端职责重叠，已于 2026-10-12 删除。等价组合：`naming.getInstancesByMetadata(...)` 或 `((RedisNamingService) naming).getHealthyInstancesByFilters(...)` 选实例 → 内置 `LoadBalancer`（见第 5 节）挑一个 → 业务侧调用；熔断/重试建议直接用成熟的调用端库（如 resilience4j）或 `reliability` 模块的内存重试原语。
 
 ## 7) 管理接口（admin）
 
@@ -279,7 +252,7 @@ consumerConfig.setHealthCheckTimeUnit(TimeUnit.SECONDS);
 consumerConfig.setHealthCheckTimeout(5000);       // 毫秒，≤0 回退 5000
 ```
 
-探测实现按协议选择：HTTP/HTTPS 用 `HttpHealthChecker`（GET `{uri}/health`，2xx~3xx 视为健康，请求异常回退 TCP 连通性）；TCP/UDP 用 `TcpHealthChecker`（连接测试）；WS/WSS 用 `WebSocketHealthChecker`（TCP 连通性）；其余协议（含 gRPC）走 `StandardHealthChecker` 的默认 TCP 连通性探测。自定义逻辑继承 `CustomHealthChecker` 实现 `doCheck`（先 TCP 连通性，3 秒超时）。探测共享一个守护线程池，状态变化时回调 `HEALTH_RECOVERY` / `HEALTH_FAILURE`。
+探测实现按协议选择：HTTP/HTTPS 用 `HttpHealthChecker`（GET `{uri}/health`，2xx~3xx 视为健康，请求异常回退 TCP 连通性）；TCP/UDP 用 `TcpHealthChecker`（连接测试）；WS/WSS 用 `StandardHealthChecker` 的 TCP 连通性探测（原 `WebSocketHealthChecker` 实为裸 TCP 探测，2026-10-12 删除，分支归 Standard）；其余协议（含 gRPC）走 `StandardHealthChecker` 的默认 TCP 连通性探测。自定义逻辑继承 `CustomHealthChecker` 实现 `doCheck`（先 TCP 连通性，3 秒超时）。探测共享一个守护线程池，状态变化时回调 `HEALTH_RECOVERY` / `HEALTH_FAILURE`。
 
 ## 参考
 

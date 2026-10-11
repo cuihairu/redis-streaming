@@ -186,39 +186,6 @@ class RedisStreamingAutoConfigurationTest {
     }
 
     @Test
-    void testInvokerPropertiesBinding() {
-        propertiesRunner.withPropertyValues(
-                        "redis-streaming.redis.address=redis://localhost:6379",
-                        "redis-streaming.invoker.max-attempts=5",
-                        "redis-streaming.invoker.initial-delay-ms=100",
-                        "redis-streaming.invoker.backoff-factor=2.0",
-                        "redis-streaming.invoker.max-delay-ms=5000",
-                        "redis-streaming.invoker.jitter-ms=50"
-                )
-                .run(ctx -> {
-                    RedisStreamingProperties props = ctx.getBean(RedisStreamingProperties.class);
-                    assertThat(props.getInvoker().getMaxAttempts()).isEqualTo(5);
-                    assertThat(props.getInvoker().getInitialDelayMs()).isEqualTo(100);
-                    assertThat(props.getInvoker().getBackoffFactor()).isEqualTo(2.0);
-                    assertThat(props.getInvoker().getMaxDelayMs()).isEqualTo(5000);
-                    assertThat(props.getInvoker().getJitterMs()).isEqualTo(50);
-                });
-    }
-
-    @Test
-    void testInvokerPropertiesDefaults() {
-        propertiesRunner.withPropertyValues("redis-streaming.redis.address=redis://localhost:6379")
-                .run(ctx -> {
-                    RedisStreamingProperties props = ctx.getBean(RedisStreamingProperties.class);
-                    assertThat(props.getInvoker().getMaxAttempts()).isEqualTo(3);
-                    assertThat(props.getInvoker().getInitialDelayMs()).isEqualTo(20);
-                    assertThat(props.getInvoker().getBackoffFactor()).isEqualTo(2.0);
-                    assertThat(props.getInvoker().getMaxDelayMs()).isEqualTo(200);
-                    assertThat(props.getInvoker().getJitterMs()).isEqualTo(20);
-                });
-    }
-
-    @Test
     void testConfigPropertiesBinding() {
         propertiesRunner.withPropertyValues(
                         "redis-streaming.redis.address=redis://localhost:6379",

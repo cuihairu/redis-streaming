@@ -3,14 +3,10 @@ package io.github.cuihairu.redis.streaming.starter.autoconfigure;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import io.github.cuihairu.redis.streaming.registry.client.ClientSelector;
 import io.github.cuihairu.redis.streaming.registry.NamingService;
 import io.github.cuihairu.redis.streaming.registry.impl.RedisNamingService;
 import io.github.cuihairu.redis.streaming.registry.ServiceConsumerConfig;
 import io.github.cuihairu.redis.streaming.registry.ServiceDiscovery;
-import io.github.cuihairu.redis.streaming.registry.client.ClientInvoker;
-import io.github.cuihairu.redis.streaming.registry.client.RetryPolicy;
-import io.github.cuihairu.redis.streaming.registry.client.metrics.RedisClientMetricsReporter;
 import io.github.cuihairu.redis.streaming.registry.loadbalancer.ConsistentHashLoadBalancer;
 import io.github.cuihairu.redis.streaming.registry.loadbalancer.LoadBalancer;
 import io.github.cuihairu.redis.streaming.registry.loadbalancer.LoadBalancerConfig;
@@ -113,39 +109,8 @@ public class RedisStreamingRegistryAutoConfiguration {
         }
     }
 
-    @Bean
-    @ConditionalOnMissingBean
-    public ClientSelector clientSelector(@org.springframework.beans.factory.annotation.Qualifier("namingService") NamingService namingService) {
-        return new ClientSelector(namingService);
-    }
-
-    @Bean
-    @ConditionalOnMissingBean
-    public RetryPolicy retryPolicy(RedisStreamingProperties props) {
-        var p = props.getInvoker();
-        return new RetryPolicy(p.getMaxAttempts(), p.getInitialDelayMs(), p.getBackoffFactor(), p.getMaxDelayMs(), p.getJitterMs());
-    }
-
-    @Bean
-    @ConditionalOnMissingBean
-    public RedisClientMetricsReporter redisClientMetricsReporter(RedissonClient redissonClient) {
-        // use default consumer config for key prefix
-        return new RedisClientMetricsReporter(redissonClient, new ServiceConsumerConfig());
-    }
-
-    @Bean
-    @ConditionalOnMissingBean
-    public ClientInvoker clientInvoker(@org.springframework.beans.factory.annotation.Qualifier("namingService") NamingService namingService,
-                                       LoadBalancer loadBalancer,
-                                       RetryPolicy retryPolicy,
-                                       RedisClientMetricsReporter reporter) {
-        return new ClientInvoker(namingService, loadBalancer, retryPolicy, reporter);
-    }
-
-    @Bean
-    @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
-    @ConditionalOnBean(ClientInvoker.class)
-    public io.github.cuihairu.redis.streaming.starter.metrics.ClientInvokerMetricsBinder clientInvokerMetricsBinder(ClientInvoker clientInvoker) {
-        return new io.github.cuihairu.redis.streaming.starter.metrics.ClientInvokerMetricsBinder(clientInvoker);
-    }
+    // ===== ClientSelector / ClientInvoker beans removed 2026-10-12:
+    // the registry.client RPC helper package (selector/invoker/retry/circuit-breaker and
+    // its metrics reporter) was deleted as overlapping scope; compose load balancing
+    // and invocation directly over NamingService + LoadBalancer instead.
 }

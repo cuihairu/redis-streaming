@@ -2,7 +2,7 @@
 
 Module: `registry/`（包根 `io.github.cuihairu.redis.streaming.registry`）
 
-基于 Redis 的服务注册与发现：注册/注销实例、心跳维持健康状态、服务发现与变更订阅（Redis Pub/Sub）、metadata/metrics 过滤（含比较运算符）、客户端负载均衡与调用封装、多协议健康检查。
+基于 Redis 的服务注册与发现：注册/注销实例、心跳维持健康状态、服务发现与变更订阅（Redis Pub/Sub）、metadata/metrics 过滤（含比较运算符）、客户端负载均衡、多协议健康检查（原 `client` RPC 调用封装包已于 2026-10-12 删除）。
 
 ## Key Concepts
 
@@ -22,10 +22,9 @@ Module: `registry/`（包根 `io.github.cuihairu.redis.streaming.registry`）
 | 实现 | `impl.RedisNamingService` / `impl.RedisServiceProvider` / `impl.RedisServiceConsumer` | Provider/Consumer 角色，NamingService 聚合两者 |
 | 键管理 | `keys.RegistryKeys` | 键模板、service name / instance ID 清洗与校验 |
 | 心跳 | `heartbeat.HeartbeatConfig` / `HeartbeatStateManager` / `UpdateDecision` | 区分 metadata / metrics 的分级心跳更新决策 |
-| 健康检查 | `health.HealthChecker` 及 `StandardHealthChecker`、`HttpHealthChecker`、`TcpHealthChecker`、`WebSocketHealthChecker`、`CustomHealthChecker`、`ClientHealthChecker`、`HealthCheckManager` | 消费端按协议探测 |
+| 健康检查 | `health.HealthChecker` 及 `StandardHealthChecker`、`HttpHealthChecker`、`TcpHealthChecker`、`CustomHealthChecker`、`ClientHealthChecker`、`HealthCheckManager` | 消费端按协议探测 |
 | 过滤 | `NamingService.getInstancesByMetadata`、`RedisNamingService.getInstancesByFilters`、`filter.FilterBuilder` | 服务端 Lua 过滤，支持 `==` `!=` `>` `>=` `<` `<=` |
 | 负载均衡 | `loadbalancer.LoadBalancer`、`WeightedRoundRobinLoadBalancer`、`WeightedRandomLoadBalancer`、`ConsistentHashLoadBalancer`、`ScoredLoadBalancer` | SPI + 三种内置策略 |
-| 客户端调用 | `client.ClientSelector`、`ClientInvoker`、`RetryPolicy`、`CircuitBreaker`、`client.metrics.RedisClientMetricsReporter` | 过滤 + 负载均衡 + 熔断重试 + 指标上报 |
 | 管理 | `admin.RegistryAdminService`、`ServiceDetails`、`InstanceDetails` | 服务/实例明细、聚合指标、手动清理过期实例 |
 | 配置 | `BaseRedisConfig` / `NamingServiceConfig` / `ServiceProviderConfig` / `ServiceConsumerConfig` | 见下表 |
 | 指标采集 | `metrics.MetricsConfig` / `MetricsCollectionManager` / 各 `MetricCollector` | cpu/memory/application/gc/disk/network |

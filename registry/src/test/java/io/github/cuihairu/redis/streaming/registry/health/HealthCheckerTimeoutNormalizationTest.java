@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * Regression test for B-31: a zero or negative health check timeout used to pass
  * straight through into the protocol checkers — the HTTP checker then threw
  * IllegalArgumentException from HttpClient.connectTimeout(Duration.ZERO) at
- * construction, while the TCP/WebSocket checkers passed 0 into
+ * construction, while the TCP checker passed 0 into
  * {@code socket.connect(addr, 0)}, which JDK defines as "infinite timeout": the
  * probe thread froze forever on an unreachable host.
  */
@@ -28,13 +28,6 @@ class HealthCheckerTimeoutNormalizationTest {
         assertEquals(5000, field(new TcpHealthChecker(-100), "connectTimeoutMs"));
         assertEquals(1234, field(new TcpHealthChecker(1234), "connectTimeoutMs"));
         assertEquals(5000, field(new TcpHealthChecker(), "connectTimeoutMs"));
-    }
-
-    @Test
-    void webSocketNonPositiveTimeoutFallsBackToDefault() throws Exception {
-        assertEquals(5000, field(new WebSocketHealthChecker(0), "connectTimeoutMs"));
-        assertEquals(5000, field(new WebSocketHealthChecker(-5), "connectTimeoutMs"));
-        assertEquals(800, field(new WebSocketHealthChecker(800), "connectTimeoutMs"));
     }
 
     @Test

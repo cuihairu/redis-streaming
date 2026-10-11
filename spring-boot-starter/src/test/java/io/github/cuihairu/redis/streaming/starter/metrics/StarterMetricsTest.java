@@ -3,7 +3,6 @@ package io.github.cuihairu.redis.streaming.starter.metrics;
 import io.github.cuihairu.redis.streaming.mq.admin.MessageQueueAdmin;
 import io.github.cuihairu.redis.streaming.mq.admin.model.QueueInfo;
 import io.github.cuihairu.redis.streaming.mq.dlq.DeadLetterService;
-import io.github.cuihairu.redis.streaming.registry.client.ClientInvoker;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.Meter;
@@ -197,20 +196,4 @@ class StarterMetricsTest {
         assertEquals(2.0, reg.get("redis_streaming_mq_dlq_total").gauge().value());
     }
 
-    @Test
-    void clientInvokerBinderReadsSnapshotSafely() {
-        ClientInvoker invoker = mock(ClientInvoker.class);
-        when(invoker.getMetricsSnapshot()).thenReturn(Map.of(
-                "total", Map.of("attempts", 9L, "successes", 8L, "failures", 1L, "retries", 2L, "cbOpenSkips", 0L)));
-        SimpleMeterRegistry reg = new SimpleMeterRegistry();
-        new ClientInvokerMetricsBinder(invoker).bindTo(reg);
-        assertEquals(9.0, reg.get("client.invoker.total.attempts").gauge().value());
-        assertEquals(8.0, reg.get("client.invoker.total.successes").gauge().value());
-
-        ClientInvoker failing = mock(ClientInvoker.class);
-        when(failing.getMetricsSnapshot()).thenThrow(new RuntimeException("no snapshot"));
-        SimpleMeterRegistry reg2 = new SimpleMeterRegistry();
-        new ClientInvokerMetricsBinder(failing).bindTo(reg2);
-        assertEquals(0.0, reg2.get("client.invoker.total.attempts").gauge().value());
-    }
 }

@@ -48,11 +48,6 @@ public class RedisStreamingProperties {
     private LoadBalancerProperties loadBalancer = new LoadBalancerProperties();
 
     /**
-     * Client invocation configuration (retry/circuit-breaker, etc.)
-     */
-    private InvokerProperties invoker = new InvokerProperties();
-
-    /**
      * Message queue (MQ) configuration
      */
     private MqProperties mq = new MqProperties();
@@ -279,16 +274,6 @@ public class RedisStreamingProperties {
         private double maxInflight = -1;
         private double maxQueue = -1;
         private double maxErrorRatePercent = -1;
-    }
-
-    @Data
-    public static class InvokerProperties {
-        // retry
-        private int maxAttempts = 3;
-        private long initialDelayMs = 20;
-        private double backoffFactor = 2.0;
-        private long maxDelayMs = 200;
-        private long jitterMs = 20;
     }
 
     @Data

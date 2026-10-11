@@ -83,7 +83,7 @@ public class RegistryLuaScriptExecutor {
 
             -- Merge the incoming metrics JSON into the existing document instead of replacing
             -- the field: client-side metrics (clientInflight etc., written by
-            -- RedisClientMetricsReporter) and server-side metrics (cpu/memory, written by the
+            -- external client processes) and server-side metrics (cpu/memory, written by the
             -- provider heartbeat) share one hash field and must not clobber each other's keys.
             local function merge_metrics(new_json)
                 local merged = {}

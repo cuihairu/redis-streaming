@@ -12,7 +12,7 @@ import java.net.ServerSocket;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Covers HTTP/Standard/WebSocket health checker success, fallback and failure
+ * Covers HTTP/Standard health checker success, fallback and failure
  * branches with local HttpServer and ServerSocket endpoints.
  */
 class ProtocolHealthCheckersCoverageTest {
@@ -114,10 +114,10 @@ class ProtocolHealthCheckersCoverageTest {
     }
 
     @Test
-    void webSocketHealthCheckerCoversSuccessFailureAndProtocolGuard() throws Exception {
-        WebSocketHealthChecker checker = new WebSocketHealthChecker(300);
-        assertThrows(IllegalArgumentException.class,
-                () -> checker.check(instance(StandardProtocol.TCP, 1)));
+    void standardHealthCheckerCoversWebSocketProtocols() throws Exception {
+        // WS/WSS are probed as plain TCP connectivity via the standard checker (the removed
+        // WebSocketHealthChecker was exactly that), so the standard checker owns those branches
+        StandardHealthChecker checker = new StandardHealthChecker(300, 300);
         try (ServerSocket open = new ServerSocket(0)) {
             assertTrue(checker.check(instance(StandardProtocol.WS, open.getLocalPort())));
             assertTrue(checker.check(instance(StandardProtocol.WSS, open.getLocalPort())));

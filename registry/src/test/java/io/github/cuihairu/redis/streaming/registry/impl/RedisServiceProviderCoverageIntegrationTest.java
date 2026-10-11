@@ -1,8 +1,6 @@
 package io.github.cuihairu.redis.streaming.registry.impl;
 
 import io.github.cuihairu.redis.streaming.registry.DefaultServiceInstance;
-import io.github.cuihairu.redis.streaming.registry.ServiceConsumerConfig;
-import io.github.cuihairu.redis.streaming.registry.client.metrics.RedisClientMetricsReporter;
 import io.github.cuihairu.redis.streaming.registry.ServiceChangeAction;
 import io.github.cuihairu.redis.streaming.registry.ServiceInstance;
 import io.github.cuihairu.redis.streaming.registry.ServiceProviderConfig;
@@ -290,16 +288,23 @@ class RedisServiceProviderCoverageIntegrationTest {
         AtomicReference<Object> serverMetrics = new AtomicReference<>(Map.of("cpu", 80));
         RedisServiceProvider provider = new RedisServiceProvider(
                 redis, new ServiceProviderConfig(), new HeartbeatConfig(), controllable(serverMetrics));
-        RedisClientMetricsReporter reporter =
-                new RedisClientMetricsReporter(redis, new ServiceConsumerConfig());
         provider.start();
         try {
             ServiceInstance a = ins(svc, "m1", Map.of("r", "1"));
             provider.register(a);
             provider.sendHeartbeat(a); // server metrics {"cpu":80} into the shared field
 
-            reporter.incrementInflight(svc, "m1");
-            reporter.recordLatency(svc, "m1", 25); // client keys, written from "another process"
+            // a "client process" writes its own keys into the shared metrics JSON via a plain
+            // read-modify-write — exactly the external writes the deleted
+            // RedisClientMetricsReporter used to perform
+            String instanceKey = new ServiceProviderConfig().getRegistryKeys().getServiceInstanceKey(svc, "m1");
+            java.util.Map<String, String> clientWritten = new java.util.HashMap<>(redis.<String, String>getMap(
+                    instanceKey, StringCodec.INSTANCE).readAllMap());
+            String clientJson = clientWritten.get("metrics");
+            assertNotNull(clientJson);
+            clientJson = clientJson.substring(0, clientJson.length() - 1)
+                    + ", \"clientInflight\":1,\"clientLatencyMs\":25}";
+            redis.getMap(instanceKey, StringCodec.INSTANCE).put("metrics", clientJson);
 
             // a later provider heartbeat must overlay server keys without erasing client keys
             serverMetrics.set(Map.of("cpu", 90));

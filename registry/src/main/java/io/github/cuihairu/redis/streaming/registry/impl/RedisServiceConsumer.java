@@ -81,7 +81,6 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
             int timeout = config.getHealthCheckTimeout();
             HttpHealthChecker httpHealthChecker = new HttpHealthChecker(timeout, timeout, "/health");
             TcpHealthChecker tcpHealthChecker = new TcpHealthChecker(timeout);
-            WebSocketHealthChecker webSocketHealthChecker = new WebSocketHealthChecker(timeout);
 
             // Create health check manager
             this.healthCheckManager = new HealthCheckManager(
@@ -91,12 +90,13 @@ public class RedisServiceConsumer implements ServiceDiscovery, ServiceConsumer {
                 config.getHealthCheckTimeUnit()
             );
 
-            // Register protocol health checkers
+            // Register protocol health checkers (WS/WSS probe as plain TCP connectivity,
+            // same semantics the removed WebSocketHealthChecker provided)
             healthCheckManager.registerProtocolHealthChecker(StandardProtocol.HTTP, httpHealthChecker);
             healthCheckManager.registerProtocolHealthChecker(StandardProtocol.HTTPS, httpHealthChecker);
             healthCheckManager.registerProtocolHealthChecker(StandardProtocol.TCP, tcpHealthChecker);
-            healthCheckManager.registerProtocolHealthChecker(StandardProtocol.WS, webSocketHealthChecker);
-            healthCheckManager.registerProtocolHealthChecker(StandardProtocol.WSS, webSocketHealthChecker);
+            healthCheckManager.registerProtocolHealthChecker(StandardProtocol.WS, standardHealthChecker);
+            healthCheckManager.registerProtocolHealthChecker(StandardProtocol.WSS, standardHealthChecker);
 
             logger.info("Health check manager initialized with {} second interval", config.getHealthCheckInterval());
         }
