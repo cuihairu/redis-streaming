@@ -169,6 +169,70 @@ class RedisKTableChangelogTest {
     }
 
     @Test
+    void changelogEmitsAreChainedInPutOrder() throws Exception {
+        // The producer runs each send on a shared async pool: without chaining, back-to-back puts
+        // can XADD out of order and a delete would land before the put it deletes, so a
+        // full-history replay reconstructs the wrong value. Pin it: the second send must not start
+        // until the first one completes.
+        RedissonClient redis = mock(RedissonClient.class);
+        @SuppressWarnings("rawtypes")
+        org.redisson.api.RMap map = mock(org.redisson.api.RMap.class);
+        when(redis.getMap(org.mockito.ArgumentMatchers.eq("unit-changelog"),
+                eq(org.redisson.client.codec.StringCodec.INSTANCE))).thenReturn(map);
+
+        java.util.List<String> sent = new java.util.concurrent.CopyOnWriteArrayList<>();
+        java.util.concurrent.CompletableFuture<String> first = new java.util.concurrent.CompletableFuture<>();
+        io.github.cuihairu.redis.streaming.mq.MessageProducer producer =
+                mock(io.github.cuihairu.redis.streaming.mq.MessageProducer.class);
+        when(producer.send(anyString(), anyString(), anyString())).thenAnswer(invocation -> {
+            sent.add(invocation.getArgument(2));
+            return sent.size() == 1 ? first : java.util.concurrent.CompletableFuture.completedFuture("2-0");
+        });
+
+        RedisKTable<String, Integer> t = new RedisKTable<>(redis, "unit-changelog", String.class, Integer.class)
+                .withChangelog(producer);
+        t.put("a", 1);
+        t.put("a", null);
+
+        assertTrue(await(() -> sent.size() >= 1, 5000), "first emit must reach the producer");
+        assertEquals(1, sent.size(), "the second emit must wait for the first one to complete");
+
+        first.complete("1-0");
+        assertTrue(await(() -> sent.size() >= 2, 5000), "second emit must follow the first");
+        assertTrue(sent.get(0).contains("PUT"), sent.get(0));
+        assertTrue(sent.get(1).contains("DEL"), sent.get(1));
+    }
+
+    @Test
+    void failedEmitDoesNotDropLaterEvents() throws Exception {
+        // whenComplete only logs a failure; it does not clear the exceptional state, so a failed
+        // emit must not make the next compose skip its send.
+        RedissonClient redis = mock(RedissonClient.class);
+        @SuppressWarnings("rawtypes")
+        org.redisson.api.RMap map = mock(org.redisson.api.RMap.class);
+        when(redis.getMap(org.mockito.ArgumentMatchers.eq("unit-changelog"),
+                eq(org.redisson.client.codec.StringCodec.INSTANCE))).thenReturn(map);
+
+        java.util.List<String> sent = new java.util.concurrent.CopyOnWriteArrayList<>();
+        io.github.cuihairu.redis.streaming.mq.MessageProducer producer =
+                mock(io.github.cuihairu.redis.streaming.mq.MessageProducer.class);
+        when(producer.send(anyString(), anyString(), anyString())).thenAnswer(invocation -> {
+            sent.add(invocation.getArgument(2));
+            return java.util.concurrent.CompletableFuture.failedFuture(new RuntimeException("boom"));
+        });
+
+        RedisKTable<String, Integer> t = new RedisKTable<>(redis, "unit-changelog", String.class, Integer.class)
+                .withChangelog(producer);
+        assertDoesNotThrow(() -> {
+            t.put("a", 1);
+            t.put("a", 2);
+            t.put("b", 3);
+        });
+        assertTrue(await(() -> sent.size() >= 3, 5000), "every put must still emit after earlier failures");
+        assertEquals(3, sent.size());
+    }
+
+    @Test
     void toStreamAttachesToEnvironmentWhenChangelogEnabled() {
         io.github.cuihairu.redis.streaming.mq.MessageProducer producer =
                 mock(io.github.cuihairu.redis.streaming.mq.MessageProducer.class);
@@ -176,5 +240,17 @@ class RedisKTableChangelogTest {
                 String.class, Integer.class).withChangelog(producer);
         // lazy pipeline construction must not touch Redis
         assertNotNull(t.toStream(env()));
+    }
+
+    /** Polls a condition until it holds or the timeout elapses (no Awaitility on the classpath). */
+    private static boolean await(java.util.function.BooleanSupplier condition, long timeoutMs) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            if (condition.getAsBoolean()) {
+                return true;
+            }
+            Thread.sleep(20);
+        }
+        return condition.getAsBoolean();
     }
 }

@@ -27,6 +27,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
@@ -70,6 +72,9 @@ public class RedisKTable<K, V> implements KTable<K, V> {
     private final ObjectMapper objectMapper;
     private MessageProducer changelogProducer;
     private volatile boolean changelogEnabled;
+    /** Tail of the in-flight changelog emits; the next emit chains onto it (see appendChangelog). */
+    private final AtomicReference<CompletableFuture<?>> changelogChain =
+            new AtomicReference<>(CompletableFuture.completedFuture(null));
     private final Class<K> keyClass;
     private final Class<V> valueClass;
     private int derivedRetention = DEFAULT_DERIVED_RETENTION;
@@ -613,6 +618,12 @@ public class RedisKTable<K, V> implements KTable<K, V> {
      * Best-effort changelog append: the primary store is already updated, so a failed
      * event emission degrades stream consumers (they keep the last known value) but
      * never breaks the put itself — same trade as the control plane's audit stream.
+     *
+     * <p>Emits are chained so the topic receives events in {@code put()} call order. The
+     * producer runs each send on a shared async pool, so back-to-back sends could otherwise
+     * XADD out of order: a delete landing before the put it deletes would make full-history
+     * replay reconstruct the wrong value. Chaining keeps the put non-blocking; a hung emit
+     * then stalls later ones (they are dropped, not reordered).
      */
     private void appendChangelog(String op, String keyJson, String valueJson) {
         if (!changelogEnabled) {
@@ -628,12 +639,16 @@ public class RedisKTable<K, V> implements KTable<K, V> {
                 event.put("v", valueJson);
             }
             String payload = objectMapper.writeValueAsString(event);
-            changelogProducer.send(changelogTopic(), tableName, payload)
+            // handle() first: a failed send leaves prev exceptional, and composing onto an
+            // exceptional stage skips the send — one failure must not drop later events.
+            changelogChain.updateAndGet(prev -> prev
+                    .handle((v, err) -> null)
+                    .thenCompose(ignored -> changelogProducer.send(changelogTopic(), tableName, payload))
                     .whenComplete((id, err) -> {
                         if (err != null) {
                             log.warn("Changelog emit failed for table {} (op {})", tableName, op, err);
                         }
-                    });
+                    }));
         } catch (Exception e) {
             log.warn("Changelog emit failed for table {} (op {})", tableName, op, e);
         }
