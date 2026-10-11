@@ -482,7 +482,7 @@ void testRedisIntegration() {
 - [x] 总体分支覆盖率 ≥ 60%（实测 **90.88%**，4675/5144 分支）
 - [x] 所有核心包（mq, registry, cdc）覆盖率 ≥ 70%（2026-10-11 现行门禁口径实测复核:mq 94.97%(13341/14048)、registry 97.82%(12379/12655)、cdc 98.99%(3632/3669),均远超 70%,满足并集口径(jacocoRootReport)）
 - [ ] 所有关键业务类覆盖率 ≥ 80%（未满足,2026-10-11 实测差距:4 个 ≥200 指令类低于 80%——`runtime/redis/RedisKeyedValueState` 37.09%(102/275)、`RedisStreamExecutionEnvironment$LaunchedJobClient` 55.49%(556/1002)、`RedisStreamBuilder$RedisKeyedStreamBuilder` 55.91%(312/558)、其嵌套 `RedisWindowedStreamImpl` 75.71%(1359/1795);聚合门禁(INSTRUCTION≥0.95/CLASS≥0.99)绿,此类粒度目标门禁不强制）
-- [ ] CI/CD 集成测试通过率 100%（2026-10-11 暂不可勾:run 38110161447 红(changelog per-key 顺序,真实缺陷已修,见上方 changelog 条目 CI 红收口)、更早 run 38099977473 红(mq DLQ replay,按负载假红协议隔离复跑判定);修复推送后 CI 转绿即可勾账）
+- [x] CI/CD 集成测试通过率 100%（2026-10-11 勾账:修复 commit `07d38d8` 的 CI run 38117907427 全绿(13m35s,unit+integration 全套,含此前红的 table changelog 与 mq integrationTest);此前的红收口——run 38110161447 唯一失败=changelog per-key 顺序,真实产品缺陷,`fix(table): chain changelog emits in put order` 修复;更早 run 38099977473 的 mq DLQ replay 失败与本次失败集不同,且新提交全量复跑绿,按负载假红协议(跨次失败集不同+隔离复跑绿)判为门禁负载抖动,未改产品代码）
 
 ---
 
@@ -551,4 +551,4 @@ void testRedisIntegration() {
 - [x] `StreamSource` 生命周期与 StreamSink 对称补齐:`open()/close()` 默认方法,InMemory 引擎 addSource 已接线(source.open → run → finally close)
 - [ ] `SourceContext.getCheckpointLock` 真实接入(in-memory 引擎现由 `StreamExecutionEnvironment.emit` 在该锁上同步发射(07539c7,生产者持锁入队、消费者不持锁故背压不会死锁),但尚无屏障协议方;Redis 引擎尚无 SourceContext 调用路径。需与检查点屏障协议一并设计)
 - [x] 发布说明记录 Redisson 4.7.0 升级与 API 迁移(README/docs 已同步版本号;CHANGELOG [Unreleased] 已含该条目,2026-10-05 另补齐 2PC sink/outbox/leader 选举/状态治理/可观测等未记录特性条目)
-- [ ] 覆盖率:延续上文"优先级 1-4"清单(15 条已全部收口,余 sink/source kafka 集成腿挂起待 broker);门禁现行为单测确定性口径 INSTRUCTION ≥ 0.95 且 CLASS ≥ 0.99(2026-10-05 起,见"成功标准"注),上调档视实测覆盖而定
+- [x] 覆盖率:延续上文"优先级 1-4"清单(15 条已全部收口,余 sink/source kafka 集成腿挂起待 broker,见决策③);门禁现行口径单测确定性 INSTRUCTION ≥ 0.95 且 CLASS ≥ 0.99(2026-10-05 起),2026-10-11 复测绿(并集 95.067%(71494/75204),jacocoRootReport),上调档视实测覆盖而定,无剩余可派动作
