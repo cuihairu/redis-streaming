@@ -1,11 +1,15 @@
 package io.github.cuihairu.redis.streaming.runtime.internal;
 
+import io.github.cuihairu.redis.streaming.api.stream.AggregateFunction;
+import io.github.cuihairu.redis.streaming.api.stream.DataStream;
 import io.github.cuihairu.redis.streaming.api.stream.WindowAssigner;
+import io.github.cuihairu.redis.streaming.api.stream.WindowedStream;
 import io.github.cuihairu.redis.streaming.window.assigners.SessionWindow;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -18,6 +22,14 @@ class InMemoryWindowedStreamSessionMergeTest {
 
     private static final long GAP = 100L;
 
+    /** Four events of one key that merge into a single session [0,270) holding 1, 2, 3, 4. */
+    private static final List<KeyedRecord<String, Integer>> MERGED_SESSION = List.of(
+            new KeyedRecord<>("k", 1, 0L),
+            new KeyedRecord<>("k", 2, 50L),
+            new KeyedRecord<>("k", 3, 120L),
+            new KeyedRecord<>("k", 4, 170L)
+    );
+
     private static List<String> run(SessionWindow<Integer> assigner, List<KeyedRecord<String, Integer>> records) {
         List<String> results = new ArrayList<>();
         new InMemoryWindowedStream<>(records::iterator, assigner)
@@ -29,6 +41,18 @@ class InMemoryWindowedStreamSessionMergeTest {
                     out.collect(key + "[" + window.getStart() + "," + window.getEnd() + ")=" + count);
                 })
                 .addSink(result -> results.add((String) result));
+        return results;
+    }
+
+    /**
+     * Runs one aggregation op over the merged session. Session buckets keep their raw elements (a
+     * merge re-accumulates absorbed elements into a surviving bucket), so every op must fold that
+     * raw list through the same accumulators it uses on the incremental path.
+     */
+    private static <R> List<R> runMerging(Function<WindowedStream<String, Integer>, DataStream<R>> op) {
+        List<R> results = new ArrayList<>();
+        op.apply(new InMemoryWindowedStream<>(MERGED_SESSION::iterator, SessionWindow.withGapMillis(GAP)))
+                .addSink(results::add);
         return results;
     }
 
@@ -106,5 +130,54 @@ class InMemoryWindowedStreamSessionMergeTest {
         // a's session merges once more when its third element arrives, which re-inserts the
         // merged bucket at the end of the emission order (b's buckets fire first).
         assertEquals(List.of("b[10,110)=1", "b[500,600)=1", "a[0,220)=3"), results);
+    }
+
+    @Test
+    void mergedSessionCountsAllElements() {
+        assertEquals(List.of(4L), runMerging(WindowedStream::count));
+    }
+
+    @Test
+    void mergedSessionSumsAllElements() {
+        assertEquals(List.of(10), runMerging(w -> w.sum(v -> v)));
+    }
+
+    @Test
+    void mergedSessionReducesAllElements() {
+        assertEquals(List.of(10), runMerging(w -> w.reduce((a, b) -> a + b)));
+    }
+
+    @Test
+    void mergedSessionAggregatesAllElements() {
+        assertEquals(List.of(10L), runMerging(w -> w.aggregate(new SumAggregateFunction())));
+    }
+
+    static final class SumAggregateFunction implements AggregateFunction<Integer, Long> {
+        @Override
+        public Accumulator<Integer> createAccumulator() {
+            return new SumAccumulator();
+        }
+
+        @Override
+        public Accumulator<Integer> add(Integer value, Accumulator<Integer> accumulator) {
+            ((SumAccumulator) accumulator).value += value;
+            return accumulator;
+        }
+
+        @Override
+        public Long getResult(Accumulator<Integer> accumulator) {
+            return (long) ((SumAccumulator) accumulator).value;
+        }
+
+        @Override
+        public Accumulator<Integer> merge(Accumulator<Integer> a, Accumulator<Integer> b) {
+            ((SumAccumulator) a).value += ((SumAccumulator) b).value;
+            return a;
+        }
+    }
+
+    static final class SumAccumulator implements AggregateFunction.Accumulator<Integer> {
+        private static final long serialVersionUID = 1L;
+        int value;
     }
 }

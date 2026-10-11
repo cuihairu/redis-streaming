@@ -284,7 +284,10 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
     @Override
     public WindowedStream<K, T> window(WindowAssigner<T> windowAssigner) {
         Objects.requireNonNull(windowAssigner, "windowAssigner");
-        return new InMemoryWindowedStream<>(keyedIteratorSupplier, windowAssigner);
+        // Carry the upstream watermark state into the window operator: with a user generator
+        // upstream (assignTimestampsAndWatermarks), event-time windows must be able to close
+        // mid-stream instead of only at end-of-input flush.
+        return new InMemoryWindowedStream<>(keyedIteratorSupplier, windowAssigner, watermarkState);
     }
 
     @Override
