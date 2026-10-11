@@ -105,3 +105,38 @@ spring:
 - **多实例仲裁**：同一作业由认领键保证只在一个 agent 部署。agent 宕机后作业随进程消失（无自动故障转移）；认领 TTL 过期后在其余实例执行 `resume` 即可重新拉起。期望停止/重启以 `stop`/`resume` 为准。
 - **滚动升级建议**：先在新实例 `resume`（认领会选中负载空闲的 agent）观察 `status:<job>` 稳定，再对旧实例 `stop`；回滚直接 `rollback`（spec 回退触发 agent 全量升级）。
 - **审计**：操作与失败报告写入 `prefix + audit` 流（近似封顶 `audit-max-entries`），`tailAudit` 倒序读取;拒绝的授权也会留痕。
+
+## 10) 安全加固（Redis ACL / TLS / 凭证管理）
+框架默认只创建"单机 + 可选密码"的最小客户端（详见 [Security-Hardening-Design.md](Security-Hardening-Design.md)）。生产接入的三条路径：
+
+### a) ACL 用户名（Redis 6+）
+```yaml
+redis-streaming:
+  redis:
+    address: redis://redis.internal:6379
+    username: app-reader      # 空缺省 = default 用户
+    password: ${env:REDIS_PASS}   # ${env:VAR} 占位:启动时从环境变量解析,缺失直接报错
+```
+`${env:VAR}` 占位对 `username`/`password` 均生效,凭证不落配置文件。推荐为框架专设 ACL 用户,最小规则示例（按部署的 key 前缀调整）：
+```
+user default off
+user streaming on >CHANGE_ME ~streaming:* +ping +hello +select +del +exists +expire +pexpire +ttl +pttl +type +scan
+    +get +set +setnx +mget +mset +incr +incrby +hget +hmget +hset +hsetnx +hgetall +hdel +hlen +hkeys +hvals
+    +sadd +srem +smembers +scard +sismember +zadd +zrem +zrange +zrangebyscore +zrangebyscorewithscores
+    +zrevrange +zcard +zscore +zcount +zremrangebyscore +llen +lpush +rpush +lrange +lindex +ltrim +rpoplpush
+    +xadd +xlen +xrange +xrevrange +xread +xreadgroup +xack +xgroup +xinfo +xtrim +xdel +xautoclaim +xpending
+    +eval +evalsha +script +subscribe +unsubscribe +publish +punsubscribe +psubscribe
+```
+
+### b) TLS（rediss://）
+单机地址直接写 `rediss://host:6379`;信任库/主机名校验等 netty/SSL 细节用 c) 的钩子补齐,框架不逐项暴露配置。
+
+### c) ConfigCustomizer SPI（高级形态统一入口)
+注册任意数量的 `ConfigCustomizer` Bean,在框架内置单机配置之后、`Redisson.create` 之前按 `@Order` 依次调用,可覆盖/追加一切 Redisson 配置(集群、哨兵、读写分离、codec、TLS 上下文等):
+```java
+@Bean
+ConfigCustomizer tls() {
+    return config -> config.useSingleServer().setSslEnableEndpointIdentification(true);
+}
+```
+注意:项目若自带 `RedissonClient` Bean（如 redisson-spring-boot-starter）,框架整体退让,该钩子与内置客户端构造都不生效。

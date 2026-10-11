@@ -19,7 +19,7 @@ class RedissonClientBeanIntegrationTest {
         props.getRedis().setAddress(System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379"));
         props.getRedis().setPassword(null);
 
-        RedissonClient client = new RedisStreamingAutoConfiguration().redissonClient(props);
+        RedissonClient client = new RedisStreamingAutoConfiguration().redissonClient(props, emptyCustomizers());
         try {
             assertNotNull(client);
             assertTrue(client.getKeys().count() >= 0);
@@ -34,11 +34,19 @@ class RedissonClientBeanIntegrationTest {
         props.getRedis().setAddress(System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379"));
         // local test Redis has no password; supplying a blank password must take the same path as null
         props.getRedis().setPassword("  ");
-        RedissonClient client = new RedisStreamingAutoConfiguration().redissonClient(props);
+        RedissonClient client = new RedisStreamingAutoConfiguration().redissonClient(props, emptyCustomizers());
         try {
             assertNotNull(client);
         } finally {
             client.shutdown();
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static org.springframework.beans.factory.ObjectProvider<io.github.cuihairu.redis.streaming.starter.autoconfigure.ConfigCustomizer> emptyCustomizers() {
+        org.springframework.beans.factory.ObjectProvider<io.github.cuihairu.redis.streaming.starter.autoconfigure.ConfigCustomizer> p =
+                org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+        org.mockito.Mockito.when(p.orderedStream()).thenReturn(java.util.stream.Stream.empty());
+        return p;
     }
 }

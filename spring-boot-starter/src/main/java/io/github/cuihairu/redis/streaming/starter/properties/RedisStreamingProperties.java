@@ -86,6 +86,12 @@ public class RedisStreamingProperties {
         private String password;
 
         /**
+         * ACL username (Redis 6+). Blank means the default user.
+         * Supports ${env:VAR} placeholder to keep the secret out of config files.
+         */
+        private String username;
+
+        /**
          * Database index
          */
         private int database = 0;

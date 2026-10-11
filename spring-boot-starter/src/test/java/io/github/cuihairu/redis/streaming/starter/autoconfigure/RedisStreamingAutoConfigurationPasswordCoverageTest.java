@@ -27,7 +27,8 @@ class RedisStreamingAutoConfigurationPasswordCoverageTest {
             ArgumentCaptor<Config> captor = ArgumentCaptor.forClass(Config.class);
             redisson.when(() -> Redisson.create(any(Config.class))).thenReturn(client);
 
-            RedissonClient out = new RedisStreamingAutoConfiguration().redissonClient(props);
+            RedissonClient out = new RedisStreamingAutoConfiguration()
+                    .redissonClient(props, RedisStreamingAutoConfigurationSecurityTest.emptyCustomizers());
             assertSame(client, out);
 
             redisson.verify(() -> Redisson.create(captor.capture()));

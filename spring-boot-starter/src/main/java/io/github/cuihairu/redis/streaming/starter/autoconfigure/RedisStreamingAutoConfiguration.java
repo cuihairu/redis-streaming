@@ -47,12 +47,15 @@ public class RedisStreamingAutoConfiguration {
      * this bean will be skipped (@ConditionalOnMissingBean) and the project's RedissonClient configuration will be used.
      *
      * This provides simplified single-server configuration, suitable for quick development and testing.
-     * For production, it is recommended to use redisson-spring-boot-starter for full cluster/sentinel/SSL configuration.
+     * For production, it is recommended to use redisson-spring-boot-starter for full cluster/sentinel/SSL configuration,
+     * or register a {@link ConfigCustomizer} bean to reach TLS/cluster/sentinel settings
+     * (docs/Security-Hardening-Design.md 方案 A).
      */
     @Bean
     @ConditionalOnMissingBean
     @SuppressWarnings("deprecation") // setUsername/setPassword replaced by CredentialsResolver in Redisson 4.x; still functional
-    public RedissonClient redissonClient(RedisStreamingProperties properties) {
+    public RedissonClient redissonClient(RedisStreamingProperties properties,
+                                         org.springframework.beans.factory.ObjectProvider<ConfigCustomizer> customizers) {
         Config config = new Config();
         RedisStreamingProperties.RedisProperties redis = properties.getRedis();
 
@@ -65,13 +68,48 @@ public class RedisStreamingAutoConfiguration {
                 .setTimeout(redis.getTimeout())
                 .setConnectionPoolSize(redis.getConnectionPoolSize())
                 .setConnectionMinimumIdleSize(redis.getConnectionMinimumIdleSize());
-        if (redis.getPassword() != null && !redis.getPassword().isBlank()) {
-            serverConfig.setPassword(redis.getPassword());
+        String username = resolveCredential(redis.getUsername());
+        if (username != null && !username.isBlank()) {
+            serverConfig.setUsername(username);
         }
+        String password = resolveCredential(redis.getPassword());
+        if (password != null && !password.isBlank()) {
+            serverConfig.setPassword(password);
+        }
+
+        // user hooks run last so they can override everything above (TLS, codecs, ...)
+        customizers.orderedStream().forEach(c -> c.customize(config));
 
         log.info("Initializing RedissonClient with address: {} (Simple single-server mode)", redis.getAddress());
         log.info("For production with cluster/sentinel, use redisson-spring-boot-starter");
         return Redisson.create(config);
+    }
+
+    /**
+     * Resolve a {@code ${env:VAR}} credential placeholder against the process
+     * environment so secrets stay out of config files. Any other value passes
+     * through unchanged; a missing variable fails fast with a clear message
+     * instead of surfacing later as a confusing auth error.
+     */
+    static String resolveCredential(String raw) {
+        return resolveCredential(raw, System::getenv);
+    }
+
+    static String resolveCredential(String raw, java.util.function.UnaryOperator<String> env) {
+        if (raw == null) {
+            return null;
+        }
+        String trimmed = raw.trim();
+        if (trimmed.startsWith("${env:") && trimmed.endsWith("}")) {
+            String name = trimmed.substring("${env:".length(), trimmed.length() - 1);
+            String value = env.apply(name);
+            if (value == null) {
+                throw new IllegalStateException(
+                        "Environment variable '" + name + "' referenced by ${env:" + name + "} is not set");
+            }
+            return value;
+        }
+        return raw;
     }
 
     // Wire RateLimit metrics to Micrometer if present
