@@ -40,10 +40,16 @@ class StreamAggregationExampleTest {
             StreamAggregationExample.Snapshot snapshot =
                     new StreamAggregationExample().run(4_000, 50, namespace);
 
-            assertTrue(snapshot.pageViews() >= 1,
-                    "events were generated for 4s — the sliding COUNT must be positive");
-            assertTrue(snapshot.revenue() > 0,
-                    "transaction amounts are >= 10 — the tumbling SUM must be positive");
+            assertTrue(snapshot.windowPageViews() >= 1,
+                    "events were generated for 4s — the windowed PV must count every generated event");
+            assertTrue(snapshot.windowUniquePages() >= 1 && snapshot.windowUniquePages() <= PAGES.size(),
+                    "windowed UV is bounded by the demo page set");
+            assertTrue(PAGES.contains(snapshot.windowTopPage()),
+                    "the window TopK winner must be drawn from the demo page set");
+            assertTrue(snapshot.windowRevenue() > 0,
+                    "transaction amounts are >= 10 — the windowed SUM must be positive");
+            assertTrue(snapshot.windowP90ResponseMs() >= 50,
+                    "response times are >= 50ms — the window p90 must be at least that");
 
             assertEquals(PAGES, snapshot.pageViewsByPage().keySet(),
                     "every demo page must appear in the PV counter");

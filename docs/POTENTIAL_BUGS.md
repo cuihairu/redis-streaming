@@ -294,6 +294,7 @@
 - 位置：`aggregation/.../WindowAggregator.java:159-167`
 - 影响：`TumblingWindow`(1min) 与 (1hour) 同 key 使用时 key 无 size 维度：同刻窗口起点（整点）下两类窗口落同一 Redis key，互相 prune 对方数据、且小时窗口读区间会计入分钟窗口写入的值（读污染，1 变 2）。注：起点不相同时 prune 互删不发生，可确证缺陷为读污染。
 - 验证与修复：`getWindowKey` 追加窗口 size 维度，key 格式改为 `prefix:window:key:startMillis:WindowSimpleName:sizeMillis`。新增 `WindowAggregatorKeyIsolationTest`（mock 验证两类窗口 captor 抓到不同 key，旧代码两 key 完全相同）与 `WindowAggregatorKeyIsolationIntegrationTest`（真实 Redis：小时窗口 COUNT 旧代码 2、新代码 1），同步更新 `WindowAggregatorTest` 13 处 key 期望。
+- 追记（2026-10-12）：`WindowAggregator` 及其配套批式 API 已随聚合统一 v2 整体删除（见 [Aggregation-Unification-Design.md](Aggregation-Unification-Design.md)），本条仅存档；替代面为 `aggregation.incremental`（窗口内计算）与 `aggregation.analytics`（跨进程滚动查询）。
 
 ### B-38 RedisListState.update 先清后写非原子：中途失败状态全丢 ✅已修复
 - 位置：`state/.../redis/RedisListState.java:47-60`

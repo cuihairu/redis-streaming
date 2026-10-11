@@ -260,19 +260,18 @@ List<ConfigHistory> history = configService.getConfigHistory("app.properties", "
 
 关键类：`TumblingWindow.java`, `SlidingWindow.java`, `SessionWindow.java`, `EventTimeTrigger.java`, `ProcessingTimeTrigger.java`, `CountTrigger.java`
 
-#### aggregation - 聚合函数
-聚合函数和窗口聚合支持，基于 Redis 实现。
+#### aggregation - 聚合
+core 接口之上的增量 `AggregateFunction` 实现与 Redis 滚动窗口分析服务。
 
 已完成。
 
 职责：
-- 基础聚合（Sum, Count, Avg, Min, Max）
-- PV/UV 统计（Redis HyperLogLog）
+- 窗口管线用的增量 `AggregateFunction` 实现（PV、UV、TopK、分位数）
+- PV/UV 统计（Redis Sorted Set / HyperLogLog，滚动窗口）
 - TopK 排行榜（Redis Sorted Set）
 - 分位数计算
-- 窗口聚合（滚动窗口、滑动窗口）
 
-关键类：`WindowAggregator.java`, `PVCounter.java`, `TopKAnalyzer.java`, `SumFunction.java` (14 个文件)
+关键类：`PVAggregateFunction.java`, `UVAggregateFunction.java`, `TopKAggregateFunction.java`, `QuantileAggregateFunction.java`, `PVCounter.java`, `UVCounter.java`, `TopKAnalyzer.java`, `QuantileAnalyzer.java` (8 个文件)
 
 #### table - 流表二元性
 KTable 和 KStream，支持流表互转和表操作。
@@ -584,24 +583,30 @@ consumer.start();
 
 #### 窗口聚合
 ```java
-import io.github.cuihairu.redis.streaming.aggregation.*;
-import io.github.cuihairu.redis.streaming.aggregation.functions.SumFunction;
+import io.github.cuihairu.redis.streaming.aggregation.incremental.PVAggregateFunction;
+import io.github.cuihairu.redis.streaming.aggregation.incremental.TopKAggregateFunction;
+import io.github.cuihairu.redis.streaming.aggregation.analytics.PVCounter;
+import io.github.cuihairu.redis.streaming.api.stream.KeyedStream;
+import io.github.cuihairu.redis.streaming.window.assigners.TumblingWindow;
 
-import java.math.BigDecimal;
 import java.time.Duration;
-import java.time.Instant;
+import java.util.List;
 
-// 创建窗口聚合器
-WindowAggregator aggregator = new WindowAggregator(redissonClient, "page_views");
-aggregator.registerFunction("SUM", SumFunction.getInstance());
+// 1) 窗口管线：增量 AggregateFunction 实现
+KeyedStream<String, String> keyed = env.fromElements(pageVisits).keyBy(page -> page);
+keyed.window(TumblingWindow.ofMinutes(1))
+        .aggregate(new PVAggregateFunction<>())
+        .addSink(pv -> System.out.println("窗口 PV = " + pv));
 
-TimeWindow window = TumblingWindow.of(Duration.ofMinutes(5));
+keyed.window(TumblingWindow.ofMinutes(1))
+        .aggregate(new TopKAggregateFunction<String>(5))
+        .addSink(top -> System.out.println("窗口 Top5 = " + top));
 
-// 添加数据（窗口内的数值将被聚合）
-aggregator.addValue(window, "product-123", 19.99, Instant.now());
-
-// 获取聚合结果
-BigDecimal total = aggregator.getAggregatedResult(window, "product-123", "SUM", Instant.now());
+// 2) 跨进程滚动查询：Redis 分析服务（无需流管线）
+PVCounter pvCounter = new PVCounter(redissonClient, "page_views", Duration.ofMinutes(10));
+pvCounter.recordPageView("/home");                      // 返回滚动窗口内计数
+long total = pvCounter.getPageViewCount("/home");
+pvCounter.close();
 ```
 
 #### CDC 数据捕获

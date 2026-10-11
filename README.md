@@ -258,19 +258,18 @@ Responsibilities:
 
 Key classes: `TumblingWindow.java`, `SlidingWindow.java`, `SessionWindow.java`, `EventTimeTrigger.java`, `ProcessingTimeTrigger.java`, `CountTrigger.java`
 
-#### aggregation - Aggregation Functions
-Aggregation functions and window aggregation support built on Redis.
+#### aggregation - Aggregation
+Incremental `AggregateFunction` implementations and Redis rolling-window analytics built on core interfaces.
 
 Complete.
 
 Responsibilities:
-- Basic aggregations (Sum, Count, Avg, Min, Max)
-- PV/UV counting (Redis HyperLogLog)
+- Incremental `AggregateFunction` implementations for windowed pipelines (PV, UV, TopK, quantiles)
+- PV/UV counting (Redis Sorted Set / HyperLogLog, rolling windows)
 - TopK rankings (Redis Sorted Set)
 - Quantile computation
-- Window aggregation (tumbling, sliding)
 
-Key classes: `WindowAggregator.java`, `PVCounter.java`, `TopKAnalyzer.java`, `SumFunction.java` (14 files)
+Key classes: `PVAggregateFunction.java`, `UVAggregateFunction.java`, `TopKAggregateFunction.java`, `QuantileAggregateFunction.java`, `PVCounter.java`, `UVCounter.java`, `TopKAnalyzer.java`, `QuantileAnalyzer.java` (8 files)
 
 #### table - Stream-Table Duality
 KTable and KStream with stream-table conversion and table operations.
@@ -582,24 +581,30 @@ consumer.start();
 
 #### Window Aggregation
 ```java
-import io.github.cuihairu.redis.streaming.aggregation.*;
-import io.github.cuihairu.redis.streaming.aggregation.functions.SumFunction;
+import io.github.cuihairu.redis.streaming.aggregation.incremental.PVAggregateFunction;
+import io.github.cuihairu.redis.streaming.aggregation.incremental.TopKAggregateFunction;
+import io.github.cuihairu.redis.streaming.aggregation.analytics.PVCounter;
+import io.github.cuihairu.redis.streaming.api.stream.KeyedStream;
+import io.github.cuihairu.redis.streaming.window.assigners.TumblingWindow;
 
-import java.math.BigDecimal;
 import java.time.Duration;
-import java.time.Instant;
+import java.util.List;
 
-// Create a window aggregator
-WindowAggregator aggregator = new WindowAggregator(redissonClient, "page_views");
-aggregator.registerFunction("SUM", SumFunction.getInstance());
+// 1) Windowed pipeline: incremental AggregateFunction implementations
+KeyedStream<String, String> keyed = env.fromElements(pageVisits).keyBy(page -> page);
+keyed.window(TumblingWindow.ofMinutes(1))
+        .aggregate(new PVAggregateFunction<>())
+        .addSink(pv -> System.out.println("window pv = " + pv));
 
-TimeWindow window = TumblingWindow.of(Duration.ofMinutes(5));
+keyed.window(TumblingWindow.ofMinutes(1))
+        .aggregate(new TopKAggregateFunction<String>(5))
+        .addSink(top -> System.out.println("window top5 = " + top));
 
-// Add values (values within the window will be aggregated)
-aggregator.addValue(window, "product-123", 19.99, Instant.now());
-
-// Get the aggregated result
-BigDecimal total = aggregator.getAggregatedResult(window, "product-123", "SUM", Instant.now());
+// 2) Cross-process rolling analytics: Redis-backed services (no pipeline needed)
+PVCounter pvCounter = new PVCounter(redissonClient, "page_views", Duration.ofMinutes(10));
+pvCounter.recordPageView("/home");                      // returns the rolling-window count
+long total = pvCounter.getPageViewCount("/home");
+pvCounter.close();
 ```
 
 #### CDC Data Capture

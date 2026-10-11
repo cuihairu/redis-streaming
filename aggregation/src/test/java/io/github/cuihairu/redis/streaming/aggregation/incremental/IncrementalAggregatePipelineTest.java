@@ -14,8 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The unification regression: the incremental AggregateFunction implementations feed
- * {@code WindowedStream.aggregate} — the pipeline entry point the batch
- * {@code AggregationFunction} interface never fit.
+ * {@code WindowedStream.aggregate} — the one pipeline entry point for aggregations
+ * since the batch API was removed.
  */
 class IncrementalAggregatePipelineTest {
 

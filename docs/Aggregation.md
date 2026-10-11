@@ -4,69 +4,34 @@ Module: `aggregation/`
 
 ## 模块职责
 
-基于 Redis 数据结构（Sorted Set / HyperLogLog / Set）的时间窗口聚合工具：窗口对象、通用聚合函数、以及 PV / UV / Top-K / 分位数四个分析器。
+core `AggregateFunction` 接口（`io.github.cuihairu.redis.streaming.api.stream.AggregateFunction`）之上的实现库，分两层：
 
-说明：该模块是独立的聚合引擎，与 `runtime` 的 `WindowedStream`（见 [window](window.md)）无关，也不依赖流执行环境；所有状态都存在 Redis 里，方法在调用线程上同步执行。注意本模块的 `TimeWindow` / `TumblingWindow` / `SlidingWindow` 与 window 模块的同名类是完全不同的类型（本模块为 `aggregation` 包下的接口/值对象，非 `WindowAssigner`）。
+- **`incremental`**：窗口内精确聚合的 `AggregateFunction` 实现（PV / UV / Top-K / 分位数），喂进 `WindowedStream.aggregate` 参与流管线，状态随 checkpoint 走。
+- **`analytics`**：独立的 Redis 滚动窗口分析服务（PVCounter / UVCounter / TopKAnalyzer / QuantileAnalyzer），自带存储、查询 API、TTL 与清理线程，跨进程可查询，不需要流执行环境。
 
-模块共 14 个主源码文件：根包 5 个（`AggregationFunction`、`TimeWindow`、`TumblingWindow`、`SlidingWindow`、`WindowAggregator`）、`functions` 5 个、`analytics` 4 个。
+两层互补：**窗口内计算走 `incremental`，跨进程/可恢复查询走 `analytics`**。
 
-## 窗口对象（aggregation 根包）
+模块共 8 个主源码文件：`incremental` 4 个、`analytics` 4 个。历史上本模块还有一套批式 API（`AggregationFunction`、`aggregation.TimeWindow/TumblingWindow/SlidingWindow`、`functions/`、`WindowAggregator`），与 core 增量接口互不兼容且无法接入窗口管线，已于 2026-10-12 删除（统一方案见 [Aggregation-Unification-Design.md](Aggregation-Unification-Design.md)）。
 
-`TimeWindow` 是接口：
+## 增量聚合（`aggregation.incremental`）
 
-```java
-Duration getSize();                              // 窗口长度
-Duration getSlide();                             // 滑动步长，滚动窗口返回 getSize()
-default boolean isSliding();                     // slide != null 且 slide != size
-Instant getWindowStart(Instant timestamp);       // 该时刻所在窗口的起点
-Instant getWindowEnd(Instant timestamp);         // 该时刻所在窗口的终点
-default boolean contains(Instant ts, Instant windowStart); // [start, start+size)
-```
+全部实现 core `AggregateFunction<IN, R>`（4 方法 + merge，accumulator 可 JSON 序列化），可直接作为 `KeyedStream.window(...).aggregate(fn)` 的入参：
 
-- `TumblingWindow`：`of(Duration)`、`ofSeconds(long)`、`ofMinutes(long)`、`ofHours(long)`；`size == null` 或非正抛 `IllegalArgumentException`；`getSlide()` 返回 `size`。
-- `SlidingWindow`：`of(Duration size, Duration slide)`、`ofSeconds(long, long)`、`ofMinutes(long, long)`；`size`/`slide` 非正、或 `slide > size` 抛 `IllegalArgumentException`；`getOverlappingWindows(Instant)` 返回覆盖该时刻的所有窗口起点（`List<Instant>`）。
-
-## 聚合函数（`aggregation.functions`）
-
-全部实现 `AggregationFunction<T, R>`（函数式接口：`R apply(Collection<T> values)`，`getName()` 默认返回类名）：
-
-| 类 | `getName()` | 输入 → 输出 | 获取实例 | 空集合行为 |
-|---|---|---|---|---|
-| `CountFunction` | `COUNT` | `Object` → `Long` | `getInstance()`（单例） | `0` |
-| `SumFunction` | `SUM` | `Number` → `BigDecimal` | `getInstance()`（单例） | `BigDecimal.ZERO` |
-| `AverageFunction` | `AVERAGE` | `Number` → `BigDecimal` | `getInstance()`（单例） | `BigDecimal.ZERO`（非空时 10 位小数、`HALF_UP`） |
-| `MinFunction<T>` | `MIN` | `Comparable` → `T` | `create()` | `null` |
-| `MaxFunction<T>` | `MAX` | `Comparable` → `T` | `create()` | `null` |
-
-## WindowAggregator（Redis 通用窗口聚合）
+| 类 | 输出 | 语义 | 备注 |
+|---|---|---|---|
+| `PVAggregateFunction<T>` | `Long` | 窗口内记录数 | 计数 |
+| `UVAggregateFunction<T>` | `Long` | 窗口内不同 key 数 | HashSet 精确去重 |
+| `TopKAggregateFunction<T>` | `List<TopKEntry<T>>` | 窗口内计数 Top-K | HashMap 精确计数 + 触发时排序；并列按 item 升序（与 `TopKAnalyzer` tie 政策一致）；`TopKEntry(item, count)` |
+| `QuantileAggregateFunction` | `Double` | 窗口内分位数 | nearest-rank `floor(q×(n-1))`，与 `QuantileAnalyzer.quantile` 同一定义；空窗口返回 `null`；构造参数 `q` 被截断到 [0,1] |
 
 ```java
-public WindowAggregator(RedissonClient redissonClient, String keyPrefix)
-
-<T, R> void registerFunction(String name, AggregationFunction<T, R> function)
-void addValue(TimeWindow window, String key, Object value, Instant timestamp)   // score=时间戳写入 zset，并裁剪窗口起点之前的数据
-<R> R getAggregatedResult(TimeWindow window, String key, String functionName, Instant timestamp)
-                                 // 读取 [windowStart, windowEnd) 内的值并套用函数；函数名未注册抛 IllegalArgumentException
-WindowStatistics getWindowStatistics(TimeWindow window, String key, Instant timestamp)
-PVCounter createPVCounter(Duration windowSize)
-TopKAnalyzer createTopKAnalyzer(int k, Duration windowSize)
-void clearKey(String key)   // 注意：当前实现只记日志，并不删除任何数据
+KeyedStream<String, Event> keyed = env.fromElements(events).keyBy(Event::getPage);
+keyed.window(TumblingWindow.ofMinutes(1))
+        .aggregate(new PVAggregateFunction<>())
+        .addSink(result -> log.info("pv={} ", result));
 ```
 
-- Redis 键：`<keyPrefix>:window:<key>:<windowStartMillis>:<Window类简名>:<sizeMillis>`。键里含窗口类名与大小，因此同一个 key 上的 1 分钟窗口和 1 小时窗口互不串数据。
-- `WindowStatistics` 是 `WindowAggregator` 的静态数据类（Lombok getter）：`getWindowStart()` / `getWindowEnd()` / `getValueCount()` / `getWindowSize()` / `getTimestamp()`。
-
-```java
-RedissonClient redisson = /* 见 state.md */;
-WindowAggregator agg = new WindowAggregator(redisson, "demo:agg");
-agg.registerFunction("COUNT", CountFunction.getInstance());
-
-TumblingWindow win = TumblingWindow.ofSeconds(10);
-Instant now = Instant.now();
-agg.addValue(win, "events", "id-1", now);
-Long cnt = agg.getAggregatedResult(win, "events", "COUNT", now);
-WindowAggregator.WindowStatistics stats = agg.getWindowStatistics(win, "events", now);
-```
+Top-K / UV 对元素的要求：`keyBy` 的 key 即计数/去重对象（TopK 对 key 计数、UV 对 key 去重）；需要以其他字段为对象时先 `map` 投影。
 
 ## 分析器（`aggregation.analytics`）
 
@@ -151,6 +116,13 @@ q.close();
 ## 最小示例（Redis 可用时）
 
 ```java
+// 1) 窗口管线：core AggregateFunction 实现，跟随流执行环境
+KeyedStream<String, String> keyed = new InMemoryKeyedStream<>(pages::iterator, p -> p);
+keyed.window(TumblingWindow.ofMillis(60_000))
+        .aggregate(new TopKAggregateFunction<String>(5))
+        .addSink(top -> log.info("top: {}", top));
+
+// 2) 跨进程滚动查询：analytics 服务直连 Redis
 PVCounter pv = new PVCounter(redisson, "example", Duration.ofMinutes(10));
 pv.recordPageView("home");
 
@@ -165,7 +137,7 @@ pv.close();
 q.close();
 ```
 
-完整可运行样例见 `aggregation/src/test/java/io/github/cuihairu/redis/streaming/aggregation/AggregationIntegrationExample.java`（标记 `@Tag("integration")`，需要 Redis）。
+完整可运行样例见 `examples/.../aggregation/StreamAggregationExample.java`（两层一起演示，需 Redis）；增量函数单测见 `aggregation/.../incremental/IncrementalAggregatePipelineTest.java`（经公开 InMemory 入口真实喂进 `WindowedStream.aggregate`）。
 
 ## References
 

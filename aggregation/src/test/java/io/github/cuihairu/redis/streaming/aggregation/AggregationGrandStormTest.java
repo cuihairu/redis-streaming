@@ -1,9 +1,9 @@
 package io.github.cuihairu.redis.streaming.aggregation;
 
+import io.github.cuihairu.redis.streaming.aggregation.analytics.PVCounter;
 import io.github.cuihairu.redis.streaming.storm.Storms;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import io.github.cuihairu.redis.streaming.aggregation.WindowAggregator;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -13,7 +13,7 @@ class AggregationGrandStormTest {
 
     @Test
     void sweepAllClasses() throws Exception {
-        int total = Storms.grandStorm(WindowAggregator.class, "io.github.cuihairu.redis.streaming.aggregation", REAL_HINTS, 2000);
+        int total = Storms.grandStorm(PVCounter.class, "io.github.cuihairu.redis.streaming.aggregation", REAL_HINTS, 2000);
         System.err.println("GRAND aggregation invocations=" + total);
         assertTrue(total > 0);
     }
