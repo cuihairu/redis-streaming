@@ -1,25 +1,27 @@
 package io.github.cuihairu.redis.streaming.runtime.redis.metrics;
 
+import io.github.cuihairu.redis.streaming.api.metrics.StreamingMetricsCollector;
+
 /**
  * Static access to Redis runtime metrics collector. Defaults to Noop; can be overridden by integrations.
  */
 public final class RedisRuntimeMetrics {
-    private static volatile RedisRuntimeMetricsCollector COLLECTOR = new Noop();
+    private static volatile StreamingMetricsCollector COLLECTOR = new Noop();
 
     private RedisRuntimeMetrics() {
     }
 
-    public static void setCollector(RedisRuntimeMetricsCollector c) {
+    public static void setCollector(StreamingMetricsCollector c) {
         if (c != null) {
             COLLECTOR = c;
         }
     }
 
-    public static RedisRuntimeMetricsCollector get() {
+    public static StreamingMetricsCollector get() {
         return COLLECTOR;
     }
 
-    private static final class Noop implements RedisRuntimeMetricsCollector {
+    private static final class Noop implements StreamingMetricsCollector {
         @Override
         public void incJobStarted(String jobName) {
         }

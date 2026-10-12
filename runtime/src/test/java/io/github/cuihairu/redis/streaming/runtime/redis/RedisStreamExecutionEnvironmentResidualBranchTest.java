@@ -14,7 +14,7 @@ import io.github.cuihairu.redis.streaming.mq.control.PausableMessageConsumer;
 import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisRuntimeCheckpointManager;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
-import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetricsCollector;
+import io.github.cuihairu.redis.streaming.api.metrics.StreamingMetricsCollector;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.SelectiveFailingMetricsCollector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -82,7 +82,7 @@ class RedisStreamExecutionEnvironmentResidualBranchTest {
     private final Map<String, RBucket<Object>> buckets = new ConcurrentHashMap<>();
     private final Map<String, RBucket<String>> markers = new ConcurrentHashMap<>();
     private SelectiveFailingMetricsCollector collector;
-    private RedisRuntimeMetricsCollector previousCollector;
+    private StreamingMetricsCollector previousCollector;
     private MDCAdapter previousMdcAdapter;
 
     @BeforeEach

@@ -1,6 +1,6 @@
 package io.github.cuihairu.redis.streaming.starter.metrics;
 
-import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetricsCollector;
+import io.github.cuihairu.redis.streaming.api.metrics.StreamingMetricsCollector;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.Gauge;
@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Micrometer-backed Redis runtime metrics (per job/topic/group).
  */
-public class RedisRuntimeMicrometerCollector implements RedisRuntimeMetricsCollector {
+public class RedisRuntimeMicrometerCollector implements StreamingMetricsCollector {
 
     private final MeterRegistry registry;
     private final Map<String, Counter> jobStarted = new ConcurrentHashMap<>();

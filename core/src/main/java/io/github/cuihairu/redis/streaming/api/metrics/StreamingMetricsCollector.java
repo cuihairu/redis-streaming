@@ -1,11 +1,12 @@
-package io.github.cuihairu.redis.streaming.runtime.redis.metrics;
+package io.github.cuihairu.redis.streaming.api.metrics;
 
 /**
- * Pluggable collector for Redis runtime internal metrics. Default is Noop.
- *
- * <p>Intended for runtime-level operational visibility (job lifecycle, pipeline startup, handler outcomes).</p>
+ * Public SPI for streaming runtime metrics (Metrics-Unification-Design v2): implement this to
+ * receive the runtime's operational visibility points (job lifecycle, pipeline startup, handler
+ * outcomes, checkpoints, keyed state, watermarks, windows). The default implementation is Noop;
+ * spring-boot-starter bridges it to Micrometer when a {@code MeterRegistry} bean exists.
  */
-public interface RedisRuntimeMetricsCollector {
+public interface StreamingMetricsCollector {
 
     void incJobStarted(String jobName);
 

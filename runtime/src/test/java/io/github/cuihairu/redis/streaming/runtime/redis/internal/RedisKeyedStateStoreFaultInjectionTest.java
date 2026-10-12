@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.cuihairu.redis.streaming.api.state.StateDescriptor;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisRuntimeConfig;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
-import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetricsCollector;
+import io.github.cuihairu.redis.streaming.api.metrics.StreamingMetricsCollector;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.SelectiveFailingMetricsCollector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,7 +45,7 @@ class RedisKeyedStateStoreFaultInjectionTest {
     private RKeys rkeys;
     private RSet<String> index;
     private RMap<String, String> schema;
-    private RedisRuntimeMetricsCollector previousCollector;
+    private StreamingMetricsCollector previousCollector;
     private SelectiveFailingMetricsCollector collector;
     private final Map<String, RMap<String, String>> maps = new ConcurrentHashMap<>();
 

@@ -1,5 +1,7 @@
 package io.github.cuihairu.redis.streaming.runtime.redis.metrics;
 
+import io.github.cuihairu.redis.streaming.api.metrics.StreamingMetricsCollector;
+
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -7,7 +9,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Test collector that throws on selected metric methods so the surrounding
  * {@code catch (Exception ignore)} defensive branches in the runtime are exercised.
  */
-public final class SelectiveFailingMetricsCollector implements RedisRuntimeMetricsCollector {
+public final class SelectiveFailingMetricsCollector implements StreamingMetricsCollector {
 
     private final Set<String> failing = ConcurrentHashMap.newKeySet();
 

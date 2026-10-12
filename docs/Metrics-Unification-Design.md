@@ -44,7 +44,7 @@
 ## 迁移路径（方案 A 分期）
 
 1. **v1**（已落地 2026-10-11）：runtime 指标接口公共化 + starter 自动桥接 Micrometer；CDC 导出器；统一命名规范写入文档；删除 `ReliabilityMetrics` 死桥。实际落地以 todo.md 记录为准（DLQ 重放观测、死桥删除、CDC Micrometer 绑定、命名规范成文）。
-2. **v2（major，已落地 2026-10-12）**：`metrics` 模块已删除（含 `MetricCollector/InMemoryMetricCollector/MetricRegistry/MetricTimer/Metric` 与 `prometheus.*`，零仓外消费者已核实）；`gradle/libs.versions.toml` 的 simpleclient 两个坐标随之移除；[Metrics.md](Metrics.md) 已给出「从 InMemoryMetricCollector 到 Micrometer」迁移对照表，Prometheus 输出交给 `micrometer-registry-prometheus`。
+2. **v2（major，已落地 2026-10-12）**：`metrics` 模块已删除（含 `MetricCollector/InMemoryMetricCollector/MetricRegistry/MetricTimer/Metric` 与 `prometheus.*`，零仓外消费者已核实）；`gradle/libs.versions.toml` 的 simpleclient 两个坐标随之移除；[Metrics.md](Metrics.md) 已给出「从 InMemoryMetricCollector 到 Micrometer」迁移对照表，Prometheus 输出交给 `micrometer-registry-prometheus`。runtime 指标接口公共化同步落地：`RedisRuntimeMetricsCollector` 更名并上移为 core 的公共 SPI `io.github.cuihairu.redis.streaming.api.metrics.StreamingMetricsCollector`（运行时指标词表的唯一对外接口；`RedisRuntimeMetrics` 静态门面与 starter 的 Micrometer 桥保留原位，仅换型）。
 
 ## 非目标
 

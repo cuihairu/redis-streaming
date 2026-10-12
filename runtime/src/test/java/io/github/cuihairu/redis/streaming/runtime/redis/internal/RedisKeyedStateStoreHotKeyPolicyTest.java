@@ -6,7 +6,7 @@ import io.github.cuihairu.redis.streaming.api.state.ValueState;
 import io.github.cuihairu.redis.streaming.runtime.redis.KeyedStateHotKeyException;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisRuntimeConfig;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
-import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetricsCollector;
+import io.github.cuihairu.redis.streaming.api.metrics.StreamingMetricsCollector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,7 +39,7 @@ class RedisKeyedStateStoreHotKeyPolicyTest {
 
     private RedissonClient redisson;
     private RMap<String, String> map;
-    private RedisRuntimeMetricsCollector previousCollector;
+    private StreamingMetricsCollector previousCollector;
 
     @BeforeEach
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -50,7 +50,7 @@ class RedisKeyedStateStoreHotKeyPolicyTest {
         when(redisson.getSet(anyString(), any(Codec.class))).thenReturn((RSet) index);
         when(redisson.getMap(anyString(), any(Codec.class))).thenReturn((RMap) map);
         previousCollector = RedisRuntimeMetrics.get();
-        RedisRuntimeMetrics.setCollector(mock(RedisRuntimeMetricsCollector.class));
+        RedisRuntimeMetrics.setCollector(mock(StreamingMetricsCollector.class));
     }
 
     @AfterEach

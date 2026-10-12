@@ -1,5 +1,7 @@
 package io.github.cuihairu.redis.streaming.runtime.redis.metrics;
 
+import io.github.cuihairu.redis.streaming.api.metrics.StreamingMetricsCollector;
+
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Constructor;
@@ -18,13 +20,13 @@ class RedisRuntimeMetricsCoverageTest {
                 "io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics$Noop");
         Constructor<?> ctor = noopClass.getDeclaredConstructor();
         ctor.setAccessible(true);
-        RedisRuntimeMetricsCollector noop = (RedisRuntimeMetricsCollector) ctor.newInstance();
+        StreamingMetricsCollector noop = (StreamingMetricsCollector) ctor.newInstance();
         assertDoesNotThrow(() -> noop.incPipelineStartFailed("job", "topic", "group"));
     }
 
     @Test
     void defaultHotKeyHookIsANoop() {
-        RedisRuntimeMetricsCollector collector = new RedisRuntimeMetricsCollector() {
+        StreamingMetricsCollector collector = new StreamingMetricsCollector() {
             @Override
             public void incJobStarted(String jobName) {
             }
@@ -63,7 +65,7 @@ class RedisRuntimeMetricsCoverageTest {
 
     @Test
     void staticAccessorsRejectNullAndReturnDefault() {
-        RedisRuntimeMetricsCollector current = RedisRuntimeMetrics.get();
+        StreamingMetricsCollector current = RedisRuntimeMetrics.get();
         assertNotNull(current);
         RedisRuntimeMetrics.setCollector(null);
         assertSame(current, RedisRuntimeMetrics.get());

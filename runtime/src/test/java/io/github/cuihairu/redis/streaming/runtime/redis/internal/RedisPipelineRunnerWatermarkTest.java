@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.cuihairu.redis.streaming.mq.Message;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisRuntimeConfig;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
-import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetricsCollector;
+import io.github.cuihairu.redis.streaming.api.metrics.StreamingMetricsCollector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RedissonClient;
@@ -21,7 +21,7 @@ import static org.mockito.Mockito.mock;
 
 class RedisPipelineRunnerWatermarkTest {
 
-    private final RedisRuntimeMetricsCollector prev = RedisRuntimeMetrics.get();
+    private final StreamingMetricsCollector prev = RedisRuntimeMetrics.get();
 
     @AfterEach
     void restoreCollector() {
@@ -203,7 +203,7 @@ class RedisPipelineRunnerWatermarkTest {
         return m;
     }
 
-    private static final class CapturingCollector implements RedisRuntimeMetricsCollector {
+    private static final class CapturingCollector implements StreamingMetricsCollector {
         private final AtomicLong lastWatermark;
         private final AtomicLong maxQueueSize;
         private final AtomicLong maxQueueObserved;

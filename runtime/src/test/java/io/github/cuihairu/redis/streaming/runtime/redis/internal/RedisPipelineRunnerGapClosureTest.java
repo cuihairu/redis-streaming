@@ -6,7 +6,7 @@ import io.github.cuihairu.redis.streaming.mq.Message;
 import io.github.cuihairu.redis.streaming.mq.MqHeaders;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisRuntimeConfig;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
-import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetricsCollector;
+import io.github.cuihairu.redis.streaming.api.metrics.StreamingMetricsCollector;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.SelectiveFailingMetricsCollector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,7 +52,7 @@ class RedisPipelineRunnerGapClosureTest {
 
     private RedissonClient redisson;
     private RSetCache<String> setCache;
-    private RedisRuntimeMetricsCollector previousCollector;
+    private StreamingMetricsCollector previousCollector;
     private RedisRuntimeConfig realConfig;
 
     @BeforeEach

@@ -8,7 +8,7 @@ import io.github.cuihairu.redis.streaming.mq.SubscriptionOptions;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
 import io.github.cuihairu.redis.streaming.mq.control.ReassignableMessageConsumer;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
-import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetricsCollector;
+import io.github.cuihairu.redis.streaming.api.metrics.StreamingMetricsCollector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,7 +47,7 @@ class RedisLaunchedJobClientScaleTest {
     private RMap<Object, Object> map;
     private MessageQueueFactory mqFactory;
     private final List<RecordingConsumer> consumers = new ArrayList<>();
-    private RedisRuntimeMetricsCollector previousCollector;
+    private StreamingMetricsCollector previousCollector;
     private RedisJobClient job;
     private volatile boolean failNextConsumerCreation;
 
@@ -72,7 +72,7 @@ class RedisLaunchedJobClientScaleTest {
             return c;
         });
         previousCollector = RedisRuntimeMetrics.get();
-        RedisRuntimeMetrics.setCollector(mock(RedisRuntimeMetricsCollector.class));
+        RedisRuntimeMetrics.setCollector(mock(StreamingMetricsCollector.class));
     }
 
     @AfterEach

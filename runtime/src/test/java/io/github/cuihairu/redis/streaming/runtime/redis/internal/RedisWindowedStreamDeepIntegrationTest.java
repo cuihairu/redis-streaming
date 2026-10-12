@@ -12,7 +12,7 @@ import io.github.cuihairu.redis.streaming.mq.Message;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisRuntimeConfig;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisStreamExecutionEnvironment;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
-import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetricsCollector;
+import io.github.cuihairu.redis.streaming.api.metrics.StreamingMetricsCollector;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.SelectiveFailingMetricsCollector;
 import io.github.cuihairu.redis.streaming.window.assigners.TumblingWindow;
 import org.junit.jupiter.api.Tag;
@@ -618,7 +618,7 @@ class RedisWindowedStreamDeepIntegrationTest {
                     .count()
                     .addSink(lateOut::add);
             RedisPipelineRunner<Object> runner2 = definitionOf(lateTail).freeze().buildRunner();
-            RedisRuntimeMetricsCollector previous = RedisRuntimeMetrics.get();
+            StreamingMetricsCollector previous = RedisRuntimeMetrics.get();
             RedisRuntimeMetrics.setCollector(
                     new SelectiveFailingMetricsCollector().failOn("incWindowLateDropped"));
             try {
@@ -684,7 +684,7 @@ class RedisWindowedStreamDeepIntegrationTest {
         WindowedStream<Object, Object> w = windowed(redis, cfg(uid, b -> {}));
         String stateName = "sum-emit-res";
         String member = "s:k" + D + "1000" + D + "2000";
-        RedisRuntimeMetricsCollector previous = RedisRuntimeMetrics.get();
+        StreamingMetricsCollector previous = RedisRuntimeMetrics.get();
         SelectiveFailingMetricsCollector failing = new SelectiveFailingMetricsCollector();
         try {
             RedisKeyedStateStore.StateMapRef ref = refOf(redis, uid, stateName);
@@ -721,7 +721,7 @@ class RedisWindowedStreamDeepIntegrationTest {
         WindowedStream<Object, Object> w = windowed(redis, cfg(uid, b -> {}));
         String stateName = "emit-metric";
         String member = "s:k" + D + "1000" + D + "2000";
-        RedisRuntimeMetricsCollector previous = RedisRuntimeMetrics.get();
+        StreamingMetricsCollector previous = RedisRuntimeMetrics.get();
         RedisRuntimeMetrics.setCollector(
                 new SelectiveFailingMetricsCollector().failOn("incWindowFired"));
         try {

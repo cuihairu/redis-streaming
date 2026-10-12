@@ -14,7 +14,7 @@ import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisPipeline;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisPipelineDefinition;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisPipelineRunner;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
-import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetricsCollector;
+import io.github.cuihairu.redis.streaming.api.metrics.StreamingMetricsCollector;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.SelectiveFailingMetricsCollector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -61,7 +61,7 @@ class RedisStreamExecutionEnvironmentGapClosureTest {
     private RMap<Object, Object> map;
     private MessageQueueFactory mqFactory;
     private final List<TestConsumer> consumers = new ArrayList<>();
-    private RedisRuntimeMetricsCollector previousCollector;
+    private StreamingMetricsCollector previousCollector;
 
     @BeforeEach
     @SuppressWarnings({"unchecked", "rawtypes"})

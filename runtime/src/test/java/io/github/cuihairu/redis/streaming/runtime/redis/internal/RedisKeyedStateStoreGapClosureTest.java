@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.cuihairu.redis.streaming.api.state.StateDescriptor;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisRuntimeConfig;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
-import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetricsCollector;
+import io.github.cuihairu.redis.streaming.api.metrics.StreamingMetricsCollector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,8 +43,8 @@ class RedisKeyedStateStoreGapClosureTest {
     private RSet<String> index;
     private RMap<String, String> schema;
     private RKeys rkeys;
-    private RedisRuntimeMetricsCollector collector;
-    private RedisRuntimeMetricsCollector previousCollector;
+    private StreamingMetricsCollector collector;
+    private StreamingMetricsCollector previousCollector;
 
     @BeforeEach
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -56,7 +56,7 @@ class RedisKeyedStateStoreGapClosureTest {
         when(redisson.getSet(anyString(), any(Codec.class))).thenReturn((RSet) index);
         when(redisson.getMap(anyString(), any(Codec.class))).thenReturn((RMap) schema);
         when(redisson.getKeys()).thenReturn(rkeys);
-        collector = mock(RedisRuntimeMetricsCollector.class);
+        collector = mock(StreamingMetricsCollector.class);
         previousCollector = RedisRuntimeMetrics.get();
         RedisRuntimeMetrics.setCollector(collector);
     }

@@ -9,7 +9,7 @@
 | 门面 | 采集器接口 | starter 安装的实现 | 指标前缀 |
 |---|---|---|---|
 | `mq.metrics.MqMetrics` | `MqMetricsCollector` | `starter.metrics.MqMicrometerCollector` | `redis_streaming_mq_*` / `redis_streaming_dlq_*` |
-| `runtime...metrics.RedisRuntimeMetrics` | `RedisRuntimeMetricsCollector` | `starter.metrics.RedisRuntimeMicrometerCollector` | `redis_streaming_runtime_*` |
+| `runtime...metrics.RedisRuntimeMetrics` | `api.metrics.StreamingMetricsCollector`（公共 SPI，core 模块） | `starter.metrics.RedisRuntimeMicrometerCollector` | `redis_streaming_runtime_*` |
 | `reliability.metrics.RateLimitMetrics` | `RateLimitMetricsCollector` | `starter.metrics.RateLimitMicrometerCollector` | `redis_streaming_rl_*` |
 | `mq.metrics.RetentionMetrics` | `RetentionMetricsCollector` | `starter.metrics.RetentionMicrometerCollector` | `redis_streaming_retention_*` / `redis_streaming_mq_trim_*` |
 
