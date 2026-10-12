@@ -22,6 +22,7 @@ public final class RedisPipelineDefinition {
     private final SubscriptionOptions subscriptionOptions;
     private final List<RedisOperatorNode> operators;
     private final List<StreamSink<Object>> sinks = new ArrayList<>();
+    private final boolean assignerOwnedEventTime;
 
     public RedisPipelineDefinition(RedisRuntimeConfig config,
                                   RedissonClient redissonClient,
@@ -30,6 +31,24 @@ public final class RedisPipelineDefinition {
                                   String consumerGroup,
                                   SubscriptionOptions subscriptionOptions,
                                   List<RedisOperatorNode> operators) {
+        this(config, redissonClient, objectMapper, topic, consumerGroup, subscriptionOptions, operators, false);
+    }
+
+    /**
+     * @param assignerOwnedEventTime {@code true} when the chain wires
+     *        {@code assignTimestampsAndWatermarks(assigner, generator)}: the user generator owns
+     *        watermark advancement and the runner's message-timestamp heuristic is muted (see
+     *        {@code RedisPipelineRunner}).
+     */
+    public RedisPipelineDefinition(RedisRuntimeConfig config,
+                                  RedissonClient redissonClient,
+                                  ObjectMapper objectMapper,
+                                  String topic,
+                                  String consumerGroup,
+                                  SubscriptionOptions subscriptionOptions,
+                                  List<RedisOperatorNode> operators,
+                                  boolean assignerOwnedEventTime) {
+        this.assignerOwnedEventTime = assignerOwnedEventTime;
         this.config = Objects.requireNonNull(config, "config");
         this.redissonClient = Objects.requireNonNull(redissonClient, "redissonClient");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
@@ -59,6 +78,7 @@ public final class RedisPipelineDefinition {
         if (sinks.isEmpty()) {
             throw new IllegalStateException("No sinks registered for pipeline: " + topic + " group=" + consumerGroup);
         }
-        return RedisPipeline.forMqSource(config, redissonClient, objectMapper, topic, consumerGroup, subscriptionOptions, operators, sinks);
+        return RedisPipeline.forMqSource(config, redissonClient, objectMapper, topic, consumerGroup, subscriptionOptions, operators, sinks,
+                assignerOwnedEventTime);
     }
 }

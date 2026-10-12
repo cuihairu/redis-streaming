@@ -22,6 +22,7 @@ public final class RedisPipeline<T> {
     private final SubscriptionOptions subscriptionOptions;
     private final List<RedisOperatorNode> operators;
     private final List<StreamSink<Object>> sinks;
+    private final boolean assignerOwnedEventTime;
 
     private RedisPipeline(RedisRuntimeConfig config,
                           RedissonClient redissonClient,
@@ -31,6 +32,19 @@ public final class RedisPipeline<T> {
                           SubscriptionOptions subscriptionOptions,
                           List<RedisOperatorNode> operators,
                           List<StreamSink<Object>> sinks) {
+        this(config, redissonClient, objectMapper, topic, consumerGroup, subscriptionOptions, operators, sinks, false);
+    }
+
+    private RedisPipeline(RedisRuntimeConfig config,
+                          RedissonClient redissonClient,
+                          ObjectMapper objectMapper,
+                          String topic,
+                          String consumerGroup,
+                          SubscriptionOptions subscriptionOptions,
+                          List<RedisOperatorNode> operators,
+                          List<StreamSink<Object>> sinks,
+                          boolean assignerOwnedEventTime) {
+        this.assignerOwnedEventTime = assignerOwnedEventTime;
         this.config = Objects.requireNonNull(config, "config");
         this.redissonClient = Objects.requireNonNull(redissonClient, "redissonClient");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
@@ -53,6 +67,20 @@ public final class RedisPipeline<T> {
                 subscriptionOptions, operators, sinks);
     }
 
+    /** {@code assignerOwnedEventTime}: see {@code RedisPipelineRunner} (user generator owns watermarks). */
+    public static RedisPipeline<Object> forMqSource(RedisRuntimeConfig config,
+                                                    RedissonClient redissonClient,
+                                                    ObjectMapper objectMapper,
+                                                    String topic,
+                                                    String consumerGroup,
+                                                    SubscriptionOptions subscriptionOptions,
+                                                    List<RedisOperatorNode> operators,
+                                                    List<StreamSink<Object>> sinks,
+                                                    boolean assignerOwnedEventTime) {
+        return new RedisPipeline<>(config, redissonClient, objectMapper, topic, consumerGroup,
+                subscriptionOptions, operators, sinks, assignerOwnedEventTime);
+    }
+
     public String topic() {
         return topic;
     }
@@ -66,11 +94,13 @@ public final class RedisPipeline<T> {
     }
 
     public RedisPipelineRunner<T> buildRunner() {
-        return new RedisPipelineRunner<>(config, redissonClient, objectMapper, topic, consumerGroup, operators, sinks);
+        return new RedisPipelineRunner<>(config, redissonClient, objectMapper, topic, consumerGroup, operators, sinks,
+                null, true, assignerOwnedEventTime);
     }
 
     public RedisPipelineRunner<T> buildRunner(java.util.concurrent.ScheduledExecutorService timerExecutor) {
-        return new RedisPipelineRunner<>(config, redissonClient, objectMapper, topic, consumerGroup, operators, sinks, timerExecutor, false);
+        return new RedisPipelineRunner<>(config, redissonClient, objectMapper, topic, consumerGroup, operators, sinks,
+                timerExecutor, false, assignerOwnedEventTime);
     }
 
     static List<StreamSink<Object>> copySinks(List<?> sinks) {

@@ -207,6 +207,7 @@ env.fromMqTopic(topic, group)
 
 - 事件时间取 `Message.getTimestamp()`(发送方构造消息时的 `Instant.now()`),为空回退当前系统时间;水位线 = max(事件时间) − `watermarkOutOfOrderness`,单调不减。
 - 用户 WatermarkGenerator:`assignTimestampsAndWatermarks(gen)` 对每条元素调用 `onEvent` + `onPeriodicEmit`;生成器只能通过 `Context.raiseWatermark` **单调提升**水位线;`markIdle()` 声明源空闲(配置 `watermarkIdleTimeout` 后由空闲清扫立即冲刷),`markActive()` 恢复活跃,`onPeriodicEmit` 按元素驱动而非墙钟定时。
+- 事件时间指派(Flink 语义):`assignTimestampsAndWatermarks(assigner, gen)` 重载中 `TimestampAssigner` 决定记录的事件时间(下游算子经 `ctx.currentEventTime()` 读取,窗口归属按指派值计算),`gen` 拥有水位线推进——该管道剩余链路的消息时间戳启发式被静默(送达时间可能远超指派事件时间,不静默会提前关窗);生成器从不发射则水位线停在 `MIN_VALUE`,静默期请搭配 `watermarkIdleTimeout`(RT-M3);`markIdle/markActive` 经由生成器输出同样接入空闲清扫。
 - 空闲水位线冲刷(RT-M3,可配置 `watermarkIdleTimeout`,默认关闭):管道静默该时长(或生成器 `markIdle()`)后,定时清扫把水位线冲刷至 `MAX_VALUE` 并触发全部到期 event-time 定时器——空闲管道的窗口/定时器不再永久滞留;下一条记录开启新水位线纪元(以该记录事件时间为基,而非被钉在冲刷值上)。
 - 窗口触发:每条消息处理过程中检查到期窗口,每条记录最多触发 `windowMaxFiresPerRecord` 个,封顶后剩余到期成员等下一条记录继续;空闲水位线冲刷(RT-M3,`watermarkIdleTimeout`)把水位线冲至 `MAX_VALUE` 时,窗口算子经注册的冲刷钩子不限量排空各自 due 集合——静默管道的窗口不再永久滞留。记录路径上 due 集合的唯一所有者仍是逐记录排空,触发器语义(如 defer-once 关闭触发器)与封顶行为不受冲刷影响;窗口关闭时间 = `windowEnd + windowAllowedLateness`,水位线越过即晚到,元素被丢弃并计入 `incWindowLateDropped` 指标。窗口算子同时驱动 `WindowAssigner.getDefaultTrigger()`:每个 (partition,key,window) 桶一个实例,元素到达调 `onElement`(`FIRE` 提前发射并继续累积 / `FIRE_AND_PURGE` 发射并清桶 / `PURGE` 静默清桶 / `CONTINUE`),到期发射前调 `onEventTime`(`CONTINUE` 推迟、`PURGE` 静默丢弃、`FIRE` 按 `FIRE_AND_PURGE` 处理)。默认 `EventTimeTrigger` 与纯水位线关闭行为等价(见 docs/watermark.md)。
 - 状态由 `RedisKeyedStateStore` 写入 (job,topic,group,partition,operator,stateName) 维度的 Redis Hash(字段为序列化后的 key),支持 TTL、按 `keyedStateShardCount` 分片、schema 版本校验与热键处理;状态取用:`keyed.getState(StateDescriptor)` 返回 `ValueState`(`value/update/clear`)。另有集合态(`getMapState(name,keyType,valueType)`/`getListState(StateDescriptor)`/`getSetState(StateDescriptor)`,2026-10-11):每当前 key 一个 Redis Hash/List/Set,键 `{...}:state:{operator}:{state}:{序列化key}`,元素 JSON 序列化,登记 `stateKeys` 索引(检查点快照为 MAP/LIST/SET 值),Map 态复用 TTL/热键,List/Set 态 TTL 滑动续期(热键按 hash 字段数检测,对 List/Set 不适用)。
@@ -255,9 +256,7 @@ env.fromMqTopic(topic, group)
 ### 2.9 未支持(相对 core 接口)
 
 - `fromCollection` / `fromElements` / `addSource`:Redis 引擎只有 MQ 源
-- `assignTimestampsAndWatermarks(TimestampAssigner, WatermarkGenerator)` 重载:未覆写,调用走 core 默认实现抛 `UnsupportedOperationException`
 - 窗口 `Trigger` 的 `onProcessingTime`:无 processing-time 窗口定时器
-- 用户 `WatermarkGenerator` 的 `markIdle/markActive`:空实现,无 idle 语义
 
 ### 2.10 动态伸缩(`RedisJobClient.scaleParallelism`)
 

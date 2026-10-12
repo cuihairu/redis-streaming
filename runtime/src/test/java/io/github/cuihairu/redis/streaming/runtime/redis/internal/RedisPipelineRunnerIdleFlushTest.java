@@ -97,6 +97,45 @@ class RedisPipelineRunnerIdleFlushTest {
     }
 
     @Test
+    void idleFlushResetsEpochSoAssignerOwnedGeneratorRaiseIsNotSwallowed() throws Exception {
+        AtomicLong lastWatermark = new AtomicLong(Long.MIN_VALUE);
+        RedisRuntimeMetrics.setCollector(new CapturingCollector(lastWatermark));
+
+        RedisRuntimeConfig cfg = RedisRuntimeConfig.builder()
+                .jobName("t")
+                .watermarkIdleTimeout(Duration.ofMillis(200))
+                .build();
+
+        RedisOperatorNode generator = (value, ctx, emit) -> {
+            ctx.raiseWatermark(ctx.currentEventTime() + 60_000L);
+            emit.emit(value);
+        };
+
+        RedisPipelineRunner<Object> runner = new RedisPipelineRunner<>(
+                cfg, mock(RedissonClient.class), new ObjectMapper(), "topicA", "groupA",
+                List.of(generator), List.of(), null, false, true);
+
+        long t0 = System.currentTimeMillis();
+        runner.handle(msgAt(t0));
+        assertEquals(t0 + 60_000L, lastWatermark.get());
+
+        // silence: the flush pins the watermark at MAX_VALUE
+        long deadline = System.currentTimeMillis() + 10_000;
+        while (lastWatermark.get() != Long.MAX_VALUE && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
+        assertEquals(Long.MAX_VALUE, lastWatermark.get(), "idle flush should raise the watermark to MAX_VALUE");
+
+        // the next record re-seeds the epoch: with a (TimestampAssigner, generator) chain the
+        // seed must be MIN_VALUE (not the message-timestamp heuristic), otherwise this
+        // generator raise would be swallowed by max(MAX_VALUE, ...)
+        long t1 = t0 + 5000;
+        runner.handle(msgAt(t1));
+        assertEquals(t1 + 60_000L, lastWatermark.get());
+        runner.close();
+    }
+
+    @Test
     void markIdleFlushesWithoutRecordSilence() throws Exception {
         AtomicLong lastWatermark = new AtomicLong(Long.MIN_VALUE);
         RedisRuntimeMetrics.setCollector(new CapturingCollector(lastWatermark));

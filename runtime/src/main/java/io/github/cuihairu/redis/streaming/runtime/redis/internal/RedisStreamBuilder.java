@@ -13,6 +13,7 @@ import io.github.cuihairu.redis.streaming.api.stream.WindowFunction;
 import io.github.cuihairu.redis.streaming.api.stream.WindowAssigner;
 import io.github.cuihairu.redis.streaming.api.stream.WindowedStream;
 import io.github.cuihairu.redis.streaming.api.watermark.Watermark;
+import io.github.cuihairu.redis.streaming.api.watermark.TimestampAssigner;
 import io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator;
 import io.github.cuihairu.redis.streaming.mq.Message;
 import io.github.cuihairu.redis.streaming.mq.SubscriptionOptions;
@@ -51,6 +52,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
     private final String consumerGroup;
     private final SubscriptionOptions subscriptionOptions;
     private final List<RedisOperatorNode> operators;
+    private final boolean assignerOwnedEventTime;
 
     private RedisPipelineDefinition registeredDefinition;
 
@@ -63,6 +65,21 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                               String consumerGroup,
                               SubscriptionOptions subscriptionOptions,
                               List<RedisOperatorNode> operators) {
+        this(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, operators, false);
+    }
+
+    private RedisStreamBuilder(RedisStreamExecutionEnvironment env,
+                              RedisRuntimeConfig config,
+                              RedissonClient redissonClient,
+                              ObjectMapper objectMapper,
+                              String streamId,
+                              String topic,
+                              String consumerGroup,
+                              SubscriptionOptions subscriptionOptions,
+                              List<RedisOperatorNode> operators,
+                              boolean assignerOwnedEventTime) {
+        this.assignerOwnedEventTime = assignerOwnedEventTime;
+
         this.env = Objects.requireNonNull(env, "env");
         this.config = Objects.requireNonNull(config, "config");
         this.redissonClient = Objects.requireNonNull(redissonClient, "redissonClient");
@@ -82,14 +99,15 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                                          String topic,
                                                          String consumerGroup,
                                                          SubscriptionOptions subscriptionOptions) {
-        return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, List.of());
+        return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, List.of(), false);
     }
 
     private RedisStreamBuilder<T> withOperator(RedisOperatorNode node) {
         List<RedisOperatorNode> next = new ArrayList<>(operators.size() + 1);
         next.addAll(operators);
         next.add(node);
-        return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, next);
+        return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, next,
+                assignerOwnedEventTime);
     }
 
     @Override
@@ -132,7 +150,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                 config.getKeyedStateHotKeyPolicy(), config.getKeyedStateHotKeyThrottleMaxMs(),
                 config.isStateSchemaEvolutionEnabled(), config.getStateSchemaMismatchPolicy());
         return new RedisKeyedStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup,
-                subscriptionOptions, operators, keySelector, store, operatorId);
+                subscriptionOptions, operators, keySelector, store, operatorId, assignerOwnedEventTime);
     }
 
     @Override
@@ -176,6 +194,53 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
         });
     }
 
+    /**
+     * Event-time assignment (Flink semantics): the {@link TimestampAssigner} decides the
+     * record's event time, downstream operators see it via {@code ctx.currentEventTime()},
+     * and the supplied generator owns watermark advancement — the built-in
+     * message-timestamp heuristic is muted for the rest of this pipeline
+     * ({@code RedisPipelineRunner} assigner-owned mode). A generator that never emits
+     * leaves the watermark at {@code MIN_VALUE}: pair it with
+     * {@code watermarkIdleTimeout} (RT-M3 idle flush) if quiet periods are expected.
+     */
+    @Override
+    public DataStream<T> assignTimestampsAndWatermarks(TimestampAssigner<T> timestampAssigner,
+                                                      WatermarkGenerator<T> watermarkGenerator) {
+        Objects.requireNonNull(timestampAssigner, "timestampAssigner");
+        Objects.requireNonNull(watermarkGenerator, "watermarkGenerator");
+        List<RedisOperatorNode> next = new ArrayList<>(operators.size() + 1);
+        next.addAll(operators);
+        next.add((value, ctx, emit) -> {
+            T v = castValue(value);
+            long assigned = timestampAssigner.extractTimestamp(v, ctx.currentEventTime());
+            ctx.overrideEventTimeMs(assigned);
+            WatermarkGenerator.WatermarkOutput output = new WatermarkGenerator.WatermarkOutput() {
+                @Override
+                public void emitWatermark(Watermark watermark) {
+                    if (watermark != null) {
+                        ctx.raiseWatermark(watermark.getTimestamp());
+                    }
+                }
+
+                @Override
+                public void markIdle() {
+                    // RT-M3: the next idle sweep flushes the watermark even without record silence
+                    ctx.markIdle();
+                }
+
+                @Override
+                public void markActive() {
+                    ctx.markActive();
+                }
+            };
+            watermarkGenerator.onEvent(v, assigned, output);
+            watermarkGenerator.onPeriodicEmit(output);
+            emit.emit(v);
+        });
+        return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup,
+                subscriptionOptions, next, true);
+    }
+
     @Override
     public DataStream<T> print() {
         return print("");
@@ -192,7 +257,8 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
             return registeredDefinition;
         }
         RedisPipelineDefinition def = new RedisPipelineDefinition(
-                config, redissonClient, objectMapper, topic, consumerGroup, subscriptionOptions, operators);
+                config, redissonClient, objectMapper, topic, consumerGroup, subscriptionOptions, operators,
+                assignerOwnedEventTime);
         env.registerPipelineDefinition(def);
         registeredDefinition = def;
         return def;
@@ -221,6 +287,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
         private final Function<V, K> keySelector;
         private final RedisKeyedStateStore<K> stateStore;
         private final String operatorId;
+        private final boolean assignerOwnedEventTime;
 
         private RedisKeyedStreamBuilder(RedisStreamExecutionEnvironment env,
                                        RedisRuntimeConfig config,
@@ -233,7 +300,9 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                        List<RedisOperatorNode> upstreamOperators,
                                        Function<V, K> keySelector,
                                        RedisKeyedStateStore<K> stateStore,
-                                       String operatorId) {
+                                       String operatorId,
+                                       boolean assignerOwnedEventTime) {
+            this.assignerOwnedEventTime = assignerOwnedEventTime;
             this.env = env;
             this.config = config;
             this.redissonClient = redissonClient;
@@ -276,7 +345,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
             };
 
             return new RedisKeyedStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup,
-                    subscriptionOptions, ops, inheritedKeySelector, stateStore, operatorId);
+                    subscriptionOptions, ops, inheritedKeySelector, stateStore, operatorId, assignerOwnedEventTime);
         }
 
         @Override
@@ -363,7 +432,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                 }
             });
 
-            return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops);
+            return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops, assignerOwnedEventTime);
         }
 
         @Override
@@ -523,7 +592,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                         stateStore.clearCurrentPartitionId();
                     }
                 });
-                return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops);
+                return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops, assignerOwnedEventTime);
             }
 
             @FunctionalInterface
@@ -1117,7 +1186,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                 }
             });
 
-            return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops);
+            return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops, assignerOwnedEventTime);
         }
 
         @Override
@@ -1156,7 +1225,7 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                 }
             });
 
-            return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops);
+            return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops, assignerOwnedEventTime);
         }
 
         @Override

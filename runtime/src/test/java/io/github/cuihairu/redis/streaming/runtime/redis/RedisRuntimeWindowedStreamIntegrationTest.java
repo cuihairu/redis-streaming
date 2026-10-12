@@ -177,6 +177,79 @@ class RedisRuntimeWindowedStreamIntegrationTest {
     }
 
     @Test
+    void timestampAssignerOwnsEventTimeAndMutesDeliveryHeuristic() throws Exception {
+        List<Integer> out = new CopyOnWriteArrayList<>();
+        RedisRuntimeConfig cfg = RedisRuntimeConfig.builder()
+                .jobName("rt-win-" + UUID.randomUUID().toString().substring(0, 6))
+                .stateKeyPrefix("streaming:runtime:wintest:" + UUID.randomUUID().toString().substring(0, 6))
+                .watermarkOutOfOrderness(Duration.ofSeconds(10))
+                .mqOptions(MqOptions.builder().workerThreads(1).schedulerThreads(1).build())
+                .build();
+        String topic = "rt-win-" + UUID.randomUUID().toString().substring(0, 8);
+        String group = "rt-grp-" + UUID.randomUUID().toString().substring(0, 8);
+        RedissonClient client = createClient();
+        try {
+            RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(client, cfg);
+            io.github.cuihairu.redis.streaming.api.watermark.TimestampAssigner<io.github.cuihairu.redis.streaming.mq.Message> assigner =
+                    (event, recordTimestamp) -> "999".equals(String.valueOf(event.getPayload()))
+                            ? recordTimestamp
+                            : recordTimestamp - WINDOW_MS;
+            env.fromMqTopic(topic, group)
+                    .assignTimestampsAndWatermarks(
+                            assigner,
+                            new io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator<
+                                    io.github.cuihairu.redis.streaming.mq.Message>() {
+                                @Override
+                                public void onEvent(io.github.cuihairu.redis.streaming.mq.Message event, long eventTimestamp,
+                                                    io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator.WatermarkOutput output) {
+                                    if ("999".equals(String.valueOf(event.getPayload()))) {
+                                        // only the trigger advances the watermark; the data record's
+                                        // delivery timestamp must not reach the watermark at all
+                                        output.emitWatermark(new io.github.cuihairu.redis.streaming.api.watermark.Watermark(eventTimestamp));
+                                    }
+                                }
+
+                                @Override
+                                public void onPeriodicEmit(io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator.WatermarkOutput output) {
+                                }
+                            })
+                    .map(m -> Integer.parseInt((String) m.getPayload()))
+                    .keyBy(v -> "k")
+                    .window(io.github.cuihairu.redis.streaming.window.assigners.TumblingWindow.<Integer>ofMillis(WINDOW_MS))
+                    .reduce(Integer::sum)
+                    .addSink(out::add);
+            try (RedisJobClient job = env.executeAsync()) {
+                MessageQueueFactory mq = new MessageQueueFactory(client, cfg.getMqOptions());
+                MessageProducer producer = mq.createProducer();
+                try {
+                    alignToWindowStart();
+                    // "41" is assigned an event time one window in the past: with the delivery
+                    // heuristic active it would fire instantly (its close is long past); under
+                    // assigner ownership the watermark stays at MIN_VALUE instead
+                    producer.send(topic, "key", "41").get(5, TimeUnit.SECONDS);
+                    Thread.sleep(800);
+                    assertTrue(out.isEmpty(),
+                            "assigned past event time must not fire via the muted delivery heuristic: " + out);
+                    producer.send(topic, "key", "999").get(5, TimeUnit.SECONDS);
+                    long deadline = System.currentTimeMillis() + 10_000;
+                    while (out.isEmpty() && System.currentTimeMillis() < deadline) {
+                        Thread.sleep(50);
+                    }
+                    assertFalse(out.isEmpty(), "generator watermark did not fire the assigned-event-time window");
+                    assertTrue(out.contains(41), "the past window holding '41' should fire: " + out);
+                    Thread.sleep(WINDOW_MS + 400);
+                    // the trigger's own window closes beyond the raised watermark
+                    assertFalse(out.contains(999), "trigger window should stay open: " + out);
+                } finally {
+                    producer.close();
+                }
+            }
+        } finally {
+            client.shutdown();
+        }
+    }
+
+    @Test
     void windowedSumFiresOnWatermark() throws Exception {
         List<Integer> out = runWindowed(List.of("5", "7"),
                 keyed -> keyed.window(TumblingWindow.<Integer>ofMillis(WINDOW_MS)).sum(v -> v));

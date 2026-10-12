@@ -51,6 +51,7 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
 
     private final ScheduledExecutorService timerExecutor;
     private final boolean closeTimerExecutor;
+    private final boolean assignerOwnedEventTime;
     private final AtomicLong maxEventTimeMs = new AtomicLong(Long.MIN_VALUE);
     private final AtomicLong watermarkMs = new AtomicLong(Long.MIN_VALUE);
     /** RT-M3: idle watermark flush period in ms; 0 = disabled (record-driven only). */
@@ -95,6 +96,25 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
                               List<StreamSink<Object>> sinks,
                               ScheduledExecutorService timerExecutor,
                               boolean closeTimerExecutor) {
+        this(config, redissonClient, objectMapper, topic, consumerGroup, operators, sinks, timerExecutor, closeTimerExecutor, false);
+    }
+
+    /**
+     * @param assignerOwnedEventTime {@code true} when the chain wires a {@code TimestampAssigner}
+     *        via {@code assignTimestampsAndWatermarks(assigner, generator)}: the user generator then
+     *        owns watermark advancement and the built-in message-timestamp heuristic must not push
+     *        its own (possibly far-ahead) watermark.
+     */
+    public RedisPipelineRunner(RedisRuntimeConfig config,
+                              RedissonClient redissonClient,
+                              ObjectMapper objectMapper,
+                              String topic,
+                              String consumerGroup,
+                              List<RedisOperatorNode> operators,
+                              List<StreamSink<Object>> sinks,
+                              ScheduledExecutorService timerExecutor,
+                              boolean closeTimerExecutor,
+                              boolean assignerOwnedEventTime) {
         this.config = Objects.requireNonNull(config, "config");
         this.redissonClient = Objects.requireNonNull(redissonClient, "redissonClient");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
@@ -112,6 +132,7 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
             this.timerExecutor = ex;
             this.closeTimerExecutor = true;
         }
+        this.assignerOwnedEventTime = assignerOwnedEventTime;
         long idleTimeout = 0L;
         try {
             Duration d = config.getWatermarkIdleTimeout();
@@ -207,10 +228,15 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
         if (idleFlushed.compareAndSet(true, false)) {
             // RT-M3: first record after an idle flush. The flush pinned the watermark at
             // MAX_VALUE — max() would keep it there forever — so this record starts a fresh
-            // watermark epoch from its own event time.
+            // watermark epoch from its own event time. With an assigner-owned event time the
+            // heuristic cannot seed it either (the Message timestamp is not the event time);
+            // start from MIN_VALUE and let the user generator raise the first watermark.
             maxEventTimeMs.set(eventTimeMs);
-            watermarkMs.set(candidateFor(eventTimeMs));
-        } else {
+            watermarkMs.set(assignerOwnedEventTime ? Long.MIN_VALUE : candidateFor(eventTimeMs));
+        } else if (!assignerOwnedEventTime) {
+            // assigner-owned: the user generator raises watermarks via Context#raiseWatermark;
+            // a message-timestamp heuristic here could run ahead of assigned event times and
+            // close windows early.
             maxEventTimeMs.updateAndGet(prev -> Math.max(prev, eventTimeMs));
             watermarkMs.updateAndGet(prev -> Math.max(prev, candidateFor(maxEventTimeMs.get())));
         }
@@ -531,7 +557,7 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
 
     public final class Context {
         private final Message message;
-        private final long eventTimeMs;
+        private long eventTimeMs;
         private final int partitionId;
 
         private Context(Message message, long processingTimeMs, long eventTimeMs) {
@@ -558,6 +584,18 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
 
         public long currentEventTime() {
             return eventTimeMs;
+        }
+
+        /**
+         * Re-binds this record's event time mid-chain: the
+         * {@code assignTimestampsAndWatermarks(assigner, generator)} operator writes the
+         * extracted timestamp here so downstream operators reading
+         * {@link #currentEventTime()} (window assignment, timers) see event time instead of
+         * the raw Message timestamp. Per-record and single-threaded (one Context flows down
+         * one operator chain), so a plain field write is safe.
+         */
+        public void overrideEventTimeMs(long eventTimeMs) {
+            this.eventTimeMs = eventTimeMs;
         }
 
         /**

@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
@@ -92,6 +93,64 @@ class RedisPipelineRunnerWatermarkTest {
     }
 
     @Test
+    void assignerOwnedModeMutesMessageTimestampHeuristic() throws Exception {
+        AtomicLong lastWatermark = new AtomicLong(Long.MIN_VALUE);
+        RedisRuntimeMetrics.setCollector(new CapturingCollector(lastWatermark, new AtomicLong(), new AtomicLong()));
+
+        RedisRuntimeConfig cfg = RedisRuntimeConfig.builder()
+                .jobName("t")
+                .watermarkOutOfOrderness(Duration.ofMillis(5))
+                .build();
+
+        RedissonClient redisson = mock(RedissonClient.class);
+        ObjectMapper om = new ObjectMapper();
+
+        RedisPipelineRunner<Object> runner = new RedisPipelineRunner<>(
+                cfg, redisson, om, "topicA", "groupA",
+                List.of(), List.of(), null, false, true);
+
+        runner.handle(msgAt(1000));
+        // with a (TimestampAssigner, generator) chain the Message timestamp is not the event
+        // time — the heuristic must stay silent and the user generator owns advancement
+        assertEquals(Long.MIN_VALUE, lastWatermark.get());
+
+        runner.handle(msgAt(2000));
+        assertEquals(Long.MIN_VALUE, lastWatermark.get());
+    }
+
+    @Test
+    void assignerOwnedModeStillHonorsGeneratorRaise() throws Exception {
+        AtomicLong lastWatermark = new AtomicLong(Long.MIN_VALUE);
+        RedisRuntimeMetrics.setCollector(new CapturingCollector(lastWatermark, new AtomicLong(), new AtomicLong()));
+
+        RedisRuntimeConfig cfg = RedisRuntimeConfig.builder()
+                .jobName("t")
+                .watermarkOutOfOrderness(Duration.ofMillis(5))
+                .build();
+
+        RedissonClient redisson = mock(RedissonClient.class);
+        ObjectMapper om = new ObjectMapper();
+
+        RedisOperatorNode eagerGenerator = (value, ctx, emit) -> {
+            ctx.raiseWatermark(ctx.currentEventTime() + 60_000L);
+            emit.emit(value);
+        };
+
+        RedisPipelineRunner<Object> runner = new RedisPipelineRunner<>(
+                cfg, redisson, om, "topicA", "groupA",
+                List.of(eagerGenerator), List.of(), null, false, true);
+
+        runner.handle(msgAt(1000));
+        // the generator raise lands on top of the MIN_VALUE seed and passes the muted heuristic
+        assertEquals(61000L, lastWatermark.get());
+
+        // the generator raises again on the new event time (2500 + 60000); only generator
+        // raises move the watermark here — the message-timestamp heuristic is muted
+        runner.handle(msgAt(2500));
+        assertEquals(62500L, lastWatermark.get());
+    }
+
+    @Test
     void eventTimeTimerQueueIsBoundedByConfig() throws Exception {
         AtomicLong maxQueueSize = new AtomicLong(0);
         RedisRuntimeMetrics.setCollector(new CapturingCollector(new AtomicLong(), maxQueueSize, new AtomicLong()));
@@ -106,8 +165,10 @@ class RedisPipelineRunnerWatermarkTest {
 
         RedisOperatorNode registersTwoTimers = (value, ctx, emit) -> {
             long t = ctx.currentEventTime() + 10_000L;
-            ctx.registerEventTimeTimer(t, () -> {});
-            ctx.registerEventTimeTimer(t + 1, () -> {});
+            ctx.registerEventTimeTimer(t, () -> {
+            });
+            ctx.registerEventTimeTimer(t + 1, () -> {
+            });
             emit.emit(value);
         };
 
@@ -121,8 +182,10 @@ class RedisPipelineRunnerWatermarkTest {
                 List.of()
         );
 
-        runner.handle(msgAt(1000));
-
+        // RT-M2: at capacity the registration fails the record (retry/DLQ path) instead of
+        // silently dropping the timer — the bounded queue is what makes the failure observable.
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> runner.handle(msgAt(1000)));
+        assertTrue(ex.getMessage().contains("eventTimeTimerMaxSize"), ex.getMessage());
         assertTrue(maxQueueSize.get() <= 1L);
     }
 
