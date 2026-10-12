@@ -3,15 +3,23 @@ package io.github.cuihairu.redis.streaming.runtime.redis.internal;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.cuihairu.redis.streaming.api.state.StateDescriptor;
 import org.junit.jupiter.api.Test;
+import org.redisson.api.BatchOptions;
+import org.redisson.api.RBatch;
 import org.redisson.api.RList;
+import org.redisson.api.RListAsync;
+import org.redisson.api.RedissonClient;
+import org.redisson.client.codec.Codec;
+import org.redisson.client.codec.StringCodec;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -32,12 +40,29 @@ class RedisKeyedListStateGapClosureTest {
 
     @SuppressWarnings("unchecked")
     private RedisKeyedStateStore<String> storeWith(String key, RList<String> list) {
+        return storeWith(key, list, mock(RedissonClient.class));
+    }
+
+    @SuppressWarnings("unchecked")
+    private RedisKeyedStateStore<String> storeWith(String key, RList<String> list, RedissonClient client) {
         RedisKeyedStateStore<String> store = mock(RedisKeyedStateStore.class);
         when(store.currentKey()).thenReturn(key);
         when(store.stateFieldForKey(key)).thenReturn(FIELD);
         when(store.stateItemKey(NAME, FIELD)).thenReturn("ik");
         when(store.stateListForKey(NAME, FIELD)).thenReturn(list);
+        when(store.redissonClient()).thenReturn(client);
         return store;
+    }
+
+    @SuppressWarnings("unchecked")
+    private RListAsync<String> listAsync() {
+        return mock(RListAsync.class);
+    }
+
+    private RedissonClient batchClient(RBatch batch) {
+        RedissonClient client = mock(RedissonClient.class);
+        when(client.createBatch(any(BatchOptions.class))).thenReturn(batch);
+        return client;
     }
 
     private RedisKeyedListState<String, Integer> state(RedisKeyedStateStore<String> store) {
@@ -102,40 +127,57 @@ class RedisKeyedListStateGapClosureTest {
     }
 
     @Test
-    void updateReplacesTheWholeList() {
-        RList<String> list = list();
-        RedisKeyedListState<String, Integer> state = state(storeWith("user-1", list));
+    void updateReplacesTheWholeListAtomically() {
+        RBatch batch = mock(RBatch.class);
+        RListAsync<String> listAsync = listAsync();
+        when(batch.<String>getList(eq("ik"), any(Codec.class))).thenReturn(listAsync);
+        RedisKeyedStateStore<String> store = storeWith("user-1", list(), batchClient(batch));
+        RedisKeyedListState<String, Integer> state = state(store);
 
         state.update(List.of(1, 2));
 
-        verify(list).clear();
-        verify(list).add("1");
-        verify(list).add("2");
+        verify(listAsync).deleteAsync();
+        verify(listAsync).addAllAsync(List.of("1", "2"));
+        verify(batch).execute();
+        verify(store).registerStateKey("ik");
     }
 
     @Test
-    void updateWithNullClearsTheList() {
-        RList<String> list = list();
-        RedisKeyedListState<String, Integer> state = state(storeWith("user-1", list));
+    void updateWithNullClearsTheListAtomically() {
+        RBatch batch = mock(RBatch.class);
+        RListAsync<String> listAsync = listAsync();
+        when(batch.<String>getList(eq("ik"), any(Codec.class))).thenReturn(listAsync);
+        RedisKeyedListState<String, Integer> state = state(storeWith("user-1", list(), batchClient(batch)));
 
         state.update(null);
 
-        verify(list).clear();
-        verify(list, org.mockito.Mockito.never()).add(org.mockito.ArgumentMatchers.anyString());
+        verify(listAsync).deleteAsync();
+        verify(listAsync, never()).addAllAsync(any());
+        verify(batch).execute();
     }
 
     @Test
-    void addAllAppendsAndNullAddAllIsANoOp() {
-        RList<String> list = list();
-        RedisKeyedStateStore<String> store = storeWith("user-1", list);
+    void addAllAppendsAtomically() {
+        RBatch batch = mock(RBatch.class);
+        RListAsync<String> listAsync = listAsync();
+        when(batch.<String>getList(eq("ik"), any(Codec.class))).thenReturn(listAsync);
+        RedisKeyedListState<String, Integer> state = state(storeWith("user-1", list(), batchClient(batch)));
+
+        state.addAll(List.of(7, 8));
+
+        verify(listAsync, never()).deleteAsync();
+        verify(listAsync).addAllAsync(List.of("7", "8"));
+        verify(batch).execute();
+    }
+
+    @Test
+    void nullAddAllIsANoOp() {
+        RedisKeyedStateStore<String> store = mock(RedisKeyedStateStore.class);
         RedisKeyedListState<String, Integer> state = state(store);
 
         state.addAll(null);
-        verifyNoInteractions(list);
 
-        state.addAll(List.of(7, 8));
-        verify(list).add("7");
-        verify(list).add("8");
+        verifyNoInteractions(store);
     }
 
     @Test

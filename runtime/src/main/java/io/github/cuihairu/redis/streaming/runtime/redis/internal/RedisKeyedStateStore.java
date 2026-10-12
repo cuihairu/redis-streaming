@@ -105,6 +105,11 @@ public final class RedisKeyedStateStore<K> {
         this.stateSchema = redissonClient.getMap(this.stateSchemaKey, StringCodec.INSTANCE);
     }
 
+    /** Package-private access for same-package state impls that need raw batch writes. */
+    RedissonClient redissonClient() {
+        return redissonClient;
+    }
+
     String stateKeyIndexKey() {
         return stateKeyIndexKey;
     }
