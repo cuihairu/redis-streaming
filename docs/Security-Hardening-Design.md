@@ -28,8 +28,8 @@
 
 ### 方案 C：密钥与配置内容保护（v2，独立增量）
 
-1. **配置中心内容加密**：`config` 模块加可插拔 `ContentCipher`（接口 `encrypt/decrypt`，默认 noop 保持兼容），按 key 前缀（如 `secure.*`）启用；密钥来源走环境/JVM 参数，不入 Redis。
-2. **JobSpec 敏感项**：约定 `secret.*` 前缀的 config 值存**引用**而非明文（如 `env:DB_PASS`），执行侧解析；spec 存储/审计/`specHash` 计算前对敏感项脱敏显示。
+1. **配置中心内容加密**：`config` 模块加可插拔 `ContentCipher`（接口 `encrypt/decrypt`，默认 noop 保持兼容），按 key 前缀（如 `secure.*`）启用；密钥来源走环境/JVM 参数，不入 Redis。**已落地 2026-10-12**（见 docs/config.md「内容加密（at-rest）」）。
+2. **JobSpec 敏感项**：约定 `secret.*` 前缀的 config 值存**引用**而非明文（`env:NAME` / `sys:NAME`），执行侧（`RedisJobLauncher`）解析，工厂拿到已解析副本；`specHash` 输入对 secret 字面量脱敏（引用是指针，原样参与以保住漂移检测）；审计流固定字段不含 config。**已落地 2026-10-12**（约定细节与轮换语义见 docs/Control-Plane-Design.md「secret 引用约定」）。
 3. **日志脱敏护栏**：统一约定——凭证只进 `CredentialsResolver`，任何模块不得把 `password/token/secret` 字段打进日志（code review + 简单 ArchUnit 规则可后续加）。
 
 ## 迁移路径

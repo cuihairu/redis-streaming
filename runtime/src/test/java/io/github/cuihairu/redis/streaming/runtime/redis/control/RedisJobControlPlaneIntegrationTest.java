@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.redisson.Redisson;
 import org.redisson.api.RMap;
 import org.redisson.api.RedissonClient;
+import org.redisson.api.stream.StreamMessageId;
 import org.redisson.config.Config;
 
 import java.util.List;
@@ -277,6 +278,46 @@ class RedisJobControlPlaneIntegrationTest {
             // cap kept the two newest history entries: [v3-spec(v=2), v4-spec(v=3)] —
             // the last entry is the pre-image of the final upgrade (v4 spec, config v=3)
             assertTrue(history.get(1).contains("\"v\":\"3\""));
+        } finally {
+            redis.getKeys().deleteByPattern(prefix + "*");
+            redis.shutdown();
+        }
+    }
+
+    @Test
+    void secretMaterialNeverReachesAuditAndSpecHashIgnoresSecretValues() {
+        String redisUrl = System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379");
+        if (!reachable(redisUrl)) {
+            return;
+        }
+        RedissonClient redis = createClient();
+        String prefix = "it-cp-" + UUID.randomUUID().toString().substring(0, 8) + ":";
+        try {
+            RedisJobControlPlane cp = new RedisJobControlPlane(redis, prefix,
+                    ControlPlaneAuthorizer.allowAll(), 100, 10);
+
+            JobSpec first = cp.submit(spec("jobA",
+                    new java.util.LinkedHashMap<>(Map.of("k", "v", "secret.pw", "hunter2-real")), 1), "alice");
+            String hashWithSecret = first.getSpecHash();
+
+            // rotate the secret material: hash unchanged, audit still clean
+            JobSpec rotated = cp.upgrade("jobA", s -> {
+                s.getConfig().put("secret.pw", "rotated-real");
+                return s;
+            }, "bob");
+            assertEquals(hashWithSecret, rotated.getSpecHash());
+
+            // the audit stream (read raw, not through tailAudit) carries no secret material
+            Map<StreamMessageId, Map<String, String>> entries = redis.<String, String>getStream(prefix + "audit",
+                    org.redisson.client.codec.StringCodec.INSTANCE)
+                    .range(StreamMessageId.MIN, StreamMessageId.MAX);
+            assertFalse(entries.isEmpty());
+            for (Map<String, String> e : entries.values()) {
+                for (String v : e.values()) {
+                    assertFalse(v.contains("hunter2-real"), v);
+                    assertFalse(v.contains("rotated-real"), v);
+                }
+            }
         } finally {
             redis.getKeys().deleteByPattern(prefix + "*");
             redis.shutdown();

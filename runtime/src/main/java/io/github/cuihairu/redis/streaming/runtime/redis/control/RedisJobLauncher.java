@@ -15,9 +15,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@link JobPipelineFactory} registered under {@link JobSpec#getPipelineFactory()},
  * and starts the job with {@code executeAsync()}.
  *
- * <p>The spec config map is passed through to the factory verbatim — the launcher
- * does not interpret it. Factories that need extra {@link RedisRuntimeConfig} knobs
- * should wrap this launcher and build the environment themselves.</p>
+ * <p>The spec config map is passed through to the factory with {@code secret.*} entries
+ * resolved to their referenced material ({@link SecretRefs}; a spec without secret keys is
+ * handed over unchanged) — the launcher does not otherwise interpret it. A failed secret
+ * resolution fails the launch and is reported as {@link JobState#FAILED} by the agent.
+ * Factories that need extra {@link RedisRuntimeConfig} knobs should wrap this launcher and
+ * build the environment themselves.</p>
  */
 public class RedisJobLauncher implements JobLauncher {
 
@@ -49,7 +52,7 @@ public class RedisJobLauncher implements JobLauncher {
                 .pipelineParallelism(spec.getParallelism())
                 .build();
         RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(redissonClient, config);
-        factory.build(spec, env);
+        factory.build(SecretRefs.resolvedSpec(spec), env);
         return env.executeAsync();
     }
 }

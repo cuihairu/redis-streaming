@@ -19,7 +19,7 @@ import java.util.Map;
  * compare-and-set token used to reject concurrent rewrites.</p>
  */
 @Data
-@Builder
+@Builder(toBuilder = true)
 @NoArgsConstructor
 @AllArgsConstructor
 public class JobSpec {

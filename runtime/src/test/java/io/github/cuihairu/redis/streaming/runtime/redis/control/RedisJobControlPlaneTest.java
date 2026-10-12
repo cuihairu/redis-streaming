@@ -329,6 +329,31 @@ class RedisJobControlPlaneTest {
     }
 
     @Test
+    void specHashIgnoresSecretValuesButTracksReferenceChanges() {
+        JobSpec first = cp.submit(spec("j1", "f",
+                new java.util.LinkedHashMap<>(Map.of("k", "v", "secret.pw", "hunter2")), 1), "a");
+        when(jobsMap.get("j1")).thenReturn(json(first));
+        when(script.eval(any(), anyString(), any(),
+                anyList(), any(), any(), any(), any(), any(), any())).thenReturn(2L);
+        String hashWithSecret = first.getSpecHash();
+
+        // rotating a convention-violating plaintext secret must not change the content hash:
+        // masked literals keep the hash input free of dictionary-attackable material
+        JobSpec rotated = cp.upgrade("j1", s -> {
+            s.getConfig().put("secret.pw", "new-hunter2");
+            return s;
+        }, "a");
+        assertEquals(hashWithSecret, rotated.getSpecHash());
+
+        // rebinding the reference is a topology change the agent must redeploy for
+        JobSpec rebind = cp.upgrade("j1", s -> {
+            s.getConfig().put("secret.pw", "env:DB_PASS_V2");
+            return s;
+        }, "a");
+        assertNotEquals(hashWithSecret, rebind.getSpecHash());
+    }
+
+    @Test
     void defaultConstructorUsesDefaultPrefix() {
         // the single-arg ctor constructs with the built-in prefix; submitting would hit
         // a different key prefix than the per-test mock stubs, so we pin construction only

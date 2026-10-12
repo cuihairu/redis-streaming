@@ -81,4 +81,40 @@ class RedisJobLauncherTest {
         assertSame(s, seenSpec.get());
         assertNotNull(seenEnv.get());
     }
+
+    @Test
+    void factoryReceivesResolvedSecretReferencesAndCallerSpecStaysUntouched() throws Exception {
+        String prop = "c2s.launcher.token";
+        System.setProperty(prop, "resolved-value");
+        try {
+            AtomicReference<JobSpec> seen = new AtomicReference<>();
+            launcher.registerFactory("f", (s, env) -> seen.set(s));
+
+            JobSpec s = JobSpec.builder()
+                    .jobName("j1").pipelineFactory("f")
+                    .config(new java.util.LinkedHashMap<>(Map.of(
+                            "secret.token", "sys:" + prop, "k", "v")))
+                    .parallelism(1).version(1L).build();
+
+            // factory registered nothing -> executeAsync guard fires, but the factory ran
+            assertThrows(IllegalStateException.class, () -> launcher.launch(s));
+            assertEquals("resolved-value", seen.get().getConfig().get("secret.token"));
+            assertEquals("v", seen.get().getConfig().get("k"));
+            // the caller's spec keeps holding the reference
+            assertEquals("sys:" + prop, s.getConfig().get("secret.token"));
+        } finally {
+            System.clearProperty(prop);
+        }
+    }
+
+    @Test
+    void missingSecretReferenceFailsTheLaunchBeforeAnyRedisUse() {
+        launcher.registerFactory("f", (s, env) -> { });
+        JobSpec s = JobSpec.builder()
+                .jobName("j1").pipelineFactory("f")
+                .config(Map.of("secret.token", "sys:c2s.launcher.missing"))
+                .parallelism(1).version(1L).build();
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> launcher.launch(s));
+        assertTrue(e.getMessage().contains("secret.token"));
+    }
 }

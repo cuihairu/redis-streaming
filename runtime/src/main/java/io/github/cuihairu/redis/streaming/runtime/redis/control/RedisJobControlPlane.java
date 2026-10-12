@@ -364,6 +364,13 @@ public class RedisJobControlPlane implements JobControlPlane {
         if (spec.getConfig() == null) {
             throw new IllegalArgumentException("Config cannot be null");
         }
+        for (Map.Entry<String, String> e : spec.getConfig().entrySet()) {
+            if (SecretRefs.isSecretKey(e.getKey()) && !SecretRefs.isReference(e.getValue())) {
+                log.warn("Config key '{}' holds a literal value; {} keys should reference env:/sys: "
+                                + "sources so secret material never reaches spec storage, history or audit",
+                        e.getKey(), SecretRefs.SECRET_PREFIX);
+            }
+        }
         // blank/null collapses to "default" (no key segment); anything else must be a
         // valid name so derived keys stay unambiguous
         spec.setTenant(StreamKeys.normalizeTenant(spec.getTenant()));
@@ -427,18 +434,7 @@ public class RedisJobControlPlane implements JobControlPlane {
 
     private JobSpec toBuilder(JobSpec spec) {
         Map<String, String> config = spec.getConfig() == null ? Map.of() : new LinkedHashMap<>(spec.getConfig());
-        return JobSpec.builder()
-                .jobName(spec.getJobName())
-                .tenant(spec.getTenant())
-                .pipelineFactory(spec.getPipelineFactory())
-                .config(config)
-                .parallelism(spec.getParallelism())
-                .version(spec.getVersion())
-                .description(spec.getDescription())
-                .updatedBy(spec.getUpdatedBy())
-                .updatedAt(spec.getUpdatedAt())
-                .specHash(spec.getSpecHash())
-                .build();
+        return spec.toBuilder().config(config).build();
     }
 
     private String specHash(JobSpec spec) {
@@ -448,7 +444,13 @@ public class RedisJobControlPlane implements JobControlPlane {
                 .append(spec.getPipelineFactory()).append('|');
         spec.getConfig().entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
-                .forEach(e -> sb.append(e.getKey()).append('=').append(e.getValue()).append(';'));
+                .forEach(e -> sb.append(e.getKey()).append('=')
+                        // keep the hash a function of the topology: secret references are
+                        // pointers and must stay visible to drift detection, while
+                        // convention-violating plaintext is masked so no hash input is
+                        // offline brute-forceable
+                        .append(SecretRefs.displayValue(e.getKey(), e.getValue()))
+                        .append(';'));
         sb.append('|').append(spec.getParallelism()).append('|')
                 .append(spec.getDescription() == null ? "" : spec.getDescription());
         try {

@@ -79,6 +79,14 @@
 - Spring Boot starter：`redis-streaming.control-plane.enabled=true` 自动装配 `JobControlPlane` + `JobAgent`（`autoDeploy=true` 才启动对账）；`authorizer` bean 用户优先。
 - actor 来源：`JobControlPlane` 方法参数显式传入（运维工具/UI 负责），缺省取系统属性 `user.name`。
 
+### secret 引用约定（已落地 2026-10-12，Security-Hardening 方案 C2）
+
+- **约定**：`config` 中以 `secret.` 为前缀的 key 存**引用**而非明文，scheme 两种：`env:NAME`（环境变量）与 `sys:NAME`（系统属性）；解析点在执行侧 `RedisJobLauncher.launch`（工厂收到的是已解析的 spec 副本，无 secret key 时原 spec 原样传递）。解析失败（源缺失）即部署失败（`reportStatus(FAILED)`），报错只含 key 与缺失源名，绝不含值。
+- **宽松兼容**：无 scheme 的 `secret.*` 值按字面量透传（约定是建议不是强制，存量 spec 不受影响）；控制面 submit/upgrade 时对这类条目打 warn。需要 Vault/KMS 的接入方自实现 `JobLauncher`（框架不内置客户端，见 Security-Hardening 非目标）。
+- **specHash 脱敏**：hash 输入中 secret **字面量**以 `***` 代替（低熵明文的哈希可被字典攻击还原）；secret **引用**原样参与（它是指针不是材料，且引用变更必须对 agent 漂移检测可见——否则换绑 `env:A→env:B` 不会触发重部署）。
+- **审计不含 config**：审计流固定字段（ts/tenant/actor/op/jobName/版本/allowed/detail），从不写入 config 内容；detail 由 agent 异常消息构成，解析器报错不携带值。
+- **轮换语义**：改环境变量/系统属性的值不需要也不应该改 spec（引用不变，specHash 不变）；要让运行中作业取到新值，需走一次 upgrade 触发重部署（任何 spec 字段变更都会 bump version，对账循环即重跑解析）。
+
 ## 非目标（v1）
 
 - 跨进程资源配额与多租户隔离（P4 后续条目）。
