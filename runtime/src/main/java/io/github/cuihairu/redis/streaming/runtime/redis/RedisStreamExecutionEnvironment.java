@@ -884,7 +884,8 @@ public final class RedisStreamExecutionEnvironment {
                     if (ok) {
                         RedisRuntimeMetrics.get().incHandleSuccess(config.getJobName(), p.topic(), p.consumerGroup());
                     } else {
-                        RedisRuntimeMetrics.get().incHandleError(config.getJobName(), p.topic(), p.consumerGroup());
+                        // this arm returns MessageHandleResult.RETRY below — pin the dimension to it
+                        RedisRuntimeMetrics.get().incHandleError(config.getJobName(), p.topic(), p.consumerGroup(), "retry");
                     }
                 } catch (Exception ignore) {
                 }
@@ -900,7 +901,8 @@ public final class RedisStreamExecutionEnvironment {
                 try {
                     RedisRuntimeMetrics.get().recordHandleLatency(config.getJobName(), p.topic(), p.consumerGroup(),
                             (System.nanoTime() - startNs) / 1_000_000);
-                    RedisRuntimeMetrics.get().incHandleError(config.getJobName(), p.topic(), p.consumerGroup());
+                    RedisRuntimeMetrics.get().incHandleError(config.getJobName(), p.topic(), p.consumerGroup(),
+                            config.getProcessingErrorResult().name().toLowerCase(java.util.Locale.ROOT));
                 } catch (Exception ignore) {
                 }
                 try {

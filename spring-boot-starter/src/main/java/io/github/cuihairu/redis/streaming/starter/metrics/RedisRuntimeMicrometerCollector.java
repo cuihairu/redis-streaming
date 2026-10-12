@@ -24,6 +24,7 @@ public class RedisRuntimeMicrometerCollector implements StreamingMetricsCollecto
     private final Map<String, Counter> pipelineStartFailed = new ConcurrentHashMap<>();
     private final Map<String, Counter> handleSuccess = new ConcurrentHashMap<>();
     private final Map<String, Counter> handleError = new ConcurrentHashMap<>();
+    private final Map<String, Counter> handleErrorResult = new ConcurrentHashMap<>();
     private final Map<String, Timer> handleLatency = new ConcurrentHashMap<>();
     private final Map<String, DistributionSummary> keyedStateSizeFields = new ConcurrentHashMap<>();
     private final Map<String, Counter> keyedStateHotKey = new ConcurrentHashMap<>();
@@ -114,6 +115,20 @@ public class RedisRuntimeMicrometerCollector implements StreamingMetricsCollecto
     @Override
     public void incHandleError(String jobName, String topic, String consumerGroup) {
         counter(handleError, "redis_streaming_runtime_handle_error_total", jobName, topic, consumerGroup).increment();
+    }
+
+    @Override
+    public void incHandleError(String jobName, String topic, String consumerGroup, String result) {
+        String r = result == null || result.isBlank() ? "error" : result;
+        handleErrorResult.computeIfAbsent(
+                        "redis_streaming_runtime_handle_error_total|" + jobName + "|" + topic + "|" + consumerGroup + "|" + r,
+                        k -> Counter.builder("redis_streaming_runtime_handle_error_total")
+                                .tag("job", jobName)
+                                .tag("topic", topic)
+                                .tag("group", consumerGroup)
+                                .tag("result", r)
+                                .register(registry))
+                .increment();
     }
 
     @Override

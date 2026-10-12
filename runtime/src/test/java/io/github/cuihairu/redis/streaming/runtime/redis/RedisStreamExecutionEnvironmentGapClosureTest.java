@@ -373,6 +373,112 @@ class RedisStreamExecutionEnvironmentGapClosureTest {
         }
     }
 
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void handleFailureRecordsTheRetryOutcomeDimension() throws Exception {
+        RedisPipelineDefinition def = mock(RedisPipelineDefinition.class);
+        RedisPipeline<Object> pipeline = mock(RedisPipeline.class);
+        RedisPipelineRunner<Object> runner = mock(RedisPipelineRunner.class);
+        when(def.topic()).thenReturn("t");
+        when(def.consumerGroup()).thenReturn("g");
+        when(def.freeze()).thenReturn(pipeline);
+        when(pipeline.topic()).thenReturn("t");
+        when(pipeline.consumerGroup()).thenReturn("g");
+        when(pipeline.buildRunner(any())).thenReturn(runner);
+        when(runner.handle(any())).thenReturn(false);
+
+        RecordingOutcomeCollector metrics = new RecordingOutcomeCollector();
+        StreamingMetricsCollector before = RedisRuntimeMetrics.get();
+        RedisRuntimeMetrics.setCollector(metrics);
+        RedisRuntimeConfig cfg = baseConfig().build();
+        RedisStreamExecutionEnvironment env = environment(cfg);
+        env.registerPipelineDefinition(def);
+        RedisJobClient job = env.executeAsync();
+        try {
+            MessageHandler handler = consumers.get(0).handler;
+            assertEquals(MessageHandleResult.RETRY, handler.handle(message("1-1", null)));
+        } finally {
+            job.cancel();
+            RedisRuntimeMetrics.setCollector(before);
+        }
+        assertEquals(List.of("retry"), metrics.handleResults);
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void handlerExceptionRecordsTheConfiguredOutcomeDimension() throws Exception {
+        RedisPipelineDefinition def = mock(RedisPipelineDefinition.class);
+        RedisPipeline<Object> pipeline = mock(RedisPipeline.class);
+        RedisPipelineRunner<Object> runner = mock(RedisPipelineRunner.class);
+        when(def.topic()).thenReturn("t");
+        when(def.consumerGroup()).thenReturn("g");
+        when(def.freeze()).thenReturn(pipeline);
+        when(pipeline.topic()).thenReturn("t");
+        when(pipeline.consumerGroup()).thenReturn("g");
+        when(pipeline.buildRunner(any())).thenReturn(runner);
+        when(runner.handle(any())).thenThrow(new IllegalStateException("boom"));
+
+        RecordingOutcomeCollector metrics = new RecordingOutcomeCollector();
+        StreamingMetricsCollector before = RedisRuntimeMetrics.get();
+        RedisRuntimeMetrics.setCollector(metrics);
+        RedisRuntimeConfig cfg = baseConfig()
+                .processingErrorResult(MessageHandleResult.DEAD_LETTER)
+                .build();
+        RedisStreamExecutionEnvironment env = environment(cfg);
+        env.registerPipelineDefinition(def);
+        RedisJobClient job = env.executeAsync();
+        try {
+            MessageHandler handler = consumers.get(0).handler;
+            assertEquals(MessageHandleResult.DEAD_LETTER, handler.handle(message("1-1", null)));
+        } finally {
+            job.cancel();
+            RedisRuntimeMetrics.setCollector(before);
+        }
+        assertEquals(List.of("dead_letter"), metrics.handleResults);
+    }
+
+    private static final class RecordingOutcomeCollector implements StreamingMetricsCollector {
+        final List<String> handleResults = new ArrayList<>();
+
+        @Override
+        public void incHandleError(String jobName, String topic, String consumerGroup, String result) {
+            handleResults.add(result);
+        }
+
+        @Override
+        public void incJobStarted(String jobName) {
+        }
+
+        @Override
+        public void incJobCanceled(String jobName) {
+        }
+
+        @Override
+        public void incPipelineStarted(String jobName, String topic, String consumerGroup) {
+        }
+
+        @Override
+        public void incPipelineStartFailed(String jobName, String topic, String consumerGroup) {
+        }
+
+        @Override
+        public void incHandleSuccess(String jobName, String topic, String consumerGroup) {
+        }
+
+        @Override
+        public void incHandleError(String jobName, String topic, String consumerGroup) {
+        }
+
+        @Override
+        public void recordHandleLatency(String jobName, String topic, String consumerGroup, long millis) {
+        }
+
+        @Override
+        public void recordKeyedStateSize(String jobName, String topic, String consumerGroup,
+                                         String operatorId, String stateName, int partitionId, long fields) {
+        }
+    }
+
     private static final class TestConsumer implements MessageConsumer, PausableMessageConsumer {
         volatile MessageHandler handler;
         volatile SubscriptionOptions options;

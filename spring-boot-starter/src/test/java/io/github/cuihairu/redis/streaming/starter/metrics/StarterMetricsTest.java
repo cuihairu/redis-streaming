@@ -40,6 +40,7 @@ class StarterMetricsTest {
         c.incPipelineStartFailed("j", "t", "g");
         c.incHandleSuccess("j", "t", "g");
         c.incHandleError("j", "t", "g");
+        c.incHandleError("j", "t", "g", "retry");
         c.recordHandleLatency("j", "t", "g", 7);
         c.recordKeyedStateSize("j", "t", "g", "op", "st", 1, 42);
         c.incKeyedStateHotKey("j", "t", "g", "op", "st", 1, 99);
@@ -60,7 +61,10 @@ class StarterMetricsTest {
         assertEquals(1.0, reg.get("redis_streaming_runtime_checkpoint_failed_total").counter().count());
         assertEquals(1.0, reg.get("redis_streaming_runtime_pipeline_started_total").counter().count());
         assertEquals(1.0, reg.get("redis_streaming_runtime_handle_success_total").counter().count());
-        assertEquals(1.0, reg.get("redis_streaming_runtime_handle_error_total").counter().count());
+        assertEquals(1.0, reg.get("redis_streaming_runtime_handle_error_total")
+                .tags("job", "j", "topic", "t", "group", "g").counter().count());
+        assertEquals(1.0, reg.get("redis_streaming_runtime_handle_error_total")
+                .tags("job", "j", "topic", "t", "group", "g", "result", "retry").counter().count());
         assertEquals(42.0, reg.get("redis_streaming_runtime_keyed_state_size_fields").summary().totalAmount());
         assertEquals(1.0, reg.get("redis_streaming_runtime_keyed_state_hot_key_total").counter().count());
         assertEquals(1.0, reg.get("redis_streaming_runtime_keyed_state_read_total").counter().count());

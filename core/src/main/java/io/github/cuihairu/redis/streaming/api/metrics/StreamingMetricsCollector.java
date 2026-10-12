@@ -20,6 +20,16 @@ public interface StreamingMetricsCollector {
 
     void incHandleError(String jobName, String topic, String consumerGroup);
 
+    /**
+     * Handle error with the resolved outcome dimension: the delivery decision the failed record
+     * resolves to (lowercase MessageHandleResult name — e.g. {@code "retry"}, {@code "fail"},
+     * {@code "dead_letter"}). Default keeps the legacy tagless counter so custom collectors stay
+     * source-compatible.
+     */
+    default void incHandleError(String jobName, String topic, String consumerGroup, String result) {
+        incHandleError(jobName, topic, consumerGroup);
+    }
+
     void recordHandleLatency(String jobName, String topic, String consumerGroup, long millis);
 
     void recordKeyedStateSize(String jobName,

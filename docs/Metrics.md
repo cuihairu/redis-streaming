@@ -42,7 +42,7 @@ CDC 是另一条通路：`CDCManager` 直接暴露 `CDCMetrics` 快照（无静�
 
 来自 `RedisRuntimeMicrometerCollector`（`RedisRuntimeMetrics.setCollector(...)` 挂接）：
 
-- job/管道：`redis_streaming_runtime_job_started_total` / `job_canceled_total`（tag：`job`）；`pipeline_started_total` / `pipeline_start_failed_total` / `handle_success_total` / `handle_error_total`（tags：`job`、`topic`、`group`）
+- job/管道：`redis_streaming_runtime_job_started_total` / `job_canceled_total`（tag：`job`）；`pipeline_started_total` / `pipeline_start_failed_total` / `handle_success_total`（tags：`job`、`topic`、`group`）；`handle_error_total` 另带 `result` 维度（失败记录的处置去向：`retry` / `fail` / `dead_letter`，由 `processingErrorResult` 与 runner 返回值解析；旧的三参调用与自定义采集器仍走无 `result` tag 的原序列）
 - 处理耗时：`redis_streaming_runtime_handle_latency_ms`（timer，tags：`job`、`topic`、`group`）
 - checkpoint：`checkpoint_triggered_total` / `checkpoint_completed_total` / `checkpoint_failed_total`（counter，tag：`job`）；`checkpoint_duration_ms` / `checkpoint_drain_duration_ms` / `checkpoint_store_duration_ms` / `checkpoint_sink_commit_duration_ms`（timer，tag：`job`）
 - keyed state：`redis_streaming_runtime_keyed_state_read_total` / `write_total` / `delete_total` / `hot_key_total`（counter）与 `read_latency_ms` / `write_latency_ms`（timer）、`size_fields`（DistributionSummary），tags：`job`、`topic`、`group`、`operator`、`state`、`partition`
