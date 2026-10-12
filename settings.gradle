@@ -36,7 +36,6 @@ include 'cep'                      // Complex event processing
 // =====================================
 // Tier 5: Integration layer
 // =====================================
-include 'metrics'                  // Monitoring metrics
 include 'spring-boot-starter'      // Spring Boot integration
 include 'examples'                 // Example code
 include 'benchmark'                // Throughput/latency/checkpoint benchmarks (not published)

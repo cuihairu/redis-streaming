@@ -264,7 +264,7 @@ management:
         enabled: true
 ```
 
-Scrape `/actuator/prometheus` for the `redis_streaming_*` meters above. Tags include `topic`/`partition`/`consumer` on MQ meters. A separate non-actuator route — the metrics module's `PrometheusExporter`/`PrometheusMetricCollector` over `io.prometheus:simpleclient` (a `compileOnly` dependency there) — is documented in [Metrics.md](../Metrics.md).
+Scrape `/actuator/prometheus` for the `redis_streaming_*` meters above. Tags include `topic`/`partition`/`consumer` on MQ meters. A separate non-actuator route — a self-managed `PrometheusMeterRegistry` from `micrometer-registry-prometheus` — is documented in [Metrics.md](../Metrics.md).
 
 ## Background & Health Components
 

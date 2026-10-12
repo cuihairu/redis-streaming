@@ -1,138 +1,6 @@
 # Metrics
 
-Module: `metrics/`
-
-## 模块职责
-
-框架自用的指标采集抽象与 Prometheus 桥接。8 个主源码文件，包根 `io.github.cuihairu.redis.streaming.metrics`：
-
-| 类 | 角色 |
-|---|---|
-| `MetricCollector` | 采集接口（counter/gauge/histogram/meter/timer + tags） |
-| `InMemoryMetricCollector` | 进程内存实现（线程安全） |
-| `Metric` / `MetricType` | 指标快照值对象与五种类型 |
-| `MetricRegistry` | 多采集器注册与广播 |
-| `MetricTimer` | 计时工具（`AutoCloseable`） |
-| `prometheus.PrometheusMetricCollector` | 桥接到 `io.prometheus.simpleclient` |
-| `prometheus.PrometheusExporter` | `/metrics` HTTP endpoint（`AutoCloseable`） |
-
-边界说明：
-
-- Prometheus client 在本模块 `build.gradle` 中是 **`compileOnly`** 依赖（`libs.prometheus.client` / `libs.prometheus.httpserver`），使用 `prometheus.*` 类时需要自行把 simpleclient 加进运行时 classpath。
-- Micrometer 集成不在本模块：采集器在 `spring-boot-starter` 的 `starter.metrics.*MicrometerCollector`，通过各模块的静态单例（`MqMetrics` / `RedisRuntimeMetrics` / `RateLimitMetrics` 等）挂接。
-- 本模块的类是通用工具：除示例和测试外，仓内主源码没有强绑定 `MetricRegistry` 的调用方。
-
-## MetricCollector 接口
-
-`public interface MetricCollector extends Serializable`，11 个方法：
-
-```java
-void incrementCounter(String name);                       // +1
-void incrementCounter(String name, long amount);          // 步进；amount < 0 抛 IllegalArgumentException
-void setGauge(String name, double value);
-void setGauge(String name, double value, Map<String, String> tags);
-void recordHistogram(String name, double value);
-void markMeter(String name);                              // 事件速率打点
-void recordTimer(String name, long durationMillis);
-void incrementCounter(String name, Map<String, String> tags);
-Map<String, Metric> getMetrics();                         // 全量快照
-Metric getMetric(String name);                            // 不存在返回 null
-void clear();
-```
-
-`MetricType` 枚举：`COUNTER`（单调递增）/ `GAUGE`（可上下）/ `HISTOGRAM`（分布）/ `METER`（事件速率）/ `TIMER`（耗时）。
-
-`Metric`：`Metric.builder(name, type)` 起链（`name` 空、`type` 为 null 抛 `IllegalArgumentException`），链式 `.value(double)` / `.timestamp(long)`（默认当前毫秒）/ `.tag(k, v)`（null 键值跳过）/ `.tags(Map)`（null 跳过）/ `.build()`。读取：`getName()` / `getType()` / `getValue()` / `getTimestamp()` / `getTags()`（返回拷贝）/ `getTag(key)`。
-
-## InMemoryMetricCollector
-
-```java
-InMemoryMetricCollector collector = new InMemoryMetricCollector();
-collector.incrementCounter("mq_messages_total");        // -> 1
-collector.incrementCounter("mq_messages_total", 5);     // -> 6
-collector.setGauge("active_consumers", 3);
-collector.recordHistogram("latency", 12.5);
-collector.markMeter("requests");
-collector.recordTimer("handle", 42);
-collector.incrementCounter("hits", Map.of("tag", "v")); // 同时更新带标签序列 hits.tag_v
-collector.getCounterValue("mq_messages_total");         // 6
-collector.getGaugeValue("active_consumers");            // 3.0（不存在返回 0.0）
-collector.getHistogramState("latency");                 // HistogramState：getCount/getSum/getMax/getMin/getMean
-collector.getMetric("requests"); collector.getMetrics(); collector.clear();
-```
-
-实现细节（源码语义）：
-
-- `incrementCounter(name, amount)` 对负步进抛 `IllegalArgumentException`。
-- `markMeter` 内部用独立键 `name + ".meter"` 计数，避免与 `incrementCounter(name)` 互相污染；`getMetrics()` 里 meter 的 value 是累计次数。
-- 带 tags 的序列按「键名 + 按 key 排序的 `.k_v` 拼接」形成独立序列（`name.tag_v`），同时也会更新不带 tag 的裸名（计数双重记账：裸名 +1、tagged 序列 +1）。
-- `HISTOGRAM` 的 `Metric.value` 存最后一次样本（向后兼容），聚合统计在 `HistogramState`（count/sum/max/min/mean）。
-- `getMetrics()` 返回拷贝；`clear()` 清空 counter/gauge/metric/histogram 四张表。
-
-## MetricRegistry（多采集器）
-
-```java
-MetricRegistry registry = new MetricRegistry();     // 构造时注册 "default" -> InMemoryMetricCollector
-registry.registerCollector("prom", new PrometheusMetricCollector());  // 名字为 "default" 时同时替换 defaultCollector
-registry.getCollector("prom"); registry.getDefaultCollector();        // 无参构造的默认是 InMemoryMetricCollector
-registry.incrementCounter("x");    // 广播到全部已注册采集器
-registry.setGauge("g", 1.0); registry.recordHistogram("h", 2.0);
-registry.markMeter("m"); registry.recordTimer("t", 100L);
-registry.getAllMetrics();          // 合并全部采集器的指标
-registry.clearAll(); registry.getCollectorCount();
-```
-
-`registerCollector("default", c)` 会同步移动 `getDefaultCollector()`，避免新旧默认采集器之间指标分裂。
-
-## MetricTimer（计时）
-
-```java
-try (MetricTimer timer = MetricTimer.start("handle", collector)) {
-    work();
-}                                    // close() 记录耗时
-
-MetricTimer.time("step", collector, () -> work());            // Runnable
-String r = MetricTimer.time("step", collector, () -> "done"); // Callable<T>，返回结果
-long ms = timer.stop();                                       // 返回毫秒；只记录一次
-```
-
-`stop()` 与 `close()` 复用同一个记录槽（`AtomicBoolean`），重复调用不会重复上报；`collector` 为 null 时只计时不记录。
-
-## PrometheusMetricCollector
-
-```java
-PrometheusMetricCollector collector = new PrometheusMetricCollector("streaming"); // 默认 namespace 也是 "streaming"
-// new PrometheusMetricCollector()                     -> namespace "streaming"，注册 defaultRegistry
-// new PrometheusMetricCollector(namespace, registry)  -> 测试用独立 CollectorRegistry（null 回退 defaultRegistry）
-
-collector.incrementCounter("mq_messages_total");
-collector.setGauge("active_consumers", 3);
-collector.incrementCounter("hits", Map.of("consumer", "c1"));
-collector.getNamespace();
-```
-
-实现细节（源码语义）：
-
-- 名字清洗：`[^a-zA-Z0-9_:]` → `_`，首字符不合法也替换为 `_`（符合 Prometheus 命名规则）。
-- 无 tag 时创建 `Counter.build().namespace(ns).name(sanitized).register(registry)`；有 tag 时 metric 键为 `sanitized + "_labeled"`、label 名按字典序排序。
-- 标签 schema 校验：同名 metric 的 label 集合不一致 → `IllegalArgumentException`（防止 label 漂移）。
-- 类型冲突快速失败：同一清洗后名字已被注册成另一种类型（counter/gauge/histogram 互斥）→ `IllegalArgumentException`，而不是让 simpleclient 深处抛 "Collector already registered"。
-- `recordTimer(name, millis)` → 以秒（`millis / 1000.0`）写入 Histogram，同时把 `Metric.value` 记为毫秒；`markMeter(name)` → 走 counter 累加。
-- 带 tag 的 `getMetrics()` 序列键与 `InMemoryMetricCollector` 相同（`.k_v` 排序拼接）。
-- `clear()` 从 registry 反注册全部 Counter/Gauge/Histogram 并清空内部缓存。
-
-## PrometheusExporter（HTTP 暴露）
-
-```java
-try (PrometheusExporter exporter = new PrometheusExporter(9090)) {   // AutoCloseable
-    collector.incrementCounter("mq_messages_total");
-    exporter.getPort();            // 实际监听端口（HTTPServer 解析后）
-    exporter.getMetricsUrl();      // http://localhost:<port>/metrics
-}                                  // close() -> stop() 关闭 HTTPServer
-```
-
-- 无参构造监听**默认端口 9090**；构造即启动（`new HTTPServer(port)`），端口非法（如 -1）由 HTTPServer 抛 `IllegalArgumentException`；端口 `0` 为临时端口。
-- 挂在 `CollectorRegistry.defaultRegistry` 上——需要与 `new PrometheusMetricCollector(...)`（默认 registry）配套使用才会暴露出来。
+框架的对外可观测性只有一条路：Micrometer `MeterRegistry`（spring-boot-starter 自动桥接，见下文「静态采集器挂钩与 starter 自动安装」）。Prometheus 抓取走 Micrometer 生态（`micrometer-registry-prometheus` / Spring Boot Actuator）。自建的 `metrics` 模块（`MetricCollector`/`InMemoryMetricCollector`/`MetricRegistry`/`MetricTimer`/`prometheus.*`）已于 2026-10-12 删除（[Metrics-Unification-Design.md](Metrics-Unification-Design.md) 方案 A v2），旧用户迁移见下文「从 InMemoryMetricCollector 到 Micrometer」。
 
 ## 静态采集器挂钩与 starter 自动安装
 
@@ -153,7 +21,7 @@ CDC 是另一条通路：`CDCManager` 直接暴露 `CDCMetrics` 快照（无静�
 
 新指标一律使用 `redis.streaming.<module>.<metric>`（点分、Micrometer 原生风格），维度 tag 沿用 `job` / `topic` / `group` 等；多租户批后新增的 `tenant` 维度保留给控制面指标，业务指标暂不携带。
 
-存量指标名（`redis_streaming_mq_*`、`redis_streaming_rl_*` 等蛇形前缀）**保持不变**，避免打爆已有 dashboard/告警；只有为它们补齐的缺口指标也沿用旧前缀（如 DLQ 重放 `redis_streaming_dlq_replay_success_total`）。两套名字的现状与 v2（`metrics` 模块删除、prometheus 输出交给 `micrometer-registry-prometheus`，走 major 版本）见 `Metrics-Unification-Design.md`。
+存量指标名（`redis_streaming_mq_*`、`redis_streaming_rl_*` 等蛇形前缀）**保持不变**，避免打爆已有 dashboard/告警；只有为它们补齐的缺口指标也沿用旧前缀（如 DLQ 重放 `redis_streaming_dlq_replay_success_total`）。v2（`metrics` 模块已删除、Prometheus 输出交给 `micrometer-registry-prometheus`，2026-10-12 落地）见 `Metrics-Unification-Design.md`。
 
 目前按新规范命名的只有 CDC 导出器（`redis.streaming.cdc.*`，tag `connector`）。
 
@@ -196,19 +64,38 @@ CDC 是另一条通路：`CDCManager` 直接暴露 `CDCMetrics` 快照（无静�
 | `redis.streaming.cdc.event.time.epoch.milliseconds` | 最近事件时间（epoch 毫秒，null → 0） |
 | `redis.streaming.cdc.commit.time.epoch.milliseconds` | 最近提交时间（epoch 毫秒，null → 0） |
 
-## 最小示例（Prometheus）
+## 从 InMemoryMetricCollector 到 Micrometer（迁移对照表）
+
+已删除的 `metrics` 模块旧类 → Micrometer 对应写法（语义一一对应，命名规范见上一节）：
+
+| 旧（已删除） | Micrometer 对应 | 说明 |
+|---|---|---|
+| `MetricCollector`（接口） | `MeterRegistry` | 采集门面由 registry 承担，不再自建抽象 |
+| `InMemoryMetricCollector` | `SimpleMeterRegistry` | 进程内实现，测试/无导出场景 |
+| `incrementCounter(name)` / `(name, amount)` | `Counter.builder(name).register(registry).increment(amount)` | 计数序列按 tag 组合区分 |
+| `setGauge(name, value[, tags])` | `Gauge.builder(name, obj, valueFn).tags(...).register(registry)` | Micrometer gauge 是弱引用读数函数，不是 set-and-forget |
+| `recordHistogram(name, value)` | `DistributionSummary.builder(name).register(registry).record(value)` | 分布统计 |
+| `markMeter(name)` | `Counter`（或 `Timer` 携带计数） | Micrometer 无独立 meter 类型；速率由监控系统按 counter 派生 |
+| `recordTimer(name, millis)` | `Timer.builder(name).register(registry).record(millis, MILLISECONDS)` | 自动产出百分位/吞吐 |
+| `Metric` / `MetricType` | `Meter` / `Meter.Type`（COUNTER/GAUGE/TIMER/…） | 快照读取改为 registry 对应 `find(name).tags(...)` |
+| `MetricRegistry`（多采集器广播） | 多个 `MeterRegistry` + `CompositeMeterRegistry` | 广播语义由复合 registry 承担 |
+| `MetricTimer.start(name, collector)` / `time(...)` | `Timer.Sample`（`sample.start()` → `sample.stop(timer)`）或 `registry.timer(name).record(() -> ...)` | AutoCloseable 计时同理 |
+| `prometheus.PrometheusMetricCollector` + `PrometheusExporter` | `micrometer-registry-prometheus` 的 `PrometheusMeterRegistry` + `HTTPServer`（或 Spring Boot Actuator `/actuator/prometheus`） | Prometheus 输出整体交给 Micrometer |
+
+存量蛇形指标名（`redis_streaming_mq_*` 等）不受本次删除影响——它们从来都在 starter 的 `*MicrometerCollector` 里，与被删的自建门面无关。
+
+## 最小示例（Micrometer + Prometheus）
 
 ```java
-import io.github.cuihairu.redis.streaming.metrics.prometheus.PrometheusExporter;
-import io.github.cuihairu.redis.streaming.metrics.prometheus.PrometheusMetricCollector;
+// spring-boot-starter 环境：引入 micrometer-registry-prometheus + actuator 即有 /actuator/prometheus
+// 手动环境：SimpleMeterRegistry 或 PrometheusMeterRegistry 自行持有
+MeterRegistry registry = new SimpleMeterRegistry();
+MqMetrics.setCollector(new MqMicrometerCollector(registry));   // starter 自动安装时无需手动 set
 
-PrometheusMetricCollector collector = new PrometheusMetricCollector("streaming");
-try (PrometheusExporter exporter = new PrometheusExporter(9090)) {
-    collector.incrementCounter("mq_messages_total");
-    collector.setGauge("active_consumers", 3);
-    collector.setGauge("active_consumers", 3, Map.of("consumer", "c1")); // 带标签序列
-    // scrape: http://localhost:9090/metrics
-}
+// 任意 Micrometer 仪表可直接使用：
+Counter.builder("redis.streaming.mq.consumed.total")
+       .tag("topic", "t1").tag("partition", "0")
+       .register(registry).increment();
 ```
 
 ## References

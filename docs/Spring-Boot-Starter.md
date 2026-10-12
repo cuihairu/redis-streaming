@@ -269,7 +269,7 @@ management:
         enabled: true
 ```
 
-之后抓取 `/actuator/prometheus` 即可拿到上表 `redis_streaming_*` 指标（MQ 指标带 `topic`/`partition`/`consumer` 等 tag）。不走 actuator 的另一条路是 metrics 模块的 `PrometheusExporter`/`PrometheusMetricCollector`（基于 `io.prometheus:simpleclient`，在该模块是 `compileOnly`），见 [Metrics.md](Metrics.md)。
+之后抓取 `/actuator/prometheus` 即可拿到上表 `redis_streaming_*` 指标（MQ 指标带 `topic`/`partition`/`consumer` 等 tag）。不走 actuator 的手动路由用 `micrometer-registry-prometheus` 自行托管 `PrometheusMeterRegistry`，见 [Metrics.md](Metrics.md)。
 
 ## 后台与健康组件
 

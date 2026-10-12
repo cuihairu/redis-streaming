@@ -21,7 +21,6 @@ This is a Java 17 streaming processing framework built around Redis Streams and 
 ./gradlew :cdc:build
 ./gradlew :sink:build
 ./gradlew :source:build
-./gradlew :metrics:build
 
 # Clean and rebuild
 ./gradlew clean build
@@ -68,7 +67,6 @@ This is a Java 17 streaming processing framework built around Redis Streams and 
 - **sink**: Output connectors (Kafka, Redis, etc.)
 - **reliability**: Reliability building blocks (dedup, DLQ helpers)
 - **cep**: Complex event processing
-- **metrics**: Metrics/observability integrations
 - **spring-boot-starter**: Spring Boot auto-configuration and annotations
 - **examples**: Runnable examples and usage patterns
 

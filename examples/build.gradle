@@ -18,7 +18,6 @@ dependencies {
     implementation project(':window')
     implementation project(':sink')
     implementation project(':source')
-    implementation project(':metrics')
     implementation project(':spring-boot-starter')
     implementation project(':cep')
     implementation project(':join')

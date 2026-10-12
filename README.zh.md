@@ -377,20 +377,6 @@ KTable 和 KStream，支持流表互转和表操作。
 
 ### Tier 5: 集成层
 
-#### metrics - 监控指标
-监控指标收集和暴露。
-
-已完成：Prometheus Exporter + Collector。
-
-职责：
-- 指标收集（Counter, Gauge, Histogram, Timer）
-- 内存指标存储
-- 指标注册管理
-- 计时器支持
-- Prometheus 导出（HTTP）
-
-关键类：`PrometheusExporter.java`, `PrometheusMetricCollector.java`, `MetricRegistry.java`
-
 #### spring-boot-starter - Spring Boot 集成
 Spring Boot 自动配置和集成。
 
@@ -727,8 +713,6 @@ List<ChangeEvent> events = connector.poll();
   - 重试机制、DLQ、去重、限流
 
 #### Tier 5: 集成层
-- [x] metrics：监控指标
-  - Prometheus Exporter、指标收集器
 - [x] spring-boot-starter：Spring Boot 集成
   - 自动配置、注解支持
 

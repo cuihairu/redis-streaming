@@ -16,7 +16,6 @@ mockito = "4.6.1"
 mysql = "8.3.0"
 mysqlBinlog = "0.29.2"
 postgresql = "42.7.1"
-prometheus = "0.16.0"
 redisson = "4.7.0"
 slf4j = "2.0.17"
 springBoot = "3.2.0"
@@ -40,8 +39,6 @@ mockito-inline = { module = "org.mockito:mockito-inline", version.ref = "mockito
 mysql-binlog = { module = "com.zendesk:mysql-binlog-connector-java", version.ref = "mysqlBinlog" }
 mysql-connector = { module = "com.mysql:mysql-connector-j", version.ref = "mysql" }
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
-prometheus-client = { module = "io.prometheus:simpleclient", version.ref = "prometheus" }
-prometheus-httpserver = { module = "io.prometheus:simpleclient_httpserver", version.ref = "prometheus" }
 redisson = { module = "org.redisson:redisson", version.ref = "redisson" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }

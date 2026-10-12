@@ -375,20 +375,6 @@ Key classes: `PatternSequenceMatcher.java`, `PatternSequence.java`, `PatternQuan
 
 ### Tier 5: Integrations
 
-#### metrics - Monitoring Metrics
-Metric collection and exposure.
-
-Complete: Prometheus Exporter + Collector.
-
-Responsibilities:
-- Metric collection (Counter, Gauge, Histogram, Timer)
-- In-memory metric storage
-- Metric registry management
-- Timer support
-- Prometheus export (HTTP)
-
-Key classes: `PrometheusExporter.java`, `PrometheusMetricCollector.java`, `MetricRegistry.java`
-
 #### spring-boot-starter - Spring Boot Integration
 Spring Boot auto-configuration and integration.
 
@@ -725,8 +711,6 @@ All modules are in place (20/20), but "modules complete ≠ framework complete" 
   - Retries, DLQ, deduplication, rate limiting
 
 #### Tier 5: Integrations
-- [x] metrics: monitoring metrics
-  - Prometheus Exporter, metric collectors
 - [x] spring-boot-starter: Spring Boot integration
   - Auto-configuration, annotation support
 
