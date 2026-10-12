@@ -86,6 +86,7 @@ runtime 内置的内存引擎(`InMemoryCheckpointCoordinator`)不使用上面的
 
 - **快照锁**:协调器持有独立的 `checkpointLock()` 监视器;注册 store 的全部变更(put/remove/setCurrentKey/snapshot/restore)与协调器的快照/恢复都同步其上,`triggerCheckpoint` 跨全部已注册 store 持锁——一次检查点即单一一致切面,快照与流水线线程写竞跑(CME/脏拷贝)不可能。该锁只在有界非阻塞内存操作上持有。
 - **发射锁**:`SourceContext.getCheckpointLock()` 返回的是源级发射锁,生产者可跨满队列阻塞持有,消费者绝不取它。两把锁不相交,背压永不死锁;按 Flink 习惯把 `collect()` 包在 `getCheckpointLock()` 里的写法是安全的。
+- **快照源泛化(2026-10-12)**:`registerSnapshotSource(name, snapshot, restore)` 让任意 `(名称, snapshot, restore)` 三元组与 keyed store 同切面进检查点;回调与 store 快照同受快照锁保护。`assignTimestampsAndWatermarks` 的流水线段在持协调器时自动把段上 `WatermarkState` 注册为 `watermark-N` 快照源,检查点即含当前水位线与 idle 标志,恢复时回放。窗口累加器因缺常驻算子状态生命周期暂未注册(见设计文档卡点)。
 - 残余边界:同一记录的多次 state 写入仍可被快照劈开(逐记录屏障归检查点协议 v2,见 [Checkpoint-Barrier-Design.md](Checkpoint-Barrier-Design.md))。
 
 ## 配置项

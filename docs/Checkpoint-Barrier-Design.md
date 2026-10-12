@@ -38,7 +38,7 @@
 
 **① in-memory 快照屏障(P1,已落地 2026-10-11)**:落地时修正了本文初版方案——「消费者逐条处理持锁」会引入死锁:用户按 Flink 习惯把 `collect()` 包在 `getCheckpointLock()` 里时,生产者可持该锁阻塞于满队列;若消费者的状态写入也要等同一把锁,队列永不腾空。真实屏障因此是**双锁契约**:协调器新增 `checkpointLock()`(独立监视器),注册 store 的全部变更(put/remove/setCurrentKey/snapshot/restore)与协调器的快照/恢复都同步在它上,`triggerCheckpoint` 跨全部 store 持锁 → 一次检查点是单一一致切面,撕裂(CME/脏拷贝)消除;该锁只在有界非阻塞内存操作上持有。`SourceContext.getCheckpointLock()` 保持返回源级发射锁(生产者可跨满队列阻塞持有,消费者绝不取)——两锁不相交,背压永不死锁。残余:同一记录的多次 state 写入仍可被快照劈开(逐记录屏障属 ③ 的检查点协议);窗口累加器注册(②)后其整表快照天然原子。测试钉死:持锁写入期间快照必等且见写入值、并发写+连拍 200 快照零撕裂、活流水线旁路并发检查点 2 万条零丢失。
 
-**② registerStore 泛化(P2,归 B4/state 统一)**:注册面从 `registerStore(InMemoryKeyedStateStore)` 泛化为按 `(名称, snapshot, restore)` 注册快照源,窗口累加器表与 `WatermarkState` 注册进来(勾掉 L527 的剩余项);它们与 keyed store 同受 ① 的锁保护。
+**② registerStore 泛化(P2,已落地 2026-10-12)**:注册面已从 `registerStore(InMemoryKeyedStateStore)` 泛化为 `registerSnapshotSource(name, snapshot, restore)`——任意 `(名称, snapshot, restore)` 三元组均可入检查点切面,与 keyed store 同受 ① 的锁保护;重复名拒绝,`latestRestoredStateByStoreId` 的延迟恢复语义对快照源同样生效。`WatermarkState` 补了 `Snapshot(watermark, idle)` 载荷与 `snapshot/restoreSnapshot`,`assignTimestampsAndWatermarks` 两个重载在持协调器的流水线段上自动以无冲突生成的 `watermark-N` 名注册(命名撞车时跳号)。**窗口累加器暂未注册,如实记卡点**:内存引擎的窗口桶是终端算子 drain 内的方法局部变量(07539c7 的增量累加器),不存在可注册的常驻算子状态生命周期;Trigger 亦无快照 API;若走"注册时惰性建表+恢复时重放"会把陈旧桶注入新窗口,属正确性陷阱。要先给内存引擎设计算子状态生命周期与重启语义,才能让累加器作为快照源注册——此项未纳入本批。
 
 **③ Redis 引擎 v2 unaligned 检查点(待评审,另立批次)**:不停消费,epoch 冻结点从"全量 drain"缩到"2PC preCommit + defer-ack freeze"(这两步本来就不需要 pause 全场)——offsets 用 defer-ack 快照语义已存在;keyed 状态取 Redis 现值 + 快照版本号,恢复时按"记录 id > 快照 frontier 才重放"去重(幂等 sink 键已具备)。必须先解决:与 `scaleParallelism` 共享的 `checkpointing` CAS 门要拆成两级(扩缩容仍需全静默,检查点不再需要);多并行度下 preCommit 的 epoch 对齐。风险集中在 2PC 交互,收益只在长 `checkpointDrainTimeout`/高吞吐作业,不默认启用。
 
@@ -53,6 +53,6 @@
 ## 迁移路径(方案 A 分期)
 
 1. **P1 快照屏障**(已落地 2026-10-11,见方案 A① 的修正记录):协调器 `checkpointLock()` + 注册 store 绑定 + 快照/恢复持锁切面;3 个并发测试钉死,背压场景由既有流式测试(慢 sink/10 万条顺序)覆盖。
-2. **P2 注册面泛化**(随 B4):窗口累加器、WatermarkState 注册为快照源。
+2. **P2 注册面泛化**(已落地 2026-10-12):WatermarkState 经 `registerSnapshotSource` 注册为快照源;窗口累加器卡在算子状态生命周期缺失(见方案 A② 的卡点记录),待内存引擎补齐该契约后再注册。
 3. **P3 unaligned v2**(独立评审):两级 CAS 门 + epoch 对齐 + frontier 重放去重,默认关,`RedisRuntimeConfig` 新开关;与 metrics 的 checkpoint 时延指标同批观察收益。
 4. 文档同步(已落地 2026-10-11):`docs/checkpoint.md` 已补"in-memory 快照与流水线互斥"语义(双锁契约);`docs/Deployment.md:97` 的 stop-theWorld 记载在 P3 落地前保持不变。

@@ -32,5 +32,20 @@ final class WatermarkState {
     void markActive() {
         idle = false;
     }
+
+    /** Checkpoint snapshot payload: the current watermark and idle flag. */
+    record Snapshot(long watermark, boolean idle) {
+    }
+
+    Object snapshot() {
+        return new Snapshot(watermark, idle);
+    }
+
+    void restoreSnapshot(Object snapshot) {
+        if (snapshot instanceof Snapshot s) {
+            this.watermark = s.watermark();
+            this.idle = s.idle();
+        }
+    }
 }
 

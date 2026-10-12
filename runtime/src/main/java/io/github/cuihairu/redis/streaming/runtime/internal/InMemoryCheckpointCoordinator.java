@@ -9,6 +9,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * In-memory checkpoint coordinator for the in-memory runtime.
@@ -31,14 +33,22 @@ import java.util.concurrent.atomic.AtomicLong;
  * queue while holding that lock, and a consumer blocked on the checkpoint lock could then
  * never drain it (deadlock). The checkpoint lock is only ever held for bounded, non-blocking
  * in-memory work.</p>
+ *
+ * <p>Besides keyed state stores, arbitrary named snapshot sources can join the checkpoint
+ * cut via {@link #registerSnapshotSource(String, Supplier, Consumer)} (P2): their
+ * snapshot/restore callbacks run under the same lock, so one checkpoint stays a single
+ * consistent cut across stores and sources. Watermark states register automatically this
+ * way when a pipeline segment carries {@code assignTimestampsAndWatermarks}.</p>
  */
 public final class InMemoryCheckpointCoordinator implements CheckpointCoordinator {
 
     private final AtomicLong nextCheckpointId = new AtomicLong(1);
     private final AtomicLong nextStoreId = new AtomicLong(1);
+    private final AtomicLong nextSourceId = new AtomicLong(1);
 
     private final Object checkpointLock = new Object();
     private final Map<String, InMemoryKeyedStateStore<?>> storesById = new LinkedHashMap<>();
+    private final Map<String, SnapshotSourceHandle> sourcesById = new LinkedHashMap<>();
     private final Map<Long, Checkpoint> checkpointsById = new HashMap<>();
     private final Map<String, Object> latestRestoredStateByStoreId = new HashMap<>();
     private Checkpoint latestCheckpoint;
@@ -66,6 +76,47 @@ public final class InMemoryCheckpointCoordinator implements CheckpointCoordinato
         return storeId;
     }
 
+    /**
+     * Registers a named snapshot source — the generalized registration face (barrier design
+     * P2): anything with a {@code (name, snapshot, restore)} triple joins the checkpoint cut,
+     * not just keyed state stores. Both callbacks run under {@link #checkpointLock()}, so a
+     * source whose mutations synchronize on that lock is torn-free; stateless or
+     * volatile-backed sources (e.g. {@link WatermarkState}) need no extra locking. Duplicate
+     * names throw — use a unique name per pipeline segment.
+     */
+    public synchronized String registerSnapshotSource(String name,
+                                                      Supplier<Object> snapshot,
+                                                      Consumer<Object> restore) {
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("Snapshot source name must not be blank");
+        }
+        if (snapshot == null || restore == null) {
+            throw new NullPointerException("snapshot/restore");
+        }
+        if (sourcesById.containsKey(name) || storesById.containsKey(name)) {
+            throw new IllegalStateException("Snapshot source already registered: " + name);
+        }
+        sourcesById.put(name, new SnapshotSourceHandle(snapshot, restore));
+
+        Object restored = latestRestoredStateByStoreId.get(name);
+        if (restored != null) {
+            restore.accept(restored);
+        }
+        return name;
+    }
+
+    /** Registers a watermark state under a collision-free generated {@code watermark-N} name. */
+    synchronized String registerWatermarkState(WatermarkState state) {
+        if (state == null) {
+            throw new NullPointerException("state");
+        }
+        String name = "watermark-" + nextSourceId.getAndIncrement();
+        while (sourcesById.containsKey(name) || storesById.containsKey(name)) {
+            name = "watermark-" + nextSourceId.getAndIncrement();
+        }
+        return registerSnapshotSource(name, state::snapshot, state::restoreSnapshot);
+    }
+
     @Override
     public synchronized long triggerCheckpoint() {
         long checkpointId = nextCheckpointId.getAndIncrement();
@@ -76,6 +127,9 @@ public final class InMemoryCheckpointCoordinator implements CheckpointCoordinato
                 String storeId = entry.getKey();
                 InMemoryKeyedStateStore<?> store = entry.getValue();
                 checkpoint.getStateSnapshot().putState(storeId, store.snapshot());
+            }
+            for (Map.Entry<String, SnapshotSourceHandle> entry : sourcesById.entrySet()) {
+                checkpoint.getStateSnapshot().putState(entry.getKey(), entry.getValue().snapshot().get());
             }
         }
 
@@ -116,6 +170,12 @@ public final class InMemoryCheckpointCoordinator implements CheckpointCoordinato
                     entry.getValue().restoreFromSnapshot(snapshot);
                 }
             }
+            for (Map.Entry<String, SnapshotSourceHandle> entry : sourcesById.entrySet()) {
+                Object snapshot = restored.get(entry.getKey());
+                if (snapshot != null) {
+                    entry.getValue().restore().accept(snapshot);
+                }
+            }
         }
     }
 
@@ -135,6 +195,15 @@ public final class InMemoryCheckpointCoordinator implements CheckpointCoordinato
      */
     synchronized Map<String, InMemoryKeyedStateStore<?>> getRegisteredStores() {
         return Collections.unmodifiableMap(new LinkedHashMap<>(storesById));
+    }
+
+    /** Names of the registered generalized snapshot sources (test visibility). */
+    synchronized java.util.Set<String> getRegisteredSourceNames() {
+        return Collections.unmodifiableSet(new java.util.LinkedHashSet<>(sourcesById.keySet()));
+    }
+
+    /** A registered {@code (snapshot, restore)} pair participating in the checkpoint cut. */
+    private record SnapshotSourceHandle(Supplier<Object> snapshot, Consumer<Object> restore) {
     }
 }
 

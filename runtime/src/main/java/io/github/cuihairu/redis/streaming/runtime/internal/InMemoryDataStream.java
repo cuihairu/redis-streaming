@@ -246,6 +246,11 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
             }
         };
 
+        // checkpoint design P2: the segment's watermark state joins the checkpoint cut as a
+        // named snapshot source (generated collision-free name) when a coordinator is present
+        if (checkpointCoordinator != null) {
+            checkpointCoordinator.registerWatermarkState(state);
+        }
         return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
             private final Iterator<InMemoryRecord<T>> it = recordIteratorSupplier.get();
 
@@ -289,6 +294,9 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
             }
         };
 
+        if (checkpointCoordinator != null) {
+            checkpointCoordinator.registerWatermarkState(state);
+        }
         return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
             private final Iterator<InMemoryRecord<T>> it = recordIteratorSupplier.get();
 
