@@ -106,6 +106,12 @@ public final class RedisStreamExecutionEnvironment {
     private final AtomicBoolean executed = new AtomicBoolean(false);
     private final AtomicInteger streamSeq = new AtomicInteger(0);
     private final java.util.Set<String> usedStreamIds = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** RT-M7: (topic, group) pairs already registered, so forked pipelines fail fast instead of splitting. */
+    private final java.util.Set<TopicGroup> registeredTopicGroups = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Subscription identity of a pipeline; a record type avoids string-delimiter ambiguity. */
+    private record TopicGroup(String topic, String consumerGroup) {
+    }
 
     private RedisStreamExecutionEnvironment(RedissonClient redissonClient,
                                             RedisRuntimeConfig config,
@@ -184,11 +190,31 @@ public final class RedisStreamExecutionEnvironment {
         return RedisStreamBuilder.forMqSource(this, config, redissonClient, objectMapper, sid, topic, consumerGroup, subscriptionOptions);
     }
 
+    /**
+     * Registers a compiled pipeline. Rejects a second pipeline on the same
+     * {@code (topic, consumerGroup)} pair (RT-M7): Redis Streams consumer groups
+     * distribute each message to a single member, so two pipelines sharing a group
+     * <b>split</b> the stream between them instead of each reading every message —
+     * and chains forked from one source builder would additionally collide on keyed
+     * state names. Independent chains must each get their own consumer group.
+     */
     public void registerPipelineDefinition(RedisPipelineDefinition pipelineDefinition) {
         if (executed.get()) {
             throw new IllegalStateException("Cannot register new pipelines after executeAsync() is called");
         }
-        pipelineDefinitions.add(Objects.requireNonNull(pipelineDefinition, "pipelineDefinition"));
+        Objects.requireNonNull(pipelineDefinition, "pipelineDefinition");
+        TopicGroup topicGroup = new TopicGroup(pipelineDefinition.topic(), pipelineDefinition.consumerGroup());
+        if (!registeredTopicGroups.add(topicGroup)) {
+            throw new IllegalStateException(
+                    "Duplicate pipeline for topic '" + pipelineDefinition.topic() + "' and consumer group '"
+                            + pipelineDefinition.consumerGroup() + "': two pipelines sharing one consumer group "
+                            + "split the stream between them instead of each reading every message (Redis Streams "
+                            + "consumer-group semantics), and chains forked from the same source also collide on "
+                            + "keyed-state names. Give each independent chain its own consumer group, e.g. "
+                            + "env.fromMqTopic(\"" + pipelineDefinition.topic() + "\", \""
+                            + pipelineDefinition.consumerGroup() + "-fork2\").");
+        }
+        pipelineDefinitions.add(pipelineDefinition);
     }
 
     private static final String ENSURE_GROUP_LUA =

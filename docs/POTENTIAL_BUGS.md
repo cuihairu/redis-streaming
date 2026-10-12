@@ -663,7 +663,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 - 回归测试：`RedisRuntimeCheckpointManagerRestoreSwapTest`（mock 6 用例：staging 失败 live 键零触碰、swap 失败清理全部 staging 键、空快照项清空 live 键并删除 index/schema、TTL 施加、请求恢复失败抛出、无 checkpoint 返回 null）+ `RedisRuntimeCheckpointManagerRestoreSwapIntegrationTest`（真实 Redis：损坏的 live 键被快照整体覆盖、checkpoint 后新增键被丢弃、index 恰为快照键集且无 staging 残留、TTL 生效）；既有 `RedisRuntimeCheckpointManagerGapClosureTest` 恢复用例更新为 staging 交互模式并新增他 job checkpoint 返回 null 断言。
 - **RT-M5** offset 快照期间 Redis 错误被 DEBUG 吞掉且存 null → 恢复时该分区静默回退 0-0（`RedisRuntimeCheckpointManager.java:283-292`）。✅已缓解：日志升为 WARN 并明示"该分区将回退 0-0"；恢复失败日志同样升 WARN（彻底修复需失败即中止 checkpoint，涉及策略决策，留待后续）。
 - **RT-M6** sink 去重是 check-then-act 两跳（`RSetCache.contains` 与 `add` 之间夹着 `sink.invoke`，`RedisPipelineRunner.java:186-230`）：并发重投递下双写（文档已注明 best-effort）。
-- **RT-M7** 同源分叉的两个 pipeline 按消费组分摊而非广播，且同种窗口算子 stateName 冲突共享状态（`RedisStreamBuilder.java:413,185-194`）→ 分叉用法下窗口结果静默错误；无校验无文档。
+- **RT-M7** 同源分叉的两个 pipeline 按消费组分摊而非广播，且同种窗口算子 stateName 冲突共享状态（`RedisStreamBuilder.java:413,185-194`）→ 分叉用法下窗口结果静默错误；无校验无文档。 [已修复：同环境重复注册 `(topic, consumerGroup)` 在 `registerPipelineDefinition` 即抛 `IllegalStateException`（`RedisStreamExecutionEnvironment.java:207`，record 键避免分隔符歧义），错误信息说明消费组分摊语义与"每条独立链各自消费组"的解法（如 `group + "-fork2"`），分叉的两个失败面（分摊 + stateName 串线）都被注册期拦截；跨进程同 `(topic, group)` 仍是合法的水平扩容语义（每进程一条管道）]
 
 ### 低（Low）
 

@@ -80,7 +80,7 @@ keyed.<String>process((key, value, ctx, collector) -> {
 - `DataStream<Message> fromMqTopic(String topic, String consumerGroup)`:源 = Redis Stream 消费组,产出原始 `mq.Message`
 - `DataStream<Message> fromMqTopic(String topic, String consumerGroup, SubscriptionOptions)`:按订阅覆写(batchCount/pollTimeout)
 - `DataStream<Message> fromMqTopicWithId(String sourceId, String topic, String consumerGroup[, SubscriptionOptions])`:显式稳定 sourceId(参与算子/状态 id 派生,重启需保持不变;仅允许 `[A-Za-z0-9_.-]`)
-- `void registerPipelineDefinition(RedisPipelineDefinition)`:`executeAsync()` 之后注册抛 `IllegalStateException`
+- `void registerPipelineDefinition(RedisPipelineDefinition)`:`executeAsync()` 之后注册抛 `IllegalStateException`;**同一环境的 (topic, consumerGroup) 二元组只能注册一条管道**,重复注册抛 `IllegalStateException`(两条管道共享一个消费组会把消息在彼此之间分摊——Redis Streams 消费组语义是组内竞争消费而非广播,同源分叉的链还会共享 keyed 状态名导致结果串线;每条独立链应使用自己的消费组,如 `env.fromMqTopic(topic, group + "-fork2")`)
 - `RedisJobClient executeAsync()`:启动全部已注册管道;**每个环境仅可调用一次**,且至少要有一条管道(没有 sink 会抛 `IllegalStateException`)
 
 `RedisJobClient`(`AutoCloseable`,`close()` 即 `cancel()`):

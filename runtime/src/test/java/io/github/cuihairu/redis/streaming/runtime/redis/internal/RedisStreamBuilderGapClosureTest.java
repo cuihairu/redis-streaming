@@ -61,7 +61,7 @@ class RedisStreamBuilderGapClosureTest {
         RedissonClient redis = mock(RedissonClient.class);
         RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(redis, cfg());
         assertNotNull(env.fromMqTopic("t", "g").print());
-        assertNotNull(env.fromMqTopicWithId("src-2", "t", "g").print(null));
+        assertNotNull(env.fromMqTopicWithId("src-2", "t", "g2").print(null));
     }
 
     @Test

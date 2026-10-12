@@ -3,6 +3,7 @@ package io.github.cuihairu.redis.streaming.runtime.redis;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.cuihairu.redis.streaming.api.checkpoint.Checkpoint;
 import io.github.cuihairu.redis.streaming.api.stream.CheckpointAwareSink;
+import io.github.cuihairu.redis.streaming.api.stream.DataStream;
 import io.github.cuihairu.redis.streaming.mq.Message;
 import io.github.cuihairu.redis.streaming.mq.MessageConsumer;
 import io.github.cuihairu.redis.streaming.mq.MessageHandleResult;
@@ -486,6 +487,44 @@ class RedisStreamExecutionEnvironmentMockTest {
         env.registerPipelineDefinition(new io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisPipelineDefinition(
                 cfg, redisson, new ObjectMapper(), "t", "g", null, List.of()));
         assertThrows(IllegalStateException.class, env::executeAsync);
+    }
+
+    /** RT-M7: two pipelines sharing (topic, group) would split the stream — must fail at registration. */
+    @Test
+    void duplicateTopicAndGroupPipelineFailsFast() {
+        RedisStreamExecutionEnvironment env = environment(baseConfig().build());
+        env.fromMqTopic("t", "g").addSink(v -> {
+        });
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> env.fromMqTopic("t", "g").addSink(v -> {
+                }));
+        assertTrue(ex.getMessage().contains("t"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("g"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("own consumer group"), ex.getMessage());
+    }
+
+    /** RT-M7: reusing one source builder for two sink chains is the same (topic, group) duplicate. */
+    @Test
+    void forkedBuilderReuseOnOneSourceFailsFast() {
+        RedisStreamExecutionEnvironment env = environment(baseConfig().build());
+        DataStream<Message> src = env.fromMqTopic("t", "g");
+        src.map(m -> m).addSink(v -> {
+        });
+        assertThrows(IllegalStateException.class, () -> src.map(m -> m).addSink(v -> {
+        }));
+    }
+
+    /** Same topic with distinct groups is the supported fork shape and must stay allowed. */
+    @Test
+    void sameTopicDifferentGroupsRegisterFine() {
+        RedisStreamExecutionEnvironment env = environment(baseConfig().build());
+        env.fromMqTopic("t", "g1").addSink(v -> {
+        });
+        env.fromMqTopic("t", "g2").addSink(v -> {
+        });
+        RedisJobClient job = env.executeAsync();
+        job.cancel();
+        assertEquals(2, consumers.size());
     }
 
     @Test
