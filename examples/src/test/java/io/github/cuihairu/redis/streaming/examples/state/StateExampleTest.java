@@ -38,9 +38,9 @@ class StateExampleTest {
         Assumptions.assumeTrue(reachable(), "no reachable Redis at " + REDIS_URL + " — skipping state example");
 
         RedissonClient redisson = redisson();
-        String prefix = "examples:state:test:" + UUID_HEX + ":";
+        String job = "examples-state-test-" + UUID_HEX;
         try {
-            RedisStateBackend backend = new RedisStateBackend(redisson, prefix);
+            RedisStateBackend backend = new RedisStateBackend(redisson, job);
 
             assertEquals(5, StateExample.demonstrateValueState(backend),
                     "5 visits must be accumulated before the counter is cleared");
@@ -56,7 +56,7 @@ class StateExampleTest {
             assertEquals(Map.of("hello", 2L, "world", 2L, "streaming", 2L, "of", 1L),
                     StateExample.demonstrateStatefulWordCount(backend));
         } finally {
-            redisson.getKeys().deleteByPattern(prefix + "*");
+            redisson.getKeys().deleteByPattern(RedisStateBackend.DEFAULT_KEY_PREFIX + ":" + job + "*");
             redisson.shutdown();
         }
     }

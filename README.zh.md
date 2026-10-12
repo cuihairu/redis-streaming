@@ -217,7 +217,7 @@ List<ConfigHistory> history = configService.getConfigHistory("app.properties", "
 - SetState - 集合状态（Redis Set）
 - 状态持久化和恢复
 
-关键类：`RedisStateBackend.java`, `RedisValueState.java`, `RedisMapState.java` (6 个文件)
+关键类：`RedisStateBackend.java`（runtime keyed store 适配层，状态统一第 3 步）
 
 #### checkpoint - 检查点机制
 分布式检查点协调和存储，提供容错保证。

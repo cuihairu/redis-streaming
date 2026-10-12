@@ -298,9 +298,10 @@
 - 追记（2026-10-12）：`WindowAggregator` 及其配套批式 API 已随聚合统一 v2 整体删除（见 [Aggregation-Unification-Design.md](Aggregation-Unification-Design.md)），本条仅存档；替代面为 `aggregation.incremental`（窗口内计算）与 `aggregation.analytics`（跨进程滚动查询）。
 
 ### B-38 RedisListState.update 先清后写非原子：中途失败状态全丢 ✅已修复
-- 位置：`state/.../redis/RedisListState.java:47-60`
+- 位置：`state/.../redis/RedisListState.java:47-60`（原文件已随状态统一第 3 步删除；语义由 runtime keyed list 继承）
 - 影响：clear 后 add 中途连接断 → 旧状态已毁新状态未写全，静默丢失；并发读者还能观察到清空瞬间。
 - 验证与修复：`update` 改为单次 `REDIS_WRITE_ATOMIC` 批（MULTI/EXEC：delete + addAll 原子生效），空更新仅 delete。改写原钉死缺陷行为的 `RedisListStateTest.updateClearsThenAddsAllElements` 为 `updateReplacesAtomicallyViaWriteAtomicBatch`（旧代码 `createBatch` 零交互）+ `emptyUpdateStillDeletesAtomically`，新增 `RedisListStateUpdateIntegrationTest`（真实 Redis：整体替换/空更新清空）。
+- 追记（2026-10-12）：老 `RedisListState` 已删除，原子批语义随状态统一第 3 步迁移进 runtime `RedisKeyedListState`（原实现是 clear()+逐元素 add 循环，属同类缺陷）；`update`/`addAll` 均改单次 `REDIS_WRITE_ATOMIC` 批（update 先 DEL 再 addAll，addAll 仅 addAll；stateKeys 索引与 schema 登记在批外补齐），钉在 `runtime/...RedisKeyedListStateGapClosureTest`（`updateReplacesTheWholeListAtomically`/`updateWithNullClearsTheListAtomically`/`addAllAppendsAtomically`）。
 
 ### B-39 CountTrigger 接受 maxCount<=0：每元素即触发 [已修复]
 - 位置：`window/.../triggers/CountTrigger.java:15-31`

@@ -6,16 +6,19 @@ import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.*;
 import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
+import org.redisson.client.codec.StringCodec;
 import org.redisson.config.Config;
 
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Integration tests for State module
+ * Integration tests for the State module (the {@link RedisStateBackend} adapter over the
+ * runtime keyed state store).
  */
 @Slf4j
 @Tag("integration")
@@ -23,6 +26,7 @@ public class StateIntegrationTest {
 
     private RedissonClient redisson;
     private RedisStateBackend stateBackend;
+    private String job;
 
     @BeforeEach
     public void setUp() {
@@ -30,12 +34,17 @@ public class StateIntegrationTest {
         Config config = new Config();
         config.useSingleServer().setAddress(redisUrl);
         redisson = Redisson.create(config);
-        stateBackend = new RedisStateBackend(redisson, "test:state:");
+        job = "it-state-" + UUID.randomUUID().toString().substring(0, 8);
+        stateBackend = new RedisStateBackend(redisson, job);
     }
 
     @AfterEach
     public void tearDown() {
         if (redisson != null) {
+            try {
+                redisson.getKeys().deleteByPattern(RedisStateBackend.DEFAULT_KEY_PREFIX + ":" + job + "*");
+            } catch (Exception ignore) {
+            }
             redisson.shutdown();
         }
     }
@@ -63,6 +72,16 @@ public class StateIntegrationTest {
         assertNull(state.value());
 
         log.info("ValueState test passed");
+    }
+
+    @Test
+    public void testValueStateDefault() {
+        StateDescriptor<Integer> descriptor = new StateDescriptor<>("test-default", Integer.class, 7);
+        ValueState<Integer> state = stateBackend.createValueState(descriptor);
+
+        assertEquals(7, state.value());
+        state.update(9);
+        assertEquals(9, state.value());
     }
 
     @Test
@@ -121,7 +140,7 @@ public class StateIntegrationTest {
         state.get().forEach(elements::add);
         assertEquals(Set.of("a", "b", "c"), elements);
 
-        // Update
+        // Update (atomic replacement)
         state.update(Arrays.asList("x", "y", "z"));
         elements.clear();
         state.get().forEach(elements::add);
@@ -204,5 +223,19 @@ public class StateIntegrationTest {
         assertEquals(20, counter2.value());
 
         log.info("Multiple states test passed");
+    }
+
+    @Test
+    public void testStateKeysIndexAndSchemaRegistered() {
+        stateBackend.createValueState(new StateDescriptor<>("idx-value", String.class)).update("x");
+
+        String base = RedisStateBackend.DEFAULT_KEY_PREFIX + ":" + job;
+        Set<String> keys = redisson.<String>getSet(base + ":stateKeys", StringCodec.INSTANCE).readAll();
+        assertTrue(keys.stream().anyMatch(k -> k.endsWith(":state:standalone:idx-value")),
+                "value hash should be registered in the stateKeys index: " + keys);
+
+        String valueHash = base + ":cg:standalone:topic:standalone:p:0:state:standalone:idx-value";
+        String schema = redisson.<String, String>getMap(base + ":stateSchema", StringCodec.INSTANCE).get(valueHash);
+        assertEquals("java.lang.String|1", schema);
     }
 }

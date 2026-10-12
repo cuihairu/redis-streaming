@@ -30,7 +30,7 @@ public class StateExample {
         RedissonClient redisson = Redisson.create(config);
 
         try {
-            RedisStateBackend stateBackend = new RedisStateBackend(redisson, "example:state:");
+            RedisStateBackend stateBackend = new RedisStateBackend(redisson, "examples-state-demo");
 
             demonstrateValueState(stateBackend);
             demonstrateMapState(stateBackend);
@@ -40,6 +40,11 @@ public class StateExample {
 
             log.info("State Example completed successfully");
         } finally {
+            try {
+                redisson.getKeys().deleteByPattern(
+                        RedisStateBackend.DEFAULT_KEY_PREFIX + ":examples-state-demo*");
+            } catch (Exception ignore) {
+            }
             redisson.shutdown();
         }
     }

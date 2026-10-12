@@ -215,7 +215,7 @@ Responsibilities:
 - SetState - set state (Redis Set)
 - State persistence and restoration
 
-Key classes: `RedisStateBackend.java`, `RedisValueState.java`, `RedisMapState.java` (6 files)
+Key classes: `RedisStateBackend.java` (adapter over the runtime keyed state store; state unification step 3)
 
 #### checkpoint - Checkpointing
 Distributed checkpoint coordination and storage for fault tolerance.

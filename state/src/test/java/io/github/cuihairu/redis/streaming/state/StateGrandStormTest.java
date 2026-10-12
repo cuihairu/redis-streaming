@@ -3,7 +3,7 @@ package io.github.cuihairu.redis.streaming.state;
 import io.github.cuihairu.redis.streaming.storm.Storms;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import io.github.cuihairu.redis.streaming.state.redis.RedisValueState;
+import io.github.cuihairu.redis.streaming.state.redis.RedisStateBackend;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -18,7 +18,7 @@ class StateGrandStormTest {
         redisCfg.useSingleServer().setAddress(System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379"));
         org.redisson.api.RedissonClient real = org.redisson.Redisson.create(redisCfg);
         hints.put(org.redisson.api.RedissonClient.class, real);
-        int total = Storms.grandStorm(RedisValueState.class, "io.github.cuihairu.redis.streaming.state", hints, 2000);
+        int total = Storms.grandStorm(RedisStateBackend.class, "io.github.cuihairu.redis.streaming.state", hints, 2000);
         System.err.println("GRAND-REDIS state invocations=" + total);
         assertTrue(total > 0);
         real.shutdown();

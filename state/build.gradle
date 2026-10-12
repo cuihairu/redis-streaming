@@ -5,6 +5,9 @@ plugins {
 dependencies {
     api project(':core')
 
+    // the keyed state store this backend adapts to (state unification step 3)
+    implementation project(':runtime')
+
     // Redis client
     implementation libs.redisson
 
