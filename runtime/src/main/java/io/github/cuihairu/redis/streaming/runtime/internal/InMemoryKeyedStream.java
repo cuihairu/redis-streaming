@@ -259,6 +259,14 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
                 public void registerEventTimeTimer(long time) {
                     timerQueue.registerEventTimeTimer(time);
                 }
+
+                @Override
+                public <S> ValueState<S> getState(StateDescriptor<S> stateDescriptor) {
+                    // Same store the KeyedStream-level getState() hands out: values are keyed
+                    // by the record's key (kept current around processElement and timer fires)
+                    // and the store participates in checkpoint snapshots.
+                    return new InMemoryKeyedValueState<>(stateStore, stateDescriptor);
+                }
             }
 
             private long currentWatermarkValue() {

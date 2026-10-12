@@ -3,6 +3,7 @@ package io.github.cuihairu.redis.streaming.runtime.internal;
 import io.github.cuihairu.redis.streaming.api.stream.KeyedProcessFunction;
 import io.github.cuihairu.redis.streaming.api.stream.ReduceFunction;
 import io.github.cuihairu.redis.streaming.api.state.StateDescriptor;
+import io.github.cuihairu.redis.streaming.api.state.ValueState;
 import io.github.cuihairu.redis.streaming.runtime.StreamExecutionEnvironment;
 import io.github.cuihairu.redis.streaming.watermark.generators.AscendingTimestampWatermarkGenerator;
 import org.junit.jupiter.api.Test;
@@ -252,6 +253,69 @@ class InMemoryKeyedStreamTest {
 
         keyed.process(fn).addSink(out::add);
 
+        assertEquals(List.of("sum=1", "restored=1", "sum=3", "sum=6"), out);
+    }
+
+    @Test
+    void processContextStateIsScopedPerKey() {
+        InMemoryKeyedStream<String, Integer> keyed = new InMemoryKeyedStream<>(
+                () -> List.of(1, 2, 1).iterator(),
+                v -> v % 2 == 0 ? "even" : "odd"
+        );
+
+        KeyedProcessFunction<String, Integer, String> fn = new KeyedProcessFunction<>() {
+            @Override
+            public void processElement(String key, Integer value, Context ctx, Collector<String> out) {
+                ValueState<String> seen = ctx.getState(new StateDescriptor<>("seen", String.class));
+                String current = seen.value();
+                String next = current == null ? String.valueOf(value) : current + value;
+                seen.update(next);
+                out.collect(key + "=" + next);
+            }
+        };
+
+        List<String> out = new ArrayList<>();
+        keyed.process(fn).addSink(out::add);
+
+        // each key's document is independent: odd saw 1 then 1 again, even only 2
+        assertEquals(List.of("odd=1", "even=2", "odd=11"), out);
+    }
+
+    @Test
+    void checkpointCanRestoreProcessContextState() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment().enableCheckpointing();
+        var coordinator = env.getCheckpointCoordinator();
+
+        List<String> out = new ArrayList<>();
+        AtomicLong checkpointId = new AtomicLong(-1);
+
+        var keyed = env.fromElements(1, 2, 3).keyBy(v -> "k");
+
+        KeyedProcessFunction<String, Integer, String> fn = new KeyedProcessFunction<>() {
+            @Override
+            public void processElement(String key, Integer value, Context ctx, Collector<String> collector) {
+                ValueState<Integer> sum = ctx.getState(new StateDescriptor<>("sum", Integer.class, 0));
+
+                if (value == 2) {
+                    sum.update(999);
+                    coordinator.restoreFromCheckpoint(checkpointId.get());
+                    collector.collect("restored=" + sum.value());
+                }
+
+                int next = sum.value() + value;
+                sum.update(next);
+                collector.collect("sum=" + next);
+
+                if (value == 1) {
+                    checkpointId.set(coordinator.triggerCheckpoint());
+                }
+            }
+        };
+
+        keyed.process(fn).addSink(out::add);
+
+        // state written through the process context participates in the checkpoint snapshot
+        // exactly like state obtained from the KeyedStream handle
         assertEquals(List.of("sum=1", "restored=1", "sum=3", "sum=6"), out);
     }
 

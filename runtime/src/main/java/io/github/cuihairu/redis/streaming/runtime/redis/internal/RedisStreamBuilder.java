@@ -417,6 +417,14 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                 }
                             });
                         }
+
+                        @Override
+                        public <S> ValueState<S> getState(StateDescriptor<S> stateDescriptor) {
+                            // The store's current key is set for the record being processed and
+                            // re-set inside timer callbacks, so this handle is per-key in both
+                            // paths; values live in the keyed state store behind checkpoints.
+                            return stateStore.getValueState(stateDescriptor);
+                        }
                     };
 
                     processFunction.processElement(key, v, kctx, out -> {

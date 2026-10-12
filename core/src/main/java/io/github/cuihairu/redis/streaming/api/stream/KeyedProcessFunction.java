@@ -1,5 +1,8 @@
 package io.github.cuihairu.redis.streaming.api.stream;
 
+import io.github.cuihairu.redis.streaming.api.state.StateDescriptor;
+import io.github.cuihairu.redis.streaming.api.state.ValueState;
+
 import java.io.Serializable;
 
 /**
@@ -63,6 +66,24 @@ public interface KeyedProcessFunction<K, I, O> extends Serializable {
          * Register an event time timer
          */
         void registerEventTimeTimer(long time);
+
+        /**
+         * Get (or create) a keyed value state scoped to the current key. The returned handle
+         * reads and writes the state of the key currently being processed (or whose timer is
+         * firing); the value participates in the engine's state snapshot/restore.
+         *
+         * <p>Default implementation throws {@link UnsupportedOperationException} so that
+         * existing custom contexts stay source/binary compatible; both built-in engines
+         * (in-memory and Redis runtime) provide real keyed state.
+         *
+         * @param stateDescriptor descriptor naming and typing the state
+         * @param <S>             the type of the state value
+         * @return a value state bound to the current key
+         */
+        default <S> ValueState<S> getState(StateDescriptor<S> stateDescriptor) {
+            throw new UnsupportedOperationException(
+                    "This KeyedProcessFunction.Context does not expose keyed state access");
+        }
     }
 
     /**
