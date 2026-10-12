@@ -74,27 +74,12 @@ public class StreamJoiner<L, R, K, O> implements Serializable {
                 .add(new TimestampedElement<>(element, timestamp));
         enforceMaxStateSize();
 
-        // Find matching right elements. The window predicate is always anchored on the LEFT
-        // timestamp (same as in processRight) so that a pair matches regardless of which
-        // element is buffered first; anchoring on the arriving element made asymmetric
-        // windows (afterOnly/beforeOnly) order-dependent.
-        List<O> results = new ArrayList<>();
-        List<TimestampedElement<R>> rightElements = rightBuffer.get(key);
-
-        if (rightElements != null) {
-            for (TimestampedElement<R> rightElem : rightElements) {
-                if (config.getJoinWindow().contains(timestamp, rightElem.timestamp)) {
-                    O joined = joinFunction.join(element, rightElem.element);
-                    results.add(joined);
-                }
-            }
-        }
-
-        // For LEFT and FULL_OUTER joins, emit even if no match
-        if ((config.getJoinType() == JoinType.LEFT || config.getJoinType() == JoinType.FULL_OUTER) && results.isEmpty()) {
-            O joined = joinFunction.join(element, null);
-            results.add(joined);
-        }
+        // Match against the right elements buffered for this key. The window predicate is
+        // always anchored on the LEFT timestamp (same as in processRight) so that a pair
+        // matches regardless of which element is buffered first; anchoring on the arriving
+        // element made asymmetric windows (afterOnly/beforeOnly) order-dependent.
+        List<O> results = JoinMatching.matchArrivingLeft(
+                config, joinFunction, element, timestamp, rightBuffer.get(key));
 
         cleanup();
         return results;
@@ -129,24 +114,9 @@ public class StreamJoiner<L, R, K, O> implements Serializable {
                 .add(new TimestampedElement<>(element, timestamp));
         enforceMaxStateSize();
 
-        // Find matching left elements
-        List<O> results = new ArrayList<>();
-
-        List<TimestampedElement<L>> leftElements = leftBuffer.get(key);
-        if (leftElements != null) {
-            for (TimestampedElement<L> leftElem : leftElements) {
-                if (config.getJoinWindow().contains(leftElem.timestamp, timestamp)) {
-                    O joined = joinFunction.join(leftElem.element, element);
-                    results.add(joined);
-                }
-            }
-        }
-
-        // For RIGHT and FULL_OUTER joins, emit even if no match
-        if ((config.getJoinType() == JoinType.RIGHT || config.getJoinType() == JoinType.FULL_OUTER) && results.isEmpty()) {
-            O joined = joinFunction.join(null, element);
-            results.add(joined);
-        }
+        // Match against the left elements buffered for this key
+        List<O> results = JoinMatching.matchArrivingRight(
+                config, joinFunction, element, timestamp, leftBuffer.get(key));
 
         cleanup();
         return results;
@@ -185,25 +155,22 @@ public class StreamJoiner<L, R, K, O> implements Serializable {
 
         if (maxTimestamp > 0) {
             long retentionTime = config.getStateRetentionTime();
-            cleanupBuffer(leftBuffer, maxTimestamp, retentionTime);
-            cleanupBuffer(rightBuffer, maxTimestamp, retentionTime);
+            leftBuffer.values().forEach(list -> JoinMatching.removeExpired(list, maxTimestamp, retentionTime));
+            rightBuffer.values().forEach(list -> JoinMatching.removeExpired(list, maxTimestamp, retentionTime));
+            leftBuffer.entrySet().removeIf(entry -> entry.getValue().isEmpty());
+            rightBuffer.entrySet().removeIf(entry -> entry.getValue().isEmpty());
         }
     }
 
     private <T> long getMaxTimestamp(Map<K, List<TimestampedElement<T>>> buffer) {
-        return buffer.values().stream()
-                .flatMap(List::stream)
-                .mapToLong(elem -> elem.timestamp)
-                .max()
-                .orElse(0L);
-    }
-
-    private <T> void cleanupBuffer(Map<K, List<TimestampedElement<T>>> buffer,
-                                    long referenceTime, long retentionTime) {
-        buffer.values().forEach(list ->
-                list.removeIf(elem -> referenceTime - elem.timestamp > retentionTime)
-        );
-        buffer.entrySet().removeIf(entry -> entry.getValue().isEmpty());
+        long max = 0L;
+        for (List<TimestampedElement<T>> list : buffer.values()) {
+            long listMax = JoinMatching.maxTimestamp(list);
+            if (listMax > max) {
+                max = listMax;
+            }
+        }
+        return max;
     }
 
     private void enforceMaxStateSize() {
@@ -248,7 +215,7 @@ public class StreamJoiner<L, R, K, O> implements Serializable {
         for (Map.Entry<K, List<TimestampedElement<T>>> entry : buffer.entrySet()) {
             List<TimestampedElement<T>> list = entry.getValue();
             for (int i = 0; i < list.size(); i++) {
-                long ts = list.get(i).timestamp;
+                long ts = list.get(i).timestamp();
                 if (oldest == null || ts < oldest.timestamp) {
                     oldest = new OldestElement(isLeft, entry.getKey(), i, ts);
                 }
@@ -291,19 +258,8 @@ public class StreamJoiner<L, R, K, O> implements Serializable {
     }
 
     /**
-     * Internal class to hold elements with timestamps
+     * Internal bookkeeping for the global oldest-element scan
      */
-    private static class TimestampedElement<T> implements Serializable {
-        private static final long serialVersionUID = 1L;
-        final T element;
-        final long timestamp;
-
-        TimestampedElement(T element, long timestamp) {
-            this.element = element;
-            this.timestamp = timestamp;
-        }
-    }
-
     private final class OldestElement {
         final boolean isLeft;
         final K key;
