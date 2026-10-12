@@ -18,6 +18,20 @@ public class ConfigServiceConfig extends BaseRedisConfig {
      */
     private long resyncIntervalMs = 30_000;
 
+    /**
+     * At-rest content encryption for sensitive configs (Security-Hardening-Design 方案 C).
+     * {@code null} (default) leaves all content in plaintext. When set, the config hash
+     * and history records of any dataId starting with {@link #securePrefix} are stored
+     * encrypted and decrypted transparently on read; non-matching dataIds are unaffected.
+     */
+    private ContentCipher contentCipher;
+
+    /**
+     * DataId prefix that marks a config as at-rest-encrypted when a {@link #contentCipher}
+     * is installed. Default {@code secure.} — match it verbatim, it is a plain prefix.
+     */
+    private String securePrefix = "secure.";
+
     public ConfigServiceConfig() {
         super();
     }
@@ -45,7 +59,25 @@ public class ConfigServiceConfig extends BaseRedisConfig {
     public void setResyncIntervalMs(long resyncIntervalMs) {
         this.resyncIntervalMs = Math.max(0, resyncIntervalMs);
     }
-    
+
+    /** @return the cipher protecting matching configs at rest, or {@code null} for plaintext */
+    public ContentCipher getContentCipher() {
+        return contentCipher;
+    }
+
+    public void setContentCipher(ContentCipher contentCipher) {
+        this.contentCipher = contentCipher;
+    }
+
+    /** @return the dataId prefix marking a config as at-rest-encrypted */
+    public String getSecurePrefix() {
+        return securePrefix;
+    }
+
+    public void setSecurePrefix(String securePrefix) {
+        this.securePrefix = securePrefix;
+    }
+
     /**
      * Get configuration key
      *

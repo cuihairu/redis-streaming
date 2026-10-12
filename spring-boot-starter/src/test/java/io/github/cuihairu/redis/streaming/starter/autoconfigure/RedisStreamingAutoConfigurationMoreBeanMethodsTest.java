@@ -31,6 +31,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -74,7 +75,10 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
         props.getConfig().setKeyPrefix("cfg:");
         props.getConfig().setEnableKeyPrefix(false);
 
-        ConfigService configService = cfg.configService(redisson, props);
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<io.github.cuihairu.redis.streaming.config.ContentCipher>
+                noCipher = mock(org.springframework.beans.factory.ObjectProvider.class);
+        ConfigService configService = cfg.configService(redisson, props, noCipher);
         assertTrue(configService.isRunning());
         assertInstanceOf(RedisConfigService.class, configService);
 
@@ -235,6 +239,42 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
 
         RateLimiter chosen = cfg.rateLimiter(registry, props);
         assertNotNull(chosen);
+    }
+
+    @Test
+    void configServiceBeanInstallsCipherAndSecurePrefix() throws Exception {
+        RedissonClient redisson = mock(RedissonClient.class);
+        RedisStreamingConfigServiceAutoConfiguration cfg = new RedisStreamingConfigServiceAutoConfiguration();
+        RedisStreamingProperties props = new RedisStreamingProperties();
+        props.getConfig().setSecureKeyPrefix("vault.");
+
+        io.github.cuihairu.redis.streaming.config.ContentCipher cipher =
+                new io.github.cuihairu.redis.streaming.config.ContentCipher() {
+                    @Override
+                    public String encrypt(String plain) {
+                        return plain;
+                    }
+
+                    @Override
+                    public String decrypt(String encrypted) {
+                        return encrypted;
+                    }
+                };
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<io.github.cuihairu.redis.streaming.config.ContentCipher>
+                provider = mock(org.springframework.beans.factory.ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(cipher);
+
+        ConfigService configService = cfg.configService(redisson, props, provider);
+        try {
+            Field internalConfig = RedisConfigService.class.getDeclaredField("config");
+            internalConfig.setAccessible(true);
+            Object cfgObj = internalConfig.get(configService);
+            assertEquals("vault.", cfgObj.getClass().getMethod("getSecurePrefix").invoke(cfgObj));
+            assertSame(cipher, cfgObj.getClass().getMethod("getContentCipher").invoke(cfgObj));
+        } finally {
+            configService.stop();
+        }
     }
 
     @Test

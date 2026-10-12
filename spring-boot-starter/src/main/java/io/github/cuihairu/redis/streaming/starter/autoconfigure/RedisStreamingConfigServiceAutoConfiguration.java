@@ -1,6 +1,8 @@
 package io.github.cuihairu.redis.streaming.starter.autoconfigure;
 
+import io.github.cuihairu.redis.streaming.config.ContentCipher;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import io.github.cuihairu.redis.streaming.config.ConfigService;
@@ -20,7 +22,8 @@ public class RedisStreamingConfigServiceAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public ConfigService configService(RedissonClient redissonClient, RedisStreamingProperties properties) {
+    public ConfigService configService(RedissonClient redissonClient, RedisStreamingProperties properties,
+                                       ObjectProvider<ContentCipher> contentCipher) {
         log.info("Initializing ConfigService with default group: {}",
                 properties.getConfig().getDefaultGroup());
 
@@ -29,7 +32,9 @@ public class RedisStreamingConfigServiceAutoConfiguration {
                 new io.github.cuihairu.redis.streaming.config.ConfigServiceConfig(
                         cfgProps.getKeyPrefix(), cfgProps.isEnableKeyPrefix());
         cfg.setHistorySize(cfgProps.getHistorySize());
-        ConfigService configService = new RedisConfigService(redissonClient, cfg);
+        cfg.setSecurePrefix(cfgProps.getSecureKeyPrefix());
+        ConfigService configService = new RedisConfigService(redissonClient, cfg,
+                contentCipher.getIfAvailable());
         configService.start();
         return configService;
     }

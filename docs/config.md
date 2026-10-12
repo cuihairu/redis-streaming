@@ -145,6 +145,8 @@ configService.trimHistoryByAge("app.properties", "DEFAULT", Duration.ofDays(30))
 | enableKeyPrefix | boolean | true | 是否启用键前缀 |
 | historySize | int | 10 | 每个配置保留的历史条数；0 表示不保存历史，负值按 0 处理 |
 | resyncIntervalMs | long | 30000 | 重同步轮询间隔（毫秒），0 关闭，负值按 0 处理 |
+| contentCipher | ContentCipher | null | at-rest 内容加密器；null 表示全部明文（默认） |
+| securePrefix | String | `secure.` | 命中该前缀的 dataId 才加密（按 dataId 前缀匹配） |
 
 键生成方法（`ConfigServiceConfig`，group/dataId 中的 `:` 会被替换为 `_`）：
 
@@ -166,6 +168,7 @@ starter（`RedisStreamingProperties`，前缀 `redis-streaming`）：
 | redis-streaming.config.enable-key-prefix | boolean | true | 是否启用键前缀 |
 | redis-streaming.config.history-size | int | 10 | 历史记录条数 |
 | redis-streaming.config.default-group | String | DEFAULT_GROUP | 仅用于启动日志，未参与装配逻辑 |
+| redis-streaming.config.secure-key-prefix | String | `secure.` | 命中该前缀的 dataId 才加密；cipher 来自容器中可选的 `ContentCipher` Bean |
 
 starter 未映射 `resyncIntervalMs`，需要时自行构造 `ConfigServiceConfig` 传入。
 
@@ -188,6 +191,26 @@ starter 未映射 `resyncIntervalMs`，需要时自行构造 `ConfigServiceConfi
 4. 再经 Pub/Sub 通知其他实例；事件带 `publisherId`，发布实例自身的回环消息被跳过
 5. 监听器派发按 `(content, version)` 幂等，与重同步轮询并发时只投递一次
 6. `start()` 之后（`resyncIntervalMs>0`）后台线程按固定间隔重读所有已订阅配置，内容与最近派发不一致时重新派发，补偿连接抖动期间丢失的 Pub/Sub 通知；轮询中的异常会被捕获，不会终止调度
+
+### 内容加密（at-rest）
+
+配置内容默认明文落 Redis。需要保护敏感配置时实现 `ContentCipher`（`encrypt` / `decrypt`，纯字符串；密钥来源由实现自管——通常走环境变量或 JVM 参数，不应与被保护数据同存于 Redis）并安装：
+
+- 编程式：`new RedisConfigService(client, config, cipher)`，或 `config.setContentCipher(cipher)`
+- Spring Boot：声明一个 `ContentCipher` Bean，starter 自动装入；未声明则维持明文（默认 no-op）
+
+**生效范围**：按 `securePrefix`（默认 `secure.`）匹配 dataId 前缀。命中前缀的配置，其 Hash `content` 字段与历史记录中的 `content` 都以 `enc:v1:` 包裹的密文落库；所有读取路径（`getConfig`、`getConfigHistory`、监听器初始派发、重同步轮询）透明解回明文，Pub/Sub 事件同样携带明文。**保护范围仅限 Redis 持久化（at-rest）**：进程内与发布订阅通道内仍是明文。
+
+**兼容性**：
+
+- 未安装 cipher 时字节级不变（默认 no-op）
+- 未命中前缀的 dataId 不受影响
+- 已存在的明文条目不会自动重加密：无 `enc:v1:` 前缀即按明文原样返回，直到下次发布才转为密文——装 cipher 无需数据迁移
+- 已落库的密文在无 cipher 的实例上读取：返回原密文并 warn，不静默当明文使用
+- 已带 `enc:v1:` 前缀的内容再次发布不会二次包裹
+- 加解密失败：发布侧在写库前抛出异常（不做明文回退——静默落明文等于没加密）；读取侧抛出异常
+
+**密钥轮换**：本模块不提供重加密工具。换密钥后需逐个重新发布敏感配置；过渡期内旧密文按 `enc:v1:` 判定但解不开，读取会抛异常，因此轮换需在维护窗口内完成。
 
 ### 历史修剪语义
 

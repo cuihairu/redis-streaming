@@ -122,7 +122,7 @@ server:
 
 ### `redis-streaming.config.*`
 
-`enabled`(boolean,`true`)、`default-group`(String,`DEFAULT_GROUP`)、`refresh-interval`(int 秒,`30`)、`auto-refresh`(boolean,`true`)、`history-size`(int,`10`)、`key-prefix`(String,`redis_streaming`)、`enable-key-prefix`(boolean,`true`)。
+`enabled`(boolean,`true`)、`default-group`(String,`DEFAULT_GROUP`)、`refresh-interval`(int 秒,`30`)、`auto-refresh`(boolean,`true`)、`history-size`(int,`10`)、`key-prefix`(String,`redis_streaming`)、`enable-key-prefix`(boolean,`true`)、`secure-key-prefix`(String,`secure.`；容器内有 `ContentCipher` Bean 时命中该前缀的 dataId 落库加密,详见 docs/config.md「内容加密」)。
 
 ### `redis-streaming.load-balancer.*`
 

@@ -244,6 +244,12 @@ public class RedisStreamingProperties {
          * Whether to enable key prefix
          */
         private boolean enableKeyPrefix = true;
+
+        /**
+         * DataId prefix marking a config as at-rest-encrypted when a {@code ContentCipher}
+         * bean is present ({@code redis-streaming.config.secure-key-prefix}).
+         */
+        private String secureKeyPrefix = "secure.";
     }
 
     @Data

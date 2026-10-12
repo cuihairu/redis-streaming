@@ -19,6 +19,14 @@ import java.util.stream.Collectors;
 public class RedisConfigService implements ConfigService {
     
     private static final Logger logger = LoggerFactory.getLogger(RedisConfigService.class);
+
+    /**
+     * Marker wrapping at-rest encrypted content. It doubles as the plaintext/ciphertext
+     * discriminator on read: unmarked content is legacy plaintext (read as-is, never
+     * decrypted — so a config published before a cipher was installed keeps working), and
+     * the writer can never re-wrap an already wrapped value on the read-modify-write path.
+     */
+    private static final String CIPHER_MARK = "enc:v1:";
     
     private final RedissonClient redissonClient;
     private final ConfigServiceConfig config;
@@ -53,11 +61,76 @@ public class RedisConfigService implements ConfigService {
     }
     
     public RedisConfigService(RedissonClient redissonClient, ConfigServiceConfig config) {
+        this(redissonClient, config, null);
+    }
+
+    /**
+     * @param contentCipher at-rest cipher for the secure-prefix configs of this config
+     *        center, or {@code null} to store everything in plaintext (the default).
+     *        A cipher installed here does not re-encrypt entries already stored plaintext;
+     *        they are read back as-is until republished.
+     */
+    public RedisConfigService(RedissonClient redissonClient, ConfigServiceConfig config,
+                              ContentCipher contentCipher) {
         this.redissonClient = redissonClient;
         this.config = config != null ? config : new ConfigServiceConfig();
         this.maxHistorySize = this.config.getHistorySize();
+        if (contentCipher != null) {
+            this.config.setContentCipher(contentCipher);
+        }
     }
     
+
+    /** Content as it is stored: encrypted for secure-prefix dataIds when a cipher is installed. */
+    private String protect(String dataId, String content) {
+        if (content == null || content.isEmpty() || contentCipher() == null
+                || !dataId.startsWith(config.getSecurePrefix())) {
+            return content;
+        }
+        // already marked (a caller republishing a raw stored value): re-wrapping would
+        // double-encrypt, and decrypting twice on read would surface a hard failure.
+        if (content.startsWith(CIPHER_MARK)) {
+            return content;
+        }
+        try {
+            String ciphered = contentCipher().encrypt(content);
+            if (ciphered == null || ciphered.equals(content)) {
+                logger.warn("ContentCipher returned input content unchanged for {}:{}; storing plaintext",
+                        dataId);
+                return content;
+            }
+            return CIPHER_MARK + ciphered;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to encrypt config content", e);
+        }
+    }
+
+    /**
+     * Content back to plaintext. Unmarked values pass through (legacy plaintext or configs
+     * outside the secure prefix); a marked value without a cipher cannot be reversed, so it
+     * is returned as-is with a warning rather than failing every read of the config.
+     */
+    private String unprotect(String content) {
+        if (content == null || !content.startsWith(CIPHER_MARK)) {
+            return content;
+        }
+        ContentCipher cipher = contentCipher();
+        if (cipher == null) {
+            logger.warn("Stored config content is encrypted but no ContentCipher is installed; "
+                    + "content cannot be decrypted");
+            return content;
+        }
+        try {
+            return cipher.decrypt(content.substring(CIPHER_MARK.length()));
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to decrypt config content (cipher mismatch or "
+                    + "corrupted data)", e);
+        }
+    }
+
+    private ContentCipher contentCipher() {
+        return config.getContentCipher();
+    }
     @Override
     public String getConfig(String dataId, String group) {
         if (!running) {
@@ -67,8 +140,7 @@ public class RedisConfigService implements ConfigService {
         try {
             RMap<String, String> configMap = redissonClient.getMap(
                 config.getConfigKey(group, dataId), org.redisson.client.codec.StringCodec.INSTANCE);
-            String v = configMap.get("content");
-            return v;
+            return unprotect(configMap.get("content"));
         } catch (Exception e) {
             logger.error("Failed to get config {}:{}", group, dataId, e);
             throw new RuntimeException("Failed to get config", e);
@@ -86,6 +158,7 @@ public class RedisConfigService implements ConfigService {
             throw new IllegalStateException("ConfigService is not running");
         }
 
+        String stored = protect(dataId, content);
         String configKey = config.getConfigKey(group, dataId);
         String historyKey = config.getConfigHistoryKey(group, dataId);
         // one version for the whole publish: the fallback reuses it, so a lost Lua
@@ -95,8 +168,10 @@ public class RedisConfigService implements ConfigService {
 
         try {
 
-            // Build entry JSON for Lua to decode (keeps write path unified)
-            java.util.Map<String,String> entry = ConfigEntryCodec.toMap(content, newVersion, description, nowMs, nowMs);
+            // Build entry JSON for Lua to decode (keeps write path unified); the entry
+            // carries the stored form so the hash (and the history the script pushes
+            // from it) hold ciphertext, never plaintext
+            java.util.Map<String,String> entry = ConfigEntryCodec.toMap(stored, newVersion, description, nowMs, nowMs);
             String entryJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(entry);
 
             String lua = "local key=KEYS[1]; local hist=KEYS[2]; local dataId=ARGV[1]; local grp=ARGV[2]; local entryJson=ARGV[3]; local now=ARGV[4]; local maxhist=tonumber(ARGV[5]); "
@@ -114,11 +189,13 @@ public class RedisConfigService implements ConfigService {
                     java.util.Arrays.asList(configKey, historyKey),
                     dataId, group, entryJson, String.valueOf(nowMs), String.valueOf(maxHistorySize));
 
+            // the event delivers usable (plaintext) content — listeners consume it directly;
+            // only the at-rest form is encrypted
             publishConfigChangeEvent(dataId, group, content, newVersion);
             logger.info("Config published: {}:{}, version: {}", group, dataId, newVersion);
             return true;
         } catch (Exception e) {
-            return fallbackPublish(dataId, group, content, description, configKey, newVersion, nowMs, e);
+            return fallbackPublish(dataId, group, stored, content, description, configKey, newVersion, nowMs, e);
         }
     }
 
@@ -130,7 +207,7 @@ public class RedisConfigService implements ConfigService {
      * and re-emitting the publish under two versions (B-44). The hash fields go out
      * in one REDIS_WRITE_ATOMIC batch, so readers never observe a half-updated entry.
      */
-    private boolean fallbackPublish(String dataId, String group, String content, String description,
+    private boolean fallbackPublish(String dataId, String group, String stored, String content, String description,
                                     String configKey, String newVersion, long nowMs, Exception cause) {
         try {
             RMap<String, String> map = redissonClient.getMap(configKey, org.redisson.client.codec.StringCodec.INSTANCE);
@@ -141,8 +218,9 @@ public class RedisConfigService implements ConfigService {
                     // content must match too: another instance can mint the identical
                     // version string in the same millisecond (the generator is JVM-local),
                     // and treating its content as "my write already applied" would publish
-                    // a change event whose content differs from what Redis holds
-                    && java.util.Objects.equals(content, all.get("content"))) {
+                    // a change event whose content differs from what Redis holds —
+                    // compare in the stored form (what the Lua attempt would have written)
+                    && java.util.Objects.equals(stored, all.get("content"))) {
                 publishConfigChangeEvent(dataId, group, content, newVersion);
                 logger.warn("Lua publish response for {}:{} was lost but version {} is applied; kept it",
                         group, dataId, newVersion);
@@ -166,8 +244,8 @@ public class RedisConfigService implements ConfigService {
             if (!all.containsKey("createTime")) {
                 entry.putAsync("createTime", String.valueOf(nowMs));
             }
-            if (content != null) {
-                entry.putAsync("content", content);
+            if (stored != null) {
+                entry.putAsync("content", stored);
             } else {
                 entry.removeAsync("content");
             }
@@ -309,15 +387,18 @@ public class RedisConfigService implements ConfigService {
             RMap<String, String> map = redissonClient.getMap(configKey, org.redisson.client.codec.StringCodec.INSTANCE);
             Map<String, String> all = map.readAllMap();
             io.github.cuihairu.redis.streaming.config.ConfigInfo info = ConfigEntryCodec.parseInfo(dataId, group, all);
-            if (info != null && info.getContent() != null) {
-                listener.onConfigChange(dataId, group, info.getContent(), info.getVersion());
+            // deliver plaintext: pub/sub events carry plaintext too, and the reconciliation
+            // poll compares this baseline against hash reads — all three must be the same form
+            String current = unprotect(info != null ? info.getContent() : null);
+            if (current != null) {
+                listener.onConfigChange(dataId, group, current, info.getVersion());
             }
             // B-06: the first subscriber's world view is the state just read (absent
             // counts as a view); later subscribers do not reset it — the baseline tracks
             // what the existing cohort was last told, and the reconciliation poll fires
             // on deviations from that
             lastDelivered.putIfAbsent(listenerKey,
-                    DeliveredState.of(info != null ? info.getContent() : null, info != null ? info.getVersion() : null));
+                    DeliveredState.of(current, info != null ? info.getVersion() : null));
         } catch (Exception e) {
             logger.warn("Failed to notify current config for: {}:{}", group, dataId, e);
         }
@@ -657,7 +738,7 @@ public class RedisConfigService implements ConfigService {
                 RMap<String, String> map = redissonClient.getMap(
                         config.getConfigKey(group, dataId), org.redisson.client.codec.StringCodec.INSTANCE);
                 Map<String, String> all = map.readAllMap();
-                String content = all.get("content");
+                String content = unprotect(all.get("content"));
                 String version = all.get("version");
 
                 DeliveredState prev = lastDelivered.getOrDefault(listenerKey, DeliveredState.UNSET);
@@ -722,7 +803,7 @@ public class RedisConfigService implements ConfigService {
             }
             String dataId = String.valueOf(data.get("dataId"));
             String group = String.valueOf(data.get("group"));
-            String content = data.get("content") != null ? String.valueOf(data.get("content")) : null;
+            String content = unprotect(data.get("content") != null ? String.valueOf(data.get("content")) : null);
             String version = data.get("version") != null ? String.valueOf(data.get("version")) : null;
             String operation = data.get("operation") != null ? String.valueOf(data.get("operation")) : null;
             String operator = data.get("operator") != null ? String.valueOf(data.get("operator")) : null;
