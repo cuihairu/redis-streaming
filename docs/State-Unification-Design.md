@@ -65,7 +65,9 @@
 2. **第 2 步（已落地 2026-10-11）**：keyed store 补 Map/List/Set 状态类型 + schema 登记；补单测（含 checkpoint 枚举新状态类型）。
 
    落地记录：`RedisKeyedStateStore` 新增 `getMapState(name, keyType, valueType)`、`getListState(StateDescriptor)`、`getSetState(StateDescriptor)`——`RedisKeyedMapState/RedisKeyedListState/RedisKeyedSetState`（核心 `MapState/ListState/SetState` 接口），布局为每当前 key 一个 Redis Hash/List/Set，键 = keyed 状态布局 + `:{序列化当前key}`（不分片——每 key 结构本身就是扇出单元），字段/元素 JSON 序列化；`stateKeys` 索引登记 + TTL 继承（Map 走 `touch` 得到 TTL+热键+容量采样，List/Set 访问时滑动续期 EXPIRE，热键按 hash 字段数检测故不适用）；Map/List/Set schema 按 value/元素类型登记（`ensureSchemaForKey`）。checkpoint 侧 `RedisStateType` 增 `LIST/SET`：`snapshotState` 枚举 `RType.LIST/SET`、restore 走同一 stage-then-rename 流程并应用 TTL。测试：三个 GapClosure 单测（30 用例）+ `RedisKeyedCollectionStatesIntegrationTest`（布局/索引/TTL/clear + 检查点 LIST/SET 快照恢复与漂移清除）。
-3. **第 3 步（major）**：`RedisStateBackend` 改为适配层委托 keyed store；删除 `RedisValueState/RedisMapState/RedisListState/RedisSetState` 旧实现；迁移文档给 key/codec 对照表。
+3. **第 3 步（major，已落地 2026-10-12）**：`RedisStateBackend` 改为适配层委托 keyed store；删除 `RedisValueState/RedisMapState/RedisListState/RedisSetState` 旧实现；迁移文档给 key/codec 对照表。
+
+   落地记录：`RedisStateBackend` 重写为 keyed store 薄适配层——构造参数从 `(redisson, keyPrefix)` 变为 `(redisson, jobName[, stateKeyPrefix])`（默认前缀 `streaming:runtime`），内部持有一个 solo 身份（`topic/consumerGroup/operatorId = standalone`、partition 0、无 TTL、无分片、无热键治理）的 store，每次操作前后把线程局部 current key 钉为 `solo`，四类状态全部落在标准 keyed 布局（`{prefix}:{job}:cg:standalone:topic:standalone:p:0:state:standalone:{name}[:s:solo]`，StringCodec + 纯 JSON，无 Redisson 默认 codec 的 `@class` 类型信息），并照常登记 `stateKeys` 索引与 `stateSchema`（FAIL 策略固定）——checkpoint 快照机制对适配层状态直接可用。key/codec 与老实现不兼容（设计预期，老数据无生产消费者），对照表与"读旧写新"搬运示例见 `docs/state.md`「迁移对照表」。配套：`state` 模块新增 `implementation project(':runtime')`（无环，runtime 主源不依赖 state）；同批补上 keyed list 的 B-38 原子性对齐（`update`/`addAll` 改单次 `REDIS_WRITE_ATOMIC` 批，见 POTENTIAL_BUGS B-38 追记）。测试：`RedisStateBackendTest` 重写为 mock 版（钉 solo 布局/codec/索引登记/delegation，9 用例）、`StateIntegrationTest` 重写（真实 Redis，7 用例含 stateKeys/schema 登记）、`StateGrandStormTest` 换锚 `RedisStateBackend`、examples `StateExample(+Test)` 迁移；删除 4 个旧实现与 5 个旧测试。
 
 ## 非目标
 
