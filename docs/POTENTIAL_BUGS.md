@@ -645,7 +645,7 @@ mq / runtime(redis 引擎) / cdc+connectors 三个模块的审计已完成，结
 ### 中（Medium）
 
 - **RT-M1** `checkpointDrainTimeout=ZERO` 使排空循环死循环且消费者永久 pause（`RedisStreamExecutionEnvironment.java:657-678`；deadline 检查被 `>0` 门控，ZERO 通过校验）→ checkpointing 标志永不释放，作业死锁无报错。✅已修复：builder 将 null/ZERO/负值统一回退 30s 默认；排空循环的 deadline 检查改为无条件（防御性）。回归断言加入 `RedisRuntimeConfigBuilderCoverageTest`。
-- **RT-M2** 事件时间定时器队列满时静默丢弃注册（`RedisPipelineRunner.java:406-429`）→ 对应窗口/回调永不 fire，仅 60s 限速 warn。
+- **RT-M2** 事件时间定时器队列满时静默丢弃注册（`RedisPipelineRunner.java`）→ 对应窗口/回调永不 fire，仅 60s 限速 warn。 [已修复：满时改抛 `IllegalStateException`（`Context.registerEventTimeTimer`），经由 `RedisPipelineRunner.handle` 上抛 → `RedisStreamExecutionEnvironment` 的消息处理包装按 `processingErrorResult`（默认 `RETRY`，重试超限进 DLQ）路由（同一 `runner.handle` 异常路径，`annotateRuntimeError` + `incHandleError`），静默丢弃变可见可恢复（drain 或上调 `eventTimeTimerMaxSize`）；删去 60s 限速 warn 字段 `lastEventTimeTimerOverflowWarnAtMs`（不再有静默丢弃可限速）；`max=0` 不限与 `size<max` 路径不变]
 - **RT-M3** watermark 与窗口 fire 纯消息驱动：空闲分区/子任务永不 fire；`windowMaxFiresPerRecord=256` 截断后剩余窗口要等下一条记录；`markIdle()` 是 no-op（`RedisPipelineRunner.java:100-113,163-184`、`RedisStreamBuilder.java:451-454,791-810`）。✅已修复（见下节 RT-M3）。
 
 ### RT-M3 watermark/窗口 fire 纯消息驱动：空闲管道永不 fire、封顶截断依赖后续记录 [已修复]

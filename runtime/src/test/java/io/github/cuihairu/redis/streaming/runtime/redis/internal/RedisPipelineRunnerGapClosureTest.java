@@ -22,11 +22,13 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.ArgumentMatchers.any;
@@ -267,34 +269,42 @@ class RedisPipelineRunnerGapClosureTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void eventTimeTimerOverflowWarnThrottlingArms() throws Exception {
+    void eventTimeTimerOverflowFailsTheRecordInsteadOfDropping() throws Exception {
         RedisRuntimeConfig cfg = cfg(b -> b.eventTimeTimerMaxSize(1));
         AtomicLong fired = new AtomicLong();
-        RedisOperatorNode register = (value, ctx, emit) -> ctx.registerEventTimeTimer(Long.MAX_VALUE, fired::incrementAndGet);
+        AtomicInteger seen = new AtomicInteger();
+        RedisOperatorNode registerTwiceThenStop = (value, ctx, emit) -> {
+            int n = seen.incrementAndGet();
+            if (n <= 2) {
+                ctx.registerEventTimeTimer(1_000_500L, fired::incrementAndGet);
+            } else if (n == 4) {
+                ctx.registerEventTimeTimer(9_000_000L, fired::incrementAndGet);
+            }
+        };
         RedisPipelineRunner<Object> r = runner(cfg, redisson, v -> {
-        }, register);
+        }, registerTwiceThenStop);
 
         Field timersF = RedisPipelineRunner.class.getDeclaredField("eventTimers");
         timersF.setAccessible(true);
-        Field warnF = RedisPipelineRunner.class.getDeclaredField("lastEventTimeTimerOverflowWarnAtMs");
-        warnF.setAccessible(true);
-        AtomicLong warnAt = (AtomicLong) warnF.get(r);
         java.util.PriorityQueue<?> timers = (java.util.PriorityQueue<?>) timersF.get(r);
 
-        r.handle(msg(1_000L, "1-1"));
+        r.handle(msg(1_000_000L, "1-1"));
         assertEquals(1, timers.size(), "first timer fits");
-        r.handle(msg(1_000L, "1-2"));
-        assertEquals(1, timers.size(), "overflowing registration is dropped");
-        long firstWarn = warnAt.get();
-        assertTrue(firstWarn > 0, "first overflow must log a warning");
 
-        r.handle(msg(1_000L, "1-3"));
-        assertEquals(firstWarn, warnAt.get(), "repeat overflow within a minute must not warn again");
+        // RT-M2: a full queue fails the record (routing it to retry/DLQ) instead of silently
+        // dropping the registration and stranding the window/callback forever.
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> r.handle(msg(1_000_000L, "1-2")));
+        assertTrue(ex.getMessage().contains("eventTimeTimerMaxSize"), ex.getMessage());
+        assertEquals(1, timers.size(), "the failed record must not leave partial timer state");
 
-        long stale = System.currentTimeMillis() - 120_000L;
-        warnAt.set(stale);
-        r.handle(msg(1_000L, "1-4"));
-        assertTrue(warnAt.get() > stale, "warning is re-emitted after the throttle interval");
+        // recovery: the queue drains when the watermark passes the due timer, then registration works again
+        r.handle(msg(2_000_000L, "1-3"));
+        assertEquals(0, timers.size(), "the due timer fired and drained");
+        assertEquals(1, fired.get());
+        r.handle(msg(2_000_000L, "1-4"));
+        assertEquals(1, timers.size(), "registration succeeds again after the drain");
+        assertEquals(1, fired.get(), "the far-future re-registration must not have fired");
         r.close();
     }
 

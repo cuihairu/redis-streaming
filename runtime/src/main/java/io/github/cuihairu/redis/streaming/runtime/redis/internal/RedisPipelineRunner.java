@@ -72,7 +72,6 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
             }
     );
     private long timerSeq = 0L;
-    private final AtomicLong lastEventTimeTimerOverflowWarnAtMs = new AtomicLong(0L);
     private final Object sinkLifecycleLock = new Object();
     private boolean sinksOpened = false;
     private boolean sinksClosed = false;
@@ -646,14 +645,15 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
                 } catch (Exception ignore) {
                 }
                 if (max > 0 && eventTimers.size() >= max) {
-                    long now = System.currentTimeMillis();
-                    long prev = lastEventTimeTimerOverflowWarnAtMs.get();
-                    if (prev <= 0 || now - prev >= 60_000L) {
-                        lastEventTimeTimerOverflowWarnAtMs.set(now);
-                        log.warn("Redis runtime event-time timer queue is full; dropping timer registration (jobName={}, topic={}, group={}, maxSize={})",
-                                config.getJobName(), topic, consumerGroup, max);
-                    }
-                    return;
+                    // RT-M2: a dropped registration would strand its window/callback forever.
+                    // Fail the record instead — the MQ layer routes it to retry/DLQ, which is
+                    // visible and recoverable (drain or raise eventTimeTimerMaxSize).
+                    throw new IllegalStateException(
+                            "Redis runtime event-time timer queue is full (size=" + eventTimers.size()
+                                    + ", maxSize=" + max + ", jobName=" + config.getJobName()
+                                    + ", topic=" + topic + ", group=" + consumerGroup
+                                    + "); failing the record instead of silently dropping the timer — "
+                                    + "raise RedisRuntimeConfig.eventTimeTimerMaxSize or fix the timer leak");
                 }
                 eventTimers.add(new EventTimer(timerSeq++, triggerTimeMs, callback));
                 try {

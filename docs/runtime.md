@@ -122,7 +122,7 @@ keyed.<String>process((key, value, ctx, collector) -> {
 | `pipelineParallelism(int)` | int | `1` | 每管道 consumer 子任务数;分区按 `partitionId % n == subtask` 固定 |
 | `timerThreads(int)` | int | `1` | 共享 processing-time 定时器线程池大小 |
 | `checkpointThreads(int)` | int | `1` | 检查点调度线程数(执行仍按作业串行) |
-| `eventTimeTimerMaxSize(int)` | int | `100000` | 每 runner 事件时间定时器队列上限;`0` 不限;满时限频告警并丢弃注册 |
+| `eventTimeTimerMaxSize(int)` | int | `100000` | 每 runner 事件时间定时器队列上限;`0` 不限;满时该条记录处理失败(抛 `IllegalStateException` 经由 `runner.handle` 进 MQ 重试/死信,可见可恢复)而非静默丢弃 |
 | `watermarkOutOfOrderness(Duration)` | Duration | `ZERO` | 水位线 = max(事件时间) − 该值;非负 |
 | `watermarkIdleTimeout(Duration)` | Duration | `null`(关闭) | 空闲水位线冲刷:源静默该时长(或生成器 `markIdle()`)后水位线冲刷至 `MAX_VALUE`,触发全部到期 event-time 定时器并经冲刷钩子排空窗口 due 集合,下一条记录开启新水位线纪元;null/ZERO 关闭,负值抛 `IllegalArgumentException` |
 | `windowAllowedLateness(Duration)` | Duration | `ZERO` | 窗口关闭时间 = windowEnd + 该值 |
