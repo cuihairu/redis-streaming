@@ -1,6 +1,7 @@
 package io.github.cuihairu.redis.streaming.cep;
 
 import lombok.Getter;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.*;
@@ -239,6 +240,77 @@ public class PatternSequenceMatcher<T> {
     public void clear() {
         partialMatches.clear();
         completeMatches.clear();
+    }
+
+    /**
+     * Snapshot every in-progress partial match into a serializable form. Used by operator
+     * integrations ({@code cep.operator}) to persist per-key matching state so it survives
+     * failover; complete-match history is deliberately not exported (it is inspection-only,
+     * {@link #process(Object, long)} delivers matches as they happen).
+     *
+     * <p>The snapshot is exact: per-step event lists are copied in step order, which is the
+     * order events were added to a partial (a partial's step index never moves backwards),
+     * so restoring reproduces the same event order in completed matches.
+     */
+    public List<PartialMatchState<T>> exportPartialMatches() {
+        List<PartialMatchState<T>> out = new ArrayList<>(partialMatches.size());
+        for (PartialMatch<T> partial : partialMatches) {
+            PartialMatchState<T> state = new PartialMatchState<>();
+            state.setStartTimestamp(partial.startTimestamp);
+            state.setCurrentStep(partial.currentStep);
+            Map<Integer, List<T>> steps = new TreeMap<>();
+            partial.eventsByStep.forEach((step, events) -> steps.put(step, new ArrayList<>(events)));
+            state.setEventsByStep(steps);
+            out.add(state);
+        }
+        return out;
+    }
+
+    /**
+     * Replace the in-progress partial matches with restored snapshots (see
+     * {@link #exportPartialMatches()}). Complete-match history is not restored.
+     *
+     * @throws IllegalArgumentException if a snapshot has a negative step index or a null
+     *                                  per-step event list
+     */
+    public void restorePartialMatches(List<PartialMatchState<T>> states) {
+        partialMatches.clear();
+        if (states == null) {
+            return;
+        }
+        for (PartialMatchState<T> state : states) {
+            if (state == null || state.getEventsByStep() == null) {
+                throw new IllegalArgumentException("Partial match snapshot with null state or event map");
+            }
+            PartialMatch<T> partial = new PartialMatch<>(state.getStartTimestamp());
+            for (Map.Entry<Integer, List<T>> entry : state.getEventsByStep().entrySet()) {
+                Integer step = entry.getKey();
+                List<T> events = entry.getValue();
+                if (step == null || step < 0) {
+                    throw new IllegalArgumentException("Partial match snapshot has invalid step index " + step);
+                }
+                if (events == null) {
+                    throw new IllegalArgumentException("Partial match snapshot has null event list for step " + step);
+                }
+                for (T event : events) {
+                    partial.addEvent(step, event, 0L);
+                }
+            }
+            partial.currentStep = state.getCurrentStep();
+            partialMatches.add(partial);
+        }
+    }
+
+    /**
+     * Serializable snapshot of one in-progress partial match (see
+     * {@link #exportPartialMatches()}).
+     */
+    @Getter
+    @Setter
+    public static final class PartialMatchState<E> {
+        private long startTimestamp;
+        private int currentStep;
+        private Map<Integer, List<E>> eventsByStep;
     }
 
     /**
