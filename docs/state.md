@@ -181,7 +181,10 @@ visitors.clear();
 
 ### 6. 在 KeyedStream 中使用状态(runtime 内存引擎)
 
-状态访问入口是 `KeyedStream.getState(StateDescriptor)`,而不是 `KeyedProcessFunction.Context`(后者只有时间/定时器方法):
+状态访问入口有二:
+
+- `KeyedStream.getState(StateDescriptor)`——构建期在算子外持有状态句柄;
+- `KeyedProcessFunction.Context.getState(StateDescriptor)`——`processElement` 内按当前 key 读写(默认方法,默认抛 `UnsupportedOperationException`,两引擎均覆写接线;join/cep 算子即走此通道,见 [Join/CEP 算子化设计](Join-CEP-Operators-Design.md) §3.4)。
 
 ```java
 import java.util.ArrayList;
