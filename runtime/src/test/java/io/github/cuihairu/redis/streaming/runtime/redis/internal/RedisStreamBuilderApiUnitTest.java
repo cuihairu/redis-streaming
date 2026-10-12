@@ -2,6 +2,7 @@ package io.github.cuihairu.redis.streaming.runtime.redis.internal;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.cuihairu.redis.streaming.api.stream.DataStream;
+import io.github.cuihairu.redis.streaming.api.watermark.TimestampAssigner;
 import io.github.cuihairu.redis.streaming.api.watermark.Watermark;
 import io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator;
 import io.github.cuihairu.redis.streaming.mq.Message;
@@ -192,5 +193,54 @@ class RedisStreamBuilderApiUnitTest {
         } finally {
             runner.close();
         }
+    }
+
+    @Test
+    void eventTimeAssignerOverloadDrivesItsWatermarkOutput() throws Exception {
+        // Covers the event-time overload's anonymous WatermarkOutput (same face as the
+        // simple overload: emitWatermark/markIdle/markActive, here fed by the generator
+        // after the assigner has overridden the record's event time)
+        RedissonClient redis = mock(RedissonClient.class);
+        RedisRuntimeConfig cfg = RedisRuntimeConfig.builder()
+                .jobName("it-rti-bapi-wm-et")
+                .stateKeyPrefix("it-rti-bapi-wm-et")
+                .build();
+
+        List<Long> assigned = new CopyOnWriteArrayList<>();
+        TimestampAssigner<String> assigner = (element, recordTimestamp) -> Long.parseLong(element.split(":")[1]);
+        List<Object> out = new CopyOnWriteArrayList<>();
+
+        WatermarkGenerator<String> generator = new WatermarkGenerator<>() {
+            @Override
+            public void onEvent(String event, long eventTimestamp, WatermarkOutput output) {
+                assigned.add(eventTimestamp);
+                output.markIdle();
+                output.markActive();
+                output.emitWatermark(new Watermark(eventTimestamp));
+                output.emitWatermark(null);
+            }
+
+            @Override
+            public void onPeriodicEmit(WatermarkOutput output) {
+                output.markIdle();
+                output.markActive();
+                output.emitWatermark(Watermark.maxWatermark());
+            }
+        };
+
+        DataStream<String> stream = env(redis, cfg)
+                .fromMqTopic("topicA", "groupA")
+                .map(m -> (String) m.getPayload())
+                .assignTimestampsAndWatermarks(assigner, generator)
+                .addSink(out::add);
+        RedisPipelineRunner<Object> runner = definitionOf(stream).freeze().buildRunner();
+        try {
+            runner.handle(msg(1000, "a:555"));
+            runner.handle(msg(2000, "b:777"));
+        } finally {
+            runner.close();
+        }
+        assertEquals(List.of(555L, 777L), assigned);
+        assertEquals(List.of("a:555", "b:777"), out);
     }
 }
