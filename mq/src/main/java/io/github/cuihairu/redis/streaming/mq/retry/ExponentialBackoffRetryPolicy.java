@@ -3,7 +3,7 @@ package io.github.cuihairu.redis.streaming.mq.retry;
 /**
  * Simple exponential backoff with cap. Jitter can be added by caller if needed.
  */
-public class ExponentialBackoffRetryPolicy implements RetryPolicy {
+public class ExponentialBackoffRetryPolicy implements DeliveryRetryPolicy {
 
     private final int maxAttempts;
     private final long baseMs;

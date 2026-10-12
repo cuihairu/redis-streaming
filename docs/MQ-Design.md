@@ -89,7 +89,7 @@ flowchart LR
 ## 重试与 DLQ
 
 - 至少一次：失败可重试；超过上限入 DLQ。
-- 策略接口 `retry.RetryPolicy` 只有两个方法：`getMaxAttempts()` 与 `nextBackoffMs(attempt)`；内置 `ExponentialBackoffRetryPolicy`（`baseMs * 2^(n-1)` 封顶 `maxBackoffMs`，移位按 62 饱和防溢出）。仓库内不存在 `DeadLetterPolicy` 类；「失败进 DLQ」的规则硬编码在消费路径。
+- 策略接口 `retry.DeliveryRetryPolicy`（原名 `RetryPolicy`，2026-10-12 为与 `reliability.RetryPolicy` 配置 POJO 区分而更名）只有两个方法：`getMaxAttempts()` 与 `nextBackoffMs(attempt)`；内置 `ExponentialBackoffRetryPolicy`（`baseMs * 2^(n-1)` 封顶 `maxBackoffMs`，移位按 62 饱和防溢出）。仓库内不存在 `DeadLetterPolicy` 类；「失败进 DLQ」的规则硬编码在消费路径。
 - 实际重试上限 = `min(message.maxRetries, retryPolicy.maxAttempts)`；`Message` 默认 `maxRetries=3`（构造器），`retryMaxAttempts` 默认 5。
 - 失败路径（`RETRY`）：
   1. 记录 `x-original-message-id`（重试产生新 stream id，原始 id 保留用于关联/去重）；

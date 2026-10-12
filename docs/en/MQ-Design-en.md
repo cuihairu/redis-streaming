@@ -93,7 +93,7 @@ flowchart LR
 ## Retry & DLQ
 
 - At-least-once: failures retry; exhausted retries go to DLQ.
-- Strategy interface `retry.RetryPolicy` has two methods: `getMaxAttempts()` and `nextBackoffMs(attempt)`; built-in `ExponentialBackoffRetryPolicy` (`baseMs * 2^(n-1)` capped at `maxBackoffMs`, shift saturates at 62 to avoid overflow). No `DeadLetterPolicy` class exists in repo; "fail to DLQ" rule is hardcoded in consume path.
+- Strategy interface `retry.DeliveryRetryPolicy` (formerly `RetryPolicy`, renamed 2026-10-12 to disambiguate from the `reliability.RetryPolicy` config POJO) has two methods: `getMaxAttempts()` and `nextBackoffMs(attempt)`; built-in `ExponentialBackoffRetryPolicy` (`baseMs * 2^(n-1)` capped at `maxBackoffMs`, shift saturates at 62 to avoid overflow). No `DeadLetterPolicy` class exists in repo; "fail to DLQ" rule is hardcoded in consume path.
 - Actual retry cap = `min(message.maxRetries, retryPolicy.maxAttempts)`; `Message` default `maxRetries=3` (constructor), `retryMaxAttempts` default 5.
 - Failure path (`RETRY`):
   1. Record `x-original-message-id` (retry produces new stream id, original id kept for correlation/dedup).

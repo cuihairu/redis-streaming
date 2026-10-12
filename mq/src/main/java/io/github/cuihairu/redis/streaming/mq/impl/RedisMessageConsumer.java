@@ -11,7 +11,7 @@ import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
 import io.github.cuihairu.redis.streaming.mq.retry.ExponentialBackoffRetryPolicy;
 import io.github.cuihairu.redis.streaming.mq.retry.RetryEnvelope;
-import io.github.cuihairu.redis.streaming.mq.retry.RetryPolicy;
+import io.github.cuihairu.redis.streaming.mq.retry.DeliveryRetryPolicy;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
 import io.github.cuihairu.redis.streaming.mq.metrics.MqMetrics;
 import io.github.cuihairu.redis.streaming.mq.control.PausableMessageConsumer;
@@ -53,7 +53,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
     private final TopicPartitionRegistry partitionRegistry;
     private final Broker broker; // optional broker; if present, use it for read/ack
     private final LeaseManager leaseManager;
-    private final RetryPolicy retryPolicy;
+    private final DeliveryRetryPolicy retryPolicy;
     private final MqOptions options;
     private final StreamKeys keys;
     private final ObjectMapper objectMapper = new ObjectMapper();

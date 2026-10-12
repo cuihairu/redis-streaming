@@ -12,7 +12,7 @@ import io.github.cuihairu.redis.streaming.mq.lease.LeaseManager;
 import io.github.cuihairu.redis.streaming.mq.metrics.MqMetrics;
 import io.github.cuihairu.redis.streaming.mq.metrics.MqMetricsCollector;
 import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
-import io.github.cuihairu.redis.streaming.mq.retry.RetryPolicy;
+import io.github.cuihairu.redis.streaming.mq.retry.DeliveryRetryPolicy;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -626,8 +626,8 @@ class RedisMessageConsumerSprintCoverageTest {
         verify(dataStream, never()).add(any());
     }
 
-    private static RetryPolicy throwingBackoffPolicy() {
-        return new RetryPolicy() {
+    private static DeliveryRetryPolicy throwingBackoffPolicy() {
+        return new DeliveryRetryPolicy() {
             @Override
             public int getMaxAttempts() {
                 return 3;
