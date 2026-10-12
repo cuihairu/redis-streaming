@@ -51,10 +51,10 @@ See `docs/exactly-once.md` for design details and boundaries.
 Documentation site (GitHub Pages): https://cuihairu.github.io/redis-streaming/
 
 ### Implemented Features
-- Stream Processing Runtime: Redis-backed runtime (Redis Streams consumer-group driven, single-process parallelism / watermarks / windows / checkpoints / HA takeover) + in-memory runtime (tests/examples)
+- Stream Processing Runtime: Redis-backed runtime (Redis Streams consumer-group driven, single-process parallelism / watermarks / windows / checkpoints / HA takeover) + in-memory runtime (tests/examples); declarative job control plane (submit / upgrade / rollback / audit) with `secret.*` config references resolved at deploy time
 - Message Queue (MQ): Redis Streams-based message queue with consumer groups and dead-letter queues
 - Service Registry & Discovery: service registration and discovery with multi-protocol health checks (HTTP/HTTPS/TCP/UDP/WebSocket/KCP/gRPC/Dubbo) and metadata comparison-operator filtering
-- Config Center: Redis-based distributed configuration management with versioning, change notifications, and history
+- Config Center: Redis-based distributed configuration management with versioning, change notifications, and history; optional at-rest encryption for `secure.` configs via a pluggable `ContentCipher`
 - State Management: Redis-based distributed state store with ValueState, MapState, ListState, SetState
 - Checkpointing: distributed checkpoint coordination with failure recovery; two-phase commit sinks and Outbox-WAL cross-system delivery
 - Watermark: WatermarkStrategy + generators (ordered / out-of-order), usable with the runtime (event time)

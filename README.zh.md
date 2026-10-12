@@ -51,10 +51,10 @@ job.triggerCheckpointNow();                              // 可选：手动触�
 文档站（GitHub Pages）：https://cuihairu.github.io/redis-streaming/
 
 ### 已实现功能
-- 流处理运行时 (Runtime)：Redis-backed runtime（Redis Streams 消费组驱动，单进程并行/水位线/窗口/checkpoint/HA 接管）+ in-memory runtime（tests/examples）
+- 流处理运行时 (Runtime)：Redis-backed runtime（Redis Streams 消费组驱动，单进程并行/水位线/窗口/checkpoint/HA 接管）+ in-memory runtime（tests/examples）；声明式作业控制面（submit / upgrade / rollback / 审计），config 支持 `secret.*` 引用（部署时解析）
 - 消息队列 (MQ)：基于 Redis Streams 的消息队列，支持消费者组、死信队列
 - 服务注册发现 (Registry)：服务注册与发现，多协议健康检查（HTTP/HTTPS/TCP/UDP/WebSocket/KCP/gRPC/Dubbo），支持 metadata 比较运算符过滤
-- 配置中心 (Config)：基于 Redis 的分布式配置管理，支持配置版本化、变更通知、历史记录
+- 配置中心 (Config)：基于 Redis 的分布式配置管理，支持配置版本化、变更通知、历史记录；可插拔 `ContentCipher` 对 `secure.` 前缀配置落库加密
 - 状态管理 (State)：基于 Redis 的分布式状态存储，支持 ValueState、MapState、ListState、SetState
 - 检查点机制 (Checkpoint)：分布式检查点协调，支持故障恢复；两阶段提交 sink 与 Outbox-WAL 跨系统投递
 - Watermark：WatermarkStrategy + 生成器（有序/乱序），可与 runtime 结合使用（event-time）
