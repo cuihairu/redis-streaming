@@ -293,7 +293,8 @@ env.fromMqTopic(eventsTopic, "cep-group")
 
 - 每 key 独立匹配状态，互不串扰；`within` 截止由 matcher 的事件驱动清理承担（算子不注册引擎定时器）；
 - key 数上限 `maxTrackedKeys`（默认 10000，0 = 不限）：超限先逐空闲 key（无进行中 partial），再按最近触达逐出，防高基数 key 无界增长；逐出只丢进行中的 partial，已完成的匹配不受影响；
-- Phase 1 边界：partial 状态在算子实例内存（按分区隔离），不参与 checkpoint；丢失后果是漏报不误报（丢未完成序列）。
+- **Phase 2 起（2026-10-12）partial 进 keyed state（直写缓存）**：实例内 matcher 是热缓存，每条事件处理后直写该 key 的 keyed state（无 partial 则清除），缓存 miss 先从 state 水合再继续匹配；被 `maxTrackedKeys` 逐出的 key 在本实例内不会从 state 复活旧 partial。failover 后未完成序列不再丢失（漏报面收窄），已恢复的 partial 继续完成匹配；
+- partial 的快照/恢复由 `PatternSequenceMatcher.exportPartialMatches()` / `restorePartialMatches()` 承担（step 升序拼接还原 flat 事件序，有专测钉住）。
 
 ## 相关文档
 

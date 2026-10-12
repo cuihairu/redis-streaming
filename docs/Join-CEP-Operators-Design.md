@@ -72,11 +72,21 @@ StreamJoinOperator.asKeyedProcessFunction(JoinConfig<L,R,K> cfg, JoinFunction<L,
 - 状态治理沿用 `JoinConfig.maxStateSize`（超限按最旧时间戳逐条淘汰）与 `stateRetentionTime`（清理为**事件驱动**：每次配对入口按两侧缓冲的最大时间戳统一清过期，与 `StreamJoiner.cleanup` 逐点一致，算子不另注册引擎定时器；窗口跨度 > 保留时长在 `JoinConfig.validate()` 已拦）；
 - 与 `StreamJoiner` 的关系：`StreamJoiner` 保留原样（独立场景与既有测试），`StreamJoinOperator` 在窗口谓词/淘汰策略上**委托同一份逻辑**（抽公共 helper 或直接内聚一份实现 + 对照测试钉住行为一致），避免第三套窗口判定。
 
-### 3.3 一致性边界（Phase 1 明示）
+### 3.3 一致性边界（Phase 2 起升级为 at-least-once 重算）
 
-- 算子缓冲在**算子实例内存**中，按 MQ 分区隔离（同 key 同分区），**不参与 checkpoint 快照**；
-- failover 后：envelope 经 MQ 重放（at-least-once），但窗口内历史缓冲丢失——已发射的配对不会重算、未配对的半边状态丢失。即 join 输出对 failover 是 at-most-once（半边状态丢失）+ envelope 层 at-least-once 的组合，文档必须写明；
-- Phase 2：缓冲迁入 keyed `ValueState`（可序列化），随既有 state/checkpoint 机制快照与恢复，failover 语义升级为 at-least-once 重算（配对去重交给下游幂等或 sink 去重）。
+- **Phase 1（历史）**：算子缓冲在算子实例内存中，不参与 checkpoint——failover 后未配对的半边状态丢失，join 输出对 failover 是 at-most-once（半边丢失）+ envelope 层 at-least-once 的组合。
+- **Phase 2（2026-10-12 落地）**：两侧缓冲迁入 keyed `ValueState`（每 key 一份 JSON 文档，经 `ctx.getState` 读写，见 §3.4），随既有 state/checkpoint 机制快照与恢复。failover 语义升级为 **at-least-once 重算**：MQ 重放 + 状态恢复后配对继续，重放的 envelope 可能再次配对——去重交给下游幂等或 sink 去重。
+- 两处相对 raw joiner 实例级记账的**范围收窄**（均为卫生性调整，窗口谓词仍守护正确性，retention/eviction 只是内存管理）：
+  - `maxStateSize` 按 **per-key** 计（两侧合计），不再是实例内跨 key 总量；
+  - retention 清理的参考时间是**该 key 自己的最新时间戳**，空闲 key 的过期元素活到该 key 下一条事件（或被 cap 逐出），不再被其他 key 的活动清扫。
+
+### 3.4 状态布局（join / cep 算子，Phase 2）
+
+- **通道**：`ctx.getState(new StateDescriptor<>(stateName, String.class))`——`Context.getState` 为 Phase 2 新增的默认方法（默认抛 `UnsupportedOperationException`，两引擎各自覆写接线：内存引擎接 `InMemoryKeyedStateStore`、Redis 引擎接 keyed store）。泛型擦除下 Redis JSON 反序列化会退化为 `LinkedHashMap`，故算子自己持 `ObjectMapper`、把缓冲编码为 **JSON 字符串**存 `ValueState<String>`。
+- **确定性命名**：Redis 引擎的 state 键形如 `prefix:jobName:cg:group:topic:p:pid:state:operatorId:stateName`，operatorId 确定性生成（`streamId-keyBy-N`），因此 stateName 必须固定——`__operator:join:buffers` / `__operator:cep:partials`——重启的 job 才能找回上一实例的文档（随机名等于自废持久化）。同一 keyed stream 上不可能挂两个同类算子（`process()` 返回 `DataStream` 非 `KeyedStream`），单一固定名无冲突。
+- **join 文档**：`JoinKeyBuffers{left[], right[]}`，元素为自描述 JSON（`BufferedElement{type, json, timestamp}`，type 记运行时类名）——两侧各自独立可解码，不依赖先到的是哪一侧的信封。
+- **cep 文档**：`PersistedMatcherState<T>{partials[]}`（`PartialMatchState{startTimestamp, currentStep, eventsByStep}`）。
+- mapper 统一 `findAndRegisterModules()` + 关 `WRITE_DATES_AS_TIMESTAMPS`（事件可能带 `Instant` 等 java.time 字段）+ 关 `FAIL_ON_UNKNOWN_PROPERTIES`；`jackson-datatype-jsr310` 以 `implementation` 依赖加入 join/cep 两模块。
 
 ## 4. CEP 算子化
 
@@ -96,26 +106,51 @@ PatternSequenceProcessFunction.of(PatternSequence<T> pattern, Function<T, Long> 
 - 输出复用 `cep.EventSequence<T>`；
 - 单条件匹配（`Pattern` / `PatternMatcher`）不做算子：无序列状态的需求 `filter` 即可，有界扩展序列的场景归入后续需求，不预造 API。
 
-### 4.2 状态与恢复
+### 4.2 状态与恢复（Phase 2 起进 keyed state）
 
-与 Join 算子同一边界：partial match 状态在算子实例内存、按分区隔离、不进 checkpoint（Phase 1）；Phase 2 迁 keyed `ValueState`。CEP 的 partial 丢失后果比 join 轻（丢的是未完成序列，不产生错误输出，只是漏报），文档同样明示。
+**Phase 1（历史）**：partial match 状态在算子实例内存、不进 checkpoint，failover 后未完成序列丢失（后果比 join 轻——丢的是未完成序列，不产生错误输出，只是漏报）。
+
+**Phase 2（2026-10-12 落地）**：采用**直写缓存**结构——
+
+- 实例内的 matcher 映射仍是热缓存（每 key 一个 `PatternSequenceMatcher`），每条事件处理后**直写**该 key 的 keyed `ValueState<String>`（无 partial 则 `clear()`）；
+- 缓存 miss 时**先水合**：从 keyed state 反序列化该 key 的 partial 列表回 matcher；
+- 失效墓碑（`evictedKeys`）：被 `maxTrackedKeys` 逐出的 key 在本实例生命周期内**不得**从 state 复活陈旧 partial（防止逐出后的旧状态与新事件错配）。
+
+**快照可精确恢复的证明**：matcher 的 partial 的 step 序号只增不减，因此 flat 事件序 == 按 step 升序逐级拼接的序——`PatternSequenceMatcher.exportPartialMatches()` 导出（step 升序深拷贝）、`restorePartialMatches()` 按此序重放 `addEvent`，事件顺序与时间戳逐一还原（钉在 `PatternSequenceMatcherStateExportTest`）。
 
 ## 5. 分阶段落地
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | Phase 1 | `Envelope` + `StreamJoinOperator` + `PatternSequenceProcessFunction`；InMemory / Redis 双引擎集成测试；`docs/Join.md`、`docs/CEP.md` 增「算子化」章节；本文档落稿 | 本批实现 |
-| Phase 2 | `DataStream.join(other)` 语法糖（编译期展开为信封 + 桥接）；两算子缓冲迁 keyed `ValueState` 进 checkpoint；`TimestampAssigner` 重载接入后评估 event-time join 窗口 | 设计定稿；**2026-10-12 评估记卡点，本批跳过**（两子项各卡一个引擎 API 缺口，见下） |
+| Phase 2 | `DataStream.join(other)` 语法糖（编译期展开为信封 + 桥接）；两算子缓冲迁 keyed `ValueState` 进 checkpoint；`TimestampAssigner` 重载接入后评估 event-time join 窗口 | **缓冲迁移本批落地**（2026-10-12，卡点 A 解除，见 §5.1）；语法糖仍卡汇合原语设计，见 §5.2 |
 | Phase 3 | 引擎级双源 pipeline（方案 A）、event-time 水位对齐窗口、retract/waiting 语义（外连接二次发射消除） | 远期，与 P4 动态伸缩合并设计 |
 
-### 5.1 Phase 2 卡点记录（2026-10-12，如实记录，本批跳过）
+### 5.1 卡点 A：Context 状态访问面——已解除（2026-10-12）
 
-- **缓冲迁 keyed `ValueState`**：卡在 `KeyedProcessFunction.Context` 无状态访问面——`core` 的 `Context` 只有 `currentProcessingTime/currentWatermark/registerProcessingTimeTimer/registerEventTimeTimer`（时钟+定时器），没有 `getState(...)`/RuntimeContext 通道，两引擎都无法把 keyed state 句柄交给算子。需要先给 Context 增加状态访问 API 并在两引擎接线（内存引擎接 `InMemoryKeyedStateStore`、Redis 引擎接 keyed store），属引擎 API 变更，超出 Phase 1「引擎零改动」边界，须先行评审。
-- **`DataStream.join(other)` 语法糖**：设计走「编译期展开为信封 + 桥接」，需要把左右流汇入同一 join 输入（MQ topic 或引擎内 union）——`DataStream` API 现在没有 union/双源汇合原语，内存引擎无 topic 基底；设计本身把「引擎级双源 pipeline（方案 A）」放在 Phase 3。语法糖落地的前置件（汇合原语或自动多 pipeline 编排）未定，先补该设计再实施。
+原卡点：`KeyedProcessFunction.Context` 只有时钟+定时器方法，没有 `getState(...)` 通道，两引擎都无法把 keyed state 句柄交给算子。
+
+解除方式（本批）：
+
+- `core`：`Context.getState(StateDescriptor)` 新增**默认方法**，默认抛 `UnsupportedOperationException`（不破坏既有自实现 Context 的二进制兼容），并钉契约测试；
+- `runtime`：内存引擎 `ContextImpl` 接 `InMemoryKeyedStateStore`，Redis 引擎匿名 Context 接 keyed store 的 `getValueState`；
+- `join` / `cep`：两算子缓冲迁 keyed `ValueState<String>`（自管 JSON 编解码，见 §3.4），failover 语义升级（§3.3/§4.2）；
+- 证明：模块级测试以「同一 store + 全新函数实例」模拟重启——join 配对与 cep partial 均从上一实例状态续跑。
+
+### 5.2 卡点 B：`DataStream.join(other)` 语法糖——仍开，待设计（2026-10-12 复核）
+
+设计走「编译期展开为信封 + 桥接」，需要把左右流汇入同一 join 输入（MQ topic 或引擎内 union）——`DataStream` API 现在没有 union/双源汇合原语，内存引擎无 topic 基底；设计本身把「引擎级双源 pipeline（方案 A）」放在 Phase 3。
+
+**本机不可解的原因**：这不是补代码，而是先要定 API——汇合原语长什么样（`DataStream.union(other)`？自动编排两条 pipeline 写同一 topic？）、内存引擎的汇合基底用什么、桥接算子落在哪一侧。这些选择影响 runtime 公开面，须先出设计稿评审（详见 `docs/Union-DualSource-Design.md`），本批已把设计稿落档，实施仍待评审通过。
+
+**未实施清单**（留档）：
+- `DataStream.union(...)`（或等价汇合原语）双引擎实现；
+- `DataStream.join(other)` 语法糖展开为 envelope map + 汇合 + keyBy + `StreamJoinOperator`；
+- event-time join 窗口评估（依赖 `TimestampAssigner` 重载接入）。
 
 ## 6. 影响面与兼容性
 
-- `join` / `cep` 模块既有公开 API **零改动**（`StreamJoiner` / `PatternSequenceMatcher` 等原样保留）；新增类型均在各自模块新 `operator` 子包；
-- 两模块已 `api project(':core')`，算子实现无新增模块依赖；构建脚本零改动；
-- 引擎（runtime 模块）零改动——纯用户级算子接入既有 `keyBy().process()` 通道；
-- 新增面全部带单测（窗口谓词对照 `StreamJoiner` 钉一致性）+ 双引擎集成测试（Redis 腿 reachability 门控）。
+- `join` / `cep` 模块既有公开 API **零改动**（`StreamJoiner` / `PatternSequenceMatcher` 等原样保留；`PatternSequenceMatcher` 新增 export/restore 一对方法，纯增量）；新增类型均在各自模块新 `operator` 子包；
+- Phase 1 算子实现无新增模块依赖；**Phase 2** 两模块新增 `implementation libs.jackson.jsr310`（状态 JSON 需序列化 java.time 字段），`core` 增 `Context.getState` 默认方法，`runtime` 两处接线；
+- 既有自实现 `KeyedProcessFunction.Context` 不受影响（默认方法抛不支持，契约不变）；
+- 窗口谓词对照 `StreamJoiner` 的差分测试保持钉住一致；新增状态面单测（缓冲/partial 跨实例续跑、retention/cap 行为、JSON round-trip）+ 双引擎集成测试（Redis 腿 reachability 门控）。
