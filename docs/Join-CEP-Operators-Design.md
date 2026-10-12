@@ -105,8 +105,13 @@ PatternSequenceProcessFunction.of(PatternSequence<T> pattern, Function<T, Long> 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | Phase 1 | `Envelope` + `StreamJoinOperator` + `PatternSequenceProcessFunction`；InMemory / Redis 双引擎集成测试；`docs/Join.md`、`docs/CEP.md` 增「算子化」章节；本文档落稿 | 本批实现 |
-| Phase 2 | `DataStream.join(other)` 语法糖（编译期展开为信封 + 桥接）；两算子缓冲迁 keyed `ValueState` 进 checkpoint；`TimestampAssigner` 重载接入后评估 event-time join 窗口 | 设计定稿 |
+| Phase 2 | `DataStream.join(other)` 语法糖（编译期展开为信封 + 桥接）；两算子缓冲迁 keyed `ValueState` 进 checkpoint；`TimestampAssigner` 重载接入后评估 event-time join 窗口 | 设计定稿；**2026-10-12 评估记卡点，本批跳过**（两子项各卡一个引擎 API 缺口，见下） |
 | Phase 3 | 引擎级双源 pipeline（方案 A）、event-time 水位对齐窗口、retract/waiting 语义（外连接二次发射消除） | 远期，与 P4 动态伸缩合并设计 |
+
+### 5.1 Phase 2 卡点记录（2026-10-12，如实记录，本批跳过）
+
+- **缓冲迁 keyed `ValueState`**：卡在 `KeyedProcessFunction.Context` 无状态访问面——`core` 的 `Context` 只有 `currentProcessingTime/currentWatermark/registerProcessingTimeTimer/registerEventTimeTimer`（时钟+定时器），没有 `getState(...)`/RuntimeContext 通道，两引擎都无法把 keyed state 句柄交给算子。需要先给 Context 增加状态访问 API 并在两引擎接线（内存引擎接 `InMemoryKeyedStateStore`、Redis 引擎接 keyed store），属引擎 API 变更，超出 Phase 1「引擎零改动」边界，须先行评审。
+- **`DataStream.join(other)` 语法糖**：设计走「编译期展开为信封 + 桥接」，需要把左右流汇入同一 join 输入（MQ topic 或引擎内 union）——`DataStream` API 现在没有 union/双源汇合原语，内存引擎无 topic 基底；设计本身把「引擎级双源 pipeline（方案 A）」放在 Phase 3。语法糖落地的前置件（汇合原语或自动多 pipeline 编排）未定，先补该设计再实施。
 
 ## 6. 影响面与兼容性
 
