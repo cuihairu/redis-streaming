@@ -303,8 +303,10 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
         Objects.requireNonNull(windowAssigner, "windowAssigner");
         // Carry the upstream watermark state into the window operator: with a user generator
         // upstream (assignTimestampsAndWatermarks), event-time windows must be able to close
-        // mid-stream instead of only at end-of-input flush.
-        return new InMemoryWindowedStream<>(keyedIteratorSupplier, windowAssigner, watermarkState);
+        // mid-stream instead of only at end-of-input flush. The coordinator rides along so the
+        // window buckets register as a checkpoint snapshot source (per-consumption operator
+        // state) and fence against mid-record checkpoints like the keyed state store does.
+        return new InMemoryWindowedStream<>(keyedIteratorSupplier, windowAssigner, watermarkState, checkpointCoordinator);
     }
 
     @Override

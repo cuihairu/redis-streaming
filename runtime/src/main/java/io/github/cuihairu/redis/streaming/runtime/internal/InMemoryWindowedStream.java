@@ -54,12 +54,26 @@ import java.util.function.Supplier;
  * <p>For assigners with {@link WindowAssigner#supportsWindowMerging()} (session windows), a
  * newly assigned window is first coalesced with every same-key bucket it intersects: the union
  * window takes over all accumulated elements, so a whole session fires as one result.</p>
+ *
+ * <p>When the pipeline carries a checkpoint coordinator, each terminal-op consumption owns a
+ * per-consumption {@link OperatorState operator state} whose bucket map registers as a
+ * {@code window-N} snapshot source: checkpoints cut a consistent view of the accumulated
+ * buckets (per-record fence, see {@link #drive}), and restore is FRESH by default — restored
+ * buckets are kept for inspection and never injected, because in-memory sources replay their
+ * full history (see docs/InMemory-Operator-State-Lifecycle-Design.md).</p>
  */
 final class InMemoryWindowedStream<K, T> implements WindowedStream<K, T> {
 
     private final Supplier<Iterator<KeyedRecord<K, T>>> keyedIteratorSupplier;
     private final WindowAssigner<T> windowAssigner;
     private final WatermarkState watermarkState;
+    private final InMemoryCheckpointCoordinator checkpointCoordinator;
+    /**
+     * The monitor window-bucket mutations synchronize on: the coordinator's checkpoint lock
+     * when this pipeline participates in checkpoints, an uncontended private lock otherwise —
+     * the same per-record-barrier contract the keyed path gives its state store.
+     */
+    private final Object fenceLock;
 
     InMemoryWindowedStream(Supplier<Iterator<KeyedRecord<K, T>>> keyedIteratorSupplier,
                            WindowAssigner<T> windowAssigner) {
@@ -69,127 +83,155 @@ final class InMemoryWindowedStream<K, T> implements WindowedStream<K, T> {
     InMemoryWindowedStream(Supplier<Iterator<KeyedRecord<K, T>>> keyedIteratorSupplier,
                            WindowAssigner<T> windowAssigner,
                            WatermarkState watermarkState) {
+        this(keyedIteratorSupplier, windowAssigner, watermarkState, null);
+    }
+
+    InMemoryWindowedStream(Supplier<Iterator<KeyedRecord<K, T>>> keyedIteratorSupplier,
+                           WindowAssigner<T> windowAssigner,
+                           WatermarkState watermarkState,
+                           InMemoryCheckpointCoordinator checkpointCoordinator) {
         this.keyedIteratorSupplier = Objects.requireNonNull(keyedIteratorSupplier, "keyedIteratorSupplier");
         this.windowAssigner = Objects.requireNonNull(windowAssigner, "windowAssigner");
         this.watermarkState = watermarkState;
+        this.checkpointCoordinator = checkpointCoordinator;
+        this.fenceLock = checkpointCoordinator != null
+                ? checkpointCoordinator.checkpointLock()
+                : new Object();
     }
 
     @Override
     public DataStream<T> reduce(ReduceFunction<T> reducer) {
         Objects.requireNonNull(reducer, "reducer");
-        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
-            private Iterator<InMemoryRecord<T>> out;
+        return InMemoryDataStream.fromRecords(() -> {
+            // One operator state per consumption (per sink): the bucket map lives and registers
+            // per drive run, exactly as the method-local map always has.
+            OperatorState<T> op = new OperatorState<>();
+            return new Iterator<>() {
+                private Iterator<InMemoryRecord<T>> out;
 
-            @Override
-            public boolean hasNext() {
-                if (out == null) {
-                    out = reduceAll(reducer).iterator();
+                @Override
+                public boolean hasNext() {
+                    if (out == null) {
+                        out = reduceAll(reducer, op).iterator();
+                    }
+                    return out.hasNext();
                 }
-                return out.hasNext();
-            }
 
-            @Override
-            public InMemoryRecord<T> next() {
-                if (!hasNext()) {
-                    throw new NoSuchElementException();
+                @Override
+                public InMemoryRecord<T> next() {
+                    if (!hasNext()) {
+                        throw new NoSuchElementException();
+                    }
+                    return out.next();
                 }
-                return out.next();
-            }
+            };
         });
     }
 
     @Override
     public <R> DataStream<R> aggregate(AggregateFunction<T, R> aggregateFunction) {
         Objects.requireNonNull(aggregateFunction, "aggregateFunction");
-        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
-            private Iterator<InMemoryRecord<R>> out;
+        return InMemoryDataStream.fromRecords(() -> {
+            OperatorState<R> op = new OperatorState<>();
+            return new Iterator<>() {
+                private Iterator<InMemoryRecord<R>> out;
 
-            @Override
-            public boolean hasNext() {
-                if (out == null) {
-                    out = aggregateAll(aggregateFunction).iterator();
+                @Override
+                public boolean hasNext() {
+                    if (out == null) {
+                        out = aggregateAll(aggregateFunction, op).iterator();
+                    }
+                    return out.hasNext();
                 }
-                return out.hasNext();
-            }
 
-            @Override
-            public InMemoryRecord<R> next() {
-                if (!hasNext()) {
-                    throw new NoSuchElementException();
+                @Override
+                public InMemoryRecord<R> next() {
+                    if (!hasNext()) {
+                        throw new NoSuchElementException();
+                    }
+                    return out.next();
                 }
-                return out.next();
-            }
+            };
         });
     }
 
     @Override
     public <R> DataStream<R> apply(WindowFunction<K, T, R> windowFunction) {
         Objects.requireNonNull(windowFunction, "windowFunction");
-        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
-            private Iterator<InMemoryRecord<R>> out;
+        return InMemoryDataStream.fromRecords(() -> {
+            OperatorState<R> op = new OperatorState<>();
+            return new Iterator<>() {
+                private Iterator<InMemoryRecord<R>> out;
 
-            @Override
-            public boolean hasNext() {
-                if (out == null) {
-                    out = applyAll(windowFunction).iterator();
+                @Override
+                public boolean hasNext() {
+                    if (out == null) {
+                        out = applyAll(windowFunction, op).iterator();
+                    }
+                    return out.hasNext();
                 }
-                return out.hasNext();
-            }
 
-            @Override
-            public InMemoryRecord<R> next() {
-                if (!hasNext()) {
-                    throw new NoSuchElementException();
+                @Override
+                public InMemoryRecord<R> next() {
+                    if (!hasNext()) {
+                        throw new NoSuchElementException();
+                    }
+                    return out.next();
                 }
-                return out.next();
-            }
+            };
         });
     }
 
     @Override
     public DataStream<T> sum(Function<T, ? extends Number> fieldSelector) {
         Objects.requireNonNull(fieldSelector, "fieldSelector");
-        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
-            private Iterator<InMemoryRecord<T>> out;
+        return InMemoryDataStream.fromRecords(() -> {
+            OperatorState<T> op = new OperatorState<>();
+            return new Iterator<>() {
+                private Iterator<InMemoryRecord<T>> out;
 
-            @Override
-            public boolean hasNext() {
-                if (out == null) {
-                    out = sumAll(fieldSelector).iterator();
+                @Override
+                public boolean hasNext() {
+                    if (out == null) {
+                        out = sumAll(fieldSelector, op).iterator();
+                    }
+                    return out.hasNext();
                 }
-                return out.hasNext();
-            }
 
-            @Override
-            public InMemoryRecord<T> next() {
-                if (!hasNext()) {
-                    throw new NoSuchElementException();
+                @Override
+                public InMemoryRecord<T> next() {
+                    if (!hasNext()) {
+                        throw new NoSuchElementException();
+                    }
+                    return out.next();
                 }
-                return out.next();
-            }
+            };
         });
     }
 
     @Override
     public DataStream<Long> count() {
-        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
-            private Iterator<InMemoryRecord<Long>> out;
+        return InMemoryDataStream.fromRecords(() -> {
+            OperatorState<Long> op = new OperatorState<>();
+            return new Iterator<>() {
+                private Iterator<InMemoryRecord<Long>> out;
 
-            @Override
-            public boolean hasNext() {
-                if (out == null) {
-                    out = countAll().iterator();
+                @Override
+                public boolean hasNext() {
+                    if (out == null) {
+                        out = countAll(op).iterator();
+                    }
+                    return out.hasNext();
                 }
-                return out.hasNext();
-            }
 
-            @Override
-            public InMemoryRecord<Long> next() {
-                if (!hasNext()) {
-                    throw new NoSuchElementException();
+                @Override
+                public InMemoryRecord<Long> next() {
+                    if (!hasNext()) {
+                        throw new NoSuchElementException();
+                    }
+                    return out.next();
                 }
-                return out.next();
-            }
+            };
         });
     }
 
@@ -228,18 +270,18 @@ final class InMemoryWindowedStream<K, T> implements WindowedStream<K, T> {
         };
     }
 
-    private List<InMemoryRecord<T>> reduceAll(ReduceFunction<T> reducer) {
+    private List<InMemoryRecord<T>> reduceAll(ReduceFunction<T> reducer, OperatorState<T> op) {
         Supplier<BucketState<T, T>> states = () -> new FoldState<T>(reducer);
-        return drive(states, false, rawFromStates(states));
+        return drive(op, states, false, rawFromStates(states));
     }
 
-    private <R> List<InMemoryRecord<R>> aggregateAll(AggregateFunction<T, R> fn) {
+    private <R> List<InMemoryRecord<R>> aggregateAll(AggregateFunction<T, R> fn, OperatorState<R> op) {
         Supplier<BucketState<T, R>> states = () -> new AggregateState<T, R>(fn);
-        return drive(states, false, rawFromStates(states));
+        return drive(op, states, false, rawFromStates(states));
     }
 
-    private <R> List<InMemoryRecord<R>> applyAll(WindowFunction<K, T, R> fn) {
-        return drive(null, true, (key, window, elements) -> {
+    private <R> List<InMemoryRecord<R>> applyAll(WindowFunction<K, T, R> fn, OperatorState<R> op) {
+        return drive(op, null, true, (key, window, elements) -> {
             ArrayDeque<R> buffer = new ArrayDeque<>();
             WindowFunction.Collector<R> collector = buffer::addLast;
             try {
@@ -251,65 +293,77 @@ final class InMemoryWindowedStream<K, T> implements WindowedStream<K, T> {
         });
     }
 
-    private List<InMemoryRecord<Long>> countAll() {
+    private List<InMemoryRecord<Long>> countAll(OperatorState<Long> op) {
         Supplier<BucketState<T, Long>> states = CountState::new;
-        return drive(states, false, rawFromStates(states));
+        return drive(op, states, false, rawFromStates(states));
     }
 
-    private List<InMemoryRecord<T>> sumAll(Function<T, ? extends Number> fieldSelector) {
+    private List<InMemoryRecord<T>> sumAll(Function<T, ? extends Number> fieldSelector, OperatorState<T> op) {
         Supplier<BucketState<T, T>> states = () -> new SumState<T>(fieldSelector);
-        return drive(states, false, rawFromStates(states));
+        return drive(op, states, false, rawFromStates(states));
     }
 
-    private <R> List<InMemoryRecord<R>> drive(Supplier<BucketState<T, R>> newState,
+    private <R> List<InMemoryRecord<R>> drive(OperatorState<R> op,
+                                              Supplier<BucketState<T, R>> newState,
                                               boolean rawElements,
                                               FireComputer<K, T, R> rawComputer) {
         boolean merging = windowAssigner.supportsWindowMerging();
-        Map<WindowKey<K>, Bucket<T, R>> buckets = new LinkedHashMap<>();
+        Map<WindowKey<K>, Bucket<T, R>> buckets = op.buckets();
         List<InMemoryRecord<R>> out = new ArrayList<>();
         Iterator<KeyedRecord<K, T>> in = keyedIteratorSupplier.get();
         while (in.hasNext()) {
             KeyedRecord<K, T> record = in.next();
-            for (WindowAssigner.Window window : windowAssigner.assignWindows(record.value(), record.timestamp())) {
-                WindowKey<K> wk = WindowKey.of(record.key(), window);
-                if (merging) {
-                    wk = mergeIntersectingBuckets(record.key(), wk, buckets);
-                    window = wk.window();
+            // Per-record barrier (same contract as the keyed path): the record's whole effect
+            // on the window buckets runs under the fence, so a checkpoint triggered mid-record
+            // blocks until the record is done instead of splitting its bucket updates. The
+            // source iterator is consumed outside the fence — a blocking source must not
+            // freeze checkpoints between records.
+            synchronized (fenceLock) {
+                for (WindowAssigner.Window window : windowAssigner.assignWindows(record.value(), record.timestamp())) {
+                    WindowKey<K> wk = WindowKey.of(record.key(), window);
+                    if (merging) {
+                        wk = mergeIntersectingBuckets(record.key(), wk, buckets);
+                        window = wk.window();
+                    }
+                    boolean raw = rawElements || merging;
+                    Bucket<T, R> bucket = buckets.computeIfAbsent(wk, key -> raw
+                            ? Bucket.raw(windowAssigner.getDefaultTrigger())
+                            : Bucket.incremental(windowAssigner.getDefaultTrigger(), newState.get()));
+                    if (bucket.raw != null) {
+                        bucket.raw.add(record.value());
+                    } else {
+                        bucket.state.add(record.value());
+                    }
+                    bucket.lastTimestamp = record.timestamp();
+                    WindowAssigner.TriggerResult result =
+                            bucket.trigger.onElement(record.value(), record.timestamp(), wk.window());
+                    if (result == WindowAssigner.TriggerResult.FIRE) {
+                        fire(wk, bucket, rawComputer, out);
+                    } else if (result == WindowAssigner.TriggerResult.FIRE_AND_PURGE) {
+                        fire(wk, bucket, rawComputer, out);
+                        purge(bucket, newState);
+                    } else if (result == WindowAssigner.TriggerResult.PURGE) {
+                        purge(bucket, newState);
+                    }
+                    // CONTINUE: keep accumulating
                 }
-                boolean raw = rawElements || merging;
-                Bucket<T, R> bucket = buckets.computeIfAbsent(wk, key -> raw
-                        ? Bucket.raw(windowAssigner.getDefaultTrigger())
-                        : Bucket.incremental(windowAssigner.getDefaultTrigger(), newState.get()));
-                if (bucket.raw != null) {
-                    bucket.raw.add(record.value());
-                } else {
-                    bucket.state.add(record.value());
+                if (watermarkState != null) {
+                    closeReachedWindows(watermarkState.getWatermark(), buckets, rawComputer, out);
                 }
-                bucket.lastTimestamp = record.timestamp();
-                WindowAssigner.TriggerResult result =
-                        bucket.trigger.onElement(record.value(), record.timestamp(), wk.window());
-                if (result == WindowAssigner.TriggerResult.FIRE) {
-                    fire(wk, bucket, rawComputer, out);
-                } else if (result == WindowAssigner.TriggerResult.FIRE_AND_PURGE) {
-                    fire(wk, bucket, rawComputer, out);
-                    purge(bucket, newState);
-                } else if (result == WindowAssigner.TriggerResult.PURGE) {
-                    purge(bucket, newState);
-                }
-                // CONTINUE: keep accumulating
+                closeReachedWindowsByProcessingTime(record.timestamp(), buckets, rawComputer, out);
             }
-            if (watermarkState != null) {
-                closeReachedWindows(watermarkState.getWatermark(), buckets, rawComputer, out);
-            }
-            closeReachedWindowsByProcessingTime(record.timestamp(), buckets, rawComputer, out);
         }
         // Input exhausted: the effective watermark is +inf. Give every remaining bucket a
-        // final onEventTime callback at the window end, then flush what is left.
-        for (Map.Entry<WindowKey<K>, Bucket<T, R>> entry : buckets.entrySet()) {
-            Bucket<T, R> bucket = entry.getValue();
-            WindowAssigner.Window window = entry.getKey().window();
-            bucket.trigger.onEventTime(window.getEnd(), window);
-            fire(entry.getKey(), bucket, rawComputer, out);
+        // final onEventTime callback at the window end, then flush what is left. The flush can
+        // also fire buckets and consult triggers; fence it the same way (same reasoning as the
+        // keyed path's end-of-input drainAllTimers).
+        synchronized (fenceLock) {
+            for (Map.Entry<WindowKey<K>, Bucket<T, R>> entry : buckets.entrySet()) {
+                Bucket<T, R> bucket = entry.getValue();
+                WindowAssigner.Window window = entry.getKey().window();
+                bucket.trigger.onEventTime(window.getEnd(), window);
+                fire(entry.getKey(), bucket, rawComputer, out);
+            }
         }
         return out;
     }
@@ -446,6 +500,72 @@ final class InMemoryWindowedStream<K, T> implements WindowedStream<K, T> {
         }
         buckets.put(mergedKey, merged);
         return mergedKey;
+    }
+
+    /**
+     * Per-consumption window operator state (operator-state lifecycle contract, see
+     * docs/InMemory-Operator-State-Lifecycle-Design.md): one instance per terminal-op
+     * consumption — the bucket map {@link #drive} populates plus its snapshot-source
+     * registration. Registered lazily at consumption start, so an unconsumed terminal op never
+     * registers. Restore is FRESH by default: the restored payload is kept for inspection in
+     * {@code restoredView} and never injected into the live buckets, because in-memory sources
+     * replay their full history — adopting restored buckets and replaying the same records
+     * would double-count every window.
+     */
+    private final class OperatorState<R> {
+        private final Map<WindowKey<K>, Bucket<T, R>> buckets = new LinkedHashMap<>();
+        private volatile Object restoredView;
+
+        OperatorState() {
+            if (checkpointCoordinator != null) {
+                checkpointCoordinator.registerGeneratedSource("window",
+                        this::snapshotBuckets, this::restoreSnapshot);
+            }
+        }
+
+        Map<WindowKey<K>, Bucket<T, R>> buckets() {
+            return buckets;
+        }
+
+        /**
+         * Checkpoint snapshot payload: one entry per non-empty bucket — key, window bounds,
+         * last element timestamp, and the bucket's accumulated contents (the incremental
+         * path's current fire results, or a copy of the raw element list for apply/session
+         * buckets). The bucket's Trigger instance is deliberately not captured: Trigger has
+         * no snapshot API, the same boundary the session-merge path already documents.
+         */
+        List<BucketContent> snapshotBuckets() {
+            List<BucketContent> out = new ArrayList<>(buckets.size());
+            for (Map.Entry<WindowKey<K>, Bucket<T, R>> entry : buckets.entrySet()) {
+                WindowKey<K> wk = entry.getKey();
+                Bucket<T, R> bucket = entry.getValue();
+                List<?> contents;
+                if (bucket.raw != null) {
+                    if (bucket.raw.isEmpty()) {
+                        continue;
+                    }
+                    contents = List.copyOf(bucket.raw);
+                } else {
+                    if (bucket.state.isEmpty()) {
+                        continue;
+                    }
+                    contents = bucket.state.fire();
+                }
+                out.add(new BucketContent(wk.key, wk.start, wk.end, bucket.lastTimestamp, contents));
+            }
+            return out;
+        }
+
+        /** FRESH restore: keep the payload for inspection, never inject it into the live buckets. */
+        void restoreSnapshot(Object snapshot) {
+            if (snapshot instanceof List<?> list) {
+                this.restoredView = List.copyOf(list);
+            }
+        }
+    }
+
+    /** Checkpoint snapshot payload for one window bucket (see {@link OperatorState}). */
+    record BucketContent(Object key, long start, long end, long lastTimestamp, List<?> contents) {
     }
 
     /** Per-(key, window) bucket: the bucket's own trigger instance plus either its raw elements

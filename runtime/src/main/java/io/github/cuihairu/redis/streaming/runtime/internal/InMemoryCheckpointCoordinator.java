@@ -110,11 +110,24 @@ public final class InMemoryCheckpointCoordinator implements CheckpointCoordinato
         if (state == null) {
             throw new NullPointerException("state");
         }
-        String name = "watermark-" + nextSourceId.getAndIncrement();
-        while (sourcesById.containsKey(name) || storesById.containsKey(name)) {
-            name = "watermark-" + nextSourceId.getAndIncrement();
+        return registerGeneratedSource("watermark", state::snapshot, state::restoreSnapshot);
+    }
+
+    /**
+     * Registers a snapshot source under a collision-free generated {@code prefix-N} name (the
+     * {@code watermark-N} pattern, generalized): a name already taken by a store or a source is
+     * skipped. Used by per-consumption operator states (window buckets) that register lazily on
+     * first drive and therefore cannot know their name up front.
+     */
+    synchronized String registerGeneratedSource(String prefix, Supplier<Object> snapshot, Consumer<Object> restore) {
+        if (prefix == null || prefix.isBlank()) {
+            throw new IllegalArgumentException("Snapshot source prefix must not be blank");
         }
-        return registerSnapshotSource(name, state::snapshot, state::restoreSnapshot);
+        String name = prefix + "-" + nextSourceId.getAndIncrement();
+        while (sourcesById.containsKey(name) || storesById.containsKey(name)) {
+            name = prefix + "-" + nextSourceId.getAndIncrement();
+        }
+        return registerSnapshotSource(name, snapshot, restore);
     }
 
     @Override

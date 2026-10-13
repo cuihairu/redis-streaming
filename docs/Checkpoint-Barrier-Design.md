@@ -2,7 +2,7 @@
 
 本文供评审,不含代码改动。目标:`SourceContext.getCheckpointLock()` 目前是死契约(唯一生产实现是引擎自己,无任何快照方在这把锁上同步);厘清两引擎检查点模型,给锁语义真实化的最小路径,并论证 Flink 式跨算子屏障协议在 Redis 引擎上的真实收益边界。
 
-> 落地状态:P1 快照屏障已落地 2026-10-11、P2 注册面泛化已落地 2026-10-12、逐记录屏障已落地 2026-10-13(见「方案 A」①②与「落地记录」)。下文「现状」是落地前的事实盘点,与当前代码的差异以落地记录为准。
+> 落地状态:P1 快照屏障已落地 2026-10-11、P2 注册面泛化已落地 2026-10-12、逐记录屏障已落地 2026-10-13、窗口累加器注册已落地 2026-10-14(见「方案 A」①②与「落地记录」)。下文「现状」是落地前的事实盘点,与当前代码的差异以落地记录为准。
 
 ## 现状(事实盘点)
 
@@ -40,7 +40,7 @@
 
 **① in-memory 快照屏障(P1,已落地 2026-10-11)**:落地时修正了本文初版方案——「消费者逐条处理持锁」会引入死锁:用户按 Flink 习惯把 `collect()` 包在 `getCheckpointLock()` 里时,生产者可持该锁阻塞于满队列;若消费者的状态写入也要等同一把锁,队列永不腾空。真实屏障因此是**双锁契约**:协调器新增 `checkpointLock()`(独立监视器),注册 store 的全部变更(put/remove/setCurrentKey/snapshot/restore)与协调器的快照/恢复都同步在它上,`triggerCheckpoint` 跨全部 store 持锁 → 一次检查点是单一一致切面,撕裂(CME/脏拷贝)消除;该锁只在有界非阻塞内存操作上持有。`SourceContext.getCheckpointLock()` 保持返回源级发射锁(生产者可跨满队列阻塞持有,消费者绝不取)——两锁不相交,背压永不死锁。逐记录屏障已落地 2026-10-13:record body 整体在 store 的 `fenceLock()`(= 注册后的 `checkpointLock`)内执行,中途触发的检查点阻塞到记录写完所有状态,不再劈开同一记录的多次写入;`synchronized` 可重入,store 自身每次写的加锁在栅栏内空转。窗口累加器注册(②)后其整表快照天然原子。测试钉死:持锁写入期间快照必等且见写入值、并发写+连拍 200 快照零撕裂、活流水线旁路并发检查点 2 万条零丢失。
 
-**② registerStore 泛化(P2,已落地 2026-10-12)**:注册面已从 `registerStore(InMemoryKeyedStateStore)` 泛化为 `registerSnapshotSource(name, snapshot, restore)`——任意 `(名称, snapshot, restore)` 三元组均可入检查点切面,与 keyed store 同受 ① 的锁保护;重复名拒绝,`latestRestoredStateByStoreId` 的延迟恢复语义对快照源同样生效。`WatermarkState` 补了 `Snapshot(watermark, idle)` 载荷与 `snapshot/restoreSnapshot`,`assignTimestampsAndWatermarks` 两个重载在持协调器的流水线段上自动以无冲突生成的 `watermark-N` 名注册(命名撞车时跳号)。**窗口累加器暂未注册**:内存引擎的窗口桶是终端算子 drain 内的方法局部变量(07539c7 的增量累加器),不存在可注册的常驻算子状态生命周期;Trigger 亦无快照 API;若走"注册时惰性建表+恢复时重放"会把陈旧桶注入新窗口,属正确性陷阱。算子状态生命周期与重启语义契约已落稿 2026-10-13(docs/InMemory-Operator-State-Lifecycle-Design.md,待评审):每次 drive() 一张桶表的算子实例 + 首次 drive() 惰性注册 + 逐记录栅栏 + 默认 FRESH 恢复(恢复只写只读镜像、不注入活动桶,从契约层面堵死双计陷阱);评审通过后注册。
+**② registerStore 泛化(P2,已落地 2026-10-12)**:注册面已从 `registerStore(InMemoryKeyedStateStore)` 泛化为 `registerSnapshotSource(name, snapshot, restore)`——任意 `(名称, snapshot, restore)` 三元组均可入检查点切面,与 keyed store 同受 ① 的锁保护;重复名拒绝,`latestRestoredStateByStoreId` 的延迟恢复语义对快照源同样生效。`WatermarkState` 补了 `Snapshot(watermark, idle)` 载荷与 `snapshot/restoreSnapshot`,`assignTimestampsAndWatermarks` 两个重载在持协调器的流水线段上自动以无冲突生成的 `watermark-N` 名注册(命名撞车时跳号)。**窗口累加器已注册 2026-10-14**(契约见 docs/InMemory-Operator-State-Lifecycle-Design.md,按推荐项 D1-a/D2-a/D3-a/D4-a/D5-a/D6-a 实现):每次终端算子消费持有一份算子状态——桶表从 drive() 局部变量提升为该实例的字段,消费开始时以无冲突生成的 `window-N` 名惰性注册(未消费的终端算子不注册);drive() 循环体与 end-of-input flush 整体在 `fenceLock()` 内(= 协调器的 checkpoint lock,与 keyed 路径逐记录屏障同契约;源迭代在栅栏外——阻塞源不得冻结检查点);快照载荷按桶记录 key/窗口边界/lastTimestamp/累积内容(增量路径的当前 fire 结果或 raw 元素拷贝),Trigger 无快照 API、实例不进快照;恢复默认 FRESH——载荷只写只读检查镜像、不注入活动桶,内存源全量重放,采纳恢复桶会双计(D3 的正确性陷阱从契约层面堵死);无注销 API,已完成运行的窗口状态留在后续检查点切面中(该次运行的最终状态)。
 
 **③ Redis 引擎 v2 unaligned 检查点(待评审,另立批次)**:不停消费,epoch 冻结点从"全量 drain"缩到"2PC preCommit + defer-ack freeze"(这两步本来就不需要 pause 全场)——offsets 用 defer-ack 快照语义已存在;keyed 状态取 Redis 现值 + 快照版本号,恢复时按"记录 id > 快照 frontier 才重放"去重(幂等 sink 键已具备)。必须先解决:与 `scaleParallelism` 共享的 `checkpointing` CAS 门要拆成两级(扩缩容仍需全静默,检查点不再需要);多并行度下 preCommit 的 epoch 对齐。风险集中在 2PC 交互,收益只在长 `checkpointDrainTimeout`/高吞吐作业,不默认启用。
 
@@ -55,6 +55,6 @@
 ## 迁移路径(方案 A 分期)
 
 1. **P1 快照屏障**(已落地 2026-10-11,见方案 A① 的修正记录):协调器 `checkpointLock()` + 注册 store 绑定 + 快照/恢复持锁切面;3 个并发测试钉死,背压场景由既有流式测试(慢 sink/10 万条顺序)覆盖。
-2. **P2 注册面泛化**(已落地 2026-10-12):WatermarkState 经 `registerSnapshotSource` 注册为快照源;窗口累加器的算子状态生命周期契约已落稿待评审(见方案 A② 与 docs/InMemory-Operator-State-Lifecycle-Design.md),评审通过后再注册。
+2. **P2 注册面泛化**(已落地 2026-10-12):WatermarkState 经 `registerSnapshotSource` 注册为快照源;窗口累加器已按算子状态生命周期契约注册(2026-10-14,见方案 A② 与 docs/InMemory-Operator-State-Lifecycle-Design.md)。
 3. **P3 unaligned v2**(独立评审):两级 CAS 门 + epoch 对齐 + frontier 重放去重,默认关,`RedisRuntimeConfig` 新开关;与 metrics 的 checkpoint 时延指标同批观察收益。
 4. 文档同步(已落地 2026-10-11):`docs/checkpoint.md` 已补"in-memory 快照与流水线互斥"语义(双锁契约);`docs/Deployment.md:97` 的 stop-theWorld 记载在 P3 落地前保持不变。

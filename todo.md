@@ -2,7 +2,6 @@
 
 ## 未完成
 
-- [ ] 内存引擎窗口累加器注册进检查点协调器：算子生命周期契约已落稿（docs/InMemory-Operator-State-Lifecycle-Design.md），待评审
 - [ ] Redis 引擎 unaligned checkpoint 方案评审（设计见 docs/Checkpoint-Barrier-Design.md 方案 A③，待评审）
 - [ ] DataStream.join(other) 语法糖：union/双源汇合原语落地，设计见 docs/Union-DualSource-Design.md，待评审
 - [ ] join/cep Phase 3：引擎级双源 pipeline、event-time 水位对齐、retract 语义（设计标注远期，与 P4 动态伸缩合并设计）
@@ -68,6 +67,7 @@
 
 ### 检查点协议与窗口运行时
 
+- [x] 内存引擎窗口累加器注册进检查点协调器：每次消费一份算子状态 + 惰性注册 window-N + 逐记录栅栏 + 默认 FRESH 恢复（2026-10-14，3 测试）
 - [x] 两引擎接入 processing-time 窗口定时器，Trigger.onProcessingTime 已接线（commit 258b694，19 测试）
 - [x] 检查点协议 v2：逐记录屏障，消除单记录多次状态写被快照劈开（commit 431572b，1 测试）
 - [x] 安全 v2 收尾：日志脱敏护栏 LogRedaction 落地，审计与 specHash 脱敏已落地（commit d639ad4，8 测试）

@@ -86,7 +86,8 @@ runtime 内置的内存引擎(`InMemoryCheckpointCoordinator`)不使用上面的
 
 - **快照锁**:协调器持有独立的 `checkpointLock()` 监视器;注册 store 的全部变更(put/remove/setCurrentKey/snapshot/restore)与协调器的快照/恢复都同步其上,`triggerCheckpoint` 跨全部已注册 store 持锁——一次检查点即单一一致切面,快照与流水线线程写竞跑(CME/脏拷贝)不可能。该锁只在有界非阻塞内存操作上持有。
 - **发射锁**:`SourceContext.getCheckpointLock()` 返回的是源级发射锁,生产者可跨满队列阻塞持有,消费者绝不取它。两把锁不相交,背压永不死锁;按 Flink 习惯把 `collect()` 包在 `getCheckpointLock()` 里的写法是安全的。
-- **快照源泛化(2026-10-12)**:`registerSnapshotSource(name, snapshot, restore)` 让任意 `(名称, snapshot, restore)` 三元组与 keyed store 同切面进检查点;回调与 store 快照同受快照锁保护。`assignTimestampsAndWatermarks` 的流水线段在持协调器时自动把段上 `WatermarkState` 注册为 `watermark-N` 快照源,检查点即含当前水位线与 idle 标志,恢复时回放。窗口累加器因缺常驻算子状态生命周期暂未注册(见设计文档卡点)。
+- **快照源泛化(2026-10-12)**:`registerSnapshotSource(name, snapshot, restore)` 让任意 `(名称, snapshot, restore)` 三元组与 keyed store 同切面进检查点;回调与 store 快照同受快照锁保护。`assignTimestampsAndWatermarks` 的流水线段在持协调器时自动把段上 `WatermarkState` 注册为 `watermark-N` 快照源,检查点即含当前水位线与 idle 标志,恢复时回放。
+- **窗口累加器注册(2026-10-14,契约见 docs/InMemory-Operator-State-Lifecycle-Design.md)**:每个终端算子消费持有一份算子状态——桶表是该实例的字段,消费开始时以无冲突生成的 `window-N` 名惰性注册(未消费的终端算子不注册);drive() 循环体与 end-of-input flush 整体在 `fenceLock()` 内(= 协调器的 checkpoint lock,与 keyed 路径逐记录屏障同契约;源迭代在栅栏外,阻塞源不得冻结检查点)。快照载荷按桶记录 key/窗口边界/lastTimestamp/累积内容(增量路径的当前 fire 结果或 raw 元素拷贝);Trigger 无快照 API,实例不进快照。恢复默认 FRESH:载荷只写只读检查镜像,不注入活动桶——内存源全量重放,采纳恢复桶会双计。
 - **逐记录屏障(2026-10-13)**:record body 整体在 store 的 `fenceLock()` 内执行——该锁即注册后的 `checkpointLock`,故中途触发的检查点会阻塞到记录写完所有状态,不再劈开同一记录的多次写入;`synchronized` 可重入,store 自身每次写的加锁在栅栏内空转。end-of-input 的 `drainAllTimers()` 同样入栅栏(定时器回调也会写状态)。
 
 ## 配置项
