@@ -7,7 +7,7 @@
 `spring-boot-starter` 把 core/runtime/mq/registry/config/reliability 组件装配成 Spring Bean:
 
 - 兜底 `RedissonClient`(项目里已有 `RedissonClient` Bean 时自动让位)
-- 服务注册/发现:`NamingService`、`ServiceConsumer`、`LoadBalancer`、`ClientSelector`/`ClientInvoker`
+- 服务注册/发现:`NamingService`、`ServiceConsumer`、`LoadBalancer`
 - 配置中心:`ConfigService`
 - 消息队列与死信:`MessageQueueFactory`、`MessageQueueAdmin`、`DeadLetterService` 等
 - 限流:`RateLimiter` / `RateLimiterRegistry`(`redis-streaming.ratelimit.enabled=true` 时,默认关闭)
@@ -16,7 +16,7 @@
 ## 对外接口
 
 - 自动装配入口是 `RedisStreamingAutoConfiguration`(classpath 即生效,见 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`);`@EnableRedisStreaming` 是它的 `@Import` 别名注解。
-- 功能域配置类有五个:`RedisStreamingRegistryAutoConfiguration` / `RedisStreamingDiscoveryAutoConfiguration` / `RedisStreamingConfigServiceAutoConfiguration` / `RedisStreamingMqAutoConfiguration` / `RedisStreamingRateLimitAutoConfiguration`,分别由 `redis-streaming.{registry,discovery,config,mq}.enabled`(默认 `true`)与 `redis-streaming.ratelimit.enabled`(默认 `false`)开关。
+- 功能域配置类有六个:`RedisStreamingRegistryAutoConfiguration` / `RedisStreamingDiscoveryAutoConfiguration` / `RedisStreamingConfigServiceAutoConfiguration` / `RedisStreamingMqAutoConfiguration` / `RedisStreamingRateLimitAutoConfiguration` / `RedisStreamingRuntimeAutoConfiguration`,分别由 `redis-streaming.{registry,discovery,config,mq}.enabled`(默认 `true`)、`redis-streaming.ratelimit.enabled`(默认 `false`)与 `redis-streaming.runtime.control-plane.enabled` / `redis-streaming.runtime.agent.enabled`(均默认 `false`)开关。
 - 注解有两个。`@ServiceChangeListener` 负责服务变更回调,由 `ServiceChangeListenerProcessor` 注册;`@ConfigChangeListener` 目前在 starter 内没有对应处理器,监听配置变更请直接调用 `ConfigService.addListener(dataId, group, listener)`。
 - 自动注册:`AutoServiceRegistration` 是 `@Component` 但不在自动装配 imports 中,需要组件扫描覆盖 `io.github.cuihairu.redis.streaming.starter.service` 包才生效。
 

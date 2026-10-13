@@ -41,7 +41,7 @@ job.triggerCheckpointNow();                              // optional: trigger a 
 | Guarantee | Path | Boundary |
 |---|---|---|
 | At-least-once | Default MQ consumption: ACK after processing, retries/DLQ on failure | Possible duplicate delivery |
-| Effectively-once (Redis sinks) | checkpoint + defer-ack + idempotent/atomic sinks (`RedisAtomicCheckpointListSink`, sink dedup, 2PC) | End-to-end dedup, closed loop within Redis |
+| Effectively-once (Redis sinks) | checkpoint + defer-ack + idempotent/atomic sinks (`RedisAtomicCheckpointListSink`, sink dedup, 2PC) | End-to-end dedup completed within Redis |
 | Effectively-once* (cross-system) | Outbox-WAL: `RedisOutboxSink` + async Dispatcher | At-least-once dispatch + per-record id dedup on the target; * depends on sink capability |
 
 See `docs/exactly-once.md` for design details and boundaries.
@@ -53,7 +53,7 @@ Documentation site (GitHub Pages): https://cuihairu.github.io/redis-streaming/
 ### Implemented Features
 - Stream Processing Runtime: Redis-backed runtime (Redis Streams consumer-group driven, single-process parallelism / watermarks / windows / checkpoints / HA takeover) + in-memory runtime (tests/examples); declarative job control plane (submit / upgrade / rollback / audit) with `secret.*` config references resolved at deploy time
 - Message Queue (MQ): Redis Streams-based message queue with consumer groups and dead-letter queues
-- Service Registry & Discovery: service registration and discovery with multi-protocol health checks (HTTP/HTTPS/TCP/UDP/WebSocket/KCP/gRPC/Dubbo) and metadata comparison-operator filtering
+- Service Registry & Discovery: service registration and discovery with multi-protocol health checks (HTTP/HTTPS/TCP/UDP/WebSocket; other protocols use a TCP port probe) and metadata comparison-operator filtering
 - Config Center: Redis-based distributed configuration management with versioning, change notifications, and history; optional at-rest encryption for `secure.` configs via a pluggable `ContentCipher`
 - State Management: Redis-based distributed state store with ValueState, MapState, ListState, SetState
 - Checkpointing: distributed checkpoint coordination with failure recovery; two-phase commit sinks and Outbox-WAL cross-system delivery
@@ -65,7 +65,7 @@ Documentation site (GitHub Pages): https://cuihairu.github.io/redis-streaming/
 - Reliability Guarantees: retries, dead-letter queues, Bloom Filter dedup, windowed dedup
 - Sink Connectors: Kafka Sink, Redis Stream Sink (XADD), Redis List/Hash Sinks
 - Source Connectors: Kafka Source, HTTP API Source, Redis List/Stream Sources
-- Prometheus Monitoring: Prometheus Exporter and metric collectors
+- Metrics: Micrometer-based metric collectors; Prometheus exposition via micrometer-registry-prometheus or Spring Boot Actuator
 - Spring Boot Integration: auto-configuration and annotation support
 - Stream-Table Duality (Table): both in-memory and Redis-persisted KTable implemented
 - CEP: complex event processing with Kleene closure and advanced pattern operations
@@ -88,7 +88,7 @@ Responsibilities:
 - Connector abstractions (StreamSource, StreamSink)
 - Utilities (InstanceIdGenerator, SystemUtils)
 
-Key classes: `DataStream.java`, `KeyedStream.java`, `State.java` (27 files)
+Key classes: `DataStream.java`, `KeyedStream.java`, `State.java` (29 files)
 
 #### runtime - Stream Processing Runtime Engine
 The execution engine of the stream processing runtime.
@@ -157,7 +157,7 @@ Responsibilities:
 - Load balancing (based on metadata such as weight, CPU, latency)
 - Ephemeral / permanent instance management
 
-Key classes: `RedisNamingService.java`, `RedisServiceProvider.java`, `RedisServiceConsumer.java`, `RegistryLuaScriptExecutor.java` (68 files)
+Key classes: `RedisNamingService.java`, `RedisServiceProvider.java`, `RedisServiceConsumer.java`, `RegistryLuaScriptExecutor.java` (44 files)
 
 Metadata filtering example:
 ```java
@@ -184,7 +184,7 @@ Responsibilities:
 - Config listeners (auto-update, hot reload)
 - Config history queries (last N versions retained)
 
-Key classes: `ConfigService.java`, `RedisConfigService.java`, `ConfigChangeListener.java` (9 files)
+Key classes: `ConfigService.java`, `RedisConfigService.java`, `ConfigChangeListener.java` (10 files)
 
 Config management example:
 ```java
@@ -295,7 +295,7 @@ Responsibilities:
 - State buffering (Redis-backed)
 - Join window management
 
-Key classes: `StreamJoiner.java`, `JoinConfig.java`, `JoinWindow.java` (6 files)
+Key classes: `StreamJoiner.java`, `JoinConfig.java`, `JoinWindow.java` (10 files)
 
 #### cdc - Change Data Capture
 Change event capture from databases with multiple source types.
@@ -337,10 +337,11 @@ Responsibilities:
 - FileSource - file data source
 - GeneratorSource - test data generation
 - RedisListSource - Redis List data source
+- RedisStreamSource - Redis Stream data source (XREADGROUP with consumer groups)
 - HttpApiSource - HTTP API polling data source
 - KafkaSource - Kafka data source
 
-Key classes: `KafkaSource.java`, `HttpApiSource.java`, `RedisListSource.java`, `CollectionSource.java`
+Key classes: `KafkaSource.java`, `HttpApiSource.java`, `RedisListSource.java`, `RedisStreamSource.java`, `CollectionSource.java`
 
 ### Tier 4: Advanced Features
 
@@ -403,6 +404,15 @@ Responsibilities:
 
 Key classes: `ServiceRegistryExample.java`, `CustomPrefixExample.java`, `MessageQueueExample.java`, `RateLimitExample.java`, `StreamAggregationExample.java`, `ComprehensiveStreamingExample.java`
 
+#### benchmark - Benchmarks
+Throughput and checkpoint-duration benchmarks against a live Redis (not published).
+
+Responsibilities:
+- MQ throughput benchmark (message count, payload size configurable)
+- Checkpoint duration benchmark (checkpoint interval configurable)
+
+Key classes: `BenchmarkRunner.java`, `MqThroughputBenchmark.java`, `CheckpointDurationBenchmark.java`
+
 ## Quick Start
 
 ### 1. Requirements
@@ -417,32 +427,32 @@ Pick the core modules you need:
 ```gradle
 dependencies {
     // Message queue
-    implementation 'io.github.cuihairu.redis-streaming:mq:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:mq:0.2.4'
 
     // Service registry & discovery (metadata comparison-operator filtering supported)
-    implementation 'io.github.cuihairu.redis-streaming:registry:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:registry:0.2.4'
 
     // Config center (versioned config, change notifications)
-    implementation 'io.github.cuihairu.redis-streaming:config:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:config:0.2.4'
 
     // State management
-    implementation 'io.github.cuihairu.redis-streaming:state:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:state:0.2.4'
 
     // Checkpointing
-    implementation 'io.github.cuihairu.redis-streaming:checkpoint:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:checkpoint:0.2.4'
 
     // Window aggregation
-    implementation 'io.github.cuihairu.redis-streaming:aggregation:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:aggregation:0.2.4'
 
     // CDC
-    implementation 'io.github.cuihairu.redis-streaming:cdc:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:cdc:0.2.4'
 }
 ```
 
 Spring Boot integration:
 ```gradle
 dependencies {
-    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.4'
     // Brings in core modules such as registry, config, and mq
 }
 ```
@@ -672,7 +682,7 @@ All modules are in place (20/20), but "modules complete ≠ framework complete" 
   - Consumer groups, DLQ, async support
 - [x] registry: service registry & discovery
   - Service registration, discovery, health checks
-  - Multi-protocol support (HTTP/HTTPS/TCP/WebSocket/gRPC)
+  - Multi-protocol support (HTTP/HTTPS/TCP/UDP/WebSocket health checks; other protocols use a TCP port probe)
   - Metadata comparison-operator filtering (`>`, `>=`, `<`, `<=`, `!=`, `==`)
   - Load balancing based on metadata such as weight, CPU, and latency
 - [x] config: config center

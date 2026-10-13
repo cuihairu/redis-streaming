@@ -2,36 +2,36 @@
 
 ## 发布到本地 Maven 仓库
 
-在仓库根目录执行以下命令，将所有可发布模块（`examples` 除外）发布到本地 Maven 仓库 (`~/.m2/repository`)：
+在仓库根目录执行以下命令，将所有可发布模块（`examples`、`benchmark` 除外）发布到本地 Maven 仓库 (`~/.m2/repository`)：
 
 ```bash
 ./gradlew publishToMavenLocal
 ```
 
-发布后的坐标格式为 `io.github.cuihairu.redis-streaming:<模块名>:<版本>`（`group` 见根 `build.gradle`，版本默认取自 Git tag，当前版本 0.2.0）。仓库共 20 个 Gradle 模块（见 `settings.gradle`），其中 `examples` 不参与发布（根 `build.gradle` 显式排除）：
+发布后的坐标格式为 `io.github.cuihairu.redis-streaming:<模块名>:<版本>`（`group` 见根 `build.gradle`，版本默认取自 Git tag，当前版本 0.2.4）。仓库共 20 个 Gradle 模块（见 `settings.gradle`），其中 `examples` 与 `benchmark` 不参与发布（根 `build.gradle` 显式排除）：
 
 ```
 io.github.cuihairu.redis-streaming:
-  - core:0.2.0        # 核心 API（DataStream / State / Checkpoint / Window 等抽象）
-  - runtime:0.2.0     # 运行时引擎（Redis 驱动 + 内存实现）
-  - mq:0.2.0          # Redis Streams 消息队列（消费组 / 重试 / DLQ）
-  - registry:0.2.0    # 服务注册与发现（心跳 / metadata 过滤）
-  - config:0.2.0      # 配置中心（版本化 / 历史 / 监听）
-  - state:0.2.0       # Redis 状态原语（Value/Map/List/Set）
-  - checkpoint:0.2.0  # Checkpoint 协调与存储
-  - watermark:0.2.0   # Watermark 策略与生成器
-  - window:0.2.0      # 窗口（assigner / trigger）
-  - aggregation:0.2.0 # 窗口聚合（PV/UV/TopK/分位数）
-  - table:0.2.0       # KTable（内存 + Redis 实现）
-  - join:0.2.0        # 时间窗口流流 Join
-  - cdc:0.2.0         # CDC 连接器（MySQL binlog / PostgreSQL 逻辑复制 / 轮询）
-  - sink:0.2.0        # 输出连接器（Kafka / Redis Stream/Hash/List 等）
-  - source:0.2.0      # 输入连接器（Kafka / HTTP / Redis List/Stream 等）
-  - reliability:0.2.0 # 重试 / DLQ / 去重 / 限流
-  - cep:0.2.0         # 复杂事件处理
-  - metrics:0.2.0     # 指标与 Prometheus 导出
-  - spring-boot-starter:0.2.0  # Spring Boot 自动装配与注解
+  - core:0.2.4        # 核心 API（DataStream / State / Checkpoint / Window 等抽象）
+  - runtime:0.2.4     # 运行时引擎（Redis 驱动 + 内存实现）
+  - mq:0.2.4          # Redis Streams 消息队列（消费组 / 重试 / DLQ）
+  - registry:0.2.4    # 服务注册与发现（心跳 / metadata 过滤）
+  - config:0.2.4      # 配置中心（版本化 / 历史 / 监听）
+  - state:0.2.4       # Redis 状态原语（Value/Map/List/Set）
+  - checkpoint:0.2.4  # Checkpoint 协调与存储
+  - watermark:0.2.4   # Watermark 策略与生成器
+  - window:0.2.4      # 窗口（assigner / trigger）
+  - aggregation:0.2.4 # 窗口聚合（PV/UV/TopK/分位数）
+  - table:0.2.4       # KTable（内存 + Redis 实现）
+  - join:0.2.4        # 时间窗口流流 Join
+  - cdc:0.2.4         # CDC 连接器（MySQL binlog / PostgreSQL 逻辑复制 / 轮询）
+  - sink:0.2.4        # 输出连接器（Kafka / Redis Stream/Hash/List 等）
+  - source:0.2.4      # 输入连接器（Kafka / HTTP / Redis List/Stream 等）
+  - reliability:0.2.4 # 重试 / DLQ / 去重 / 限流
+  - cep:0.2.4         # 复杂事件处理
+  - spring-boot-starter:0.2.4  # Spring Boot 自动装配与注解
   - examples          # 可运行示例（不发布，仅模块依赖）
+  - benchmark         # 基准测试（不发布，仅模块依赖）
 ```
 
 > 各模块构建脚本引用统一版本目录 `gradle/libs.versions.toml`（当前 Redisson 4.7.0、Jackson 2.17.0、Lombok 1.18.34、Spring Boot 3.2.0）。
@@ -44,7 +44,7 @@ io.github.cuihairu.redis-streaming:
 ```gradle
 dependencies {
     // 引入 Spring Boot Starter（会自动引入必需的依赖）
-    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.4'
 
     // 可选：使用官方 Redisson Starter 支持集群/哨兵模式（生产环境推荐）
     // 版本应与本仓库依赖的 Redisson 对齐（gradle/libs.versions.toml 当前 redisson = 4.7.0）
@@ -81,7 +81,7 @@ redis-streaming:
 build.gradle
 ```gradle
 dependencies {
-    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.4'
     // 版本与 gradle/libs.versions.toml 中的 redisson 保持一致（当前 4.7.0）
     implementation 'org.redisson:redisson-spring-boot-starter:4.7.0'
 }
@@ -565,7 +565,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.4'
     implementation 'org.springframework.boot:spring-boot-starter-web'
     compileOnly 'org.projectlombok:lombok:1.18.34'
     annotationProcessor 'org.projectlombok:lombok:1.18.34'
@@ -667,5 +667,5 @@ A: 检查 Redis 是否启动，地址配置是否正确
 
 ---
 
-版本：0.2.0
+版本：0.2.4
 最后更新：2026-10-05

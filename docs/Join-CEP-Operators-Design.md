@@ -5,12 +5,12 @@
 
 ## 1. 背景与问题
 
-`join` 与 `cep` 两个模块目前是**调用方驱动的纯内存工具库**：
+`join` 与 `cep` 两个模块在 Phase 1 之前是**调用方驱动的纯内存工具库**（Phase 1 已包装为 DataStream 算子，用法见 [Join.md](Join.md) / [CEP.md](CEP.md)，本节保留当时的问题陈述）：
 
 - `join.StreamJoiner`：`processLeft/processRight` 逐条喂入、同步返回配对结果，缓冲在实例内 `ConcurrentHashMap`；
 - `cep.PatternSequenceMatcher` / `PatternMatcher`：调用方在自己的消息循环里调 `process(event, timestamp)`。
 
-两者都**没有接入 `DataStream` 算子链**：用户没法写出 `env.fromMqTopic(...).keyBy(...).<join|match>` 这样的 pipeline，得自己搭消费循环、自己处理分区与生命周期。而两套执行引擎（`runtime` 的 in-memory 引擎与 `runtime` 的 Redis 引擎）都已提供统一的有状态算子底座：
+Phase 1 之前两者都**没有接入 `DataStream` 算子链**：用户没法写出 `env.fromMqTopic(...).keyBy(...).<join|match>` 这样的 pipeline，得自己搭消费循环、自己处理分区与生命周期。而两套执行引擎（`runtime` 的 in-memory 引擎与 `runtime` 的 Redis 引擎）都已提供统一的有状态算子底座：
 
 ```java
 KeyedStream.process(KeyedProcessFunction<K, I, O>)   // 双引擎均已实现
@@ -94,8 +94,9 @@ StreamJoinOperator.asKeyedProcessFunction(JoinConfig<L,R,K> cfg, JoinFunction<L,
 
 ```java
 // io.github.cuihairu.redis.streaming.cep.operator
-PatternSequenceProcessFunction.of(PatternSequence<T> pattern, Function<T, Long> timestampExtractor)
+new PatternSequenceProcessFunction<>(pattern, timestampExtractor)
                             // 产 KeyedProcessFunction<K, T, EventSequence<T>>
+// 另有 3 参重载：追加 maxTrackedKeys（0 = 不设上限）
 ```
 
 语义：

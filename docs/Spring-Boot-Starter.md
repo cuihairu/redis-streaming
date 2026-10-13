@@ -9,7 +9,7 @@ Maven 坐标 `io.github.cuihairu.redis-streaming:spring-boot-starter`(传递依�
 ### 1. 添加依赖
 
 ```groovy
-implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
+implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.4'
 ```
 
 ### 2. 启用方式(二选一)
@@ -58,7 +58,7 @@ server:
 | 类 | 属性开关(默认值) | 装配的 Bean |
 |---|---|---|
 | `RedisStreamingAutoConfiguration` | 类级 `@ConditionalOnClass(RedissonClient)` | 兜底 `RedissonClient`(`@ConditionalOnMissingBean`;单机简化配置,`password` 为空/空白时不设置密码)、`RateLimitMicrometerCollector` + `installRateLimitCollector` |
-| `RedisStreamingRegistryAutoConfiguration` | `redis-streaming.registry.enabled`(默认 `true`) | `NamingService`、`ServiceChangeListenerProcessor`、`LoadBalancer`、`ClientSelector`、`RetryPolicy`、`RedisClientMetricsReporter`、`ClientInvoker`、`ClientInvokerMetricsBinder` |
+| `RedisStreamingRegistryAutoConfiguration` | `redis-streaming.registry.enabled`(默认 `true`) | `NamingService`、`ServiceChangeListenerProcessor`、`LoadBalancer` |
 | `RedisStreamingDiscoveryAutoConfiguration` | `redis-streaming.discovery.enabled`(默认 `true`) | `ServiceConsumer`（`RedisNamingService`）——仅当容器无 `NamingService`/`ServiceConsumer` Bean 时兜底 |
 | `RedisStreamingConfigServiceAutoConfiguration` | `redis-streaming.config.enabled`(默认 `true`) | `ConfigService`(启动即 `start()`) |
 | `RedisStreamingMqAutoConfiguration` | `redis-streaming.mq.enabled`(默认 `true`) | `MqOptions`、`BrokerFactory`/`BrokerRouter`、`MessageQueueFactory`、`MessageQueueAdmin`、`dlqReplayProducer`、`dlqReplayHandler`、`DeadLetterService`/`DeadLetterAdmin`/`DeadLetterConsumer`/`DeadLetterQueueManager`、保留治理 `StreamRetentionHousekeeper`(destroyMethod=close)、Micrometer 桥(见「指标导出」)、`MqHealthIndicator` |
@@ -114,8 +114,6 @@ server:
 | `instance.ephemeral` | Boolean | `null` → 按临时实例 |
 | `instance.metadata.*` | `Map<String,String>` | `{}` |
 
-`metrics.*`(provider 指标):`enabled`(`Set<String>`,默认 `memory,cpu,application,disk,network`)、`intervals`(`Map<String,Duration>`,`{}`)、`default-interval`(Duration,`PT1M`)、`immediate-update-on-significant-change`(boolean,`true`)、`timeout`(Duration,`PT5S`)。
-
 ### `redis-streaming.discovery.*`
 
 `enabled`(boolean,`true`)、`healthy-only`(boolean,`true`)、`cache-time`(int 秒,`30`)。
@@ -127,10 +125,6 @@ server:
 ### `redis-streaming.load-balancer.*`
 
 `strategy`(String,`scored`;可选 `scored|wrr|weighted-random|consistent-hash`)、`preferred-region`(String)、`preferred-zone`(String)、`cpu-weight`(double,`1.0`)、`latency-weight`(double,`1.0`)、`memory-weight`(double,`0.0`)、`inflight-weight`(double,`0.0`)、`queue-weight`(double,`0.0`)、`error-rate-weight`(double,`0.0`)、`target-latency-ms`(double,`50.0`)、`max-cpu-percent`/`max-latency-ms`/`max-memory-percent`/`max-inflight`/`max-queue`/`max-error-rate-percent`(double,`-1` = 不限,仅 `scored` 使用)。
-
-### `redis-streaming.invoker.*`
-
-`max-attempts`(int,`3`)、`initial-delay-ms`(long,`20`)、`backoff-factor`(double,`2.0`)、`max-delay-ms`(long,`200`)、`jitter-ms`(long,`20`)。
 
 ### `redis-streaming.mq.*`(扁平键,对应 `MqProperties`)
 
@@ -248,7 +242,6 @@ public class ConfigWatch {
 | `RetentionMicrometerCollector` | `redis_streaming_mq_trim_attempts_total`/`trim_deleted_total` |
 | `CDCMetricsMicrometerBinder` | `redis.streaming.cdc.*`(11 个 gauge,tag `connector=<name>`;需 cdc 模块在 classpath 且应用注册了 `CDCManager` Bean) |
 | `RateLimitMicrometerCollector` | `redis_streaming_rl_allowed_total`/`rl_denied_total` |
-| `ClientInvokerMetricsBinder` | `client.invoker.total.{attempts,successes,failures,retries,cbOpenSkips}` |
 
 经 Spring Boot actuator 导出时，自行引入任一 Micrometer registry 实现（版本交给 Boot BOM 管理），例如：
 

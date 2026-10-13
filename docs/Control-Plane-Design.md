@@ -76,7 +76,7 @@
 
 ### 权限与审计（v1.2：starter 接入）
 
-- Spring Boot starter：`redis-streaming.control-plane.enabled=true` 自动装配 `JobControlPlane` + `JobAgent`（`autoDeploy=true` 才启动对账）；`authorizer` bean 用户优先。
+- Spring Boot starter：`redis-streaming.runtime.control-plane.enabled=true` 自动装配 `JobControlPlane`，`redis-streaming.runtime.agent.enabled=true` 再装配 `JobAgent`（启动即首轮对账）；`authorizer` bean 用户优先。
 - actor 来源：`JobControlPlane` 方法参数显式传入（运维工具/UI 负责），缺省取系统属性 `user.name`。
 
 ### secret 引用约定（已落地 2026-10-12，Security-Hardening 方案 C2）

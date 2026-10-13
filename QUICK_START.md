@@ -43,13 +43,13 @@ redis-cli ping
 ```gradle
 dependencies {
     // 方式1: 使用 Spring Boot Starter (推荐)
-    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.4'
 
     // 方式2: 按需添加模块
-    implementation 'io.github.cuihairu.redis-streaming:mq:0.2.0'
-    implementation 'io.github.cuihairu.redis-streaming:registry:0.2.0'
-    implementation 'io.github.cuihairu.redis-streaming:aggregation:0.2.0'
-    implementation 'io.github.cuihairu.redis-streaming:cep:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:mq:0.2.4'
+    implementation 'io.github.cuihairu.redis-streaming:registry:0.2.4'
+    implementation 'io.github.cuihairu.redis-streaming:aggregation:0.2.4'
+    implementation 'io.github.cuihairu.redis-streaming:cep:0.2.4'
 }
 ```
 
@@ -268,27 +268,28 @@ KTable<String, UserProfile> enriched = userTable.join(
 );
 ```
 
-### 示例 5: Prometheus 监控
+### 示例 5: 指标监控
+
+框架指标经 Micrometer `MeterRegistry` 输出，Prometheus 抓取交给 `micrometer-registry-prometheus` 或 Spring Boot Actuator（见 `docs/Metrics.md`）：
 
 ```java
-import io.github.cuihairu.redis.streaming.metrics.prometheus.*;
-import java.util.Map;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.prometheus.PrometheusConfig;
+import io.micrometer.prometheus.PrometheusMeterRegistry;
+import java.util.concurrent.TimeUnit;
 
-// 启动 Exporter (暴露 /metrics)
-try (PrometheusExporter exporter = new PrometheusExporter(9090)) {
-    PrometheusMetricCollector metrics = new PrometheusMetricCollector("myapp");
+// 手动环境：自行持有 MeterRegistry
+MeterRegistry registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
 
-    // 记录指标
-    metrics.incrementCounter("requests_total");
-    metrics.setGauge("active_connections", 42);
-    metrics.recordHistogram("request_duration_seconds", 0.25);
+// 记录指标
+Counter.builder("requests_total").register(registry).increment();
+Gauge.builder("active_connections", () -> 42).register(registry);
+Timer.builder("request_duration_seconds").register(registry).record(250, TimeUnit.MILLISECONDS);
 
-    // 带标签的指标
-    Map<String, String> tags = Map.of("method", "GET", "status", "200");
-    metrics.incrementCounter("http_requests", tags);
-
-    // 访问 http://localhost:9090/metrics 查看指标
-}
+// Spring Boot 环境：引入 micrometer-registry-prometheus + actuator 后访问 /actuator/prometheus
 ```
 
 ### 示例 6: CDC 数据捕获
@@ -413,22 +414,22 @@ config.useSingleServer()
 
 ### 5. 监控和可观测性
 
-建议启用 Prometheus 监控：
+框架指标经 Micrometer 输出，Prometheus 抓取走 `micrometer-registry-prometheus` 或 Spring Boot Actuator：
 
 ```java
-import io.github.cuihairu.redis.streaming.metrics.MetricTimer;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 
-// 在应用启动时
-PrometheusExporter exporter = new PrometheusExporter(9090);
-PrometheusMetricCollector metrics = new PrometheusMetricCollector("myapp");
+// 在应用启动时注入 MeterRegistry（Spring Boot 环境自动装配）
 
 // 在关键路径记录指标
-metrics.incrementCounter("business_operations");
+Counter.builder("business_operations").register(registry).increment();
 
-// 计时：MetricTimer.stop()/close() 会把耗时写入 collector（只记一次）
-try (MetricTimer timer = MetricTimer.start("operation_duration", metrics)) {
+// 计时
+Timer.builder("operation_duration").register(registry).record(() -> {
     // 业务逻辑
-}
+});
 ```
 
 ## 常见问题
@@ -443,8 +444,8 @@ try (MetricTimer timer = MetricTimer.start("operation_duration", metrics)) {
 
 ### Q2: 如何查看 Prometheus 指标？
 
-1. 启动 PrometheusExporter
-2. 浏览器访问 `http://localhost:9090/metrics`
+1. 引入 `micrometer-registry-prometheus` 与 `spring-boot-starter-actuator` 依赖
+2. 浏览器访问 `http://localhost:8080/actuator/prometheus`
 3. 或配置 Prometheus 服务器抓取该端点
 
 ### Q3: KTable 数据丢失怎么办？
@@ -474,7 +475,7 @@ try (MetricTimer timer = MetricTimer.start("operation_duration", metrics)) {
 2. 配置 Redis 持久化 (AOF + RDB)
 3. 监控 Redis 内存使用
 4. 设置合理的资源限制
-5. 启用 Prometheus 监控
+5. 启用指标监控（Micrometer + Actuator）
 6. 配置日志聚合系统
 
 ## 下一步

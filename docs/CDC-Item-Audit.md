@@ -20,7 +20,7 @@
 MySQL binlog ──CDCConnector──▶ CDCSource ──▶ ChangeEvent 流（item_bag + transaction 两张表）
 ```
 
-- 真实部署：`MySQLBinlogCDCConnector`（仓内自研 reader，`mysql-binlog-connector-java`，虚拟槽 `FilePosition` 位点管理）。选择自研而非 Debezium 的理由：Debezium 需要外部 Kafka + Connect 集群，运维面大；自研 reader 与本框架的 `ChangeEvent` 契约原生对齐，零额外基础设施——择最简。
+- 真实部署：`MySQLBinlogCDCConnector`（仓内自写 reader，`mysql-binlog-connector-java`，binlog 文件名 + 偏移位点管理）。选择自写而非 Debezium 的理由：Debezium 需要外部 Kafka + Connect 集群，运维面大；自写 reader 与本框架的 `ChangeEvent` 契约原生对齐，零额外基础设施——择最简。
 - 示例/测试：`SimulatedItemBinlogConnector`（同一接口，脚本化事件回放）。切换到真实库只需替换 connector 一个类，三道闸代码零改动。
 - 拓扑要求：binlog 用户需 `REPLICATION SLAVE`/`REPLICATION CLIENT` 权限；`binlog_format=ROW`、`binlog_row_image=FULL`（对账闸需要 `afterData` 全行镜像）。
 
@@ -60,7 +60,7 @@ transaction 流水（RIGHT）─┘                 ─▶ 无 peer 的 LEFT →
 - **写入顺序影响时延**：正常写入应保证流水行先于道具行落 binlog（同一 DB 事务内通常天然如此，但两行是两条 binlog event）；道具行先落会先告警、peer 到达后对平——**不是漏报，是先报后平**。
 - **join 缓冲按事件时间清理**（`stateRetentionTime`）：必须大于部署实际的最大"binlog→审计"延迟；示例里用 25h 覆盖脚本化事件时间跨度，真实部署按 binlog 积压最坏情况配置（小于窗口跨度会被 `JoinConfig.validate()` 拒绝）。
 - **对账依赖流水完整性**：若业务本身存在"改道具不走流水表"的合法路径（应存在吗？——这恰是要审计的第一件事），须先补流水或加白名单源表，否则持续误报。
-- **相位 1 边界**：join/CEP 算子的缓冲状态是分区内存态、不进 checkpoint（见 `docs/Join-CEP-Operators-Design.md`），实例重启丢的是未完成的窗口状态，可能漏掉重启瞬间的匹配——Redis runtime 部署下对账闸可配合 MQ 重放位点补扫。
+- **相位 2 起**：join/CEP 算子的缓冲状态写入 keyed state（`__operator:join:buffers` / `__operator:cep:partials`），随 checkpoint 快照持久化；实例重启后按 at-least-once 重算恢复，未完成窗口状态不再丢失（相位 1 的分区内存态边界已解除，见 `docs/Join-CEP-Operators-Design.md`）。
 
 ## 跑法
 

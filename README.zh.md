@@ -41,7 +41,7 @@ job.triggerCheckpointNow();                              // 可选：手动触�
 | 语义 | 路径 | 边界 |
 |---|---|---|
 | At-least-once | 默认 MQ 消费：处理后 ACK，失败重试/DLQ | 可能重复投递 |
-| Effectively-once（Redis 目标端） | checkpoint + defer-ack + 幂等/原子 sink（`RedisAtomicCheckpointListSink`、sink 去重、2PC） | 端到端去重，Redis 内闭环 |
+| Effectively-once（Redis 目标端） | checkpoint + defer-ack + 幂等/原子 sink（`RedisAtomicCheckpointListSink`、sink 去重、2PC） | 端到端去重全程在 Redis 内完成 |
 | Effectively-once*（跨系统） | Outbox-WAL：`RedisOutboxSink` + 异步 Dispatcher | at-least-once 派发 + 目标端按记录 id 幂等；\* 取决于 sink 能力 |
 
 设计与边界详见 `docs/exactly-once.md`。
@@ -53,7 +53,7 @@ job.triggerCheckpointNow();                              // 可选：手动触�
 ### 已实现功能
 - 流处理运行时 (Runtime)：Redis-backed runtime（Redis Streams 消费组驱动，单进程并行/水位线/窗口/checkpoint/HA 接管）+ in-memory runtime（tests/examples）；声明式作业控制面（submit / upgrade / rollback / 审计），config 支持 `secret.*` 引用（部署时解析）
 - 消息队列 (MQ)：基于 Redis Streams 的消息队列，支持消费者组、死信队列
-- 服务注册发现 (Registry)：服务注册与发现，多协议健康检查（HTTP/HTTPS/TCP/UDP/WebSocket/KCP/gRPC/Dubbo），支持 metadata 比较运算符过滤
+- 服务注册发现 (Registry)：服务注册与发现，多协议健康检查（HTTP/HTTPS/TCP/UDP/WebSocket；其余协议按 TCP 端口探测），支持 metadata 比较运算符过滤
 - 配置中心 (Config)：基于 Redis 的分布式配置管理，支持配置版本化、变更通知、历史记录；可插拔 `ContentCipher` 对 `secure.` 前缀配置落库加密
 - 状态管理 (State)：基于 Redis 的分布式状态存储，支持 ValueState、MapState、ListState、SetState
 - 检查点机制 (Checkpoint)：分布式检查点协调，支持故障恢复；两阶段提交 sink 与 Outbox-WAL 跨系统投递
@@ -65,7 +65,7 @@ job.triggerCheckpointNow();                              // 可选：手动触�
 - 可靠性保证 (Reliability)：重试机制、死信队列、Bloom Filter 去重、窗口去重
 - Sink 连接器 (Sink)：Kafka Sink、Redis Stream Sink（XADD）、Redis List/Hash Sink
 - Source 连接器 (Source)：Kafka Source、HTTP API Source、Redis List/Stream Source
-- Prometheus 监控 (Metrics)：Prometheus Exporter、指标收集器
+- 指标监控 (Metrics)：基于 Micrometer 的指标收集器；Prometheus 输出走 micrometer-registry-prometheus 或 Spring Boot Actuator
 - Spring Boot 集成：自动配置和注解支持
 - 流表二元性 (Table)：内存版和 Redis 持久化版 KTable 已实现
 - CEP：复杂事件处理，支持 Kleene closure、高级模式操作
@@ -88,7 +88,7 @@ job.triggerCheckpointNow();                              // 可选：手动触�
 - 连接器抽象（StreamSource, StreamSink）
 - 工具类（InstanceIdGenerator, SystemUtils）
 
-关键类：`DataStream.java`, `KeyedStream.java`, `State.java` (27 个文件)
+关键类：`DataStream.java`, `KeyedStream.java`, `State.java` (29 个文件)
 
 #### runtime - 流处理运行时引擎
 流处理运行时执行引擎。
@@ -159,7 +159,7 @@ Retention 与 ACK 删除策略（简述）
 - 负载均衡支持（基于权重、CPU、延迟等 metadata）
 - 临时/永久实例管理
 
-关键类：`RedisNamingService.java`, `RedisServiceProvider.java`, `RedisServiceConsumer.java`, `RegistryLuaScriptExecutor.java` (68 个文件)
+关键类：`RedisNamingService.java`, `RedisServiceProvider.java`, `RedisServiceConsumer.java`, `RegistryLuaScriptExecutor.java` (44 个文件)
 
 Metadata 过滤示例：
 ```java
@@ -186,7 +186,7 @@ List<ServiceInstance> instances =
 - 配置监听器（自动更新、热加载）
 - 配置历史查询（保留最近 N 个版本）
 
-关键类：`ConfigService.java`, `RedisConfigService.java`, `ConfigChangeListener.java` (9 个文件)
+关键类：`ConfigService.java`, `RedisConfigService.java`, `ConfigChangeListener.java` (10 个文件)
 
 配置管理示例：
 ```java
@@ -297,7 +297,7 @@ KTable 和 KStream，支持流表互转和表操作。
 - 状态缓冲（Redis 存储）
 - Join 窗口管理
 
-关键类：`StreamJoiner.java`, `JoinConfig.java`, `JoinWindow.java` (6 个文件)
+关键类：`StreamJoiner.java`, `JoinConfig.java`, `JoinWindow.java` (10 个文件)
 
 #### cdc - 变更数据捕获
 从数据库捕获变更事件，支持多种数据源。
@@ -339,10 +339,11 @@ KTable 和 KStream，支持流表互转和表操作。
 - FileSource - 文件数据源
 - GeneratorSource - 测试数据生成
 - RedisListSource - Redis List 数据源
+- RedisStreamSource - Redis Stream 数据源（XREADGROUP 消费组）
 - HttpApiSource - HTTP API 轮询数据源
 - KafkaSource - Kafka 数据源
 
-关键类：`KafkaSource.java`, `HttpApiSource.java`, `RedisListSource.java`, `CollectionSource.java`
+关键类：`KafkaSource.java`, `HttpApiSource.java`, `RedisListSource.java`, `RedisStreamSource.java`, `CollectionSource.java`
 
 ### Tier 4: 高级功能层
 
@@ -405,6 +406,15 @@ Spring Boot 自动配置和集成。
 
 关键类：`ServiceRegistryExample.java`, `CustomPrefixExample.java`, `MessageQueueExample.java`, `RateLimitExample.java`, `StreamAggregationExample.java`, `ComprehensiveStreamingExample.java`
 
+#### benchmark - 基准测试
+面向真实 Redis 的吞吐与 checkpoint 耗时基准（不发布）。
+
+职责：
+- MQ 吞吐基准（消息数、payload 大小可配）
+- Checkpoint 耗时基准（checkpoint 间隔可配）
+
+关键类：`BenchmarkRunner.java`, `MqThroughputBenchmark.java`, `CheckpointDurationBenchmark.java`
+
 ## 快速开始
 
 ### 1. 环境要求
@@ -419,32 +429,32 @@ Spring Boot 自动配置和集成。
 ```gradle
 dependencies {
     // 消息队列
-    implementation 'io.github.cuihairu.redis-streaming:mq:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:mq:0.2.4'
 
     // 服务注册发现（支持 metadata 比较运算符过滤）
-    implementation 'io.github.cuihairu.redis-streaming:registry:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:registry:0.2.4'
 
     // 配置中心（版本化配置、变更通知）
-    implementation 'io.github.cuihairu.redis-streaming:config:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:config:0.2.4'
 
     // 状态管理
-    implementation 'io.github.cuihairu.redis-streaming:state:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:state:0.2.4'
 
     // 检查点
-    implementation 'io.github.cuihairu.redis-streaming:checkpoint:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:checkpoint:0.2.4'
 
     // 窗口聚合
-    implementation 'io.github.cuihairu.redis-streaming:aggregation:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:aggregation:0.2.4'
 
     // CDC
-    implementation 'io.github.cuihairu.redis-streaming:cdc:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:cdc:0.2.4'
 }
 ```
 
 Spring Boot 集成：
 ```gradle
 dependencies {
-    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.4'
     // 自动引入 registry、config、mq 等核心模块
 }
 ```
@@ -674,7 +684,7 @@ List<ChangeEvent> events = connector.poll();
   - 消费者组、DLQ、异步支持
 - [x] registry：服务注册发现
   - 服务注册、发现、健康检查
-  - 多协议支持（HTTP/HTTPS/TCP/WebSocket/gRPC）
+  - 多协议支持（HTTP/HTTPS/TCP/UDP/WebSocket 健康检查；其余协议按 TCP 端口探测）
   - Metadata 比较运算符过滤（`>`, `>=`, `<`, `<=`, `!=`, `==`）
   - 基于权重、CPU、延迟等 metadata 的负载均衡
 - [x] config：配置中心

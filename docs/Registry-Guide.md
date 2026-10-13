@@ -8,7 +8,7 @@
 
 ```gradle
 dependencies {
-    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.4'
 }
 ```
 
@@ -35,12 +35,6 @@ redis-streaming:
     healthy-only: true       # 默认 true
   load-balancer:
     strategy: scored         # scored | wrr | weighted-random | consistent-hash
-  invoker:
-    max-attempts: 3          # 默认 3
-    initial-delay-ms: 20
-    backoff-factor: 2.0
-    max-delay-ms: 200
-    jitter-ms: 20
 ```
 
 注入使用：

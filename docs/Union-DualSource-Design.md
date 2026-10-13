@@ -41,7 +41,7 @@
 ## 4. 推荐路径
 
 1. **第一步（小原语，先评审）**：`DataStream.union(DataStream<? extends T>)` 只做内存引擎（迭代器交错），Redis 引擎默认抛不支持并写明「用 join topic 模式」——原语先立契约，Redis 落点指向 U3；
-2. **第二步（语法糖，U3 展开）**：`DataStream.join(other, config, fn)` 在 Redis 引擎展开为 U3 三段编排（自动生成 join topic 名、信封 map、合流消费 pipeline），内存引擎展开为 map + union + keyBy + 算子；join topic 生命周期跟随 job（trim 策略复用 MQ 既有 autoTrim）；
+2. **第二步（语法糖，U3 展开）**：`DataStream.join(other, config, fn)` 在 Redis 引擎展开为 U3 三段编排（自动生成 join topic 名、信封 map、合流消费 pipeline），内存引擎展开为 map + union + keyBy + 算子；join topic 生命周期跟随 job（trim 走 MQ 的 stream 保留治理）；
 3. **第三步（Phase 3 合并设计）**：Redis 引擎原生多源读取（U1 的 Redis 侧）与 event-time 水位对齐一起做——那才是免中转 topic 的最终形态；U3 的语法糖届时切换底层实现，用户 API 不变。
 
 ## 5. 未实施清单（本批留档，待评审后另批实施）

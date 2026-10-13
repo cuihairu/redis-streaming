@@ -18,7 +18,7 @@
 - 执行步骤：
   1. `actions/checkout@v6`（`fetch-depth: 0`，供 axion-release 读取标签）
   2. `actions/setup-java@v5`（Temurin 17，`cache: gradle`）
-  3. `docker compose -f docker-compose.test.yml up -d`，等待 Redis/MySQL/PostgreSQL/Elasticsearch 共 4 个服务 healthy（`timeout 180`）
+  3. `docker compose -f docker-compose.test.yml up -d`，等待 Redis/MySQL/PostgreSQL/Elasticsearch/Kafka 共 5 个服务 healthy（`timeout 240`）
   4. `./gradlew clean check jacocoRootReport --warning-mode=all`（单测 + 集成测试 + 聚合覆盖率门禁）
   5. `codecov/codecov-action@v5` 上传 `build/reports/jacoco/jacocoRootReport/jacocoRootReport.xml`（`fail_ci_if_error: false`）
   6. 收尾 `docker compose -f docker-compose.test.yml down -v`

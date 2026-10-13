@@ -5,7 +5,7 @@
 ## 现状（事实盘点）
 
 1. **唯一的 main 侧 `Redisson.create`**：`spring-boot-starter` `RedisStreamingAutoConfiguration`，`useSingleServer()` 只设 address/database/超时/连接池 + 可选 `setPassword`（带 `@SuppressWarnings("deprecation")`，注释说明 Redisson 4.x 推荐 `CredentialsResolver`）。
-2. **ACL 用户名传不进去**：`RedisStreamingProperties.RedisProperties` 只有 `address/database/password/...`，没有 `username`——Redis 6+ ACL（`default` 之外的用户）无法通过 starter 配置使用。
+2. **ACL 用户名（v1 已落地 2026-10-11）**：`RedisStreamingProperties.RedisProperties.username` 已支持（空/空白不设），`${env:VAR}` 惰性凭证解析同批落地；剩余 v2 为日志脱敏护栏。
 3. **TLS 无一等支持**：没有 `rediss://` 文档与示例，没有 truststore/peer 验证相关配置暴露；用户唯一路径是自带 `redisson-spring-boot-starter`（javadoc 里提了，但没有 TLS 具体指引）。
 4. **集群/哨兵同样只靠"用官方 starter"一句话**：框架自身配置模型只有单机。
 5. **配置中心内容明文**：`config` 模块把配置内容原样存 Redis（String/Hash），无加密、无敏感项标记。

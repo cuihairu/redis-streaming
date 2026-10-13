@@ -8,7 +8,7 @@
 
 | 设施 | 位置 | 形态 | 失败语义 |
 | --- | --- | --- | --- |
-| 投递重试 | `mq.retry.RetryPolicy`（接口：`getMaxAttempts` / `nextBackoffMs`）+ `ExponentialBackoffRetryPolicy` | 投递层重试决策，配 lease/pending 接管 | 未达上限重投，达上限转死信 |
+| 投递重试 | `mq.retry.DeliveryRetryPolicy`（接口：`getMaxAttempts` / `nextBackoffMs`）+ `ExponentialBackoffRetryPolicy` | 投递层重试决策，配 lease/pending 接管 | 未达上限重投，达上限转死信 |
 | 投递死信 | `mq.dlq` 包（`DeadLetterService` / `RedisDeadLetterService` / `DeadLetterConsumer` / `ReplayHandler` / `DeadLetterAdmin`）+ `DeadLetterQueueManager` | Redis stream 持久化 | 写成功才 ack；**写失败则保持 PEL 未 ack 等待重投（不丢事件）** |
 | 用户侧重试 | `reliability.RetryExecutor` + `RetryPolicy`（POJO 配置：maxAttempts/initialDelay/backoff） | 对 `Function` 的 JVM 内同步重试 | 用尽后抛给调用方 |
 | 用户侧死信 | `reliability.DeadLetterQueue`（`ConcurrentLinkedQueue` + `FailedElement`，`Serializable`，maxSize 封顶） | **进程内内存** | 崩溃即丢；仅适合 JVM 内工具链 |
@@ -33,15 +33,15 @@
 - 在 MQ 消费循环里调 `RetryExecutor` 包业务函数再自己管 PEL：PEL/replay 语义必须只有一份（mq 的）。
 - 把 `reliability.DeadLetterQueue` 接进 MQ 投递路径：内存队列与持久化 DLQ 语义冲突。
 - Sink 端同时挂 `Deduplicator` 与幂等 sink：两层去重键不同源，反而制造重复或漏判。
-- 用 `reliability.RetryPolicy`（配置 POJO）驱动 mq 投递重试：两者是不同类型，mq 侧只认 `mq.retry.RetryPolicy` 接口。
+- 用 `reliability.RetryPolicy`（配置 POJO）驱动 mq 投递重试：两者是不同类型，mq 侧只认 `mq.retry.DeliveryRetryPolicy` 接口。
 
 ## 已知债（不在本批处理）
 
-- **`RetryPolicy` 同名不同型**：`mq.retry.RetryPolicy`（接口）与 `reliability.RetryPolicy`（配置 POJO）同名，检索与阅读易混。建议 v2 把 mq 侧改名为 `DeliveryRetryPolicy`——破坏性重命名，与"指标体系统一"同一 major 周期处理（见 [Metrics-Unification-Design.md](docs/Metrics-Unification-Design.md)）。
+- **`RetryPolicy` 同名不同型**：已消解——mq 侧 2026-10-12 改名为 `DeliveryRetryPolicy`（`mq/src/main/java/.../retry/DeliveryRetryPolicy.java` javadoc 记录更名），`reliability.RetryPolicy` 配置 POJO 保留原名（指标统一方案见 [Metrics-Unification-Design.md](Metrics-Unification-Design.md)）。
 - `reliability` 的 `RetryPolicy` 是 `@Builder` 配置而 mq 侧是接口，统一为"接口 + 配置"同型需要 API 评审，本批不动。
 
 ## 非目标
 
 - 本批不合并/不删除任何重试或死信类（保留向后兼容）。
-- 不引入新的重试调度组件（背压式重试调度属多租户配额设计范畴，见 [Multi-Tenancy-Design.md](docs/Multi-Tenancy-Design.md)）。
+- 不引入新的重试调度组件（背压式重试调度属多租户配额设计范畴，见 [Multi-Tenancy-Design.md](Multi-Tenancy-Design.md)）。
 - 不改变 DLQ 写失败的"不 ack 等重投"语义。

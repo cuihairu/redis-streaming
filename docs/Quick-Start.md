@@ -50,9 +50,9 @@ docker compose up -d
 可用的示例入口见 [Examples](/Examples)。
 
 ## 5) Spring Boot 集成（最小配置）
-Gradle 依赖（当前 0.2.0）：
+Gradle 依赖（当前 0.2.4）：
 ```gradle
-implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
+implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.4'
 ```
 
 在应用中启用：

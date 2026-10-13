@@ -42,5 +42,5 @@ docker compose -f docker-compose.minimal.yml down
 
 ## 3) CI 提示
 - 确认 Java 17（`java -version`）；CI 使用 `actions/setup-java@v5` + Temurin 17。
-- CI 先起 `docker-compose.test.yml` 并等待 4 个服务 healthy（timeout 180s），再执行 `./gradlew clean check jacocoRootReport`。
+- CI 先起 `docker-compose.test.yml` 并等待 5 个服务 healthy（Redis/MySQL/PostgreSQL/Elasticsearch/Kafka，timeout 240s），再执行 `./gradlew clean check jacocoRootReport`。
 - 某些 Redis 时序敏感用例可适当增加等待或重试，详见 [GitHub Actions](/GitHub-Actions)。

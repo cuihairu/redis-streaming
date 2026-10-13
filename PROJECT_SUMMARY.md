@@ -2,7 +2,7 @@
 
 `redis-streaming` is a multi-module (Gradle) Java 17 project that provides a pragmatic set of streaming building blocks on top of Redis (and optional external systems like Kafka / MySQL / PostgreSQL).
 
-The goal is to keep the core APIs small and composable, while shipping infrastructure modules (MQ / registry / config / state / reliability / metrics) that can be adopted independently.
+The goal is to keep the core APIs small and composable, while shipping infrastructure modules (MQ / registry / config / state / reliability) that can be adopted independently.
 
 ## Quick Links
 - Start here: `README.md`, `QUICK_START.md`
@@ -37,9 +37,9 @@ The goal is to keep the core APIs small and composable, while shipping infrastru
 - `source`: Sources (Kafka, HTTP API, Redis List/Stream, file, collection, generator).
 - `sink`: Sinks (Kafka, Redis Stream/Hash/List, file, print, collection).
 - `reliability`: Retry policies/executor, DLQ services, deduplication, rate-limiters.
-- `metrics`: Prometheus exporter + metrics collectors.
 - `spring-boot-starter`: Spring Boot auto-configuration & operational integration.
 - `examples`: Runnable demos (not published as a library artifact).
+- `benchmark`: Benchmarks (not published as a library artifact).
 
 ## Runtime Status (Intentional Scope)
 `runtime` includes two runtimes with intentionally different scope:

@@ -4,7 +4,7 @@
 
 ## 现状（事实盘点）
 
-1. **零租户概念**：代码库无 `tenant` 字段/概念；`JobSpec`（`jobName/pipelineFactory/config/parallelism/version/description/updatedBy/updatedAt/specHash`）不带租户。
+1. **租户概念（v1 已落地 2026-10-11）**：`JobSpec.tenant`（默认 `StreamKeys.DEFAULT_TENANT`）、`MqOptions.tenant`、`AuditEntry.tenant`、`TenantQuotaPolicy` 均已存在；本设计剩余项（线程/内存/in-flight 配额、指标 tenant 维度、其余模块 key 前缀租户注入）待实施。
 2. **全局静态前缀**：`mq` 的 `StreamKeys.configure(controlPrefix, streamPrefix)` 是 `static volatile` 全局量（默认 `streaming:mq` / `stream:topic`），所有 MQ key（分区流、DLQ、meta、lease、retry、commit frontier、topics registry）由它派生。**多作业共用 JVM 时是全局配置；跨 JVM 部署时若两个应用不 configure 不同前缀，同名 topic 直接共用同一条 stream**。
 3. **runtime key**：checkpoint/dedup 走 `streaming:runtime:*` 前缀（可配）；keyed state key 带 job 维度（`{stateKeyPrefix}:{job}:...`），job 级隔离天然存在，但 stateKeyPrefix 本身是全局静态。
 4. **背压/配额粒度**：`maxInFlight` 等内存闸门是 per-consumer-instance 的；**没有任何跨租户的速率/容量配额**（无生产速率限制、无 stream 长度配额——autoTrim 只按 topic 配置裁剪）。
