@@ -60,7 +60,10 @@ import java.util.function.Supplier;
  * {@code window-N} snapshot source: checkpoints cut a consistent view of the accumulated
  * buckets (per-record fence, see {@link #drive}), and restore is FRESH by default — restored
  * buckets are kept for inspection and never injected, because in-memory sources replay their
- * full history (see docs/InMemory-Operator-State-Lifecycle-Design.md).</p>
+ * full history (see docs/InMemory-Operator-State-Lifecycle-Design.md). The state rides as a
+ * field of the per-consumption iterator, not a lambda local: javac 17 (the build's target JDK)
+ * fails to resolve a lambda-body local captured by the anonymous iterator class, even though
+ * later compilers accept it.</p>
  */
 final class InMemoryWindowedStream<K, T> implements WindowedStream<K, T> {
 
@@ -102,136 +105,126 @@ final class InMemoryWindowedStream<K, T> implements WindowedStream<K, T> {
     @Override
     public DataStream<T> reduce(ReduceFunction<T> reducer) {
         Objects.requireNonNull(reducer, "reducer");
-        return InMemoryDataStream.fromRecords(() -> {
+        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
             // One operator state per consumption (per sink): the bucket map lives and registers
             // per drive run, exactly as the method-local map always has.
-            OperatorState<T> op = new OperatorState<>();
-            return new Iterator<>() {
-                private Iterator<InMemoryRecord<T>> out;
+            private final OperatorState<T> op = new OperatorState<>();
+            private Iterator<InMemoryRecord<T>> out;
 
-                @Override
-                public boolean hasNext() {
-                    if (out == null) {
-                        out = reduceAll(reducer, op).iterator();
-                    }
-                    return out.hasNext();
+            @Override
+            public boolean hasNext() {
+                if (out == null) {
+                    out = reduceAll(reducer, op).iterator();
                 }
+                return out.hasNext();
+            }
 
-                @Override
-                public InMemoryRecord<T> next() {
-                    if (!hasNext()) {
-                        throw new NoSuchElementException();
-                    }
-                    return out.next();
+            @Override
+            public InMemoryRecord<T> next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
                 }
-            };
+                return out.next();
+            }
         });
     }
 
     @Override
     public <R> DataStream<R> aggregate(AggregateFunction<T, R> aggregateFunction) {
         Objects.requireNonNull(aggregateFunction, "aggregateFunction");
-        return InMemoryDataStream.fromRecords(() -> {
-            OperatorState<R> op = new OperatorState<>();
-            return new Iterator<>() {
-                private Iterator<InMemoryRecord<R>> out;
+        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
+            private final OperatorState<R> op = new OperatorState<>();
+            private Iterator<InMemoryRecord<R>> out;
 
-                @Override
-                public boolean hasNext() {
-                    if (out == null) {
-                        out = aggregateAll(aggregateFunction, op).iterator();
-                    }
-                    return out.hasNext();
+            @Override
+            public boolean hasNext() {
+                if (out == null) {
+                    out = aggregateAll(aggregateFunction, op).iterator();
                 }
+                return out.hasNext();
+            }
 
-                @Override
-                public InMemoryRecord<R> next() {
-                    if (!hasNext()) {
-                        throw new NoSuchElementException();
-                    }
-                    return out.next();
+            @Override
+            public InMemoryRecord<R> next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
                 }
-            };
+                return out.next();
+            }
         });
     }
 
     @Override
     public <R> DataStream<R> apply(WindowFunction<K, T, R> windowFunction) {
         Objects.requireNonNull(windowFunction, "windowFunction");
-        return InMemoryDataStream.fromRecords(() -> {
-            OperatorState<R> op = new OperatorState<>();
-            return new Iterator<>() {
-                private Iterator<InMemoryRecord<R>> out;
+        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
+            private final OperatorState<R> op = new OperatorState<>();
+            private Iterator<InMemoryRecord<R>> out;
 
-                @Override
-                public boolean hasNext() {
-                    if (out == null) {
-                        out = applyAll(windowFunction, op).iterator();
-                    }
-                    return out.hasNext();
+            @Override
+            public boolean hasNext() {
+                if (out == null) {
+                    out = applyAll(windowFunction, op).iterator();
                 }
+                return out.hasNext();
+            }
 
-                @Override
-                public InMemoryRecord<R> next() {
-                    if (!hasNext()) {
-                        throw new NoSuchElementException();
-                    }
-                    return out.next();
+            @Override
+            public InMemoryRecord<R> next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
                 }
-            };
+                return out.next();
+            }
         });
     }
 
     @Override
     public DataStream<T> sum(Function<T, ? extends Number> fieldSelector) {
         Objects.requireNonNull(fieldSelector, "fieldSelector");
-        return InMemoryDataStream.fromRecords(() -> {
-            OperatorState<T> op = new OperatorState<>();
-            return new Iterator<>() {
-                private Iterator<InMemoryRecord<T>> out;
+        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
+            private final OperatorState<T> op = new OperatorState<>();
+            private Iterator<InMemoryRecord<T>> out;
 
-                @Override
-                public boolean hasNext() {
-                    if (out == null) {
-                        out = sumAll(fieldSelector, op).iterator();
-                    }
-                    return out.hasNext();
+            @Override
+            public boolean hasNext() {
+                if (out == null) {
+                    out = sumAll(fieldSelector, op).iterator();
                 }
+                return out.hasNext();
+            }
 
-                @Override
-                public InMemoryRecord<T> next() {
-                    if (!hasNext()) {
-                        throw new NoSuchElementException();
-                    }
-                    return out.next();
+            @Override
+            public InMemoryRecord<T> next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
                 }
-            };
+                return out.next();
+            }
         });
     }
 
     @Override
     public DataStream<Long> count() {
-        return InMemoryDataStream.fromRecords(() -> {
-            OperatorState<Long> op = new OperatorState<>();
-            return new Iterator<>() {
-                private Iterator<InMemoryRecord<Long>> out;
+        return InMemoryDataStream.fromRecords(() -> new Iterator<>() {
+            private final OperatorState<Long> op = new OperatorState<>();
+            private Iterator<InMemoryRecord<Long>> out;
 
-                @Override
-                public boolean hasNext() {
-                    if (out == null) {
-                        out = countAll(op).iterator();
-                    }
-                    return out.hasNext();
+            @Override
+            public boolean hasNext() {
+                if (out == null) {
+                    out = countAll(op).iterator();
                 }
+                return out.hasNext();
+            }
 
-                @Override
-                public InMemoryRecord<Long> next() {
-                    if (!hasNext()) {
-                        throw new NoSuchElementException();
-                    }
-                    return out.next();
+            @Override
+            public InMemoryRecord<Long> next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
                 }
-            };
+                return out.next();
+            }
         });
     }
 
