@@ -631,6 +631,18 @@ connector.start().join();
 List<ChangeEvent> events = connector.poll();
 ```
 
+
+## 本地测试口径
+
+CI 与本地开发按改动面三路分流——改一行文档不该全量编译。
+
+1. **文档改动**（`*.md`、`docs/**`、图片）：不编译。主 CI workflow 的
+   `paths-ignore` 已跳过这些路径。
+2. **代码改动**：只跑改动子集，不全量。
+   - `./gradlew :<改动模块>:test`
+3. **全量**（`./gradlew clean check jacocoRootReport`）：仅以下情形触发——build.gradle / settings.gradle / gradle.properties、
+   `.github/**`、Docker/Compose 配置、发布前。
+
 ## Tech Stack
 
 ### Core Dependencies
