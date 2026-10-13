@@ -2,14 +2,11 @@
 
 ## 未完成
 
-- [ ] 内存引擎窗口累加器注册进检查点协调器，依赖算子生命周期契约设计
-- [x] 两引擎接入 processing-time 窗口定时器，Trigger.onProcessingTime 已接线（2026-10-13）
-- [x] 检查点协议 v2：逐记录屏障，消除单记录多次状态写被快照劈开（2026-10-13）
-- [ ] Redis 引擎 unaligned checkpoint 方案评审
+- [ ] 内存引擎窗口累加器注册进检查点协调器：算子生命周期契约已落稿（docs/InMemory-Operator-State-Lifecycle-Design.md），待评审
+- [ ] Redis 引擎 unaligned checkpoint 方案评审（设计见 docs/Checkpoint-Barrier-Design.md 方案 A③，待评审）
 - [ ] DataStream.join(other) 语法糖：union/双源汇合原语落地，设计见 docs/Union-DualSource-Design.md，待评审
-- [ ] join/cep Phase 3：引擎级双源 pipeline、event-time 水位对齐、retract 语义
-- [ ] 多租户 v2：线程/内存/in-flight 配额、指标 tenant 维度、registry/config/state/checkpoint/cdc/sink 前缀租户注入、租户级迁移与运维 CLI，设计见 docs/Multi-Tenancy-Design.md
-- [x] 安全 v2 收尾：日志脱敏护栏 LogRedaction 落地，审计与 specHash 脱敏已落地（2026-10-13）
+- [ ] join/cep Phase 3：引擎级双源 pipeline、event-time 水位对齐、retract 语义（设计标注远期，与 P4 动态伸缩合并设计）
+- [ ] 多租户 v2：线程/内存/in-flight 配额、指标 tenant 维度、registry/config/state/checkpoint/cdc/sink 前缀租户注入、租户级迁移与运维 CLI，设计见 docs/Multi-Tenancy-Design.md（配额与 CLI 无规格；指标 tenant 维度需破坏性改 StreamingMetricsCollector SPI）
 
 ## 已完成
 
@@ -68,3 +65,9 @@
 - [x] config 接口收敛：ConfigService 唯一接口，删 ConfigManager/ConfigCenter/RedisConfigCenter
 - [x] CDC 拉取模型修复：调度器交付 listener，snapshot 语义对齐
 - [x] 双引擎公共抽象：决策不定义，公开面交集仅 3 方法（2026-10-11 拍板）
+
+### 检查点协议与窗口运行时
+
+- [x] 两引擎接入 processing-time 窗口定时器，Trigger.onProcessingTime 已接线（commit 258b694，19 测试）
+- [x] 检查点协议 v2：逐记录屏障，消除单记录多次状态写被快照劈开（commit 431572b，1 测试）
+- [x] 安全 v2 收尾：日志脱敏护栏 LogRedaction 落地，审计与 specHash 脱敏已落地（commit d639ad4，8 测试）
