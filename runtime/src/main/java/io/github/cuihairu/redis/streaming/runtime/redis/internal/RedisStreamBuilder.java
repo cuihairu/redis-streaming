@@ -584,6 +584,8 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                                 windowDueKey(pid, stateName), StringCodec.INSTANCE);
                                         fireDueWindows(flushDue, flushWatermark, pid, stateName,
                                                 bucketTriggers, flushHandler, Integer.MAX_VALUE);
+                                        fireDueWindowsByProcessingTime(flushDue, System.currentTimeMillis(),
+                                                pid, stateName, bucketTriggers, flushHandler, Integer.MAX_VALUE);
                                     } catch (Exception e) {
                                         log.warn("Idle flush window drain failed (jobName={}, topic={}, group={}, op={}, p={})",
                                                 config.getJobName(), topic, consumerGroup, stateName, pid, e);
@@ -595,6 +597,12 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                         }
                         fireDueWindows(due, watermark, partitionId, stateName,
                                 bucketTriggers, fireHandler, Math.max(1, config.getWindowMaxFiresPerRecord()));
+                        // Processing-time sweep: the Redis engine's processing-time clock is the
+                        // wall clock, so a bucket whose close time has passed fires here via the
+                        // trigger's onProcessingTime instead of waiting for the watermark.
+                        fireDueWindowsByProcessingTime(due, System.currentTimeMillis(), partitionId,
+                                stateName, bucketTriggers, fireHandler,
+                                Math.max(1, config.getWindowMaxFiresPerRecord()));
                     } finally {
                         stateStore.clearCurrentKey();
                         stateStore.clearCurrentPartitionId();
@@ -1052,6 +1060,60 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                         // its original close score so the emission is retried by the next fire
                         // sweep. The emitter kept the window state (purge only happens after a
                         // successful emit), so the retry fires the complete window.
+                        due.add(entry.getScore(), entry.getValue());
+                        throw e;
+                    }
+                    bucketTriggers.remove(triggerKey);
+                }
+            }
+
+            /**
+             * Drains due windows whose close score is within the current wall clock, consulting
+             * each bucket trigger's {@code onProcessingTime}. This is the Redis engine's
+             * processing-time fire path: a
+             * {@link io.github.cuihairu.redis.streaming.window.triggers.ProcessingTimeTrigger}
+             * (or any trigger that answers FIRE/FIRE_AND_PURGE from {@code onProcessingTime})
+             * closes its window here rather than waiting for the watermark. Triggers that answer
+             * CONTINUE (the stock {@code EventTimeTrigger}) are re-queued at their original close
+             * score, so event-time firing is untouched.
+             */
+            private void fireDueWindowsByProcessingTime(RScoredSortedSet<String> due,
+                                                        long now,
+                                                        int partitionId,
+                                                        String stateName,
+                                                        Map<String, WindowAssigner.Trigger<V>> bucketTriggers,
+                                                        WindowFireHandler handler,
+                                                        int maxFires) throws Exception {
+                for (int i = 0; i < maxFires; i++) {
+                    org.redisson.client.protocol.ScoredEntry<String> first = due.firstEntry();
+                    if (first == null || first.getScore() > now) {
+                        return;
+                    }
+                    org.redisson.client.protocol.ScoredEntry<String> entry = due.pollFirstEntry();
+                    if (entry == null) {
+                        return; // raced with a concurrent drain
+                    }
+                    if (entry.getValue() == null || entry.getValue().isBlank()) {
+                        continue; // vanished/raced member — drop it, never fire a garbage window
+                    }
+                    ParsedWindow pw = parseWindow(entry.getValue());
+                    String triggerKey = partitionId + D + entry.getValue();
+                    WindowAssigner.Trigger<V> trigger = bucketTriggers.computeIfAbsent(
+                            triggerKey, k -> assigner.getDefaultTrigger());
+                    WindowAssigner.TriggerResult result = trigger.onProcessingTime(now,
+                            new io.github.cuihairu.redis.streaming.window.TimeWindow(pw.start, pw.end));
+                    if (result == WindowAssigner.TriggerResult.CONTINUE) {
+                        due.add(entry.getScore(), entry.getValue());
+                        return;
+                    }
+                    if (result == WindowAssigner.TriggerResult.PURGE) {
+                        purgeWindowState(stateName, entry.getValue());
+                        bucketTriggers.remove(triggerKey);
+                        continue;
+                    }
+                    try {
+                        handler.fire(entry.getValue(), pw.start, pw.end, true);
+                    } catch (Exception e) {
                         due.add(entry.getScore(), entry.getValue());
                         throw e;
                     }

@@ -39,8 +39,9 @@ import java.util.function.Supplier;
  * {@code window} operator) buckets whose end the current watermark already passed close
  * mid-stream through the same {@code onEventTime} callback — that is what makes event-time
  * firing possible before an unbounded input ends.
- * {@link WindowAssigner.Trigger#onProcessingTime} is never invoked — the in-memory engine has
- * no processing-time timers.</p>
+ * {@link WindowAssigner.Trigger#onProcessingTime} is invoked by
+ * {@link #closeReachedWindowsByProcessingTime}, which fires every bucket whose window end the
+ * current record's timestamp has passed (the in-memory engine's processing-time clock).</p>
  *
  * <p>Accumulation is incremental: {@code reduce} / {@code sum} / {@code count} /
  * {@code aggregate} keep a per-bucket accumulator (fold value, running total, counter,
@@ -300,6 +301,7 @@ final class InMemoryWindowedStream<K, T> implements WindowedStream<K, T> {
             if (watermarkState != null) {
                 closeReachedWindows(watermarkState.getWatermark(), buckets, rawComputer, out);
             }
+            closeReachedWindowsByProcessingTime(record.timestamp(), buckets, rawComputer, out);
         }
         // Input exhausted: the effective watermark is +inf. Give every remaining bucket a
         // final onEventTime callback at the window end, then flush what is left.
@@ -330,6 +332,39 @@ final class InMemoryWindowedStream<K, T> implements WindowedStream<K, T> {
             }
             Bucket<T, R> bucket = entry.getValue();
             WindowAssigner.TriggerResult result = bucket.trigger.onEventTime(wk.end, wk.window());
+            if (result == WindowAssigner.TriggerResult.FIRE
+                    || result == WindowAssigner.TriggerResult.FIRE_AND_PURGE) {
+                fire(wk, bucket, rawComputer, out);
+            }
+            if (result == WindowAssigner.TriggerResult.FIRE_AND_PURGE
+                    || result == WindowAssigner.TriggerResult.PURGE) {
+                it.remove();
+            }
+        }
+    }
+
+    /**
+     * Processing-time sweep. The in-memory engine has no wall clock of its own: its
+     * processing-time clock is the timestamp of the record currently being processed (the same
+     * contract {@code InMemoryKeyedStream} uses for {@code KeyedProcessFunction} timers), so a
+     * bucket fires here once a record's timestamp passes its window end. This is the only
+     * mid-stream fire path when no {@link WatermarkState} is present.
+     */
+    private <R> void closeReachedWindowsByProcessingTime(long processingTime,
+                                                        Map<WindowKey<K>, Bucket<T, R>> buckets,
+                                                        FireComputer<K, T, R> rawComputer,
+                                                        List<InMemoryRecord<R>> out) {
+        if (processingTime == Long.MIN_VALUE) {
+            return;
+        }
+        for (Iterator<Map.Entry<WindowKey<K>, Bucket<T, R>>> it = buckets.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<WindowKey<K>, Bucket<T, R>> entry = it.next();
+            WindowKey<K> wk = entry.getKey();
+            if (wk.end > processingTime) {
+                continue;
+            }
+            Bucket<T, R> bucket = entry.getValue();
+            WindowAssigner.TriggerResult result = bucket.trigger.onProcessingTime(processingTime, wk.window());
             if (result == WindowAssigner.TriggerResult.FIRE
                     || result == WindowAssigner.TriggerResult.FIRE_AND_PURGE) {
                 fire(wk, bucket, rawComputer, out);

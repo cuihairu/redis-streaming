@@ -260,6 +260,105 @@ class InMemoryWindowedStreamTriggerTest {
     }
 
     @Test
+    void processingTimeTriggerFiresWindowWhenRecordTimestampPassesWindowEnd() {
+        List<KeyedRecord<String, Integer>> records = List.of(
+                new KeyedRecord<>("k", 1, 10L),
+                new KeyedRecord<>("k", 2, 20L),
+                new KeyedRecord<>("k", 3, 150L)
+        );
+
+        List<Long> ptCalls = new ArrayList<>();
+        List<Integer> results = new ArrayList<>();
+        windowed(() -> new WindowAssigner.Trigger<Integer>() {
+            @Override
+            public WindowAssigner.TriggerResult onElement(Integer e, long ts, Window w) {
+                return WindowAssigner.TriggerResult.CONTINUE;
+            }
+
+            @Override
+            public WindowAssigner.TriggerResult onProcessingTime(long time, Window w) {
+                ptCalls.add(time);
+                return time >= w.getEnd() ? WindowAssigner.TriggerResult.FIRE_AND_PURGE
+                        : WindowAssigner.TriggerResult.CONTINUE;
+            }
+
+            @Override
+            public WindowAssigner.TriggerResult onEventTime(long time, Window w) {
+                return WindowAssigner.TriggerResult.CONTINUE;
+            }
+        }, records).reduce(Integer::sum).addSink(results::add);
+
+        // The [0,100) bucket fires via onProcessingTime when the ts=150 record advances the
+        // processing-time clock past its end; the [100,200) bucket flushes at end of input.
+        assertEquals(List.of(3, 3), results);
+        assertEquals(List.of(150L), ptCalls);
+    }
+
+    @Test
+    void processingTimeSweepPassesRecordTimestampAsClockAndSkipsFutureWindows() {
+        List<KeyedRecord<String, Integer>> records = List.of(
+                new KeyedRecord<>("k", 1, 10L),
+                new KeyedRecord<>("k", 2, 250L)
+        );
+
+        List<String> calls = new ArrayList<>();
+        List<Integer> results = new ArrayList<>();
+        windowed(() -> new WindowAssigner.Trigger<Integer>() {
+            @Override
+            public WindowAssigner.TriggerResult onElement(Integer e, long ts, Window w) {
+                return WindowAssigner.TriggerResult.CONTINUE;
+            }
+
+            @Override
+            public WindowAssigner.TriggerResult onProcessingTime(long time, Window w) {
+                calls.add(time + "@" + w.getStart() + "-" + w.getEnd());
+                return WindowAssigner.TriggerResult.CONTINUE;
+            }
+
+            @Override
+            public WindowAssigner.TriggerResult onEventTime(long time, Window w) {
+                return WindowAssigner.TriggerResult.FIRE_AND_PURGE;
+            }
+        }, records).reduce(Integer::sum).addSink(results::add);
+
+        // ts=10: clock 10, [0,100) end 100 > 10 -> no call.
+        // ts=250: clock 250, [0,100) end 100 <= 250 -> call; [200,300) end 300 > 250 -> no call.
+        assertEquals(List.of("250@0-100"), calls);
+        assertEquals(List.of(1, 2), results);
+    }
+
+    @Test
+    void processingTimeFireKeepsBucketWhenTriggerAnswersFire() {
+        List<KeyedRecord<String, Integer>> records = List.of(
+                new KeyedRecord<>("k", 1, 10L),
+                new KeyedRecord<>("k", 2, 150L)
+        );
+
+        List<Integer> results = new ArrayList<>();
+        windowed(() -> new WindowAssigner.Trigger<Integer>() {
+            @Override
+            public WindowAssigner.TriggerResult onElement(Integer e, long ts, Window w) {
+                return WindowAssigner.TriggerResult.CONTINUE;
+            }
+
+            @Override
+            public WindowAssigner.TriggerResult onProcessingTime(long time, Window w) {
+                return time >= w.getEnd() ? WindowAssigner.TriggerResult.FIRE
+                        : WindowAssigner.TriggerResult.CONTINUE;
+            }
+
+            @Override
+            public WindowAssigner.TriggerResult onEventTime(long time, Window w) {
+                return WindowAssigner.TriggerResult.CONTINUE;
+            }
+        }, records).reduce(Integer::sum).addSink(results::add);
+
+        // ts=150 fires [0,100) partially (contents kept); the end-of-input flush re-emits
+        // the retained [0,100) contents and then flushes [100,200).
+        assertEquals(List.of(1, 1, 2), results);
+    }
+
+    @Test
     void triggerFailurePropagates() {
         List<KeyedRecord<String, Integer>> records = List.of(
                 new KeyedRecord<>("k", 1, 10L)

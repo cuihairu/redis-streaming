@@ -314,6 +314,75 @@ class RedisWindowedStreamTriggerTest {
         }
     }
 
+    /** Fires (and purges) on the processing-time sweep once the wall clock passes the end. */
+    private static final class ProcessingTimeFireTrigger implements WindowAssigner.Trigger<Integer> {
+        @Override
+        public WindowAssigner.TriggerResult onElement(Integer element, long timestamp, WindowAssigner.Window window) {
+            return WindowAssigner.TriggerResult.CONTINUE;
+        }
+
+        @Override
+        public WindowAssigner.TriggerResult onProcessingTime(long time, WindowAssigner.Window window) {
+            return time >= window.getEnd() ? WindowAssigner.TriggerResult.FIRE_AND_PURGE
+                    : WindowAssigner.TriggerResult.CONTINUE;
+        }
+
+        @Override
+        public WindowAssigner.TriggerResult onEventTime(long time, WindowAssigner.Window window) {
+            return WindowAssigner.TriggerResult.CONTINUE;
+        }
+    }
+
+    @Test
+    void processingTimeTriggerFiresWindowOnProcessingTimeSweep() throws Exception {
+        List<Object> out = new CopyOnWriteArrayList<>();
+        Object tail = triggeredSumStream(ProcessingTimeFireTrigger::new, new AtomicInteger(), out);
+        RedisPipelineRunner<Object> runner = runnerFor(tail);
+        try {
+            runner.handle(msg(500L, 3));
+            assertEquals(List.of(3), out,
+                    "the wall clock is already past the [0,1000) end, so the very first record's "
+                            + "processing-time sweep must fire the window");
+            assertTrue(dueBacking.isEmpty(), "a processing-time fire-and-purge must leave the due set");
+        } finally {
+            runner.close();
+        }
+    }
+
+    @Test
+    void processingTimeSweepPassesWallClockAndWindowToTheTrigger() throws Exception {
+        List<Object> out = new CopyOnWriteArrayList<>();
+        List<String> calls = new ArrayList<>();
+        Object tail = triggeredSumStream(() -> new WindowAssigner.Trigger<Integer>() {
+            @Override
+            public WindowAssigner.TriggerResult onElement(Integer element, long timestamp, WindowAssigner.Window window) {
+                return WindowAssigner.TriggerResult.CONTINUE;
+            }
+
+            @Override
+            public WindowAssigner.TriggerResult onProcessingTime(long time, WindowAssigner.Window window) {
+                calls.add(time + "@" + window.getStart() + "-" + window.getEnd());
+                // Fire only the [0,1000) bucket, and only on its first processing-time call.
+                if (window.getStart() == 0 && calls.size() == 1) {
+                    return WindowAssigner.TriggerResult.FIRE_AND_PURGE;
+                }
+                return WindowAssigner.TriggerResult.CONTINUE;
+            }
+
+            @Override
+            public WindowAssigner.TriggerResult onEventTime(long time, WindowAssigner.Window window) {
+                return WindowAssigner.TriggerResult.CONTINUE;
+            }
+        }, new AtomicInteger(), out);
+        RedisPipelineRunner<Object> runner = runnerFor(tail);
+        try {
+            runner.handle(msg(500L, 3));
+            assertEquals(List.of(3), out, "the first processing-time sweep must fire [0,1000)");
+        } finally {
+            runner.close();
+        }
+    }
+
     @Test
     void stockEventTimeTriggerKeepsThePreWiringBehavior() throws Exception {
         List<Object> out = new CopyOnWriteArrayList<>();
