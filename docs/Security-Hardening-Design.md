@@ -5,11 +5,11 @@
 ## 现状（事实盘点）
 
 1. **唯一的 main 侧 `Redisson.create`**：`spring-boot-starter` `RedisStreamingAutoConfiguration`，`useSingleServer()` 只设 address/database/超时/连接池 + 可选 `setPassword`（带 `@SuppressWarnings("deprecation")`，注释说明 Redisson 4.x 推荐 `CredentialsResolver`）。
-2. **ACL 用户名（v1 已落地 2026-10-11）**：`RedisStreamingProperties.RedisProperties.username` 已支持（空/空白不设），`${env:VAR}` 惰性凭证解析同批落地；剩余 v2 为日志脱敏护栏。
+2. **ACL 用户名（v1 已落地 2026-10-11）**：`RedisStreamingProperties.RedisProperties.username` 已支持（空/空白不设），`${env:VAR}` 惰性凭证解析同批落地。
 3. **TLS 无一等支持**：没有 `rediss://` 文档与示例，没有 truststore/peer 验证相关配置暴露；用户唯一路径是自带 `redisson-spring-boot-starter`（javadoc 里提了，但没有 TLS 具体指引）。
 4. **集群/哨兵同样只靠"用官方 starter"一句话**：框架自身配置模型只有单机。
 5. **配置中心内容明文**：`config` 模块把配置内容原样存 Redis（String/Hash），无加密、无敏感项标记。
-6. **无日志脱敏**：连接初始化打 address（可接受），但框架层没有"密码/凭证永不出现在日志与异常"的统一约束；`JobSpec.config` 是自由 `Map<String,String>`，用户容易把密码塞进去并存进控制面 spec 存储（明文 + 进历史）。
+6. **日志脱敏护栏（已落地 2026-10-13）**：连接初始化打 address（可接受）；`LogRedaction` 提供按键名（`secret.*` 前缀 + `password/token/credential/...` 片段）分类的脱敏，`JobSpec.toString()` 经它渲染，config 映射与自由文本日志均不再泄漏凭证字面量。
 7. 各模块（mq/registry/config/cdc/sink...）不自行创建 Redisson，统一复用注入的 client——**这一点是好的**，加固只需集中在 client 构造与配置边界。
 
 ## 可选方案
@@ -30,7 +30,7 @@
 
 1. **配置中心内容加密**：`config` 模块加可插拔 `ContentCipher`（接口 `encrypt/decrypt`，默认 noop 保持兼容），按 key 前缀（如 `secure.*`）启用；密钥来源走环境/JVM 参数，不入 Redis。**已落地 2026-10-12**（见 docs/config.md「内容加密（at-rest）」）。
 2. **JobSpec 敏感项**：约定 `secret.*` 前缀的 config 值存**引用**而非明文（`env:NAME` / `sys:NAME`），执行侧（`RedisJobLauncher`）解析，工厂拿到已解析副本；`specHash` 输入对 secret 字面量脱敏（引用是指针，原样参与以保住漂移检测）；审计流固定字段不含 config。**已落地 2026-10-12**（约定细节与轮换语义见 docs/Control-Plane-Design.md「secret 引用约定」）。
-3. **日志脱敏护栏**：统一约定——凭证只进 `CredentialsResolver`，任何模块不得把 `password/token/secret` 字段打进日志（code review + 简单 ArchUnit 规则可后续加）。
+3. **日志脱敏护栏（已落地 2026-10-13）**：`runtime.redis.control.LogRedaction`——按键名分类（`secret.*` 前缀 + `password/passwd/secret/token/credential/apikey/accesskey/privatekey/auth` 片段，大小写不敏感），`redact(Map)` / `redact(String)` / `renderSpec(JobSpec)` 三种出口；引用（`env:`/`sys:`）是指针不脱敏，字面量一律换 `***`。`JobSpec.toString()` 改走 `renderSpec`（Lombok `@Data` 的生成版会原样嵌 config），任何 `log("{}", spec)` 不再泄漏。约定仍成立：凭证只进惰性解析路径，任何模块不得把 `password/token/secret` 字段打进日志。ArchUnit 规则（机械强制，替代 code review 约定）尚未引入，需新增外部依赖，留待评审。
 
 ## 迁移路径
 

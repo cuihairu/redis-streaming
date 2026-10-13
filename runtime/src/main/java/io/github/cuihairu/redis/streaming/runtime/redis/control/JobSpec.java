@@ -59,4 +59,15 @@ public class JobSpec {
 
     /** Content hash of the semantic fields; agents compare it to detect drift. */
     private String specHash;
+
+    /**
+     * Log-safe rendering: Lombok's generated {@code toString} would embed {@link #config}
+     * verbatim, so a {@code log.debug("... {}", spec)} could leak a secret literal. This
+     * override routes the config through {@link LogRedaction#renderSpec}; Lombok skips
+     * generating a {@code toString} when one is already declared.
+     */
+    @Override
+    public String toString() {
+        return LogRedaction.renderSpec(this);
+    }
 }

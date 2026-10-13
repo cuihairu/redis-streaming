@@ -9,7 +9,7 @@
 - [ ] DataStream.join(other) 语法糖：union/双源汇合原语落地，设计见 docs/Union-DualSource-Design.md，待评审
 - [ ] join/cep Phase 3：引擎级双源 pipeline、event-time 水位对齐、retract 语义
 - [ ] 多租户 v2：线程/内存/in-flight 配额、指标 tenant 维度、registry/config/state/checkpoint/cdc/sink 前缀租户注入、租户级迁移与运维 CLI，设计见 docs/Multi-Tenancy-Design.md
-- [ ] 安全 v2 收尾：日志脱敏护栏，审计与 specHash 脱敏已落地
+- [x] 安全 v2 收尾：日志脱敏护栏 LogRedaction 落地，审计与 specHash 脱敏已落地（2026-10-13）
 
 ## 已完成
 
