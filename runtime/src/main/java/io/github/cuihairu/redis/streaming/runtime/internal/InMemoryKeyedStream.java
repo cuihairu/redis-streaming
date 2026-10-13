@@ -127,21 +127,30 @@ public final class InMemoryKeyedStream<K, T> implements KeyedStream<K, T> {
                 while (buffer.isEmpty()) {
                     if (!inputDrained && in.hasNext()) {
                         KeyedRecord<K, T> record = in.next();
-                        currentTimestamp = record.timestamp();
-                        timerQueue.fireDueTimers();
-                        stateStore.setCurrentKey(record.key());
-                        try {
-                            processFunction.processElement(record.key(), record.value(), ctx, out);
-                        } catch (Exception e) {
-                            throw new RuntimeException("Keyed process function failed", e);
+                        // Per-record barrier (checkpoint protocol v2): hold the fence across the
+                        // whole record body, so a checkpoint triggered mid-record blocks until
+                        // every state write of the record is done instead of splitting them.
+                        // Reentrant — the store's own per-write locking is a no-op inside.
+                        synchronized (stateStore.fenceLock()) {
+                            currentTimestamp = record.timestamp();
+                            timerQueue.fireDueTimers();
+                            stateStore.setCurrentKey(record.key());
+                            try {
+                                processFunction.processElement(record.key(), record.value(), ctx, out);
+                            } catch (Exception e) {
+                                throw new RuntimeException("Keyed process function failed", e);
+                            }
+                            timerQueue.fireDueTimers();
                         }
-                        timerQueue.fireDueTimers();
                         continue;
                     }
 
                     if (!inputDrained) {
                         inputDrained = true;
-                        timerQueue.drainAllTimers();
+                        // End-of-input timer flush can also write state; fence it the same way.
+                        synchronized (stateStore.fenceLock()) {
+                            timerQueue.drainAllTimers();
+                        }
                         continue;
                     }
                     break;

@@ -26,6 +26,16 @@ final class InMemoryKeyedStateStore<K> {
         return mutationLock;
     }
 
+    /**
+     * The monitor a record body must hold across all of its state writes (per-record barrier):
+     * the same lock every mutation and snapshot synchronizes on, so a checkpoint triggered
+     * mid-record blocks until the record finishes. Reentrant, so the store's own per-write
+     * locking is a no-op inside the fence.
+     */
+    Object fenceLock() {
+        return mutationLock;
+    }
+
     K currentKey() {
         synchronized (lock()) {
             return currentKey;

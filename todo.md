@@ -4,7 +4,7 @@
 
 - [ ] 内存引擎窗口累加器注册进检查点协调器，依赖算子生命周期契约设计
 - [x] 两引擎接入 processing-time 窗口定时器，Trigger.onProcessingTime 已接线（2026-10-13）
-- [ ] 检查点协议 v2：逐记录屏障，消除单记录多次状态写被快照劈开
+- [x] 检查点协议 v2：逐记录屏障，消除单记录多次状态写被快照劈开（2026-10-13）
 - [ ] Redis 引擎 unaligned checkpoint 方案评审
 - [ ] DataStream.join(other) 语法糖：union/双源汇合原语落地，设计见 docs/Union-DualSource-Design.md，待评审
 - [ ] join/cep Phase 3：引擎级双源 pipeline、event-time 水位对齐、retract 语义

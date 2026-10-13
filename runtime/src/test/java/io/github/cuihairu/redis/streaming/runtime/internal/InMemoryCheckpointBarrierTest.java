@@ -1,6 +1,9 @@
 package io.github.cuihairu.redis.streaming.runtime.internal;
 
 import io.github.cuihairu.redis.streaming.api.checkpoint.Checkpoint;
+import io.github.cuihairu.redis.streaming.api.state.StateDescriptor;
+import io.github.cuihairu.redis.streaming.api.stream.DataStream;
+import io.github.cuihairu.redis.streaming.api.stream.KeyedProcessFunction;
 import io.github.cuihairu.redis.streaming.api.stream.StreamSource;
 import io.github.cuihairu.redis.streaming.runtime.StreamExecutionEnvironment;
 import org.junit.jupiter.api.Test;
@@ -26,9 +29,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * mutate and snapshot under the coordinator's checkpoint lock, and the coordinator holds it
  * across all stores' snapshots, so one checkpoint is a single consistent cut.
  *
- * <p>Deliberately not asserted: atomicity of one record's multiple writes (two separate
- * {@code put} calls can still be split by a snapshot — the per-record barrier is the
- * checkpoint-protocol work this P1 does not claim).</p>
+ * <p>The per-record barrier (v2) goes further: a record's body runs under the same fence, so
+ * a snapshot triggered mid-record waits for the record to finish <em>all</em> of its state
+ * writes instead of splitting them.</p>
  */
 class InMemoryCheckpointBarrierTest {
 
@@ -72,6 +75,81 @@ class InMemoryCheckpointBarrierTest {
                 "the snapshot must include the write that was in flight when it started");
         assertTrue(elapsedMs >= 100,
                 "snapshot must wait for the in-flight write instead of racing it, took " + elapsedMs + "ms");
+    }
+
+    @Test
+    void processRecordStateWritesAreAtomicWithRespectToAConcurrentSnapshot() throws Exception {
+        InMemoryCheckpointCoordinator coordinator = new InMemoryCheckpointCoordinator();
+        InMemoryKeyedStream<String, Integer> stream = new InMemoryKeyedStream<>(
+                () -> List.of(new InMemoryRecord<>(1, 0L)).iterator(),
+                v -> "k",
+                null,
+                coordinator);
+        String storeId = coordinator.getRegisteredStores().keySet().iterator().next();
+
+        CountDownLatch insideRecord = new CountDownLatch(1);
+        CountDownLatch proceed = new CountDownLatch(1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+
+        KeyedProcessFunction<String, Integer, Integer> fn = (key, value, ctx, out) -> {
+            ctx.getState(new StateDescriptor<>("bufferA", Integer.class, 0)).update(1);
+            insideRecord.countDown();
+            try {
+                proceed.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            ctx.getState(new StateDescriptor<>("bufferB", Integer.class, 0)).update(2);
+            out.collect(value);
+        };
+
+        List<Integer> out = new ArrayList<>();
+        DataStream<Integer> ds = stream.process(fn);
+        Thread pipeline = new Thread(() -> {
+            try {
+                ds.addSink(out::add);
+            } catch (Throwable t) {
+                failure.set(t);
+            }
+        });
+        pipeline.setDaemon(true);
+        pipeline.setUncaughtExceptionHandler((t, e) -> failure.set(e));
+        pipeline.start();
+
+        assertTrue(insideRecord.await(5, TimeUnit.SECONDS),
+                "the pipeline must be inside the record before the snapshot is triggered");
+
+        AtomicLong checkpointId = new AtomicLong();
+        Thread snapshotter = new Thread(() -> {
+            try {
+                checkpointId.set(coordinator.triggerCheckpoint());
+            } catch (Throwable t) {
+                failure.set(t);
+            }
+        });
+        snapshotter.setDaemon(true);
+        snapshotter.start();
+
+        // Without the per-record barrier the snapshot would complete in microseconds; the
+        // fence makes it wait for the record to finish both writes.
+        Thread.sleep(500);
+        assertTrue(snapshotter.isAlive(),
+                "the snapshot must block on the in-flight record instead of splitting its writes");
+
+        proceed.countDown();
+        snapshotter.join(5_000);
+        pipeline.join(5_000);
+
+        assertFalse(snapshotter.isAlive(), "the snapshot must complete once the record finishes");
+        assertFalse(pipeline.isAlive(), "the pipeline must drain once released");
+        assertNull(failure.get(), "no thread may fail");
+
+        Map<String, Map<Object, Object>> snap = storeSnapshot(
+                coordinator.getCheckpoint(checkpointId.get()), storeId);
+        assertEquals(1, snap.get("bufferA").get("k"),
+                "the snapshot must include the first write of the record");
+        assertEquals(2, snap.get("bufferB").get("k"),
+                "the snapshot must include the second write of the record — no split");
     }
 
     @Test
