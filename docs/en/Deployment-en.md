@@ -100,3 +100,49 @@ spring:
 - Scale one job horizontally through consumer groups; combine with `MqOptions.maxLeasedPartitionsPerConsumer` (default 0 = follows `workerThreads`) to avoid lease over-provisioning.
 - Checkpointing is single-process stop-the-world; with the optional job-global control gate (`jobControlGateEnabled`, default follows `leaderElectionEnabled`) enabled, checkpoints and scaling of same-`jobName` instances are serialized across instances via Redis leases (see [runtime.md](../runtime.md) §2.6). For end-to-end semantics still prefer idempotent sinks or Redis-only atomic sinks.
 - Rolling upgrade: scale up new-version instances first, watch leased partitions and error rates until stable, then scale old-version instances down gradually.
+
+## 9) Job control plane (optional, declarative upgrade/rollback)
+
+Job submit/upgrade/rollback/stop can be managed centrally through the Redis control plane (design and key layout in the Chinese [Control-Plane-Design.md](../Control-Plane-Design.md); starter wiring in the "Job control plane" section of [Spring-Boot-Starter-en.md](Spring-Boot-Starter-en.md)):
+
+- **Topology**: any process with `redis-streaming.runtime.control-plane.enabled=true` acts as the submit entry point (CLI / ops service / application); executor-side instances enable `redis-streaming.runtime.agent.enabled=true`. The control plane only writes the spec (desired state); agents reconcile periodically: claim (`SET NX EX`, TTL=max(3×poll,10s)) → deploy → report status.
+- **Upgrade semantics**: a config/factory/descriptor change is a full upgrade (best-effort checkpoint → cancel → redeploy, brief interruption); a parallelism-only change takes the `scaleParallelism` fast path (no restart). `rollback` returns to the previous spec version.
+- **Multi-instance arbitration**: a job is deployed by exactly one agent, guaranteed by the claim key. If that agent dies the job disappears with the process (no automatic failover); after the claim TTL expires, run `resume` on another instance to bring it back. Intended stop/restart goes through `stop`/`resume`.
+- **Rolling upgrade advice**: `resume` on a new instance first (the claim picks the least-loaded agent), watch `status:<job>` stabilize, then `stop` the old instance; for rollback just run `rollback` (spec revert triggers a full agent upgrade).
+- **Audit**: operations and failure reports go to the `prefix + audit` stream (near-capped at `audit-max-entries`), read newest-first with `tailAudit`; denied authorization attempts are also recorded.
+
+## 10) Security hardening (Redis ACL / TLS / credential management)
+
+By default the framework creates only a minimal "single server + optional password" client (details in the Chinese [Security-Hardening-Design.md](../Security-Hardening-Design.md)). Three paths for production:
+
+### a) ACL username (Redis 6+)
+```yaml
+redis-streaming:
+  redis:
+    address: redis://redis.internal:6379
+    username: app-reader      # omitted = the default user
+    password: ${env:REDIS_PASS}   # ${env:VAR} placeholder: resolved from the environment at startup, missing variable fails startup
+```
+The `${env:VAR}` placeholder works for both `username` and `password`, keeping credentials out of config files. Dedicate an ACL user to the framework; minimal rule example (adjust to your key prefix):
+```
+user default off
+user streaming on >CHANGE_ME ~streaming:* +ping +hello +select +del +exists +expire +pexpire +ttl +pttl +type +scan
+    +get +set +setnx +mget +mset +incr +incrby +hget +hmget +hset +hsetnx +hgetall +hdel +hlen +hkeys +hvals
+    +sadd +srem +smembers +scard +sismember +zadd +zrem +zrange +zrangebyscore +zrangebyscorewithscores
+    +zrevrange +zcard +zscore +zcount +zremrangebyscore +llen +lpush +rpush +lrange +lindex +ltrim +rpoplpush
+    +xadd +xlen +xrange +xrevrange +xread +xreadgroup +xack +xgroup +xinfo +xtrim +xdel +xautoclaim +xpending
+    +eval +evalsha +script +subscribe +unsubscribe +publish +punsubscribe +psubscribe
+```
+
+### b) TLS (rediss://)
+Use `rediss://host:6379` directly as the single-server address; truststore/hostname-verification and other netty/SSL details are covered by the (c) hook — the framework does not expose per-item config for them.
+
+### c) ConfigCustomizer SPI (unified advanced hook)
+Register any number of `ConfigCustomizer` beans; they are invoked in `@Order` after the built-in single-server config and before `Redisson.create`, and can override/append any Redisson setting (cluster, sentinel, read/write splitting, codec, TLS context, etc.):
+```java
+@Bean
+ConfigCustomizer tls() {
+    return config -> config.useSingleServer().setSslEnableEndpointIdentification(true);
+}
+```
+Note: if the application provides its own `RedissonClient` bean (e.g. redisson-spring-boot-starter), the framework steps back entirely — this hook and the built-in client construction both become inert.

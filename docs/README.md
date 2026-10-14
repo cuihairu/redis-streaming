@@ -39,7 +39,7 @@
 - [CEP 模块](CEP.md) - 复杂事件处理
 
 #### 可观测性
-- [Metrics 模块](Metrics.md) - 指标监控（含 MQ/Runtime Micrometer 指标清单）
+- [指标与可观测性](Metrics.md) - 指标监控（含 MQ/Runtime Micrometer 指标清单；自建 metrics 模块已于 2026-10-12 删除）
 
 #### 集成
 - [Spring Boot Starter](Spring-Boot-Starter.md) - Starter 模块说明
