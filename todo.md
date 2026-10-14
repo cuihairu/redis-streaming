@@ -69,6 +69,7 @@
 - [x] 文档一致性第二轮 E7 补漏（FIRE20261015）：Deployment 双语 §8「不跨实例 barrier」滞后主张（E3 同款漏网）+ Architecture-en checkpoint 模块行漏控制门限定（E6 修复时改写措辞的同批漏网）+ runtime.md `triggerCheckpointNow` null 条件补控制门拒绝一路；docs:build 绿（2026-10-15）
 - [x] 文档一致性第二轮 E8-E9（FIRE20261015）：E8 Deployment-en 缺主文档 §9 控制面/§10 安全两节（补全译）+ E9 docs/README.md:42「Metrics 模块」标签残留（metrics 模块 2026-10-12 已删，改「指标与可观测性」）；docs:build 绿（2026-10-15）
 - [x] 文档一致性第二轮 E10（FIRE20261015）：Spring-Boot-Starter-en 补「Job Control Plane (runtime)」整节（E4 属性表漏节、E8 曾误链向缺失节）+ `## 典型用例` 标题译为 Typical Use Cases + 尾链对齐主文档相关文档五目标；docs:build 绿（2026-10-15）
+- [x] 文档一致性第二轮 E11（FIRE20261015）：Spring-Boot-Starter-en 典型用例节 4 子标题与正文全译（原系主文档中文直拷）+ 修正 docs/en/ 下 runtime.md 坏相对链接；全 en 页 CJK 残留与坏链接扫描归零，主文档/README 链接核对无坏链；docs:build 绿（2026-10-15）
 
 ### 检查点协议与窗口运行时
 

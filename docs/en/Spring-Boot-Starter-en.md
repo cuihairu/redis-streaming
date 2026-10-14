@@ -342,14 +342,14 @@ Guidelines:
 
 ## Typical Use Cases
 
-### 服务注册与发现
+### Service registration & discovery
 
 ```java
-// 服务提供方
+// service provider
 @SpringBootApplication
 @EnableRedisStreaming
 public class UserServiceProvider {
-    // registry.auto-register=true 时启动即注册 user-service
+    // registers user-service at startup when registry.auto-register=true
 }
 ```
 
@@ -364,7 +364,7 @@ redis-streaming:
         version: 2.0.0
 ```
 
-手动注册外部服务(`NamingService` 同时实现 `ServiceProvider`/`ServiceConsumer`,两个视角都可注入):
+Manually register external services (`NamingService` implements both `ServiceProvider` and `ServiceConsumer`; either view can be injected):
 
 ```java
 @Service
@@ -394,7 +394,7 @@ public class UserService {
 }
 ```
 
-### 配置发布
+### Config publishing
 
 ```java
 @Service
@@ -417,7 +417,7 @@ public class ConfigPublisher {
 }
 ```
 
-### 服务变更监听
+### Service change listening
 
 ```java
 @Component
@@ -434,12 +434,12 @@ public class ServiceListener {
 }
 ```
 
-支持的方法签名见「注解与组件」。
+Supported method signatures: see "Annotations & Components".
 
-### 事件驱动
+### Event-driven
 
 ```java
-// 订单服务——生产者
+// order service — producer
 @Service
 public class OrderService {
     @Autowired
@@ -453,7 +453,7 @@ public class OrderService {
 ```
 
 ```java
-// 支付服务——同一 topic 上自己的消费组
+// payment service — its own consumer group on the same topic
 @Component
 public class PaymentService {
     @Autowired
@@ -482,7 +482,7 @@ public class PaymentService {
 ```
 
 ```java
-// 库存服务——另一个独立消费组
+// inventory service — another independent consumer group
 @Component
 public class InventoryService {
     @Autowired
@@ -505,9 +505,9 @@ public class InventoryService {
 }
 ```
 
-`MessageHandleResult` 取值 `SUCCESS`/`RETRY`/`FAIL`/`DEAD_LETTER`;`subscribe()` 只登记处理器,真正拉取从 `start()` 开始。需要窗口/精确语义的流水线用运行时入口 `RedisStreamExecutionEnvironment.fromMqTopic(...)`,见 [runtime.md](runtime.md)。
+`MessageHandleResult` values are `SUCCESS`/`RETRY`/`FAIL`/`DEAD_LETTER`; `subscribe()` only registers the handler — actual pulling starts at `start()`. Pipelines that need windows/exactly-once semantics use the runtime entry point `RedisStreamExecutionEnvironment.fromMqTopic(...)`, see [runtime.md](../runtime.md).
 
-MQ 调优示例(下面值仅作示意——所有键的默认值见「配置项参考」,前缀为 `redis-streaming.mq`,历史文档中的 `streaming.mq` 已废弃):
+MQ tuning example (values below are illustrative — defaults for every key are in "Configuration Reference"; prefix is `redis-streaming.mq`, the historical `streaming.mq` is deprecated):
 
 ```yaml
 redis-streaming:
