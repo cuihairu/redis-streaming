@@ -139,6 +139,8 @@ keyed.<String>process((key, value, ctx, collector) -> {
 | `leaderElectionEnabled(boolean)` | boolean | `false` | 多实例 leader 选举(见 2.6) |
 | `leaderLeaseTtl(Duration)` | Duration | `30s` | leader 租约 TTL;必须 >0 |
 | `leaderRenewInterval(Duration)` | Duration | `10s` | 续约间隔;必须 >0 且 < leaseTtl(构造期校验) |
+| `jobControlGateEnabled(Boolean)` | Boolean | `null`(跟随 `leaderElectionEnabled`) | 作业级控制门(见 2.6):stop-the-world 检查点与 `scaleParallelism` 在同 `jobName` 实例间经 Redis 租约串行化;`null` 跟随 `leaderElectionEnabled`(默认关),显式 `true/false` 双向覆盖,不影响选举本身 |
+| `controlGateWait(Duration)` | Duration | `ZERO`(快速失败) | 抢跨实例控制租约的等待上限;被拒时 `triggerCheckpointNow()` 返回 null、`scaleParallelism` 返回 false;正值时轮询等待直至抢到或超时;负值抛 `IllegalArgumentException` |
 
 ### 2.3 构建与启动示例
 
@@ -222,12 +224,13 @@ env.fromMqTopic(topic, group)
 - `checkpointsToKeep`(默认 5):超过后清扫旧检查点,不完整的优先删除;`0` 关闭。
 - 在 stop-the-world 窗口内,清扫被延后到恢复消费之后执行(`cleanupOld()`),避免拉长暂停。
 
-### 2.6 Leader 选举与 HA 接管(`RedisLeaderElector`)
+### 2.6 Leader 选举、HA 接管与作业级控制门(`RedisLeaderElector` / `JobControlGate`)
 
 - `leaderElectionEnabled(true)` 后,同 `jobName` 的多实例竞争 Redis 租约(键 `stateKeyPrefix:jobName:leader`):获取 = `SET NX PX ttl`;续约 = compare-and-expire Lua(仅当自己仍持有);释放 = compare-and-delete Lua。租约随持有者死亡自动过期,无需人工干预。
 - 周期检查点调度只由 leader 运行;丢失租约立即停止;follower 按续约间隔尝试接管,接管成功时分配新 fencing token 并 `refreshCheckpointIdFromStorage()` 对齐检查点计数,再启动自己的调度。
-- fencing token 每个任期通过 Redis `INCR` 分配一次,写入该任期所有检查点的 meta;恢复时只采纳 token 等于历史最大 token 的检查点,旧 leader 在丢租约后仍写入的检查点不会被采纳。
+- fencing token 每个任期通过 Redis `INCR` 分配一次,写入该任期所有检查点的 meta;恢复时只采纳 token 等于历史最大 token 的检查点,旧 leader 在丢租约后仍写入的检查点不会被采纳(2026-10-15 起更进一步:曾持租约但续租失败的实例在快照写入前即拒绝落盘,不再产出靠 token 淘汰的孤儿快照;从未持租约的实例手动 `triggerCheckpointNow` 路径保留)。
 - `diagnostics()` 中可观测 `isLeader` / `leaderInstanceId` / `fencingToken`。
+- **作业级控制门(跨实例串行化,`jobControlGateEnabled`,默认跟随 `leaderElectionEnabled`)**:开启后,stop-the-world 检查点与 `scaleParallelism` 先抢作业级两级 Redis 租约(键 `<stateKeyPrefix>:<jobName>:ctl:excl` / `:ctl:silence`,持有者值 `jobInstanceId:opSeq`)——两级同抢、反转序释放(`silence ⇒ exclusive`);TTL = `max(30s, 2 × checkpointDrainTimeout)` 自愈,持有期按 TTL/3 续租。他实例持锁或 Redis 不可达一律拒绝而非盲跑:`triggerCheckpointNow()` 返回 null、`scaleParallelism` 返回 false(`controlGateWait > 0` 时先轮询等待);`cancel()` 先释放后关闭,重启作业的首个控制操作不被旧 TTL 阻塞;门关闭时完全惰性,不触碰租约键。跨进程崩溃恢复由 TTL 兜底,与选举租约同一自愈边界。
 
 ### 2.7 Keyed 状态热键处理
 
@@ -262,7 +265,7 @@ env.fromMqTopic(topic, group)
 
 - `scaleParallelism(n)`(n≥1,`RedisJobClient` 接口默认返回 false,`LaunchedJobClient` 实现):对作业的**每条管道**增/删子任务到 n 个,并把所有存活 consumer 重钉到 `partitionId % n == subtaskIndex`(经 MQ 层 `updatePartitionAssignment`,移出指派的分区即时停 worker 释放租约,同组新属主由再均衡取回,无需等租约 TTL)。
 - **状态与检查点天然向前兼容**:keyed state 与 checkpoint 都按 `(job,topic,group,partition,…)` 键控,不含并行度/子任务维度——伸缩后新属主子任务直接读写原分区的既有状态;并行度 2 时写的检查点可以在并行度 3 下恢复(`restoreFromLatestCheckpoint`)。
-- **伸缩与检查点互斥**:resize 等待(有界 30s)在途的 stop-the-world 检查点完成后才改动子任务列表;consumers/runners 列表为 copy-on-write,`cancel()` 无锁遍历安全。
+- **伸缩与检查点互斥**:resize 等待(有界 30s)在途的 stop-the-world 检查点完成后才改动子任务列表;consumers/runners 列表为 copy-on-write,`cancel()` 无锁遍历安全。开启作业级控制门后该互斥升级为跨实例:同 `jobName` 他实例的控制操作(检查点/伸缩)进行中,本实例的 resize 等待或拒绝(见 2.6)。
 - **缩容语义**:被移除子任务的 consumer 先 stop(workers 退出时以 owner 身份释放租约,提示移交)再 close;其 runner **不 close**——sink 由同管道的全部 runner 共享,幸存 runner 仍持有,作业 cancel 时统一关闭。被移除 runner 无独立线程,至多已调度定时器的有界尾部仍写入共享的按分区键控状态。
 - **交接窗口是 at-least-once**:租约释放与再均衡取回之间(秒级)消息停留在 stream 中不丢失;与 leader 崩溃接管的语义一致。
 - 消费者命名跨伸缩单调递增(`jobName-jobInstanceId-{seq}`,seq 不复用);`diagnostics()` 的 `liveParallelism` 反映伸缩后的实时并行度(配置值为启动值)。

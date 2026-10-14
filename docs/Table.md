@@ -51,13 +51,22 @@ static <T, K, V> TableBuilder<T, K, V> tableBuilder(Function<T, K> keyExtractor,
 |---|---|---|
 | 定位 | 测试与简单用例 | 生产（状态存 Redis Hash，JSON 序列化 key/value） |
 | 构造 | `new InMemoryKTable<>()` 或传入初始 `Map<K,V>` | `new RedisKTable<>(redissonClient, tableName, keyClass, valueClass)`，`tableName` 即 Redis Hash key |
-| 额外方法 | `put` / `get` / `getState` / `size` / `clear` | `put` / `get` / `getState` / `size` / `clear` / `delete`（删除整个 Hash）/ `getTableName()` |
+| 额外方法 | `put` / `get` / `getState` / `size` / `clear` | `put` / `get` / `getState` / `size` / `clear` / `delete`（删除整个 Hash）/ `getTableName()` / `withChangelog()` / `isChangelogEnabled()` / `changelogTopic()` / `defaultChangelogGroup()` / `toStream(env[, group])`（changelog 模式，见下节） |
 | `join`/`leftJoin` 对端 | 仅 `InMemoryKTable` 或 `RedisKTable`（其他类型抛 `UnsupportedOperationException`） | 同左 |
 
 两个实现的共同行为：
 
 - `put(key, null)` 删除该 key（Redis 版删除 Hash field）。
-- `toStream()` 是**快照**导出：调用时把当前状态物化成一条集合流（非持续 changelog）。
+- `toStream()` 是**快照**导出：调用时把当前状态物化成一条集合流（非持续 changelog）。Redis 表开启 changelog 模式（`withChangelog()`）后无参 `toStream()` 抛 `IllegalStateException`——持续变更流需要调用方环境才能启动，须走 `toStream(env)`（见下节）。
+
+## KTable changelog（仅 `RedisKTable`，默认关）
+
+`withChangelog()` 开启后，每次 `put`（含 `put(key, null)` 的删除）在更新主存储之外向 MQ topic `table-changelog:<tableName>` 追加一条 `op=PUT/DEL` 事件；`toStream(env)` 从静态快照切换为**持续变更流**（Flink `KTable.toStream` 语义）：管道 `env.fromMqTopic(topic, group)` 挂到调用方环境，由调用方 `env.executeAsync()` 启动并管理生命周期。设计细节见 [Table-Changelog-Design](Table-Changelog-Design.md)。
+
+- **组语义**：默认组 `table-changelog-group:<tableName>` 组内单播（多个消费端分流负载）；`toStream(env, group)` 传显式组，每组各得全量（跨组广播）。组从 0-0 建，首个消费者回放全量事件即重建表状态。
+- **事件顺序**：emit 按调用链串联，topic 内事件与 `put` 调用序一致——乱序的全历史重放会重建出错误值。
+- **best-effort**：主存储先行更新，事件追加失败只降级流消费端（保留最后已知值），不影响 `put` 本身。
+- **默认关**：每次 put 多一次 MQ append 的写放大，对查询型表（配置/维表）是错误取舍；`isChangelogEnabled()` / `changelogTopic()` / `defaultChangelogGroup()` 供观测。
 - `mapValues` / `filter` / `join` / `groupBy` 的结果是一张**新表**：InMemory 版返回新内存表；Redis 版写入派生表 `<tableName>:<op>:<millis>-<uuid>`（如 `...:mapValues:...`、`...:join:...`，分组结果为 `<tableName>:groupBy:count:...` 等），原表不变。
 - `groupBy` 的 keySelector 返回 `null` 的行被跳过（两个实现一致）。
 
@@ -107,6 +116,19 @@ users.put("eu-1", 100);
 var byRegion = users.groupBy(kv -> kv.getKey().startsWith("eu-") ? "EU" : "OTHER");
 RedisKTable<String, Long> regionCounts = (RedisKTable<String, Long>) byRegion.count();
 regionCounts.getTableName();     // 形如 "users:groupBy:count:<millis>-<uuid>"
+
+// 5) changelog：持续变更流（RedisKTableChangelog*Test / Table-Changelog-Design.md）
+users.withChangelog();           // 开启（幂等）；之后每次 put 追加 PUT/DEL 事件
+users.put("eu-1", 200);          // 主存储更新 + PUT 事件入 table-changelog:users
+users.put("eu-1", null);         // DEL 事件
+
+RedisStreamExecutionEnvironment env = new RedisStreamExecutionEnvironment(config);
+users.toStream(env)              // 持续变更流（默认组，组内分流；首个消费者回放全量历史）
+        .map(kv -> kv.getKey() + "=" + kv.getValue())
+        .addSink(...);
+env.executeAsync();              // 由调用方环境启动
+
+users.toStream(env, "audit-group"); // 显式组：每组各得全量历史（跨组广播）
 ```
 
 ## References

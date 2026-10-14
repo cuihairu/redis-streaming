@@ -65,6 +65,7 @@
 - [x] config 接口收敛：ConfigService 唯一接口，删 ConfigManager/ConfigCenter/RedisConfigCenter
 - [x] CDC 拉取模型修复：调度器交付 listener，snapshot 语义对齐
 - [x] 双引擎公共抽象：决策不定义，公开面交集仅 3 方法（2026-10-11 拍板）
+- [x] 文档一致性第二轮（FIRE20261015）：作业级控制门（`jobControlGateEnabled`/`controlGateWait` 配置行、§2.6 控制门语义与续租失败拒写、§2.10 跨实例互斥）与 KTable changelog（Table.md changelog 节 + 用法示例 5）补入用户文档，2 条漂移记录 docs/审计-文档一致性.md 第二轮；docs:build 绿（2026-10-15）
 
 ### 检查点协议与窗口运行时
 
