@@ -82,6 +82,8 @@ public final class RedisRuntimeConfig {
     private final boolean leaderElectionEnabled;
     private final Duration leaderLeaseTtl;
     private final Duration leaderRenewInterval;
+    private final Boolean jobControlGateEnabled;
+    private final Duration controlGateWait;
 
     private RedisRuntimeConfig(Builder b) {
         this.jobName = Objects.requireNonNull(b.jobName, "jobName");
@@ -172,6 +174,11 @@ public final class RedisRuntimeConfig {
         }
         if (this.leaderRenewInterval.compareTo(this.leaderLeaseTtl) >= 0) {
             throw new IllegalArgumentException("leaderRenewInterval must be < leaderLeaseTtl");
+        }
+        this.jobControlGateEnabled = b.jobControlGateEnabled;
+        this.controlGateWait = b.controlGateWait == null ? Duration.ZERO : b.controlGateWait;
+        if (this.controlGateWait.isNegative()) {
+            throw new IllegalArgumentException("controlGateWait must not be negative");
         }
     }
 
@@ -484,6 +491,38 @@ public final class RedisRuntimeConfig {
         return leaderRenewInterval;
     }
 
+    /**
+     * The raw job control gate override, or {@code null} to follow
+     * {@link #isLeaderElectionEnabled()}. A null override means "same decision as leader
+     * election", which is how the cross-instance gate is turned on together with multi-node
+     * coordination without a second configuration surface.
+     */
+    public Boolean getJobControlGateEnabled() {
+        return jobControlGateEnabled;
+    }
+
+    /**
+     * Whether the cross-instance job control gate is enabled. The gate serializes the
+     * runtime's exclusive control operations (aligned checkpoint flows, {@code scaleParallelism})
+     * across every instance of a job, so two clients of the same job cannot run torn control
+     * operations concurrently.
+     *
+     * <p>On whenever leader election is on, unless overridden by
+     * {@link Builder#jobControlGateEnabled(Boolean)}.</p>
+     */
+    public boolean isJobControlGateEnabled() {
+        return jobControlGateEnabled == null ? leaderElectionEnabled : jobControlGateEnabled;
+    }
+
+    /**
+     * How long a control operation waits for the job-global control lease before giving up.
+     * Zero (the default) means fail-fast: the operation is skipped and retried on the next
+     * tick rather than blocking the caller's thread behind another instance's control work.
+     */
+    public Duration getControlGateWait() {
+        return controlGateWait;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -531,6 +570,8 @@ public final class RedisRuntimeConfig {
         private boolean leaderElectionEnabled = false;
         private Duration leaderLeaseTtl = Duration.ofSeconds(30);
         private Duration leaderRenewInterval = Duration.ofSeconds(10);
+        private Boolean jobControlGateEnabled;
+        private Duration controlGateWait = Duration.ZERO;
 
         public Builder jobName(String jobName) {
             if (jobName != null && !jobName.isBlank()) {
@@ -772,6 +813,25 @@ public final class RedisRuntimeConfig {
 
         public Builder leaderRenewInterval(Duration interval) {
             this.leaderRenewInterval = interval;
+            return this;
+        }
+
+        /**
+         * Override the cross-instance job control gate (default: follow
+         * {@link #leaderElectionEnabled(boolean)}). Null restores the follow-the-election
+         * default; an explicit value wins in both directions.
+         */
+        public Builder jobControlGateEnabled(Boolean enabled) {
+            this.jobControlGateEnabled = enabled;
+            return this;
+        }
+
+        /**
+         * How long a control operation waits for the job-global control lease before failing
+         * fast. Zero (the default) refuses immediately.
+         */
+        public Builder controlGateWait(Duration wait) {
+            this.controlGateWait = wait;
             return this;
         }
 

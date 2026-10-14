@@ -1,6 +1,6 @@
-# 作业级控制门设计（缺陷 (2) 立项，2026-10-15 巡检代决；仅设计、未实施）
+# 作业级控制门设计（缺陷 (2) 立项，2026-10-15 巡检代决；**已实施，2026-10-15 落地**）
 
-状态：**设计稿，待评审后另批实施**。本设计回应 `docs/Checkpoint-Barrier-Design.md` 评审中顺带发现的缺陷 (2)——控制门是每 env 实例的而非作业级全局锁。
+状态：**已落地**（原设计稿 → 同日实施）。本设计回应 `docs/Checkpoint-Barrier-Design.md` 评审中顺带发现的缺陷 (2)——控制门是每 env 实例的而非作业级全局锁。实现：`runtime/redis/internal/JobControlGate`（原语）+ `RedisStreamExecutionEnvironment` 接入；落地细节见 §7。
 
 ## 1. 问题
 
@@ -64,6 +64,12 @@
 4. **Redis 不可达**：begin 拒绝，作业数据面不受影响；
 5. **晶格不变量**：跨实例版争用测试（多线程/多客户端混合 begin，零重叠）。
 
-## 7. 落地顺序（实施批，未排期）
+## 7. 落地记录（2026-10-15，按本设计实施）
 
-(i) Redis 租约门原语 + 单测；(ii) 接入 `triggerCheckpointWhilePaused` 与 `scaleParallelism` 的 begin/end；(iii) §6 的双客户端集成；(iv) 文档同步（checkpoint.md、本仓库 CLAUDE.md 的运维语义如需）。开关策略（随 leaderElectionEnabled 自动启用 / 独立 `jobControlGateEnabled`）在实施批与 §6 测试一并定。
+按先补测试再实现推进，(i)–(iv) 全部落地：
+
+1. **原语** `runtime/redis/internal/JobControlGate`：`SET NX PX` 获取（reentrant 对同 holder 值刷新）、Lua compare-and-expire 续租、Lua compare-and-delete 释放、`tryBeginControlOp(waitMillis)` 轮询等待（默认 0 = 快速失败）。键 `<stateKeyPrefix>:<jobName>:ctl:excl` / `:ctl:silence`，值 `jobInstanceId:opSeq`——每次 begin 递增 `opSeq`，故一次 release 未达 Redis 的 begin 不能复用旧值，只能等 TTL 过期；过期释放（compare-and-delete）对已接管者是 no-op。获取失败（含 Redis 不可达）一律拒绝返回 false，不抛异常；两段获取中 silence 段失败会把已赢得的 excl 段交回（防滞留锁死所有后续控制操作）。
+2. **开关策略**：门随 `leaderElectionEnabled` 默认启停（`jobControlGateEnabled` 默认 null = 跟随选举），可用 `jobControlGateEnabled(Boolean)` 双向显式覆盖，不影响选举本身；`controlGateWait` 默认 `Duration.ZERO`（快速失败，不排队等待他人控制操作），负值拒绝。TTL = `max(30s, 2 × checkpointDrainTimeout)`，续租周期 = TTL/3，持锁期间由守护线程保活。
+3. **接入**：单缝隙 `triggerCheckpointInternal`（周期 + 手动共用）与 `scaleParallelism` 的进程内块内，跨实例门恒为最内层（进程内 `CheckpointGate` 先取、跨实例租约后取，全局锁序一致 → 无死锁）。**null 门是「未配置」不是「拒绝」**——两个判据在每个调用点分开，避免把未配置误读成拒绝（实施中先写错过一版，由 wiring 单测钉住）。拒绝沿用既有约定：`triggerCheckpointNow()` 在任何消费者被 pause 之前返回 null，`scaleParallelism` 返回 false。
+4. **§6 测试**全绿：`JobControlGateTest`（14 个单测，fake Redis 晶格 + TTL 断言：fake 会像真 Redis 一样拒绝缺 TTL 的 acquire/renew）、`RedisStreamExecutionEnvironmentControlGateTest`（3 个 wiring 单测）、`JobControlGateIntegrationTest`（7 个集成：双客户端互斥、两 env 串行化、跨实例晶格争用、TTL 自愈 + 过期释放 no-op、Redis 不可达拒绝、关闭门完全惰性、follower 手动检查点仍落盘且带 epoch token）；`RedisLeaderElectionIntegrationTest` 显式关门前保持钉住选举语义。
+5. 实施教训（供后续同类改动）：**集成测试必须早于实现定稿**——单测 fake Redis 不校验 ARGV 个数，acquire/renew 漏传 TTL（`ARGV[2]` 缺失 → Redis 拒绝 → 门恒拒绝）在单测里表现为正常拒绝，直到集成测试跑真 Redis 才暴露；fake 现已镜像该拒绝语义。

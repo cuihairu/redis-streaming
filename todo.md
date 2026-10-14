@@ -2,7 +2,6 @@
 
 ## 未完成
 
-- [ ] 作业级控制门（缺陷 (2) 实施）：设计已出 docs/Job-Global-Control-Gate-Design.md（2026-10-15 巡检代决立项，仅设计未实施）；实施批次待排期，先补测试再实现（双客户端互斥、TTL 自愈、Redis 不可达拒绝、跨实例晶格不变量）
 - [ ] join/cep Phase 3：引擎级双源 pipeline、event-time 水位对齐、retract 语义（设计标注远期，与 P4 动态伸缩合并设计；2026-10-15 巡检代决：继续搁置）
 - [ ] 多租户 v2：线程/内存/in-flight 配额、指标 tenant 维度、registry/config/state/checkpoint/cdc/sink 前缀租户注入、租户级迁移与运维 CLI，设计见 docs/Multi-Tenancy-Design.md（配额与 CLI 无规格；指标 tenant 维度需破坏性改 StreamingMetricsCollector SPI；2026-10-15 巡检代决：继续搁置）
 
@@ -17,6 +16,7 @@
 - [x] 覆盖率水位：指令 99.2%、分支 90.9%；mq 96%、registry 98%、cdc 99%（2026-10-11 并集口径）
 - [x] 门禁口径：单测 INSTRUCTION 不低于 0.95 且 CLASS 不低于 0.99（2026-10-05 起）
 - [x] CI 集成测试通过率 100%，全量门禁绿（2026-10-11）
+- [x] CI 核查（0b7e539，缺门 (1)+缺门 (3) 修复 commit）：Docs、CodeQL、CI unit gate+jacoco 三个 workflow 全部 success（2026-10-15 补核查，14m41s）
 
 ### Runtime 企业级能力
 
@@ -71,6 +71,7 @@
 - [x] 缺陷 (1) 修复：checkpoint store 前续租门——曾持 leader 租约但续租失败的实例拒绝落盘（返回 null），从未持租约的 follower 手动检查点路径保留；`hasHeldLeadership()` 区分两种 renew 失败（2026-10-15，4 单测 + leader election 集成绿）
 - [x] 缺陷 (3) 修复：删除 `DeferredAcks` 无生产调用方的 drain-and-ack 重载，唯一 ack 面=「冻结快照（drainForAck）+ 检查点成功路径」，防流程外调用提前推 commit frontier（2026-10-15，3 个测试类同步）
 - [x] 缺陷 (2) 设计：作业级控制门（每作业 Redis 租约两级门，方案 A）设计稿 docs/Job-Global-Control-Gate-Design.md（2026-10-15，仅设计；实施入未完成清单）
+- [x] 缺陷 (2) 实施：作业级控制门落地——`JobControlGate` 两级 Redis 租约（`ctl:excl`/`ctl:silence`，`SET NX PX` + Lua CAS 释放/续租，TTL=max(30s, 2×drainTimeout) 自愈 + TTL/3 续租），接入 `triggerCheckpointInternal` 与 `scaleParallelism`（跨实例门恒最内层）；开关随 `leaderElectionEnabled`（`jobControlGateEnabled` 双向覆盖）、`controlGateWait` 默认 0 快速失败；Redis 不可达拒绝。测试：`JobControlGateTest` 14 单测（fake Redis 晶格+TTL 断言）、`RedisStreamExecutionEnvironmentControlGateTest` 3 单测、`JobControlGateIntegrationTest` 7 集成（双客户端互斥/TTL 自愈/跨实例晶格/不可达拒绝/关门惰性/follower 手动检查点带 token）+ leader election 4 集成回归绿（2026-10-15，落地记录 docs/Job-Global-Control-Gate-Design.md §7）
 - [x] 内存引擎窗口累加器注册进检查点协调器：每次消费一份算子状态 + 惰性注册 window-N + 逐记录栅栏 + 默认 FRESH 恢复（2026-10-14，3 测试）
 - [x] 两引擎接入 processing-time 窗口定时器，Trigger.onProcessingTime 已接线（commit 258b694，19 测试）
 - [x] 检查点协议 v2：逐记录屏障，消除单记录多次状态写被快照劈开（commit 431572b，1 测试）

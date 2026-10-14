@@ -20,6 +20,7 @@ import io.github.cuihairu.redis.streaming.mq.control.PausableMessageConsumer;
 import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.CheckpointGate;
+import io.github.cuihairu.redis.streaming.runtime.redis.internal.JobControlGate;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisJoinEnvelopeCodec;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisLeaderElector;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisPipeline;
@@ -114,6 +115,12 @@ public final class RedisStreamExecutionEnvironment {
 
     private final List<RedisPipelineDefinition> pipelineDefinitions = new ArrayList<>();
     private final AtomicBoolean executed = new AtomicBoolean(false);
+    /**
+     * Cross-instance control gate, set by {@link #executeAsync()}; null when the gate is
+     * disabled, in which case control operations behave exactly as the single-instance
+     * in-process {@link CheckpointGate} always did.
+     */
+    private JobControlGate jobControlGate;
     private final AtomicInteger streamSeq = new AtomicInteger(0);
     private final java.util.Set<String> usedStreamIds = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** RT-M7: (topic, group) pairs already registered, so forked pipelines fail fast instead of splitting. */
@@ -133,6 +140,22 @@ public final class RedisStreamExecutionEnvironment {
                 ? new MessageQueueFactory(this.redissonClient, this.config.getMqOptions())
                 : mqFactory;
         this.objectMapper = objectMapper == null ? new ObjectMapper().findAndRegisterModules() : objectMapper;
+    }
+
+    /**
+     * Build the cross-instance control gate, or null when it is disabled. The lease TTL has to
+     * cover a full stop-the-world control operation (drain plus snapshot write) so a slow holder
+     * is never mistaken for a crashed one; the renewer runs at a third of the TTL.
+     */
+    private JobControlGate newJobControlGate() {
+        if (!config.isJobControlGateEnabled()) {
+            return null;
+        }
+        long drainMs = Math.max(1L, config.getCheckpointDrainTimeout().toMillis());
+        long ttlMs = Math.max(30_000L, drainMs * 2);
+        String base = config.getStateKeyPrefix() + ":" + config.getJobName();
+        return new JobControlGate(redissonClient, base + ":ctl:excl", base + ":ctl:silence",
+                config.getJobInstanceId(), ttlMs, ttlMs / 3);
     }
 
     private RedisStreamExecutionEnvironment(RedissonClient redissonClient, RedisRuntimeConfig config) {
@@ -406,6 +429,9 @@ public final class RedisStreamExecutionEnvironment {
         // control gate: serializes checkpoint flows and scaleParallelism; the full-silence
         // level is what the aligned checkpoint and scale both need (see CheckpointGate)
         CheckpointGate gate = new CheckpointGate();
+        // cross-instance counterpart of the gate above: clients of the same job serialize their
+        // control operations through Redis leases, and null leaves single-instance behavior intact
+        this.jobControlGate = newJobControlGate();
         DeferredAcks deferredAcks = new DeferredAcks();
         TwoPhaseEpochTracker twoPhaseEpochs = new TwoPhaseEpochTracker();
         // set when at least one runner replayed a stored transaction during restore
@@ -498,6 +524,13 @@ public final class RedisStreamExecutionEnvironment {
             shutdownExecutorQuietly(sharedTimerExecutor);
             shutdownExecutorQuietly(checkpointExecutorRef.get());
             shutdownExecutorQuietly(leaderRenewExecutor);
+            if (jobControlGate != null) {
+                // release-then-close: a held lease must not block the restarted job's first
+                // control operation for a full TTL; the CAS release cannot free another
+                // instance's lease
+                jobControlGate.endControlOp();
+                jobControlGate.close();
+            }
             if (leaderElector != null) {
                 try {
                     leaderElector.releaseLeadership();
@@ -510,7 +543,8 @@ public final class RedisStreamExecutionEnvironment {
 
         return new LaunchedJobClient(checkpointExecutorRef, leaderRenewExecutor, leaderElector, isLeader,
                 sharedTimerExecutor, consumers, runners, subtasks, consumerSeq,
-                checkpointManager, pipelineKeys, deferredAcks, twoPhaseEpochs, gate, restoredCheckpointIdRef);
+                checkpointManager, pipelineKeys, deferredAcks, twoPhaseEpochs, gate, jobControlGate,
+                restoredCheckpointIdRef);
     }
 
     /**
@@ -626,6 +660,7 @@ public final class RedisStreamExecutionEnvironment {
         private final DeferredAcks deferredAcks;
         private final TwoPhaseEpochTracker twoPhaseEpochs;
         private final CheckpointGate gate;
+        private final JobControlGate jobControlGate;
         private final java.util.concurrent.atomic.AtomicReference<Long> restoredCheckpointId;
 
         private LaunchedJobClient(AtomicReference<ScheduledExecutorService> checkpointExecutorRef,
@@ -642,6 +677,7 @@ public final class RedisStreamExecutionEnvironment {
                                   DeferredAcks deferredAcks,
                                   TwoPhaseEpochTracker twoPhaseEpochs,
                                   CheckpointGate gate,
+                                  JobControlGate jobControlGate,
                                   java.util.concurrent.atomic.AtomicReference<Long> restoredCheckpointId) {
             this.checkpointExecutorRef = checkpointExecutorRef;
             this.leaderRenewExecutor = leaderRenewExecutor;
@@ -657,6 +693,7 @@ public final class RedisStreamExecutionEnvironment {
             this.deferredAcks = deferredAcks;
             this.twoPhaseEpochs = twoPhaseEpochs;
             this.gate = gate;
+            this.jobControlGate = jobControlGate;
             this.restoredCheckpointId = restoredCheckpointId;
         }
 
@@ -675,6 +712,13 @@ public final class RedisStreamExecutionEnvironment {
                 }
                 shutdownExecutorQuietly(checkpointExecutorRef.get());
                 shutdownExecutorQuietly(leaderRenewExecutor);
+                if (jobControlGate != null) {
+                    // release-then-close: a held lease must not block the restarted job's first
+                    // control operation for a full TTL; the CAS release cannot free another
+                    // instance's lease
+                    jobControlGate.endControlOp();
+                    jobControlGate.close();
+                }
                 if (leaderElector != null) {
                     try {
                         leaderElector.releaseLeadership();
@@ -775,7 +819,19 @@ public final class RedisStreamExecutionEnvironment {
                         }
                     }
                     try {
-                        return scaleSubtasks(newParallelism);
+                        // cross-instance counterpart: no two clients may re-balance the same
+                        // subtask lists, so the lease is won before any list is touched. A
+                        // null gate is "not configured", not a refusal.
+                        if (jobControlGate != null && !tryBeginJobControlGate()) {
+                            return false;
+                        }
+                        try {
+                            return scaleSubtasks(newParallelism);
+                        } finally {
+                            if (jobControlGate != null) {
+                                jobControlGate.endControlOp();
+                            }
+                        }
                     } finally {
                         gate.endScale();
                     }
@@ -1149,16 +1205,38 @@ public final class RedisStreamExecutionEnvironment {
                                                  List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
                                                  DeferredAcks deferredAcks,
                                                  TwoPhaseEpochTracker twoPhaseEpochs) {
-        Checkpoint cp = triggerCheckpointWhilePaused(consumers, runners, checkpointManager, pipelineKeys,
-                deferredAcks, twoPhaseEpochs);
-        if (cp != null) {
-            // RT-H2: the retention sweep lists and fully deserializes every retained
-            // checkpoint. It used to run inside the paused window below, stretching the
-            // stop-the-world pause on every tick by the size of the whole checkpoint
-            // history — run it now that the finally block has resumed the consumers.
-            checkpointManager.cleanupOld();
+        // A null gate is "not configured" — it must not read as a refusal. Refusal and
+        // "not configured" are deliberately separate checks at every gate call site.
+        if (jobControlGate != null && !tryBeginJobControlGate()) {
+            return null;
         }
-        return cp;
+        try {
+            Checkpoint cp = triggerCheckpointWhilePaused(consumers, runners, checkpointManager, pipelineKeys,
+                    deferredAcks, twoPhaseEpochs);
+            if (cp != null) {
+                // RT-H2: the retention sweep lists and fully deserializes every retained
+                // checkpoint. It used to run inside the paused window below, stretching the
+                // stop-the-world pause on every tick by the size of the whole checkpoint
+                // history — run it now that the finally block has resumed the consumers.
+                checkpointManager.cleanupOld();
+            }
+            return cp;
+        } finally {
+            if (jobControlGate != null) {
+                jobControlGate.endControlOp();
+            }
+        }
+    }
+
+    /**
+     * Try to win the cross-instance control lease, bounded by the configured wait. Tolerates a
+     * null (disabled) gate by returning {@code false} too — which is why every call site must
+     * branch on {@code jobControlGate != null} first: a {@code false} after that check is a
+     * refusal, and it must never be mixed up with the null-gate "not configured" case.
+     */
+    private boolean tryBeginJobControlGate() {
+        return jobControlGate != null
+                && jobControlGate.tryBeginControlOp(Math.max(0L, config.getControlGateWait().toMillis()));
     }
 
     /**

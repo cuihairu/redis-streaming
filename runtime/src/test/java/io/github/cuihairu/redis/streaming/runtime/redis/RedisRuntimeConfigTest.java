@@ -7,8 +7,10 @@ import java.time.Duration;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class RedisRuntimeConfigTest {
 
@@ -102,6 +104,43 @@ class RedisRuntimeConfigTest {
                 .leaderLeaseTtl(Duration.ofSeconds(30))
                 .leaderRenewInterval(Duration.ofSeconds(10))
                 .build());
+    }
+
+    @Test
+    void jobControlGateFollowsLeaderElectionUnlessOverridden() {
+        // default: no override recorded, effective value follows leader election (off)
+        RedisRuntimeConfig off = RedisRuntimeConfig.builder().build();
+        assertNull(off.getJobControlGateEnabled(), "no override means a null raw value");
+        assertFalse(off.isJobControlGateEnabled(),
+                "the gate must follow leader election and default to off");
+
+        // leader election on and no override: the gate rides along
+        RedisRuntimeConfig riding = RedisRuntimeConfig.builder().leaderElectionEnabled(true).build();
+        assertTrue(riding.isJobControlGateEnabled(),
+                "with leader election on and no override the gate is on");
+
+        // explicit overrides win in both directions without touching election itself
+        RedisRuntimeConfig forcedOn = RedisRuntimeConfig.builder().jobControlGateEnabled(true).build();
+        assertTrue(forcedOn.isJobControlGateEnabled(),
+                "an explicit override enables the gate without leader election");
+        RedisRuntimeConfig forcedOff = RedisRuntimeConfig.builder()
+                .leaderElectionEnabled(true)
+                .jobControlGateEnabled(false)
+                .build();
+        assertFalse(forcedOff.isJobControlGateEnabled(), "the override must win over election");
+        assertTrue(forcedOff.isLeaderElectionEnabled(), "the override must not disturb election");
+    }
+
+    @Test
+    void controlGateWaitDefaultsToFailFast() {
+        assertEquals(Duration.ZERO, RedisRuntimeConfig.builder().build().getControlGateWait(),
+                "the default is fail-fast: refuse a contended control operation, never queue it");
+        assertEquals(Duration.ofMillis(250),
+                RedisRuntimeConfig.builder().controlGateWait(Duration.ofMillis(250)).build()
+                        .getControlGateWait());
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> RedisRuntimeConfig.builder().controlGateWait(Duration.ofSeconds(-1)).build());
+        assertTrue(e.getMessage().contains("controlGateWait"));
     }
 
     @Test

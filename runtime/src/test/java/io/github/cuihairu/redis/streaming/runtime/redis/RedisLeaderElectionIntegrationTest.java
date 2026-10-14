@@ -44,6 +44,11 @@ class RedisLeaderElectionIntegrationTest {
                 .leaderElectionEnabled(true)
                 .leaderLeaseTtl(Duration.ofSeconds(3))
                 .leaderRenewInterval(Duration.ofMillis(500))
+                // the control gate rides along with leader election by default, but these
+                // tests pin election semantics — including a crashed leader that strands no
+                // lease at all — so the gate is switched off here. Its own contract (and the
+                // gate-plus-election combination) lives in JobControlGateIntegrationTest.
+                .jobControlGateEnabled(false)
                 .checkpointInterval(Duration.ofMillis(200))
                 // no retention: these tests assert on the full checkpoint history, which
                 // the default keep=5 would evict mid-test
