@@ -68,7 +68,9 @@
 
 - unaligned 的最小一致点应重新定义为 **per-partition barrier + per-partition 快照切分 + 恢复期排他重放**,而非「preCommit + defer-ack freeze」。(2026-10-15 勘误:初稿此处称「frontier 三段可独立落地、不依赖 epoch 对齐、纯管道」——不成立。frontier 序列化与恢复期 seek 本就存在(见上文 frontier 去重条),不存在可独立落地的「frontier 三段」;「恢复期排他」依赖作业级全局门,即上文缺陷(2),也不是纯管道。唯一真正缺失的原语是 per-partition effect fence + 把快照 Lua 拆到 per-partition。)决策因此收敛为二选一:**设计并实现 fence**(独立设计批次,MQ 层新原语,与 2PC 交互为主要风险,须专项评审 + 集成测试),或**维持对齐检查点为唯一一致路径**。不存在不动 fence 的廉价中间路径。
 - per-partition fence 是 MQ 层新原语(与 2PC 交互为主要风险),需独立设计;在此之前**对齐检查点仍是唯一一致路径**,unaligned 若要先行,只能定位为「允许 RPO > 0 的最佳努力」,须在 API 与文档上明示。
-- 另记三个本批顺带发现的既有缺陷(不属 A③ 范畴,**未列入 todo**,供决定是否立项):(1) `triggerCheckpoint` 全程不调 `renewLeadership()`,leader 丢租约后仍可写快照(`checkFence` 抛异常但 Lua 已入队)→ 无 fencing 的孤儿快照;(2) 控制门是每 env 实例的而非作业级全局锁,同名 job 的两个 `LaunchedJobClient` 可并行打快照(leader election 只协调周期触发,不保护手动 `triggerCheckpointNow`);(3) deferred-ack 的 `freeze()` 名义化(只有一个空行、无生产调用方),`release()` 无条件 `ackAll`,与「检查点已完成」无同步——defer 实为永久「先不 ack」,checkpoint 只是恰好在其后。
+- 另记三个本批顺带发现的既有缺陷(不属 A③ 范畴,**未列入 todo**,供决定是否立项):(1) `triggerCheckpoint` 全程不调 `renewLeadership()`,leader 丢租约后仍可写快照→ 无 fencing 的孤儿快照;(2) 控制门是每 env 实例的而非作业级全局锁,同名 job 的两个 `LaunchedJobClient` 可并行打快照(leader election 只协调周期触发,不保护手动 `triggerCheckpointNow`);(3) `DeferredAcks` 存在一个无生产调用方的 drain-and-ack 便捷重载(`ackAll(client, keys)`),在冻结集之外无条件 ack,与「检查点已完成」无同步——若在检查点流程之外调用,会把下个 epoch 的 id 提前计入 commit frontier。**处置(2026-10-15,巡检代决,三项均立项)**:(1) 已修——store 前续租门:曾持租约但 renew 失败的实例拒绝写快照(返回 null、不落盘;从未持租约的 follower 手动路径保留,`RedisRuntimeCheckpointManagerLeadershipGateTest` 4 测试 + `RedisLeaderElectionIntegrationTest` 集成钉住);(3) 已修——删除无调用方的 drain-and-ack 重载,唯一 ack 面收窄为「冻结快照 + 检查点成功路径」(`ackAll(client, frozenSnapshot, keys)`,DeferredAcks 相关 3 个测试类同步);(2) 设计已出、仅设计未实施——见 `docs/Job-Global-Control-Gate-Design.md`。
+
+**A③ 收口(2026-10-15,巡检代决,事后可推翻)**:选择**维持对齐检查点为唯一一致路径**,unaligned 不立项。理由:唯一缺失原语是 per-partition effect fence(正确性关键路径 + 2PC 交互风险),而收益面窄(仅长 drain timeout/高吞吐作业可感知)。`RedisRuntimeConfig` 的 unaligned 开关不再需要(无特性可开);P3(迁移路径)保持「未实施」。重启条件:生产负载出现真实 RPO 需求,且届时以 per-partition fence 设计批次重启,不复活本草图。
 
 ### 方案 B:两引擎全面对齐屏障(Flink 式)
 
@@ -82,5 +84,5 @@
 
 1. **P1 快照屏障**(已落地 2026-10-11,见方案 A① 的修正记录):协调器 `checkpointLock()` + 注册 store 绑定 + 快照/恢复持锁切面;3 个并发测试钉死,背压场景由既有流式测试(慢 sink/10 万条顺序)覆盖。
 2. **P2 注册面泛化**(已落地 2026-10-12):WatermarkState 经 `registerSnapshotSource` 注册为快照源;窗口累加器已按算子状态生命周期契约注册(2026-10-14,见方案 A② 与 docs/InMemory-Operator-State-Lifecycle-Design.md)。
-3. **P3 unaligned v2**(独立评审):两级 CAS 门 + epoch 对齐 + frontier 重放去重,默认关,`RedisRuntimeConfig` 新开关;与 metrics 的 checkpoint 时延指标同批观察收益。
+3. **P3 unaligned v2**:**已收口,不实施**(2026-10-15 巡检代决——草图「epoch 可对齐」前提不成立,维持对齐检查点为唯一一致路径;重启条件见上文 A③ 收口段)。两级 CAS 门已作为前置独立落地(2026-10-14,`CheckpointGate`)。
 4. 文档同步(已落地 2026-10-11):`docs/checkpoint.md` 已补"in-memory 快照与流水线互斥"语义(双锁契约);`docs/Deployment.md:97` 的 stop-theWorld 记载在 P3 落地前保持不变。

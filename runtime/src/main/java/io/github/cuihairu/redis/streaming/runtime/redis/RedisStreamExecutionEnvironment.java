@@ -1617,11 +1617,14 @@ public final class RedisStreamExecutionEnvironment {
             return out;
         }
 
-        /** Convenience path: ack everything currently tracked (drain-and-ack). */
-        void ackAll(RedissonClient redissonClient, StreamKeys keys) {
-            ackAll(redissonClient, drainForAck(), keys);
-        }
-
+        /**
+         * Acks exactly the frozen snapshot the owning checkpoint prepared via
+         * {@link #drainForAck()} — and nothing else. There is deliberately no
+         * "ack everything currently tracked" convenience: acking ids outside the frozen
+         * set would advance the commit frontier over records whose epoch has not
+         * committed yet (the ack must stay synchronized with the checkpoint's success,
+         * not with the caller's whim).
+         */
         void ackAll(RedissonClient redissonClient,
                     Map<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, java.util.List<String>>> snapshot,
                     StreamKeys keys) {

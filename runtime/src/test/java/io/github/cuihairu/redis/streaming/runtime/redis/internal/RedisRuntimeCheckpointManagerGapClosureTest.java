@@ -328,6 +328,7 @@ class RedisRuntimeCheckpointManagerGapClosureTest {
     @Test
     void triggerCheckpointAttachesFencingTokenWhenElectorPresent() {
         RedisLeaderElector elector = mock(RedisLeaderElector.class);
+        when(elector.renewLeadership()).thenReturn(true);
         when(elector.currentFencingToken()).thenReturn(9L);
         RedisRuntimeCheckpointManager m = new RedisRuntimeCheckpointManager(redisson, config, elector);
 

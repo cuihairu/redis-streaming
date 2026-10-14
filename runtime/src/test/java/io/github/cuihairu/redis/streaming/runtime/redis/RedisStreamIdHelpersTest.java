@@ -167,9 +167,14 @@ class RedisStreamIdHelpersTest {
     }
 
     private static void invokeAckAll(Object target, RedissonClient redisson, StreamKeys keys) throws Exception {
-        Method m = target.getClass().getDeclaredMethod("ackAll", RedissonClient.class, StreamKeys.class);
+        // the only ack surface is the frozen-snapshot form: freeze (drainForAck) then ack,
+        // exactly the sequence the checkpoint's success path performs
+        Method drain = target.getClass().getDeclaredMethod("drainForAck");
+        drain.setAccessible(true);
+        Object frozen = drain.invoke(target);
+        Method m = target.getClass().getDeclaredMethod("ackAll", RedissonClient.class, Map.class, StreamKeys.class);
         m.setAccessible(true);
-        m.invoke(target, redisson, keys);
+        m.invoke(target, redisson, frozen, keys);
     }
 
     private static void invoke(Object target, String name, Object... args) throws Exception {

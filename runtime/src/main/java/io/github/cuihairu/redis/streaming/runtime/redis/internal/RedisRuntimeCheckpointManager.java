@@ -225,6 +225,17 @@ public final class RedisRuntimeCheckpointManager {
      * between this store and the sink commit phase. Handles must be written
      * <em>before</em> any sink commits; a null/empty map writes no txn key (checkpoints
      * without two-phase-commit sinks stay byte-identical to the plain variant).
+     *
+     * <p>Leadership gate (2026-10-15): when leader election is enabled, the lease is renewed
+     * immediately before the store. An instance that held the lease but can no longer renew
+     * it has lost it mid-checkpoint — GC pause, network partition, takeover — and is refused
+     * (returns null, nothing written): previously it still landed the snapshot it had already
+     * assembled, an orphan the restore side could only reject by fencing token after the
+     * fact. Refusing at the store keeps the write inside the term; the allocated checkpoint
+     * id is simply skipped (ids stay monotonic). A renewal failure on an instance that never
+     * held the lease is a follower — its manual checkpoint keeps the designed path, writing
+     * under the shared epoch token (pinned by {@code RedisLeaderElectionIntegrationTest}).
+     * Without an elector the path is unchanged.
      */
     public Checkpoint triggerCheckpoint(long checkpointId,
                                         List<PipelineKey> pipelines,
@@ -253,6 +264,12 @@ public final class RedisRuntimeCheckpointManager {
                 cp.getStateSnapshot().putState(SNAPSHOT_KEY_TXNS, txnHandles);
             }
 
+            if (leaderElector != null && !leaderElector.renewLeadership()
+                    && leaderElector.hasHeldLeadership()) {
+                log.warn("Skip checkpoint {}: leadership lease lost before store (jobName={})",
+                        checkpointId, config.getJobName());
+                return null;
+            }
             cp.markCompleted();
             storage.storeCheckpoint(cp);
 

@@ -145,7 +145,6 @@ class DeferredAcksTest {
     @Test
     void ackAll_toleratesNullClientAndNullSnapshot() {
         RedisStreamExecutionEnvironment.DeferredAcks acks = new RedisStreamExecutionEnvironment.DeferredAcks();
-        assertDoesNotThrow(() -> acks.ackAll(null, StreamKeys.shared()));
         assertDoesNotThrow(() -> acks.ackAll(null, Map.of(), StreamKeys.shared()));
 
         RedissonClient redis = mock(RedissonClient.class);

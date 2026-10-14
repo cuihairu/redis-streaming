@@ -187,6 +187,17 @@ public final class RedisLeaderElector {
         }
     }
 
+    /**
+     * Whether this process ever acquired a leadership term (its fencing token was
+     * allocated). Distinguishes "never was leader" (a follower) from "held the lease
+     * but lost it": the checkpoint store refuses the latter — a lease lost
+     * mid-checkpoint must not land an orphan snapshot — while a follower's manual
+     * checkpoint keeps its designed path, writing under the shared epoch token.
+     */
+    public boolean hasHeldLeadership() {
+        return currentFenceToken != 0;
+    }
+
     public String leaderKey() {
         return leaderKey;
     }

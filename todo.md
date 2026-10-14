@@ -2,9 +2,9 @@
 
 ## 未完成
 
-- [ ] Redis 引擎 unaligned checkpoint 方案 A③：评审结论（方向正确、默认关）+ 前置第一步 CAS 门两级拆分（runtime internal/CheckpointGate，行为等价重构，4 单测）均已落地 2026-10-14。**第二步评估 2026-10-14：草图「epoch 可对齐」前提不成立**——checkpoint id 是每 env 实例 JVM AtomicLong、快照是单次 Lua 全局写入、无 per-partition effect fence（fencing 见 docs/Checkpoint-Barrier-Design.md「epoch 对齐与 frontier 去重评估」）；2026-10-15 勘误：frontier 序列化与恢复期 seek 本就存在（snapshotOffsets 写 SNAPSHOT_KEY_OFFSETS、restoreOffsets 按 partition 重建 group，对齐路径的恢复语义本就是「回卷到 frontier 重放」），不存在可独立落地的「frontier 三段」，唯一缺失原语是 per-partition effect fence + 快照 Lua 拆到 per-partition。待决策：设计实现 fence（独立设计批次，MQ 层新原语，与 2PC 交互为主要风险，须专项评审+集成测试）或维持对齐检查点为唯一一致路径；`RedisRuntimeConfig` 默认关开关与 2PC 专项集成测试随选中路径一并定
-- [ ] join/cep Phase 3：引擎级双源 pipeline、event-time 水位对齐、retract 语义（设计标注远期，与 P4 动态伸缩合并设计）
-- [ ] 多租户 v2：线程/内存/in-flight 配额、指标 tenant 维度、registry/config/state/checkpoint/cdc/sink 前缀租户注入、租户级迁移与运维 CLI，设计见 docs/Multi-Tenancy-Design.md（配额与 CLI 无规格；指标 tenant 维度需破坏性改 StreamingMetricsCollector SPI）
+- [ ] 作业级控制门（缺陷 (2) 实施）：设计已出 docs/Job-Global-Control-Gate-Design.md（2026-10-15 巡检代决立项，仅设计未实施）；实施批次待排期，先补测试再实现（双客户端互斥、TTL 自愈、Redis 不可达拒绝、跨实例晶格不变量）
+- [ ] join/cep Phase 3：引擎级双源 pipeline、event-time 水位对齐、retract 语义（设计标注远期，与 P4 动态伸缩合并设计；2026-10-15 巡检代决：继续搁置）
+- [ ] 多租户 v2：线程/内存/in-flight 配额、指标 tenant 维度、registry/config/state/checkpoint/cdc/sink 前缀租户注入、租户级迁移与运维 CLI，设计见 docs/Multi-Tenancy-Design.md（配额与 CLI 无规格；指标 tenant 维度需破坏性改 StreamingMetricsCollector SPI；2026-10-15 巡检代决：继续搁置）
 
 ## 已完成
 
@@ -67,6 +67,10 @@
 
 ### 检查点协议与窗口运行时
 
+- [x] Redis 引擎 unaligned checkpoint 方案 A③：评审 + 前置 CAS 门两级拆分 + epoch/frontier 评估 + 2026-10-15 勘误后**收口**——巡检代决维持对齐检查点为唯一一致路径，unaligned 不立项，重启条件=生产出现真实 RPO 需求且以 per-partition fence 设计批次重启（决策记录 docs/Checkpoint-Barrier-Design.md「A③ 收口」段）
+- [x] 缺陷 (1) 修复：checkpoint store 前续租门——曾持 leader 租约但续租失败的实例拒绝落盘（返回 null），从未持租约的 follower 手动检查点路径保留；`hasHeldLeadership()` 区分两种 renew 失败（2026-10-15，4 单测 + leader election 集成绿）
+- [x] 缺陷 (3) 修复：删除 `DeferredAcks` 无生产调用方的 drain-and-ack 重载，唯一 ack 面=「冻结快照（drainForAck）+ 检查点成功路径」，防流程外调用提前推 commit frontier（2026-10-15，3 个测试类同步）
+- [x] 缺陷 (2) 设计：作业级控制门（每作业 Redis 租约两级门，方案 A）设计稿 docs/Job-Global-Control-Gate-Design.md（2026-10-15，仅设计；实施入未完成清单）
 - [x] 内存引擎窗口累加器注册进检查点协调器：每次消费一份算子状态 + 惰性注册 window-N + 逐记录栅栏 + 默认 FRESH 恢复（2026-10-14，3 测试）
 - [x] 两引擎接入 processing-time 窗口定时器，Trigger.onProcessingTime 已接线（commit 258b694，19 测试）
 - [x] 检查点协议 v2：逐记录屏障，消除单记录多次状态写被快照劈开（commit 431572b，1 测试）
