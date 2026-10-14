@@ -2,7 +2,7 @@
 
 本文供评审,不含代码改动。目标:`SourceContext.getCheckpointLock()` 目前是死契约(唯一生产实现是引擎自己,无任何快照方在这把锁上同步);厘清两引擎检查点模型,给锁语义真实化的最小路径,并论证 Flink 式跨算子屏障协议在 Redis 引擎上的真实收益边界。
 
-> 落地状态:P1 快照屏障已落地 2026-10-11、P2 注册面泛化已落地 2026-10-12、逐记录屏障已落地 2026-10-13、窗口累加器注册已落地 2026-10-14(见「方案 A」①②与「落地记录」)。下文「现状」是落地前的事实盘点,与当前代码的差异以落地记录为准。
+> 落地状态:P1 快照屏障已落地 2026-10-11、P2 注册面泛化已落地 2026-10-12、逐记录屏障已落地 2026-10-13、窗口累加器注册已落地 2026-10-14(见「方案 A」①②与「落地记录」);A③ Redis unaligned v2 评审结论已出 2026-10-14(方向正确、不在本批实施,拆独立批次,见「方案 A」③ 评审结论)。下文「现状」是落地前的事实盘点,与当前代码的差异以落地记录为准。
 
 ## 现状(事实盘点)
 
@@ -42,7 +42,9 @@
 
 **② registerStore 泛化(P2,已落地 2026-10-12)**:注册面已从 `registerStore(InMemoryKeyedStateStore)` 泛化为 `registerSnapshotSource(name, snapshot, restore)`——任意 `(名称, snapshot, restore)` 三元组均可入检查点切面,与 keyed store 同受 ① 的锁保护;重复名拒绝,`latestRestoredStateByStoreId` 的延迟恢复语义对快照源同样生效。`WatermarkState` 补了 `Snapshot(watermark, idle)` 载荷与 `snapshot/restoreSnapshot`,`assignTimestampsAndWatermarks` 两个重载在持协调器的流水线段上自动以无冲突生成的 `watermark-N` 名注册(命名撞车时跳号)。**窗口累加器已注册 2026-10-14**(契约见 docs/InMemory-Operator-State-Lifecycle-Design.md,按推荐项 D1-a/D2-a/D3-a/D4-a/D5-a/D6-a 实现):每次终端算子消费持有一份算子状态——桶表从 drive() 局部变量提升为该实例的字段,消费开始时以无冲突生成的 `window-N` 名惰性注册(未消费的终端算子不注册);drive() 循环体与 end-of-input flush 整体在 `fenceLock()` 内(= 协调器的 checkpoint lock,与 keyed 路径逐记录屏障同契约;源迭代在栅栏外——阻塞源不得冻结检查点);快照载荷按桶记录 key/窗口边界/lastTimestamp/累积内容(增量路径的当前 fire 结果或 raw 元素拷贝),Trigger 无快照 API、实例不进快照;恢复默认 FRESH——载荷只写只读检查镜像、不注入活动桶,内存源全量重放,采纳恢复桶会双计(D3 的正确性陷阱从契约层面堵死);无注销 API,已完成运行的窗口状态留在后续检查点切面中(该次运行的最终状态)。
 
-**③ Redis 引擎 v2 unaligned 检查点(待评审,另立批次)**:不停消费,epoch 冻结点从"全量 drain"缩到"2PC preCommit + defer-ack freeze"(这两步本来就不需要 pause 全场)——offsets 用 defer-ack 快照语义已存在;keyed 状态取 Redis 现值 + 快照版本号,恢复时按"记录 id > 快照 frontier 才重放"去重(幂等 sink 键已具备)。必须先解决:与 `scaleParallelism` 共享的 `checkpointing` CAS 门要拆成两级(扩缩容仍需全静默,检查点不再需要);多并行度下 preCommit 的 epoch 对齐。风险集中在 2PC 交互,收益只在长 `checkpointDrainTimeout`/高吞吐作业,不默认启用。
+**③ Redis 引擎 v2 unaligned 检查点(评审结论已出 2026-10-14)**:不停消费,epoch 冻结点从"全量 drain"缩到"2PC preCommit + defer-ack freeze"(这两步本来就不需要 pause 全场)——offsets 用 defer-ack 快照语义已存在;keyed 状态取 Redis 现值 + 快照版本号,恢复时按"记录 id > 快照 frontier 才重放"去重(幂等 sink 键已具备)。必须先解决:与 `scaleParallelism` 共享的 `checkpointing` CAS 门要拆成两级(扩缩容仍需全静默,检查点不再需要);多并行度下 preCommit 的 epoch 对齐。风险集中在 2PC 交互,收益只在长 `checkpointDrainTimeout`/高吞吐作业,不默认启用。
+
+> **评审结论(2026-10-14,巡检代决)**:方向正确但**不在本批实施**。草图自洽——preCommit + defer-ack freeze 是最小一致点,offsets 复用既有 defer-ack 快照语义,keyed 状态取 Redis 现值 + 版本号、按 frontier 去重重放均成立;但它是正确性关键路径且收益面窄(仅长 `checkpointDrainTimeout`/高吞吐作业可感知),前置有两项硬骨头:与 `scaleParallelism` 共享的 `checkpointing` CAS 门两级拆分、多并行度 preCommit epoch 对齐。**建议拆为独立批次、默认关**(`RedisRuntimeConfig` 新开关),落地顺序:先做 CAS 门两级拆分(独立可测,对既有对齐路径亦有收益),再评 epoch 对齐与 frontier 去重;2PC 交互为主要风险,需专项集成测试覆盖。本批不动代码。
 
 ### 方案 B:两引擎全面对齐屏障(Flink 式)
 
