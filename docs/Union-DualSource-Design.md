@@ -47,7 +47,7 @@
 ## 5. 未实施清单（本批留档，待评审后另批实施）
 
 - [x] `DataStream.union(...)` 契约 + 内存引擎实现 + Redis 引擎显式不支持（默认方法模式）（2026-10-14，11 测试）；
-- [ ] `DataStream.join(other, ...)` 语法糖，Redis 侧：U3 三段编排（join topic 命名/trim/生命周期、合流消费 pipeline 注册）。实施注记（2026-10-14）：静态工厂签名无法表达 Redis 侧——`DataStream` 公开面不暴露执行环境（`RedisStreamBuilder.env` 为私有字段），糖拿不到 env 就无法注册左右两条「信封落地 join topic」pipeline；Redis 侧糖需先定 API 形态（带 env 参数的工厂 / `env.join(...)` 环境级方法 / `DataStream` 暴露 env）与 join topic 生命周期规则（命名、trim/TTL、随 job 清理）；
+- [ ] `DataStream.join(other, ...)` 语法糖，Redis 侧：U3 三段编排（join topic 命名/trim/生命周期、合流消费 pipeline 注册）。实施注记（2026-10-14）：静态工厂签名无法表达 Redis 侧——`DataStream` 公开面不暴露执行环境（`RedisStreamBuilder.env` 为私有字段），糖拿不到 env 就无法注册左右两条「信封落地 join topic」pipeline；架构卡点（2026-10-14 复核）：`runtime` 主源码**刻意不依赖 join 模块**（join 在其 `testImplementation` 里），而 `RedisStreamBuilder.map()` 返回 `DataStream<R>` 而非 builder——糖若落在 runtime 会反转「引擎→算子库」的依赖分层，若落在 join 模块则拿不到 Redis 引擎的 env。三个候选落点（runtime 主依赖 join / 新建 join-runtime 桥接模块 / `DataStream` 暴露 env 的环境级 `env.join(...)`）各有一次架构改动，属设计取舍，**待评审**；join topic 生命周期规则（命名、trim/TTL、随 job 清理）亦需一并定；
 - [x] `DataStream.join(other, ...)` 语法糖，内存侧：`StreamJoinOperator.join(left, right, config, fn)` 静态工厂（信封 map + union + keyBy + 算子，时间戳走 config 提取器、缺省落系统时间与 `StreamJoiner` 一致）（2026-10-14，7 测试，与手工信封路径差分对照）；
 - [ ] 双引擎集成测试：join 糖的差分对照（直接信封路径 vs 糖展开路径输出一致）；
 - [ ] event-time join 窗口评估（依赖 `TimestampAssigner` 重载与水位对齐，随 Phase 3）。

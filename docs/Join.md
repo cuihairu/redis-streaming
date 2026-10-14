@@ -180,6 +180,37 @@ StreamJoinOperator.join(orders, users, config, (order, user) -> new EnrichedOrde
 - 信封 key 须与 `JoinConfig` 的 selector 一致——不一致不会报错，只会让配对路由到互不相见的分区而**静默失配**；
 - **Phase 2 起（2026-10-12）缓冲进 keyed state**：每 key 一份 JSON 文档（自描述元素，跨重启可解码），经 `ctx.getState` 读写、随引擎 checkpoint 快照恢复——failover 后未配对的半边不再丢失，语义升级为 **at-least-once 重算**（MQ 重放的信封可能再次配对，去重交给下游）；`maxStateSize` 与 retention 从实例级收窄为 **per-key**（窗口谓词仍守护正确性，详见设计文档 §3.3/§3.4）。
 
+### 接入三步
+
+把两条可合流的 `DataStream` 接成一条 join 输出，只需三步（完整可跑示例见 `examples/.../join/StreamJoinSugarExample.java`，内存引擎、无需 Redis）：
+
+1. **建 `JoinConfig`**：`joinType` + `joinWindow` + 左右键选择器 + 左右时间戳提取器（提取器可缺省，落系统时间）；
+2. **调糖**：`StreamJoinOperator.join(left, right, config, (l, r) -> ...)` 返回 `DataStream<O>`，像普通流一样接 `map`/`filter`/`addSink`；
+3. **跑**：内存引擎直接 `addSink` 消费；Redis 引擎把返回的流交给 `RedisStreamBuilder` 注册执行。
+
+```java
+// 1) 配置
+JoinConfig<Order, User, String> config = JoinConfig.<Order, User, String>builder()
+        .joinType(JoinType.LEFT)
+        .joinWindow(JoinWindow.ofSize(Duration.ofSeconds(30)))
+        .leftKeySelector(Order::getUserId)
+        .rightKeySelector(User::getUserId)
+        .leftTimestampExtractor(Order::getEventTime)
+        .rightTimestampExtractor(User::getEventTime)
+        .build();
+
+// 2) 糖：一条调用完成信封 + 合流 + keyBy + 算子
+DataStream<String> joined = StreamJoinOperator.join(orders, users, config,
+        (order, user) -> user == null
+                ? order.getOrderId() + "|unmatched"
+                : order.getOrderId() + "|" + user.getName() + "|" + order.getAmount());
+
+// 3) 消费
+joined.addSink(System.out::println);
+```
+
+外连接语义：左流元素先到时立即以 `null` 右半边发射一次，右流在窗口内到达时再补发射一次配对结果（`StreamJoinerTest.testLeftJoin` 钉住）；`JoinType.INNER` 只保留配对成功的元素。
+
 ## References
 
 - [Architecture](Architecture.md)

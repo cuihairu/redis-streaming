@@ -3,7 +3,7 @@
 ## 未完成
 
 - [ ] Redis 引擎 unaligned checkpoint 方案评审（设计见 docs/Checkpoint-Barrier-Design.md 方案 A③，待评审）
-- [ ] DataStream.join(other) 语法糖：union 原语（2026-10-14，11 测试）与内存侧糖 StreamJoinOperator.join（2026-10-14，7 测试）已落地，剩 Redis U3 三段编排（join topic 命名/trim/生命周期），见 docs/Union-DualSource-Design.md §5
+- [ ] DataStream.join(other) 语法糖：union 原语（2026-10-14，11 测试）与内存侧糖 StreamJoinOperator.join（2026-10-14，7 测试）已落地，可跑示例 StreamJoinSugarExample + docs/Join.md 接入三步已交付；剩 Redis U3 三段编排（join topic 命名/trim/生命周期），架构卡点见 docs/Union-DualSource-Design.md §5（runtime 主依赖刻意不含 join、RedisStreamBuilder.map 返回 DataStream，糖落点三选一待评审）
 - [ ] join/cep Phase 3：引擎级双源 pipeline、event-time 水位对齐、retract 语义（设计标注远期，与 P4 动态伸缩合并设计）
 - [ ] 多租户 v2：线程/内存/in-flight 配额、指标 tenant 维度、registry/config/state/checkpoint/cdc/sink 前缀租户注入、租户级迁移与运维 CLI，设计见 docs/Multi-Tenancy-Design.md（配额与 CLI 无规格；指标 tenant 维度需破坏性改 StreamingMetricsCollector SPI）
 
