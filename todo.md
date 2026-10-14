@@ -2,7 +2,7 @@
 
 ## 未完成
 
-- [ ] Redis 引擎 unaligned checkpoint 方案 A③：评审结论（方向正确、默认关）+ 前置第一步 CAS 门两级拆分（runtime internal/CheckpointGate，行为等价重构，4 单测）均已落地 2026-10-14。**第二步评估 2026-10-14：草图「epoch 可对齐」前提不成立**——checkpoint id 是每 env 实例 JVM AtomicLong、快照是单次 Lua 全局写入、无 per-partition effect fence（fencing 见 docs/Checkpoint-Barrier-Design.md「epoch 对齐与 frontier 去重评估」）；建议最小一致点改为「per-partition barrier + 显式 frontier 序列化 + 恢复期排他重放」三段。待决策：先落 frontier 三段（纯管道、不依赖 epoch 对齐，但改所有作业恢复重放语义，须专项集成测试）或维持对齐检查点为唯一一致路径；`RedisRuntimeConfig` 默认关开关与 2PC 专项集成测试随选中路径一并定
+- [ ] Redis 引擎 unaligned checkpoint 方案 A③：评审结论（方向正确、默认关）+ 前置第一步 CAS 门两级拆分（runtime internal/CheckpointGate，行为等价重构，4 单测）均已落地 2026-10-14。**第二步评估 2026-10-14：草图「epoch 可对齐」前提不成立**——checkpoint id 是每 env 实例 JVM AtomicLong、快照是单次 Lua 全局写入、无 per-partition effect fence（fencing 见 docs/Checkpoint-Barrier-Design.md「epoch 对齐与 frontier 去重评估」）；2026-10-15 勘误：frontier 序列化与恢复期 seek 本就存在（snapshotOffsets 写 SNAPSHOT_KEY_OFFSETS、restoreOffsets 按 partition 重建 group，对齐路径的恢复语义本就是「回卷到 frontier 重放」），不存在可独立落地的「frontier 三段」，唯一缺失原语是 per-partition effect fence + 快照 Lua 拆到 per-partition。待决策：设计实现 fence（独立设计批次，MQ 层新原语，与 2PC 交互为主要风险，须专项评审+集成测试）或维持对齐检查点为唯一一致路径；`RedisRuntimeConfig` 默认关开关与 2PC 专项集成测试随选中路径一并定
 - [ ] join/cep Phase 3：引擎级双源 pipeline、event-time 水位对齐、retract 语义（设计标注远期，与 P4 动态伸缩合并设计）
 - [ ] 多租户 v2：线程/内存/in-flight 配额、指标 tenant 维度、registry/config/state/checkpoint/cdc/sink 前缀租户注入、租户级迁移与运维 CLI，设计见 docs/Multi-Tenancy-Design.md（配额与 CLI 无规格；指标 tenant 维度需破坏性改 StreamingMetricsCollector SPI）
 
