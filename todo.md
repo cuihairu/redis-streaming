@@ -17,6 +17,7 @@
 - [x] 门禁口径：单测 INSTRUCTION 不低于 0.95 且 CLASS 不低于 0.99（2026-10-05 起）
 - [x] CI 集成测试通过率 100%，全量门禁绿（2026-10-11）
 - [x] CI 核查（0b7e539，缺门 (1)+缺门 (3) 修复 commit）：Docs、CodeQL、CI unit gate+jacoco 三个 workflow 全部 success（2026-10-15 补核查，14m41s）
+- [x] CI 核查（decda45，作业级控制门/缺门 (2) 实施 commit）：Docs 52s、CodeQL 3m50s、CI unit+integration 13m48s 三个 workflow 全部 success（2026-10-15 定时核查）
 
 ### Runtime 企业级能力
 
