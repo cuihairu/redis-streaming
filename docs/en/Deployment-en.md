@@ -98,5 +98,5 @@ spring:
 
 ## 8) Multi-instance and rolling upgrade notes
 - Scale one job horizontally through consumer groups; combine with `MqOptions.maxLeasedPartitionsPerConsumer` (default 0 = follows `workerThreads`) to avoid lease over-provisioning.
-- Checkpointing is single-process stop-the-world (no cross-instance barriers); for multi-instance deployments prefer idempotent sinks or Redis-only atomic sinks to keep end-to-end semantics consistent.
+- Checkpointing is single-process stop-the-world; with the optional job-global control gate (`jobControlGateEnabled`, default follows `leaderElectionEnabled`) enabled, checkpoints and scaling of same-`jobName` instances are serialized across instances via Redis leases (see [runtime.md](../runtime.md) §2.6). For end-to-end semantics still prefer idempotent sinks or Redis-only atomic sinks.
 - Rolling upgrade: scale up new-version instances first, watch leased partitions and error rates until stable, then scale old-version instances down gradually.

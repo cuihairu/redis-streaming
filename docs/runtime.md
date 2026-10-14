@@ -88,7 +88,7 @@ keyed.<String>process((key, value, ctx, collector) -> {
 | 方法 | 语义 |
 |---|---|
 | `void cancel()` | 幂等;停周期检查点/leader 续约调度、释放 leader 租约、停消费者、关 runner(连带 `sink.close()`)、关共享定时器线程池 |
-| `Checkpoint triggerCheckpointNow()` | 手动触发一次 stop-the-world 检查点;与周期调度共用同一 CAS(单飞),已在执行或已取消时返回 `null` |
+| `Checkpoint triggerCheckpointNow()` | 手动触发一次 stop-the-world 检查点;与周期调度共用同一 CAS(单飞),已在执行、已取消或作业级控制门拒绝(见 2.6)时返回 `null` |
 | `Checkpoint getLatestCheckpoint()` | 读取最新检查点(可能为 `null`) |
 | `void pause()` / `void resume()` | 背压式暂停/恢复;仅当消费者实现 `PausableMessageConsumer` 时生效 |
 | `long inFlight()` | 汇总各消费者在途消息数;无 pausable 实现时返回 `-1` |

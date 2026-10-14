@@ -39,7 +39,7 @@ The project is a Gradle multi-module build (20 modules, matching `settings.gradl
 - `registry`: Service registration & discovery — heartbeats, metadata/metrics filtering, change notifications, client-side load balancing.
 - `config`: Configuration center — versioned configs, change listeners, Redis-backed storage.
 - `state`: Keyed state abstractions + Redis-backed implementations (`RedisStateBackend`).
-- `checkpoint`: Checkpoint coordination and storage (stop-the-world per process; aligned in-process, no cross-instance barrier).
+- `checkpoint`: Checkpoint coordination and storage (stop-the-world per process; the optional job-global control gate serializes checkpoints/scaling across same-job instances).
 - `watermark`: Watermark generators (ascending timestamps, bounded out-of-orderness).
 
 ### Tier 3: Functional Modules

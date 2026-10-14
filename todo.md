@@ -66,6 +66,7 @@
 - [x] CDC 拉取模型修复：调度器交付 listener，snapshot 语义对齐
 - [x] 双引擎公共抽象：决策不定义，公开面交集仅 3 方法（2026-10-11 拍板）
 - [x] 文档一致性第二轮（FIRE20261015）：E1 作业级控制门入 runtime.md（配置行/§2.6 控制门与续租拒写/§2.10 跨实例互斥）、E2 KTable changelog 入 Table.md、E3 PROJECT_SUMMARY exactly-once 滞后主张、E4-E5 英文孪生页首轮漏同步（Spring-Boot-Starter-en 删 invoker/metrics 面 + 补控制面节、Registry-Guide-en 删 client 包示例 + WebSocketHealthChecker 表述 + invoker yaml）、E6 Architecture 双语 Tier5（metrics→benchmark）+ en 四处不符 + README 双语里程碑行 + 8 页版本 0.2.0→0.2.4，共 6 条，记录 docs/审计-文档一致性.md 第二轮；docs:build 绿（2026-10-15）
+- [x] 文档一致性第二轮 E7 补漏（FIRE20261015）：Deployment 双语 §8「不跨实例 barrier」滞后主张（E3 同款漏网）+ Architecture-en checkpoint 模块行漏控制门限定（E6 修复时改写措辞的同批漏网）+ runtime.md `triggerCheckpointNow` null 条件补控制门拒绝一路；docs:build 绿（2026-10-15）
 
 ### 检查点协议与窗口运行时
 

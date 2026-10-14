@@ -94,7 +94,7 @@ spring:
 
 ## 8) 多实例与滚动升级建议（要点）
 - 同一 job 建议通过 consumer group 水平扩展；并结合 `MqOptions.maxLeasedPartitionsPerConsumer`（默认 0 = 取 `workerThreads`）避免超配 lease。
-- checkpoint 为单进程 stop-the-world（不跨实例 barrier）；多实例部署时请优先使用幂等 sink 或 Redis-only 原子 sink 方案确保端到端效果一致性。
+- checkpoint 为单进程 stop-the-world；可选作业级控制门（`jobControlGateEnabled`，默认跟随 `leaderElectionEnabled`）开启后，同 `jobName` 各实例的检查点与伸缩经 Redis 租约跨实例串行化（见 [runtime.md](runtime.md) §2.6）。端到端效果一致性仍请优先使用幂等 sink 或 Redis-only 原子 sink 方案。
 - 滚动升级：先扩容新版本实例，观察 leased partitions 与错误率稳定后，再逐步缩容旧版本实例。
 
 ## 9) 作业控制面（可选,声明式升级/回滚）
