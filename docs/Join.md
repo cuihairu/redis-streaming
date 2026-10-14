@@ -157,6 +157,26 @@ env.fromMqTopic(joinInputTopic, "join-group")
 
 - 语义与 `StreamJoiner` 逐点一致（窗口谓词有差分测试钉住）：左锚定窗口谓词、外连接立即发射 + 后到补配对、retention/maxStateSize 淘汰；
 - 内存引擎的合流用 `DataStream.union`（round-robin 交错，源内顺序保留、跨源顺序未定义，逐消费可复用），无需中转 topic；Redis 引擎仍走 join 输入 topic（跨引擎合流见 [双源汇合设计](Union-DualSource-Design.md)）；
+
+### 语法糖：两条流直接 join
+
+两条可合流的 `DataStream` 不必手工写信封 map / keyBy——`StreamJoinOperator.join` 用 `JoinConfig` 自带的键选择器与时间戳提取器打信封，`union` 合流，keyBy 落在信封自身的 join 键上（信封键即分区键，手工路径「键选择器与信封键不一致导致静默失配」的坑在糖路径上结构性不存在）：
+
+```java
+JoinConfig<String, String, String> config = JoinConfig.<String, String, String>builder()
+        .joinType(JoinType.INNER)
+        .joinWindow(JoinWindow.ofSize(Duration.ofSeconds(30)))
+        .leftKeySelector(o -> o.getUserId())
+        .rightKeySelector(u -> u.getUserId())
+        .leftTimestampExtractor(Order::getEventTime)   // 缺省落系统时间，与 StreamJoiner 一致
+        .rightTimestampExtractor(User::getEventTime)
+        .build();
+
+StreamJoinOperator.join(orders, users, config, (order, user) -> new EnrichedOrder(order, user))
+        .addSink(out);
+```
+
+糖与手工信封路径输出一致（差分测试钉住），仅覆盖两侧都是可合流 `DataStream` 的场景；跨引擎（Redis 两条独立 pipeline）仍走上面的 join 输入 topic 模式。
 - 信封 key 须与 `JoinConfig` 的 selector 一致——不一致不会报错，只会让配对路由到互不相见的分区而**静默失配**；
 - **Phase 2 起（2026-10-12）缓冲进 keyed state**：每 key 一份 JSON 文档（自描述元素，跨重启可解码），经 `ctx.getState` 读写、随引擎 checkpoint 快照恢复——failover 后未配对的半边不再丢失，语义升级为 **at-least-once 重算**（MQ 重放的信封可能再次配对，去重交给下游）；`maxStateSize` 与 retention 从实例级收窄为 **per-key**（窗口谓词仍守护正确性，详见设计文档 §3.3/§3.4）。
 

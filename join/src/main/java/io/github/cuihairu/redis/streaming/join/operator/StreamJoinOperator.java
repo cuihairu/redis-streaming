@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import io.github.cuihairu.redis.streaming.api.state.StateDescriptor;
 import io.github.cuihairu.redis.streaming.api.state.ValueState;
+import io.github.cuihairu.redis.streaming.api.stream.DataStream;
 import io.github.cuihairu.redis.streaming.api.stream.KeyedProcessFunction;
 import io.github.cuihairu.redis.streaming.join.JoinConfig;
 import io.github.cuihairu.redis.streaming.join.JoinFunction;
@@ -16,6 +17,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.function.Function;
 
 /**
  * Operatorization of the stream-stream join: adapts the {@code StreamJoiner} windowed join
@@ -80,6 +83,60 @@ public final class StreamJoinOperator {
             JoinConfig<L, R, K> config, JoinFunction<L, R, O> joinFunction) {
         config.validate();
         return new JoinProcessFunction<>(config, joinFunction);
+    }
+
+    /**
+     * Sugar for the operatorized join over two mergeable pipelines: both sides are tagged
+     * into {@link Envelope}s using the config's own key selectors and timestamp extractors
+     * (current time when an extractor is absent, matching {@code StreamJoiner}), merged
+     * through {@link DataStream#union}, routed by the envelope's join key, and run through
+     * {@link #asKeyedProcessFunction}. Because the keyBy selector is the envelope's join
+     * key itself, the manual path's "envelope key vs keyBy selector mismatch" silent
+     * mispairing is structurally impossible here.
+     *
+     * <p>Available wherever both inputs are mergeable {@code DataStream}s (in-memory engine
+     * natively; cross-engine Redis merges still go through join topic mode — the two
+     * pipelines produce envelopes to one topic and a third consumes it).
+     *
+     * @param left         left-hand stream
+     * @param right        right-hand stream
+     * @param config       join configuration (type, window, retention bounds); validated on entry
+     * @param joinFunction the pairing function; invoked with a {@code null} half for unmatched outer-join emissions
+     * @param <K>          join key type
+     * @param <L>          left element type
+     * @param <R>          right element type
+     * @param <O>          output element type
+     * @return a stream of joined outputs
+     */
+    public static <K, L, R, O> DataStream<O> join(
+            DataStream<L> left,
+            DataStream<R> right,
+            JoinConfig<L, R, K> config,
+            JoinFunction<L, R, O> joinFunction) {
+        Objects.requireNonNull(left, "left");
+        Objects.requireNonNull(right, "right");
+        Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(joinFunction, "joinFunction");
+        config.validate();
+        DataStream<Envelope<K, L, R>> leftTagged = left.map(l -> Envelope.<K, L, R>forLeft(
+                config.getLeftKeySelector().apply(l),
+                extractTimestamp(l, config.getLeftTimestampExtractor()),
+                l));
+        DataStream<Envelope<K, L, R>> rightTagged = right.map(r -> Envelope.<K, L, R>forRight(
+                config.getRightKeySelector().apply(r),
+                extractTimestamp(r, config.getRightTimestampExtractor()),
+                r));
+        return leftTagged.union(rightTagged)
+                .keyBy(Envelope::getJoinKey)
+                .process(asKeyedProcessFunction(config, joinFunction));
+    }
+
+    /**
+     * Extract timestamp from element, using current time if no extractor provided
+     * (same convention as {@code StreamJoiner}).
+     */
+    private static <T> long extractTimestamp(T element, Function<T, Long> extractor) {
+        return extractor != null ? extractor.apply(element) : System.currentTimeMillis();
     }
 
     private static final class JoinProcessFunction<K, L, R, O>
