@@ -41,10 +41,12 @@ public class RedisNamingService implements NamingService {
         ServiceProviderConfig providerConfig = new ServiceProviderConfig();
         providerConfig.setKeyPrefix(this.config.getKeyPrefix());
         providerConfig.setEnableKeyPrefix(this.config.isEnableKeyPrefix());
-        
+        providerConfig.setTenant(this.config.getTenant());
+
         ServiceConsumerConfig consumerConfig = new ServiceConsumerConfig();
         consumerConfig.setKeyPrefix(this.config.getKeyPrefix());
         consumerConfig.setEnableKeyPrefix(this.config.isEnableKeyPrefix());
+        consumerConfig.setTenant(this.config.getTenant());
         // Health-check and admin settings must reach the consumer config (B-30):
         // they used to be silently dropped here while getConfig() kept reporting the
         // user's values, making the misconfiguration impossible to see.

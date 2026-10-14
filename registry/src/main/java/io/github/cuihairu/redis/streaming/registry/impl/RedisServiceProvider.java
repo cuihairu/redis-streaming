@@ -389,7 +389,9 @@ public class RedisServiceProvider implements ServiceProvider {
             long timeoutMs = config.getHeartbeatTimeoutSeconds() * 1000L;
 
             String heartbeatKey = registryKeys.getServiceHeartbeatsKey(serviceName);
-            String keyPrefix = config.getKeyPrefix() != null ? config.getKeyPrefix() : "registry";
+            // Lua builds instance keys as "<prefix>:services:...", so it must get the
+            // effective prefix (key prefix + tenant segment) to match the Java-built keys.
+            String keyPrefix = registryKeys.getEffectivePrefix();
 
             // Call cleanup script with snapshots, result is [id1, json1, id2, json2, ...]
             List<Object> result = luaExecutor.executeCleanupExpiredInstancesWithSnapshots(

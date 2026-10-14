@@ -672,7 +672,7 @@ public class RedisServiceConsumer implements ServiceConsumer {
             // Use new interface (metadata-only), pass null for metricsFilters
             List<String> matchedInstanceIds = luaExecutor.executeGetInstancesByFilters(
                     heartbeatsKey,
-                    config.getRegistryKeys().getKeyPrefix(),
+                    config.getRegistryKeys().getEffectivePrefix(),
                     serviceName,
                     currentTime,
                     heartbeatTimeoutMs,
@@ -757,7 +757,7 @@ public class RedisServiceConsumer implements ServiceConsumer {
 
             List<String> matchedInstanceIds = luaExecutor.executeGetInstancesByFilters(
                     heartbeatsKey,
-                    config.getRegistryKeys().getKeyPrefix(),
+                    config.getRegistryKeys().getEffectivePrefix(),
                     serviceName,
                     currentTime,
                     heartbeatTimeoutMs,

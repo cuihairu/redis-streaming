@@ -1,5 +1,7 @@
 package io.github.cuihairu.redis.streaming.registry.keys;
 
+import java.util.regex.Pattern;
+
 import lombok.Getter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +18,12 @@ public class RegistryKeys {
     // Default prefix
     private static final String DEFAULT_PREFIX = "registry";
 
+    /** Default tenant: no tenant key segment, keys are byte-identical to the legacy layout. */
+    public static final String DEFAULT_TENANT = "default";
+
+    /** Tenant names: 1..64 chars of {@code [A-Za-z0-9._-]} (same contract as {@code StreamKeys}). */
+    private static final Pattern TENANT_PATTERN = Pattern.compile("[A-Za-z0-9._-]{1,64}");
+
     // Service registration and discovery key templates
     private static final String SERVICES_INDEX_TEMPLATE = "%s:services";                           // Level 1: Service index
     private static final String SERVICE_HEARTBEATS_TEMPLATE = "%s:services:%s:heartbeats";         // Level 2: Heartbeat index (ZSet)
@@ -28,13 +36,55 @@ public class RegistryKeys {
      */
     private final String keyPrefix;
 
+    /** Normalized tenant of this view. */
+    private final String tenant;
+
+    /** {@code keyPrefix} plus the tenant segment; what the key templates are formatted with. */
+    private final String effectivePrefix;
+
     public RegistryKeys() {
         this(DEFAULT_PREFIX);
     }
 
     public RegistryKeys(String keyPrefix) {
+        this(keyPrefix, DEFAULT_TENANT);
+    }
+
+    /**
+     * Build a tenant-scoped view: a non-default tenant inserts {@code :tenant}
+     * right after the prefix ({@code registry:acme:services:...}).
+     */
+    public RegistryKeys(String keyPrefix, String tenant) {
         this.keyPrefix = keyPrefix != null && !keyPrefix.trim().isEmpty() ?
             keyPrefix.trim() : DEFAULT_PREFIX;
+        this.tenant = normalizeTenant(tenant);
+        this.effectivePrefix = keyPrefix + tenantSegment();
+    }
+
+    /**
+     * Normalize a tenant name: null/blank/{@link #DEFAULT_TENANT} collapse to
+     * {@link #DEFAULT_TENANT} (no key segment); anything else must be 1..64 chars of
+     * {@code [A-Za-z0-9._-]} so the derived keys stay unambiguous (no colon).
+     */
+    public static String normalizeTenant(String tenant) {
+        if (tenant == null || tenant.isBlank() || DEFAULT_TENANT.equals(tenant)) {
+            return DEFAULT_TENANT;
+        }
+        if (!TENANT_PATTERN.matcher(tenant).matches()) {
+            throw new IllegalArgumentException(
+                    "tenant must match [A-Za-z0-9._-]{1,64} (no colon), got: " + tenant);
+        }
+        return tenant;
+    }
+
+    /** @return {@code ""} for the default tenant, else {@code ":" + tenant}. */
+    public String tenantSegment() {
+        return DEFAULT_TENANT.equals(tenant) ? "" : ":" + tenant;
+    }
+
+    /** A view with this view's prefix and the given tenant (normalized). */
+    public RegistryKeys withTenant(String tenant) {
+        return new RegistryKeys(keyPrefix, tenant);
     }
 
     // ==================== Service registration related keys ====================
@@ -44,7 +94,7 @@ public class RegistryKeys {
      * Stores all registered service names
      */
     public String getServicesIndexKey() {
-        return String.format(SERVICES_INDEX_TEMPLATE, keyPrefix);
+        return String.format(SERVICES_INDEX_TEMPLATE, effectivePrefix);
     }
 
     /**
@@ -53,7 +103,7 @@ public class RegistryKeys {
      */
     public String getServiceHeartbeatsKey(String serviceName) {
         validateServiceName(serviceName);
-        return String.format(SERVICE_HEARTBEATS_TEMPLATE, keyPrefix, serviceName);
+        return String.format(SERVICE_HEARTBEATS_TEMPLATE, effectivePrefix, serviceName);
     }
 
     /**
@@ -63,7 +113,7 @@ public class RegistryKeys {
     public String getServiceInstanceKey(String serviceName, String instanceId) {
         validateServiceName(serviceName);
         validateInstanceId(instanceId);
-        return String.format(SERVICE_INSTANCE_TEMPLATE, keyPrefix, serviceName, instanceId);
+        return String.format(SERVICE_INSTANCE_TEMPLATE, effectivePrefix, serviceName, instanceId);
     }
 
     /**
@@ -71,7 +121,7 @@ public class RegistryKeys {
      */
     public String getServiceChangeChannelKey(String serviceName) {
         validateServiceName(serviceName);
-        return String.format(SERVICE_CHANGE_CHANNEL_TEMPLATE, keyPrefix, serviceName);
+        return String.format(SERVICE_CHANGE_CHANNEL_TEMPLATE, effectivePrefix, serviceName);
     }
 
     // ==================== Instance ID safety handling methods ====================
@@ -181,24 +231,21 @@ public class RegistryKeys {
     }
 
     /**
-     * Check if the key belongs to the current registry
+     * Check if the key belongs to the current registry (this view's tenant)
      */
     public boolean isRegistryKey(String key) {
-        return key != null && key.startsWith(keyPrefix + ":");
+        return tailPartsAfterPrefix(key) != null;
     }
 
     /**
      * Extract the service name from a full instance key
      */
     public String extractServiceNameFromInstanceKey(String instanceKey) {
-        if (!isRegistryKey(instanceKey)) {
-            return null;
-        }
-
-        // Key format: prefix:services:serviceName:instance:instanceId
-        String[] parts = instanceKey.split(":");
-        if (parts.length >= 4 && "services".equals(parts[1]) && "instance".equals(parts[3])) {
-            return parts[2];
+        // Key format: prefix[:tenant]:services:serviceName:instance:instanceId
+        String[] parts = tailPartsAfterPrefix(instanceKey);
+        if (parts != null && parts.length >= 4
+                && "services".equals(parts[0]) && "instance".equals(parts[2])) {
+            return parts[1];
         }
         return null;
     }
@@ -207,14 +254,11 @@ public class RegistryKeys {
      * Extract the instance ID from a full instance key
      */
     public String extractInstanceIdFromInstanceKey(String instanceKey) {
-        if (!isRegistryKey(instanceKey)) {
-            return null;
-        }
-
-        // Key format: prefix:services:serviceName:instance:instanceId
-        String[] parts = instanceKey.split(":");
-        if (parts.length >= 5 && "services".equals(parts[1]) && "instance".equals(parts[3])) {
-            return parts[4];
+        // Key format: prefix[:tenant]:services:serviceName:instance:instanceId
+        String[] parts = tailPartsAfterPrefix(instanceKey);
+        if (parts != null && parts.length >= 4
+                && "services".equals(parts[0]) && "instance".equals(parts[2])) {
+            return parts[3];
         }
         return null;
     }
@@ -223,16 +267,25 @@ public class RegistryKeys {
      * Extract the service name from a heartbeat key
      */
     public String extractServiceNameFromHeartbeatsKey(String heartbeatsKey) {
-        if (!isRegistryKey(heartbeatsKey)) {
-            return null;
-        }
-
-        // Key format: prefix:services:serviceName:heartbeats
-        String[] parts = heartbeatsKey.split(":");
-        if (parts.length >= 4 && "services".equals(parts[1]) && "heartbeats".equals(parts[3])) {
-            return parts[2];
+        // Key format: prefix[:tenant]:services:serviceName:heartbeats
+        String[] parts = tailPartsAfterPrefix(heartbeatsKey);
+        if (parts != null && parts.length >= 3
+                && "services".equals(parts[0]) && "heartbeats".equals(parts[2])) {
+            return parts[1];
         }
         return null;
+    }
+
+    /**
+     * The key with this view's prefix stripped and split on ':'; null when the
+     * key does not belong to this view (other prefix or other tenant).
+     */
+    private String[] tailPartsAfterPrefix(String key) {
+        String prefix = effectivePrefix + ":";
+        if (key == null || !key.startsWith(prefix)) {
+            return null;
+        }
+        return key.substring(prefix.length()).split(":");
     }
 
     // ==================== Validation methods ====================
@@ -275,6 +328,7 @@ public class RegistryKeys {
     public String toString() {
         return "RegistryKeys{" +
                 "keyPrefix='" + keyPrefix + '\'' +
+                ", tenant='" + tenant + '\'' +
                 '}';
     }
 }

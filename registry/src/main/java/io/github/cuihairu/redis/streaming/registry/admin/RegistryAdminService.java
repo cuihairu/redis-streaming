@@ -218,7 +218,9 @@ public class RegistryAdminService {
             Set<String> services = getAllServices();
             long currentTime = System.currentTimeMillis();
             long timeoutMs = timeout.toMillis();
-            String keyPrefix = config.getKeyPrefix() != null ? config.getKeyPrefix() : "registry";
+            // Lua builds instance keys as "<prefix>:services:...", so it must get the
+            // effective prefix (key prefix + tenant segment) to match the Java-built keys.
+            String keyPrefix = config.getRegistryKeys().getEffectivePrefix();
 
             for (String serviceName : services) {
                 try {
