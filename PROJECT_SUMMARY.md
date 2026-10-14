@@ -45,7 +45,7 @@ The goal is to keep the core APIs small and composable, while shipping infrastru
 `runtime` includes two runtimes with intentionally different scope:
 - [In-memory runtime: deterministic unit tests / examples (single-thread)]
 - [Redis runtime: Redis Streams consumer groups + Redis keyed state + checkpoint (experimental) + window/watermark/timers (best-effort)]
-- [Checkpoint is stop-the-world per process (not cross-instance barrier); strict end-to-end exactly-once across external sinks still requires idempotency/2PC/outbox designs]
+- [Checkpoint is stop-the-world per process, serialized across same-job instances by the optional job-global control gate (`jobControlGateEnabled`); strict end-to-end exactly-once at sinks is opt-in via the shipped components — idempotent sink, `TwoPhaseCommitSink` (2PC), outbox/WAL, Redis-atomic commit (see `docs/exactly-once.md`)]
 
 If you need a distributed engine, you can still reuse most infrastructure/operator modules (`mq`, `registry`, `state`, `reliability`, etc.) independently.
 
