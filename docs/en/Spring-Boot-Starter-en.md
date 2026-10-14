@@ -340,7 +340,7 @@ Guidelines:
 - Kryo/JSON codecs are fine for your own keys as long as no Lua script touches them.
 - Simplest: set a global `codec: !<org.redisson.codec.StringCodec>` in the Redisson config.
 
-## 典型用例
+## Typical Use Cases
 
 ### 服务注册与发现
 
@@ -521,6 +521,57 @@ redis-streaming:
     claim-idle-ms: 300000
 ```
 
+## Job Control Plane (runtime)
+
+The starter can optionally wire the Redis job control plane (declarative spec + executor-side reconciliation; design and Redis key layout in the Chinese [Control-Plane-Design.md](../Control-Plane-Design.md)):
+
+```yaml
+redis-streaming:
+  runtime:
+    control-plane:
+      enabled: true
+    agent:
+      enabled: true        # this process acts as an executor-side agent
+      instance-id: node-a  # optional, auto-generated when omitted
+```
+
+Pipeline factories register into the default `JobLauncher` **by Spring bean name**; `JobSpec.pipelineFactory` must equal it:
+
+```java
+@Bean
+public JobPipelineFactory pvAgg() {
+    return (spec, env) -> {
+        String topic = spec.getConfig().getOrDefault("topic", "pv");
+        env.fromMqTopic(topic, "grp-" + spec.getJobName())
+           .map(m -> 1L)
+           .addSink(new MyRedisCounterSink(spec));
+    };
+}
+```
+
+Then submit/upgrade/stop through the injected `JobControlPlane` (jobs take effect at the agent's next reconciliation round):
+
+```java
+plane.submit(JobSpec.builder()
+        .jobName("pv-agg")
+        .pipelineFactory("pvAgg")          // = bean name
+        .config(Map.of("topic", "pv"))
+        .parallelism(2)
+        .build(), "alice");
+
+plane.upgrade("pv-agg", s -> { s.setParallelism(4); return s; }, "alice"); // parallelism-only change takes the scale fast path
+plane.stop("pv-agg", "alice");   // the agent cancels the local instance and confirms DESIRED_STOPPED
+plane.resume("pv-agg", "alice"); // redeploy
+```
+
+Key points:
+
+- The control plane only writes desired state and never touches running jobs directly; the agent handles claim (`SET NX EX`) → launch → status report, reporting FAILED on failure and retrying next round.
+- When multiple application instances enable `agent.enabled`, one claim key arbitrates so the same job deploys on exactly one instance; when an instance dies its claim expires with the TTL and other instances need an explicit `resume` to take over (no automatic failover).
+- On application shutdown `JobAgent.close()` (`destroyMethod`) cancels all local jobs of this instance; to keep jobs running after the app exits, create the agent yourself and only call `start()`.
+- User-provided `ControlPlaneAuthorizer`/`JobLauncher` beans win (`@ConditionalOnMissingBean`); with a custom `JobLauncher`, factory registration is your responsibility.
+- An application context with zero factory beans is valid (pure control-plane usage): submit/upgrade/rollback work as usual and a separate process runs the agent side.
+
 ## Notes
 
 1. Redis must be reachable before startup; size the connection pool for production loads.
@@ -581,8 +632,8 @@ redis-streaming:
 **Last Updated**: 2026-10-05
 
 Related documentation:
-- [Overall Architecture](Architecture-en.md)
-- [Quick Start](Quick-Start-en.md)
-- [Registry Design](Registry-Design-en.md)
-- [MQ Design](MQ-Design-en.md)
-- [MQ Guide](MQ-Guide-en.md)
+- [Runtime](../runtime.md)
+- [MQ](../MQ.md)
+- [Registry](../Registry.md)
+- [Config](../config.md)
+- [Metrics](../Metrics.md)
