@@ -2,16 +2,24 @@ package io.github.cuihairu.redis.streaming.runtime.redis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.cuihairu.redis.streaming.api.stream.DataStream;
+import io.github.cuihairu.redis.streaming.api.stream.KeyedStream;
+import io.github.cuihairu.redis.streaming.api.stream.StreamSink;
+import io.github.cuihairu.redis.streaming.join.JoinConfig;
+import io.github.cuihairu.redis.streaming.join.JoinFunction;
+import io.github.cuihairu.redis.streaming.join.operator.Envelope;
+import io.github.cuihairu.redis.streaming.join.operator.StreamJoinOperator;
 import io.github.cuihairu.redis.streaming.mq.Message;
 import io.github.cuihairu.redis.streaming.mq.MessageConsumer;
 import io.github.cuihairu.redis.streaming.mq.MessageHandleResult;
 import io.github.cuihairu.redis.streaming.mq.MessageHandler;
+import io.github.cuihairu.redis.streaming.mq.MessageProducer;
 import io.github.cuihairu.redis.streaming.mq.MessageQueueFactory;
 import io.github.cuihairu.redis.streaming.mq.MqHeaders;
 import io.github.cuihairu.redis.streaming.mq.SubscriptionOptions;
 import io.github.cuihairu.redis.streaming.mq.control.PausableMessageConsumer;
 import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
+import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisJoinEnvelopeCodec;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisLeaderElector;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisPipeline;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisPipelineDefinition;
@@ -44,6 +52,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 
 /**
@@ -188,6 +197,121 @@ public final class RedisStreamExecutionEnvironment {
         String sid = requireValidId(sourceId);
         registerStreamId(sid);
         return RedisStreamBuilder.forMqSource(this, config, redissonClient, objectMapper, sid, topic, consumerGroup, subscriptionOptions);
+    }
+
+    /**
+     * Join sugar over two pipelines (union design step 2, Redis half — design option U3, the
+     * three-pipeline orchestration): the two input streams are tagged into self-describing
+     * {@link Envelope}s using the config's own key selectors and timestamp extractors (current
+     * time when an extractor is absent, matching {@code StreamJoiner}) and written to the join
+     * topic; a third consumer pipeline reads the join topic, routes by the envelope's join
+     * key, and runs the join operator. Returns the consumer's output stream — attach your sink
+     * to it before {@link #executeAsync()}.
+     *
+     * <p>{@code joinTopic} is user-provided and must be <b>stable across restarts</b>: the
+     * consumer pipeline's keyed state (the per-key join buffers) is keyed by the
+     * (job, topic, group, operator id) tuple, so a renamed topic orphans the previous
+     * instance's buffers. It also feeds the consumer's stable source id, so its characters are
+     * limited to the source-id charset ({@code [A-Za-z0-9_.-]+}). Its retention follows the MQ stream retention
+     * governance like any other topic (the producer path registers it); the sugar never
+     * deletes it — deleting would orphan the consumer's state.
+     *
+     * <p>Consumer-group and source-id hygiene: the group is derived from the topic
+     * ({@code topic + "-join"}), the source id is {@code "join-" + topic} — both stable, so
+     * operator/state identifiers survive restarts, and the RT-M7 duplicate (topic, group)
+     * guard fails fast if anything else tries to share the join topic's group.
+     *
+     * @param joinTopic    stable topic the two producers write envelopes to (dedicated to this join)
+     * @param left         left-hand stream
+     * @param right        right-hand stream
+     * @param config       join configuration (type, window, retention bounds); validated on entry
+     * @param joinFunction the pairing function; invoked with a {@code null} half for unmatched outer-join emissions
+     * @param <K>          join key type
+     * @param <L>          left element type
+     * @param <R>          right element type
+     * @param <O>          output element type
+     * @return the consumer pipeline's joined-output stream
+     */
+    public <K, L, R, O> DataStream<O> join(
+            String joinTopic,
+            DataStream<L> left,
+            DataStream<R> right,
+            JoinConfig<L, R, K> config,
+            JoinFunction<L, R, O> joinFunction) {
+        Objects.requireNonNull(joinTopic, "joinTopic");
+        if (joinTopic.isBlank()) {
+            throw new IllegalArgumentException("joinTopic must not be blank");
+        }
+        Objects.requireNonNull(left, "left");
+        Objects.requireNonNull(right, "right");
+        Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(joinFunction, "joinFunction");
+        config.validate();
+
+        DataStream<Envelope<K, L, R>> leftTagged = left.map(l -> Envelope.<K, L, R>forLeft(
+                config.getLeftKeySelector().apply(l),
+                extractTimestamp(l, config.getLeftTimestampExtractor()), l));
+        leftTagged.addSink(new EnvelopeTopicSink<>(joinTopic));
+
+        DataStream<Envelope<K, L, R>> rightTagged = right.map(r -> Envelope.<K, L, R>forRight(
+                config.getRightKeySelector().apply(r),
+                extractTimestamp(r, config.getRightTimestampExtractor()), r));
+        rightTagged.addSink(new EnvelopeTopicSink<>(joinTopic));
+
+        DataStream<Envelope<K, L, R>> envelopes = fromMqTopicWithId(
+                        "join-" + joinTopic, joinTopic, joinTopic + "-join")
+                .map(m -> RedisJoinEnvelopeCodec.<K, L, R>parse(String.valueOf(m.getPayload())));
+        KeyedStream<K, Envelope<K, L, R>> keyed = envelopes.keyBy(Envelope::getJoinKey);
+        return keyed.process(StreamJoinOperator.asKeyedProcessFunction(config, joinFunction));
+    }
+
+    /** Extract timestamp from element, using current time if no extractor provided
+     * (same convention as {@code StreamJoiner} and the join module's sugar). */
+    private static <T> long extractTimestamp(T element, Function<T, Long> extractor) {
+        return extractor != null ? extractor.apply(element) : System.currentTimeMillis();
+    }
+
+    /**
+     * Producer-side sink for the join topic: encodes envelopes through
+     * {@link RedisJoinEnvelopeCodec} and sends them through the normal MQ producer path, so
+     * the join topic gets standard topic registration, partitioning and retention governance.
+     * The join key doubles as the MQ key — same-key envelopes land on the same partition,
+     * preserving per-key arrival order into the join operator. Send failures fail the record
+     * (retry/DLQ by the runner's failure policy); a blocking send is the at-least-once backpressure.
+     */
+    private final class EnvelopeTopicSink<K, L, R> implements StreamSink<Envelope<K, L, R>> {
+
+        private final String joinTopic;
+        private MessageProducer producer;
+
+        EnvelopeTopicSink(String joinTopic) {
+            this.joinTopic = Objects.requireNonNull(joinTopic, "joinTopic");
+        }
+
+        @Override
+        public void open() {
+            this.producer = mqFactory.createProducer();
+        }
+
+        @Override
+        public void invoke(Envelope<K, L, R> envelope) {
+            // toJson rejects a null join key with a message naming the offending side —
+            // propagate that IllegalArgumentException unwrapped
+            String json = RedisJoinEnvelopeCodec.toJson(envelope);
+            try {
+                producer.send(joinTopic, String.valueOf(envelope.getJoinKey()), json)
+                        .get(30, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to write join envelope to topic '" + joinTopic + "'", e);
+            }
+        }
+
+        @Override
+        public void close() {
+            if (producer != null) {
+                producer.close();
+            }
+        }
     }
 
     /**

@@ -176,7 +176,7 @@ StreamJoinOperator.join(orders, users, config, (order, user) -> new EnrichedOrde
         .addSink(out);
 ```
 
-糖与手工信封路径输出一致（差分测试钉住），仅覆盖两侧都是可合流 `DataStream` 的场景；跨引擎（Redis 两条独立 pipeline）仍走上面的 join 输入 topic 模式。
+糖与手工信封路径输出一致（差分测试钉住），仅覆盖两侧都是可合流 `DataStream` 的场景；跨引擎（Redis 两条独立 pipeline）走下面的 `env.join` 编排。
 - 信封 key 须与 `JoinConfig` 的 selector 一致——不一致不会报错，只会让配对路由到互不相见的分区而**静默失配**；
 - **Phase 2 起（2026-10-12）缓冲进 keyed state**：每 key 一份 JSON 文档（自描述元素，跨重启可解码），经 `ctx.getState` 读写、随引擎 checkpoint 快照恢复——failover 后未配对的半边不再丢失，语义升级为 **at-least-once 重算**（MQ 重放的信封可能再次配对，去重交给下游）；`maxStateSize` 与 retention 从实例级收窄为 **per-key**（窗口谓词仍守护正确性，详见设计文档 §3.3/§3.4）。
 
@@ -210,6 +210,30 @@ joined.addSink(System.out::println);
 ```
 
 外连接语义：左流元素先到时立即以 `null` 右半边发射一次，右流在窗口内到达时再补发射一次配对结果（`StreamJoinerTest.testLeftJoin` 钉住）；`JoinType.INNER` 只保留配对成功的元素。
+
+### Redis 引擎：`env.join` 三段编排
+
+Redis 引擎里左右两条独立 pipeline 无法直接合流，`RedisStreamExecutionEnvironment.join` 把糖展开为 U3 三段编排（设计见 [双源汇合设计](Union-DualSource-Design.md) §3 方案 U3）：左右源各起一条「信封落地」pipeline 把记录打成 `Envelope` JSON 写入 join topic（join 键即 MQ key，同键分区内有序），再从该 topic 起一条合流消费 pipeline（解析 → `keyBy` → join 算子）承载 join 语义：
+
+```java
+RedisStreamExecutionEnvironment env = new RedisStreamExecutionEnvironment(redisson, config, mqFactory);
+DataStream<EnrichedOrder> joined = env.join(
+        "order-user-join",                       // join topic：用户给定，重启间须稳定
+        env.fromMqTopic("orders", "orders-group"),
+        env.fromMqTopic("users", "users-group"),
+        config,
+        (order, user) -> new EnrichedOrder(order, user));
+
+joined.addSink(...);
+env.executeAsync("order-user-join-job");
+```
+
+约定与守卫：
+
+- **joinTopic 字符集 `[A-Za-z0-9_.-]+`**：它喂稳定 source id `join-<topic>` 与消费组 `<topic>-join`，重启间不变（keyed state 键因此稳定）；
+- **糖不治理 topic 生命周期**：trim/TTL 走 MQ 的 stream 保留治理；同一 joinTopic 二次调用会被稳定 source id 的重复注册守卫拒绝（fail-fast）；
+- **信封跨 topic 走自描述 JSON**（side + key + timestamp + payload 各带类型名），编解码约定与 join 算子 keyed state 的序列化一致，负载类型跨重启可还原；
+- 时间戳缺省落系统时间（与内存糖、`StreamJoiner` 一致），event-time 水位对齐仍属 Phase 3。
 
 ## References
 

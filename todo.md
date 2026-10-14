@@ -3,7 +3,6 @@
 ## 未完成
 
 - [ ] Redis 引擎 unaligned checkpoint 方案 A③：评审结论已出 2026-10-14（方向正确、不在本批实施，拆独立批次、默认关，先做 CAS 门两级拆分再评 epoch 对齐与 frontier 去重，见 docs/Checkpoint-Barrier-Design.md 方案 A③ 评审结论）；实施待另立批次
-- [ ] DataStream.join(other) 语法糖：union 原语（2026-10-14，11 测试）与内存侧糖 StreamJoinOperator.join（2026-10-14，7 测试）已落地，可跑示例 StreamJoinSugarExample + docs/Join.md 接入三步已交付；剩 Redis U3 三段编排（join topic 命名/trim/生命周期），架构卡点见 docs/Union-DualSource-Design.md §5（runtime 主依赖刻意不含 join、RedisStreamBuilder.map 返回 DataStream，糖落点三选一待评审）
 - [ ] join/cep Phase 3：引擎级双源 pipeline、event-time 水位对齐、retract 语义（设计标注远期，与 P4 动态伸缩合并设计）
 - [ ] 多租户 v2：线程/内存/in-flight 配额、指标 tenant 维度、registry/config/state/checkpoint/cdc/sink 前缀租户注入、租户级迁移与运维 CLI，设计见 docs/Multi-Tenancy-Design.md（配额与 CLI 无规格；指标 tenant 维度需破坏性改 StreamingMetricsCollector SPI）
 
@@ -57,6 +56,7 @@
 - [x] 状态统一三步：水位线收敛（0d1079b）、keyed store 补齐（ee00fe8）、RedisStateBackend 适配层（3618c37、1dea93a）
 - [x] aggregation 统一 v1+v2：incremental 四实现，删除第三套批式抽象
 - [x] join/cep 算子化 Phase 1+2：Envelope、StreamJoinOperator、PatternSequenceProcessFunction 与 keyed state 缓冲
+- [x] DataStream.join 语法糖全链路：union 原语（11 测试）+ 内存糖 StreamJoinOperator.join（7 测试，差分对照）+ Redis `env.join` U3 三段编排（10 测试含 1 集成；落点三选一代决与被否选项记 docs/Union-DualSource-Design.md §5；join topic 生命周期规则一并定）+ 可跑示例与 docs/Join.md 接入指引（2026-10-14）
 - [x] KTable changelog：withChangelog 与 toStream(env) 全历史重放，12 单测 + 2 集成
 - [x] metrics 统一 v1+v2：DLQ 重放指标、CDCMetricsMicrometerBinder、删 metrics 模块、core StreamingMetricsCollector SPI（commits 5630fef、6f246ff、8ba68a1、ec6b60e、9c99494）
 - [x] 去重/重试/DLQ 职责划界；mq RetryPolicy 改名 DeliveryRetryPolicy（commit 2ff417c）

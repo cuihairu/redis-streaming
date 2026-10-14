@@ -1,6 +1,6 @@
 # Union / 双源汇合原语设计（Blocker B 留档，2026-10-12）
 
-状态：**设计稿；推荐路径 step 1（union 原语）已落地 2026-10-14**。本文档回应 `docs/Join-CEP-Operators-Design.md` §5.2 的卡点 B——`DataStream.join(other)` 语法糖需要先把左右流汇入同一输入，而 `DataStream` API 没有汇合原语。本文把可选方案、取舍、推荐路径与未实施清单定下来。
+状态：**设计稿；推荐路径 step 1（union 原语）与 step 2（两侧语法糖）均已落地 2026-10-14**（Redis 侧 U3 三段编排落点 `RedisStreamExecutionEnvironment.join`，见 §5）。本文档回应 `docs/Join-CEP-Operators-Design.md` §5.2 的卡点 B——`DataStream.join(other)` 语法糖需要先把左右流汇入同一输入，而 `DataStream` API 没有汇合原语。本文把可选方案、取舍、推荐路径与未实施清单定下来。
 
 ## 1. 问题
 
@@ -41,13 +41,13 @@
 ## 4. 推荐路径
 
 1. **第一步（小原语，先评审）**：`DataStream.union(DataStream<? extends T>)` 只做内存引擎（迭代器交错），Redis 引擎默认抛不支持并写明「用 join topic 模式」——原语先立契约，Redis 落点指向 U3；
-2. **第二步（语法糖，U3 展开）**：`DataStream.join(other, config, fn)` 在 Redis 引擎展开为 U3 三段编排（自动生成 join topic 名、信封 map、合流消费 pipeline），内存引擎展开为 map + union + keyBy + 算子；join topic 生命周期跟随 job（trim 走 MQ 的 stream 保留治理）。实施注记（2026-10-14）：`Envelope`/`StreamJoinOperator` 在 join 模块而 `DataStream` 在 core——糖的签名不能直接引用算子类型，落点需在 join 模块扩展或运行时/starter 层。**落点已定（同日）**：内存侧糖落在 join 模块 `StreamJoinOperator.join(left, right, config, fn)`（静态工厂，只用 core 公开面组合 map→union→keyBy→process，信封键即 keyBy 键，键选择器不一致的静默失配在糖路径上结构性不可能）；Redis 侧 U3 三段编排仍待实施；
+2. **第二步（语法糖，U3 展开）**：`DataStream.join(other, config, fn)` 在 Redis 引擎展开为 U3 三段编排（join topic 名由用户给定、信封 map、合流消费 pipeline），内存引擎展开为 map + union + keyBy + 算子；join topic 生命周期跟随 job（trim 走 MQ 的 stream 保留治理）。实施注记（2026-10-14）：`Envelope`/`StreamJoinOperator` 在 join 模块而 `DataStream` 在 core——糖的签名不能直接引用算子类型，落点需在 join 模块扩展或运行时/starter 层。**两侧落点均已定（2026-10-14）**：内存侧糖落在 join 模块 `StreamJoinOperator.join(left, right, config, fn)`（静态工厂，只用 core 公开面组合 map→union→keyBy→process，信封键即 keyBy 键，键选择器不一致的静默失配在糖路径上结构性不可能）；Redis 侧 U3 三段编排落在 `RedisStreamExecutionEnvironment.join(joinTopic, left, right, config, fn)`（实例方法，糖落点三选一的代决与被否选项见 §5）；
 3. **第三步（Phase 3 合并设计）**：Redis 引擎原生多源读取（U1 的 Redis 侧）与 event-time 水位对齐一起做——那才是免中转 topic 的最终形态；U3 的语法糖届时切换底层实现，用户 API 不变。
 
 ## 5. 未实施清单（本批留档，待评审后另批实施）
 
 - [x] `DataStream.union(...)` 契约 + 内存引擎实现 + Redis 引擎显式不支持（默认方法模式）（2026-10-14，11 测试）；
-- [ ] `DataStream.join(other, ...)` 语法糖，Redis 侧：U3 三段编排（join topic 命名/trim/生命周期、合流消费 pipeline 注册）。实施注记（2026-10-14）：静态工厂签名无法表达 Redis 侧——`DataStream` 公开面不暴露执行环境（`RedisStreamBuilder.env` 为私有字段），糖拿不到 env 就无法注册左右两条「信封落地 join topic」pipeline；架构卡点（2026-10-14 复核）：`runtime` 主源码**刻意不依赖 join 模块**（join 在其 `testImplementation` 里），而 `RedisStreamBuilder.map()` 返回 `DataStream<R>` 而非 builder——糖若落在 runtime 会反转「引擎→算子库」的依赖分层，若落在 join 模块则拿不到 Redis 引擎的 env。三个候选落点（runtime 主依赖 join / 新建 join-runtime 桥接模块 / `DataStream` 暴露 env 的环境级 `env.join(...)`）各有一次架构改动，属设计取舍，**待评审**；join topic 生命周期规则（命名、trim/TTL、随 job 清理）亦需一并定；
+- [x] `DataStream.join(other, ...)` 语法糖，Redis 侧：U3 三段编排（join topic 命名/trim/生命周期、合流消费 pipeline 注册）（2026-10-14，10 测试含 1 集成）。**落点代决（2026-10-14，三选一）**：落在 `RedisStreamExecutionEnvironment.join(joinTopic, left, right, config, fn)` 实例方法，runtime 主依赖加 `implementation project(':join')`。理由：runtime 主源码本就依赖 window/checkpoint/watermark 等算子模块（join 的 `testImplementation` 状态只说明「当时无主代码用它」，不是分层规则），糖与它们同属「引擎组合的算子库」类别；env 是三段编排的天然归属（注册左右两条信封落地 pipeline + 合流消费 pipeline 都是 env 的职责），签名上 joinTopic 由用户显式给定，与 `fromMqTopic` 的 topic 命名习惯一致。被否选项：(a) 新建 join-runtime 桥接模块——为一个工厂方法立一套 settings/构建/发布/覆盖率管线，且把用户可见 API 劈成两处；(b) `DataStream` 暴露 env——要么 core→runtime 反向依赖（API 模块方向错误），要么为单一调用点新立 core SPI。join topic 生命周期规则（随代决一并定）：topic 名由用户给定、字符集 `[A-Za-z0-9_.-]+`（喂稳定 source id `join-<topic>`）；消费组派生为 `<topic>-join`；trim/TTL 走 MQ 既有 stream 保留治理，糖不擅自删 topic；同一 joinTopic 二次调用被稳定 source id 的重复注册守卫拒绝（fail-fast）；
 - [x] `DataStream.join(other, ...)` 语法糖，内存侧：`StreamJoinOperator.join(left, right, config, fn)` 静态工厂（信封 map + union + keyBy + 算子，时间戳走 config 提取器、缺省落系统时间与 `StreamJoiner` 一致）（2026-10-14，7 测试，与手工信封路径差分对照）；
 - [ ] 双引擎集成测试：join 糖的差分对照（直接信封路径 vs 糖展开路径输出一致）；
 - [ ] event-time join 窗口评估（依赖 `TimestampAssigner` 重载与水位对齐，随 Phase 3）。

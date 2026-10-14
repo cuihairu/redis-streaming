@@ -12,6 +12,10 @@ dependencies {
     implementation project(':checkpoint')
     // Shared watermark formula (bounded out-of-orderness) used by the redis pipeline runner
     implementation project(':watermark')
+    // Join operator library: the env.join sugar (U3 three-pipeline orchestration) wires
+    // StreamJoinOperator/Envelope/JoinConfig into redis pipelines — same category as
+    // window/checkpoint/watermark above (operator modules the engine composes)
+    implementation project(':join')
 
     // External dependencies
     implementation libs.redisson
@@ -27,7 +31,6 @@ dependencies {
     // Only referenced from tests / example code, not the main runtime pipeline
     testImplementation project(':state')
     testImplementation project(':window')
-    testImplementation project(':join')
     testImplementation project(':cep')
     testImplementation libs.junit.jupiter
     testImplementation libs.junit.api
