@@ -2,7 +2,7 @@
 
 ## 未完成
 
-- [ ] Redis 引擎 unaligned checkpoint 方案 A③：评审结论已出 2026-10-14（方向正确、拆独立批次、默认关）；前置第一步 CAS 门两级拆分已落地 2026-10-14（runtime internal/CheckpointGate 两级 serialization/full-silence，行为等价重构，4 单测钉住晶格，见 docs/Checkpoint-Barrier-Design.md 方案 A③ 落地注记）；剩 epoch 对齐、frontier 去重、`RedisRuntimeConfig` 默认关开关与 2PC 专项集成测试，待另立批次
+- [ ] Redis 引擎 unaligned checkpoint 方案 A③：评审结论（方向正确、默认关）+ 前置第一步 CAS 门两级拆分（runtime internal/CheckpointGate，行为等价重构，4 单测）均已落地 2026-10-14。**第二步评估 2026-10-14：草图「epoch 可对齐」前提不成立**——checkpoint id 是每 env 实例 JVM AtomicLong、快照是单次 Lua 全局写入、无 per-partition effect fence（fencing 见 docs/Checkpoint-Barrier-Design.md「epoch 对齐与 frontier 去重评估」）；建议最小一致点改为「per-partition barrier + 显式 frontier 序列化 + 恢复期排他重放」三段。待决策：先落 frontier 三段（纯管道、不依赖 epoch 对齐，但改所有作业恢复重放语义，须专项集成测试）或维持对齐检查点为唯一一致路径；`RedisRuntimeConfig` 默认关开关与 2PC 专项集成测试随选中路径一并定
 - [ ] join/cep Phase 3：引擎级双源 pipeline、event-time 水位对齐、retract 语义（设计标注远期，与 P4 动态伸缩合并设计）
 - [ ] 多租户 v2：线程/内存/in-flight 配额、指标 tenant 维度、registry/config/state/checkpoint/cdc/sink 前缀租户注入、租户级迁移与运维 CLI，设计见 docs/Multi-Tenancy-Design.md（配额与 CLI 无规格；指标 tenant 维度需破坏性改 StreamingMetricsCollector SPI）
 

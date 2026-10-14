@@ -49,7 +49,7 @@
 - [x] `DataStream.union(...)` 契约 + 内存引擎实现 + Redis 引擎显式不支持（默认方法模式）（2026-10-14，11 测试）；
 - [x] `DataStream.join(other, ...)` 语法糖，Redis 侧：U3 三段编排（join topic 命名/trim/生命周期、合流消费 pipeline 注册）（2026-10-14，10 测试含 1 集成）。**落点代决（2026-10-14，三选一）**：落在 `RedisStreamExecutionEnvironment.join(joinTopic, left, right, config, fn)` 实例方法，runtime 主依赖加 `implementation project(':join')`。理由：runtime 主源码本就依赖 window/checkpoint/watermark 等算子模块（join 的 `testImplementation` 状态只说明「当时无主代码用它」，不是分层规则），糖与它们同属「引擎组合的算子库」类别；env 是三段编排的天然归属（注册左右两条信封落地 pipeline + 合流消费 pipeline 都是 env 的职责），签名上 joinTopic 由用户显式给定，与 `fromMqTopic` 的 topic 命名习惯一致。被否选项：(a) 新建 join-runtime 桥接模块——为一个工厂方法立一套 settings/构建/发布/覆盖率管线，且把用户可见 API 劈成两处；(b) `DataStream` 暴露 env——要么 core→runtime 反向依赖（API 模块方向错误），要么为单一调用点新立 core SPI。join topic 生命周期规则（随代决一并定）：topic 名由用户给定、字符集 `[A-Za-z0-9_.-]+`（喂稳定 source id `join-<topic>`）；消费组派生为 `<topic>-join`；trim/TTL 走 MQ 既有 stream 保留治理，糖不擅自删 topic；同一 joinTopic 二次调用被稳定 source id 的重复注册守卫拒绝（fail-fast）；
 - [x] `DataStream.join(other, ...)` 语法糖，内存侧：`StreamJoinOperator.join(left, right, config, fn)` 静态工厂（信封 map + union + keyBy + 算子，时间戳走 config 提取器、缺省落系统时间与 `StreamJoiner` 一致）（2026-10-14，7 测试，与手工信封路径差分对照）；
-- [ ] 双引擎集成测试：join 糖的差分对照（直接信封路径 vs 糖展开路径输出一致）；
+- [x] 双引擎集成测试：join 糖的差分对照（Redis 侧：`RedisEnvJoinSugarTest#redisJoinSugarMatchesTheHandWrittenEnvelopeExpansion`，手工信封展开与 `env.join` 同作业同输入跑同一组 fixture，500ms 宽限后断言输出集合逐点一致，2026-10-14；内存侧差分在 `StreamJoinOperatorSugarTest#sugarMatchesManualEnvelopePathOutput`）；
 - [ ] event-time join 窗口评估（依赖 `TimestampAssigner` 重载与水位对齐，随 Phase 3）。
 
 ## 6. 与既有文档的关系

@@ -1,9 +1,13 @@
 package io.github.cuihairu.redis.streaming.runtime.redis;
 
 import io.github.cuihairu.redis.streaming.api.stream.DataStream;
+import io.github.cuihairu.redis.streaming.api.stream.StreamSink;
 import io.github.cuihairu.redis.streaming.join.JoinConfig;
+import io.github.cuihairu.redis.streaming.join.JoinFunction;
+import io.github.cuihairu.redis.streaming.join.JoinType;
 import io.github.cuihairu.redis.streaming.join.JoinWindow;
 import io.github.cuihairu.redis.streaming.join.operator.Envelope;
+import io.github.cuihairu.redis.streaming.join.operator.StreamJoinOperator;
 import io.github.cuihairu.redis.streaming.mq.MessageProducer;
 import io.github.cuihairu.redis.streaming.mq.MessageQueueFactory;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisJoinEnvelopeCodec;
@@ -338,6 +342,176 @@ class RedisEnvJoinSugarTest {
 
             assertTrue(await(() -> out.containsAll(List.of("o1+Alice", "o2+Bob")), 30_000),
                     "expected both join pairs across the join topic, got " + out);
+        } finally {
+            if (job != null) {
+                job.close();
+            }
+            try {
+                redis.getKeys().deleteByPattern("*" + tag + "*");
+            } catch (Exception ignore) {
+            }
+            redis.shutdown();
+        }
+    }
+
+    // ---------- differential against the hand-written expansion ----------
+
+    /**
+     * Config with pinned timestamps, so the differential below compares the orchestration only
+     * (tagging, wire format, routing, operator) and not the clock: the manual path reads the
+     * extractors straight off the same config object, as the sugar does.
+     */
+    private static JoinConfig<Order, User, String> pinnedConfig() {
+        return JoinConfig.<Order, User, String>builder()
+                .joinType(JoinType.INNER)
+                .joinWindow(JoinWindow.ofSize(Duration.ofSeconds(30)))
+                .leftKeySelector(Order::getUserId)
+                .rightKeySelector(User::getUserId)
+                .leftTimestampExtractor(o -> 1000L)
+                .rightTimestampExtractor(u -> 1000L)
+                .build();
+    }
+
+    private static DataStream<Order> orders(RedisStreamExecutionEnvironment env, String topic) {
+        return env.fromMqTopic(topic, topic + "-g").map(m -> {
+            String[] p = String.valueOf(m.getPayload()).split("\\|");
+            return new Order(p[0], p[1], 1L);
+        });
+    }
+
+    private static DataStream<User> users(RedisStreamExecutionEnvironment env, String topic) {
+        return env.fromMqTopic(topic, topic + "-g").map(m -> {
+            String[] p = String.valueOf(m.getPayload()).split("\\|");
+            return new User(p[0], p[1]);
+        });
+    }
+
+    /**
+     * The U3 orchestration written out by hand — the expansion {@code env.join} performs:
+     * tag both sides into envelopes from the config's own selectors/extractors, write them to the
+     * join topic through the MQ producer, read the topic back in a third pipeline, route by the
+     * envelope's join key, run the operator.
+     */
+    private static void manualJoinExpansion(
+            RedisStreamExecutionEnvironment env,
+            MessageQueueFactory mq,
+            String joinTopic,
+            DataStream<Order> left,
+            DataStream<User> right,
+            JoinConfig<Order, User, String> config,
+            JoinFunction<Order, User, String> fn,
+            java.util.function.Consumer<String> out) {
+        left.map(o -> Envelope.<String, Order, User>forLeft(
+                        config.getLeftKeySelector().apply(o),
+                        config.getLeftTimestampExtractor().apply(o), o))
+                .addSink(new ManualEnvelopeSink<>(mq, joinTopic));
+        right.map(u -> Envelope.<String, Order, User>forRight(
+                        config.getRightKeySelector().apply(u),
+                        config.getRightTimestampExtractor().apply(u), u))
+                .addSink(new ManualEnvelopeSink<>(mq, joinTopic));
+
+        env.fromMqTopicWithId("join-" + joinTopic, joinTopic, joinTopic + "-join")
+                .map(m -> RedisJoinEnvelopeCodec.<String, Order, User>parse(String.valueOf(m.getPayload())))
+                .keyBy(Envelope::getJoinKey)
+                .process(StreamJoinOperator.asKeyedProcessFunction(config, fn))
+                .addSink(out::accept);
+    }
+
+    /** The sugar's producer side, written in the test: encode, then send through the MQ producer. */
+    private static final class ManualEnvelopeSink<K, L, R> implements StreamSink<Envelope<K, L, R>> {
+
+        private final MessageQueueFactory mq;
+        private final String joinTopic;
+        private MessageProducer producer;
+
+        ManualEnvelopeSink(MessageQueueFactory mq, String joinTopic) {
+            this.mq = mq;
+            this.joinTopic = joinTopic;
+        }
+
+        @Override
+        public void open() {
+            this.producer = mq.createProducer();
+        }
+
+        @Override
+        public void invoke(Envelope<K, L, R> envelope) {
+            try {
+                producer.send(joinTopic, String.valueOf(envelope.getJoinKey()),
+                        RedisJoinEnvelopeCodec.toJson(envelope)).get(30, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                throw new RuntimeException("manual envelope write to '" + joinTopic + "' failed", e);
+            }
+        }
+
+        @Override
+        public void close() {
+            if (producer != null) {
+                producer.close();
+            }
+        }
+    }
+
+    /**
+     * Differential guard for the Redis half of the sugar (the in-memory half has the same shape in
+     * {@code StreamJoinOperatorSugarTest#sugarMatchesManualEnvelopePathOutput}): both paths run in
+     * one job over the same fixtures and must emit exactly the same pairs. If the sugar's
+     * expansion ever drifts from the documented one — a selector wired to the wrong side, the
+     * envelope timestamp dropped, the key not used for routing — the two lists diverge here.
+     */
+    @Test
+    @Tag("integration")
+    void redisJoinSugarMatchesTheHandWrittenEnvelopeExpansion() throws Exception {
+        String redisUrl = System.getenv().getOrDefault("REDIS_URL", "redis://127.0.0.1:6379");
+        if (!reachable(redisUrl)) {
+            return; // gated on a reachable Redis, like the other runtime integration legs
+        }
+        Config cfg = new Config();
+        cfg.useSingleServer().setAddress(redisUrl);
+        RedissonClient redis = Redisson.create(cfg);
+        String tag = UUID.randomUUID().toString().substring(0, 8);
+        List<String> viaSugar = new CopyOnWriteArrayList<>();
+        List<String> viaManual = new CopyOnWriteArrayList<>();
+        RedisJobClient job = null;
+        try {
+            MessageQueueFactory mq = new MessageQueueFactory(redis);
+            RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(redis,
+                    RedisRuntimeConfig.builder().jobName("it-join-diff-" + tag).build());
+            JoinFunction<Order, User, String> fn = (o, u) -> o.getOrderId() + "+" + u.getName();
+
+            String sugarL = "it-jd-sug-l-" + tag;
+            String sugarR = "it-jd-sug-r-" + tag;
+            env.join("it-jd-sug-j-" + tag, orders(env, sugarL), users(env, sugarR), pinnedConfig(), fn)
+                    .addSink(viaSugar::add);
+
+            String manualL = "it-jd-man-l-" + tag;
+            String manualR = "it-jd-man-r-" + tag;
+            manualJoinExpansion(env, mq, "it-jd-man-j-" + tag, orders(env, manualL), users(env, manualR),
+                    pinnedConfig(), fn, viaManual::add);
+
+            job = env.executeAsync();
+
+            MessageProducer producer = mq.createProducer();
+            for (String leftTopic : List.of(sugarL, manualL)) {
+                producer.send(leftTopic, "u1", "o1|u1").get(10, TimeUnit.SECONDS);
+                producer.send(leftTopic, "u2", "o2|u2").get(10, TimeUnit.SECONDS);
+            }
+            for (String rightTopic : List.of(sugarR, manualR)) {
+                producer.send(rightTopic, "u1", "u1|Alice").get(10, TimeUnit.SECONDS);
+                producer.send(rightTopic, "u2", "u2|Bob").get(10, TimeUnit.SECONDS);
+            }
+            producer.close();
+
+            List<String> expected = List.of("o1+Alice", "o2+Bob");
+            assertTrue(await(() -> viaSugar.containsAll(expected) && viaManual.containsAll(expected), 30_000),
+                    "both paths must join both pairs; sugar=" + viaSugar + " manual=" + viaManual);
+            Thread.sleep(500); // grace: a stray or duplicate emission must still be caught below
+            List<String> sugarSorted = viaSugar.stream().sorted().toList();
+            List<String> manualSorted = viaManual.stream().sorted().toList();
+
+            assertEquals(expected, sugarSorted, "sugar path emitted an unexpected set");
+            assertEquals(manualSorted, sugarSorted,
+                    "the sugar must be indistinguishable from the hand-written expansion");
         } finally {
             if (job != null) {
                 job.close();

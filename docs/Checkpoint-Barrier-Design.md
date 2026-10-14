@@ -46,7 +46,29 @@
 
 > **评审结论(2026-10-14,巡检代决)**:方向正确但**不在本批实施**。草图自洽——preCommit + defer-ack freeze 是最小一致点,offsets 复用既有 defer-ack 快照语义,keyed 状态取 Redis 现值 + 版本号、按 frontier 去重重放均成立;但它是正确性关键路径且收益面窄(仅长 `checkpointDrainTimeout`/高吞吐作业可感知),前置有两项硬骨头:与 `scaleParallelism` 共享的 `checkpointing` CAS 门两级拆分、多并行度 preCommit epoch 对齐。**建议拆为独立批次、默认关**(`RedisRuntimeConfig` 新开关),落地顺序:先做 CAS 门两级拆分(独立可测,对既有对齐路径亦有收益),再评 epoch 对齐与 frontier 去重;2PC 交互为主要风险,需专项集成测试覆盖。本批不动代码。
 >
-> **落地注记(2026-10-14,P1014B 批次)**:上述落地顺序的第一步已执行——原单一 `AtomicBoolean checkpointing` 重构为 `runtime/redis/internal/CheckpointGate` 两级门(serialization 级:同一时刻至多一个控制操作;full-silence 级:消费者暂停/在途排空)。对齐检查点(周期与手动触发)与 `scaleParallelism` 仍同取两级(先 serialization 后 full-silence,逆序释放,类不变量 `fullSilence ⇒ serialization` 保证无死锁),**行为与拆分前逐点等价**——原门的三类持有者本就两两互斥,拆分只是把「互斥」与「全静默」两个关注点显式化,给未来 unaligned 检查点留出「只取 serialization 级、不停消费」的入口。诊断面 `checkpointing` 键改为 serialization 视图并新增 `fullSilence` 键。门晶格由 `CheckpointGateTest` 4 测试钉住:检查点/扩缩容互斥、二次 begin 拒绝、拒绝的 begin 不滞留 serialization 级(防卡死不变量)、4 线程 2000 次争用零重叠。epoch 对齐、frontier 去重与默认关开关仍待独立批次。
+> **落地注记(2026-10-14,P1014B 批次)**:上述落地顺序的第一步已执行——原单一 `AtomicBoolean checkpointing` 重构为 `runtime/redis/internal/CheckpointGate` 两级门(serialization 级:同一时刻至多一个控制操作;full-silence 级:消费者暂停/在途静默)。对齐检查点(周期与手动触发)与 `scaleParallelism` 仍同取两级(先 serialization 后 full-silence,逆序释放,类不变量 `fullSilence ⇒ serialization` 保证无死锁),**行为与拆分前逐点等价**——原门的三类持有者本就两两互斥,拆分只是把「互斥」与「全静默」两个关注点显式化,给未来 unaligned 检查点留出「只取 serialization 级、不停消费」的入口。诊断面 `checkpointing` 键改为 serialization 视图并新增 `fullSilence` 键。门晶格由 `CheckpointGateTest` 4 测试钉住:检查点/扩缩容互斥、二次 begin 拒绝、拒绝的 begin 不滞留 serialization 级(防卡死不变量)、4 线程 2000 次争用零重叠。第二步评估结论见下节「epoch 对齐与 frontier 去重评估」。
+
+#### epoch 对齐与 frontier 去重评估(2026-10-14,P1014B 批次)
+
+代码走读(以 `runtime/.../redis/RedisStreamExecutionEnvironment`、`.../internal/RedisRuntimeCheckpointManager`、`mq/.../impl/RedisMessageConsumer` 为准)显示草图有四处前提与实际不符,先纠正:
+
+1. **pause 与 drain 是尽力而为,且 drain 超时常照进行**。`RedisRuntimeCheckpointManager.triggerCheckpoint` 本身只有纯快照+存储,不含 pause/drain/2PC;编排全在 `RedisStreamExecutionEnvironment.triggerCheckpointWhilePaused`——先 pause **全部** consumer,再按 `checkpointDrainTimeout`(默认 30s)轮询 `Σ inFlightBarrier()==0`,**超时只 `log.warn` 然后照常继续**(不中止、不失败)。今日正确性依赖的不是"静默",而是 2PC abort/recover 路径兜底 drain 超时下的在途记录。
+2. **快照原子性是单次 Lua 调用级,不是作业级**。全 pipeline 的 offsets 与 state 在一个 Lua 事务内写同一 checkpoint id 与同一 `timestamp`,但作业语义上并非单一一致切面:`stateKeys` 的 SCAN 发生在 Lua **之前且之外**,快照读到的是 Redis 现值(+`stateSchema` 字符串),不是"某一刻的算子状态"。
+3. **「keyed state = 现值 + 快照版本号」不成立**。`meta` 只有 `jobName/jobInstanceId/stateKeyPrefix/sinkCommitted/fencingToken`,没有 per-partition/per-key 版本字段,「恢复时只重放 id > frontier」无处挂靠——恢复的 keyed state 是整键空间**拷贝覆盖**(staging 名 + 原子 `RENAME` 翻牌),无 delta、无 replay 语义。
+4. **「offsets 复用既有 defer-ack 快照语义」只在 `deferAckUntilCheckpoint=true`(默认 false)下成立**。默认路径读的是 **commit frontier hash**(最大**已 ack** id),既不读 `last-delivered-id` 也不读 PEL;defer-ack 模式下存的是该模式下记录过的最大 id。
+
+**两个待评问题的结论**
+
+- **frontier 去重:可行,属纯管道小改**。快照已按 partition 存 Stream id(`snapshotOffsets`,`(topic, cg, pid) → "ms-seq"`,defer-ack 最大 id 或 commit frontier),恢复已能 seek 到任意 id(`restoreOffsets` 用 `XGROUP DESTROY + XGROUP CREATE` 把 group 建在 frontier 上,此后 `XREADGROUP >` 只投 `id > frontier`)。缺的只有两段管道:快照把这组 frontier **显式序列化**进 payload、恢复时读出来作为消费起点。注意这**不是**消费者层的 `id <= frontier` 过滤(消费层无任何 id 过滤,跳是由 group 边界隐式完成的,且会一并丢弃 PEL);它等价于「回卷到 frontier 重放」,成立前提是「effect ≤ frontier 的记录其效果已全在快照里」——而这正是 unaligned 想回避的性质。
+- **多并行度 epoch 对齐:当前快照结构下不可行,不是小改**。checkpoint id 是**每 env 实例**的 JVM `AtomicLong`(非 Redis 分配、非 per-subtask);快照是一次 Lua 全局写入,只能代表**一个全局时刻**;没有任何 per-partition effect fence 或随记录传播的 epoch。已存在的 `inFlightBarrier()`(`inFlight + readsInFlight`,已修过「在 pause 窗口内被调用」的竞态)是 consumer **本地**视图——不 per-partition、不可跨实例探测,不能替代跨 subtask 栅栏。要做到 unaligned 且正确,必须新增 **Redis 可见的 per-partition in-flight/effect fence**(每个 subtask 处理 partition p 前 incr、ack 决定后 decr,协调者跨全部 subtask 等 `inFlight(p)==0`),并把快照 Lua 拆成 per-partition。
+
+**因此 A③ 草图的核心前提(「epoch 可对齐」)不成立**:今天没有 epoch 可对齐;在没有 per-partition effect fence 的前提下做 frontier 去重,会退化成「回卷重放」,恰好丢掉设计想避免暂停的那些跨切面记录(其效果落在快照之后、id 却在 frontier 之内,既无版本字段可判、也无 replay 可补)。
+
+**建议(供下一批次决策)**
+
+- unaligned 的最小一致点应重新定义为 **per-partition barrier + 显式 frontier 序列化 + 恢复期排他重放** 三段,而非「preCommit + defer-ack freeze」。其中 **frontier 三段** 可独立落地且**不依赖 epoch 对齐**,但它改变所有作业恢复时的重放语义,属正确性关键路径,须单独评审 + 专项集成测试,不与 per-partition fence 混批。
+- per-partition fence 是 MQ 层新原语(与 2PC 交互为主要风险),需独立设计;在此之前**对齐检查点仍是唯一一致路径**,unaligned 若要先行,只能定位为「允许 RPO > 0 的最佳努力」,须在 API 与文档上明示。
+- 另记三个本批顺带发现的既有缺陷(不属 A③ 范畴,**未列入 todo**,供决定是否立项):(1) `triggerCheckpoint` 全程不调 `renewLeadership()`,leader 丢租约后仍可写快照(`checkFence` 抛异常但 Lua 已入队)→ 无 fencing 的孤儿快照;(2) 控制门是每 env 实例的而非作业级全局锁,同名 job 的两个 `LaunchedJobClient` 可并行打快照(leader election 只协调周期触发,不保护手动 `triggerCheckpointNow`);(3) deferred-ack 的 `freeze()` 名义化(只有一个空行、无生产调用方),`release()` 无条件 `ackAll`,与「检查点已完成」无同步——defer 实为永久「先不 ack」,checkpoint 只是恰好在其后。
 
 ### 方案 B:两引擎全面对齐屏障(Flink 式)
 
