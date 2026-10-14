@@ -124,7 +124,7 @@ new PatternSequenceProcessFunction<>(pattern, timestampExtractor)
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | Phase 1 | `Envelope` + `StreamJoinOperator` + `PatternSequenceProcessFunction`；InMemory / Redis 双引擎集成测试；`docs/Join.md`、`docs/CEP.md` 增「算子化」章节；本文档落稿 | 本批实现 |
-| Phase 2 | `DataStream.join(other)` 语法糖（编译期展开为信封 + 桥接）；两算子缓冲迁 keyed `ValueState` 进 checkpoint；`TimestampAssigner` 重载接入后评估 event-time join 窗口 | **缓冲迁移本批落地**（2026-10-12，卡点 A 解除，见 §5.1）；语法糖仍卡汇合原语设计，见 §5.2 |
+| Phase 2 | `DataStream.join(other)` 语法糖（编译期展开为信封 + 桥接）；两算子缓冲迁 keyed `ValueState` 进 checkpoint；`TimestampAssigner` 重载接入后评估 event-time join 窗口 | **缓冲迁移本批落地**（2026-10-12，卡点 A 解除，见 §5.1）；语法糖内存侧已落地（2026-10-14，卡点 B 部分解除，见 §5.2），Redis 侧 U3 仍开 |
 | Phase 3 | 引擎级双源 pipeline（方案 A）、event-time 水位对齐窗口、retract/waiting 语义（外连接二次发射消除） | 远期，与 P4 动态伸缩合并设计 |
 
 ### 5.1 卡点 A：Context 状态访问面——已解除（2026-10-12）
@@ -138,15 +138,20 @@ new PatternSequenceProcessFunction<>(pattern, timestampExtractor)
 - `join` / `cep`：两算子缓冲迁 keyed `ValueState<String>`（自管 JSON 编解码，见 §3.4），failover 语义升级（§3.3/§4.2）；
 - 证明：模块级测试以「同一 store + 全新函数实例」模拟重启——join 配对与 cep partial 均从上一实例状态续跑。
 
-### 5.2 卡点 B：`DataStream.join(other)` 语法糖——仍开，待设计（2026-10-12 复核）
+### 5.2 卡点 B：`DataStream.join(other)` 语法糖——内存侧已解除（2026-10-14），Redis 侧仍开
 
 设计走「编译期展开为信封 + 桥接」，需要把左右流汇入同一 join 输入（MQ topic 或引擎内 union）——`DataStream` API 现在没有 union/双源汇合原语，内存引擎无 topic 基底；设计本身把「引擎级双源 pipeline（方案 A）」放在 Phase 3。
 
-**本机不可解的原因**：这不是补代码，而是先要定 API——汇合原语长什么样（`DataStream.union(other)`？自动编排两条 pipeline 写同一 topic？）、内存引擎的汇合基底用什么、桥接算子落在哪一侧。这些选择影响 runtime 公开面，须先出设计稿评审（详见 `docs/Union-DualSource-Design.md`），本批已把设计稿落档，实施仍待评审通过。
+**解除方式（内存侧，2026-10-14，按 `docs/Union-DualSource-Design.md` 推荐路径）**：
+
+- `DataStream.union(DataStream<? extends T>)` 默认方法立契约（Redis 引擎默认抛不支持并指向 join topic 模式），内存引擎 round-robin 交错实现（11 测试）；
+- `StreamJoinOperator.join(left, right, config, fn)` 静态工厂（join 模块）：信封 map + union + keyBy 信封键 + 算子，与手工信封路径差分对照钉住（7 测试）——键即分区键，「信封键与 keyBy 选择器不一致静默失配」在糖路径结构性不存在。
+
+**仍开的部分（Redis 侧 U3）**：静态工厂拿不到执行环境（`RedisStreamBuilder.env` 私有），无法注册「信封落地 join topic」的左右 pipeline；API 形态（带 env 参数工厂 / `env.join(...)` / `DataStream` 暴露 env）与 join topic 生命周期（命名/trim/随 job 清理）待定，详见 `docs/Union-DualSource-Design.md` §5 注记。
 
 **未实施清单**（留档）：
-- `DataStream.union(...)`（或等价汇合原语）双引擎实现；
-- `DataStream.join(other)` 语法糖展开为 envelope map + 汇合 + keyBy + `StreamJoinOperator`；
+- ~~`DataStream.union(...)`（或等价汇合原语）双引擎实现~~（2026-10-14：内存侧落地，Redis 侧按设计走 join topic 模式即 U3，不另做引擎级实现）；
+- ~~`DataStream.join(other)` 语法糖展开为 envelope map + 汇合 + keyBy + `StreamJoinOperator`~~（2026-10-14：内存侧以 `StreamJoinOperator.join` 落地；Redis 侧 U3 编排仍开）；
 - event-time join 窗口评估（依赖 `TimestampAssigner` 重载接入）。
 
 ## 6. 影响面与兼容性
