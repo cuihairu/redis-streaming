@@ -120,5 +120,5 @@ sequenceDiagram
 
 ---
 
-**Version**: 0.2.0
+**Version**: 0.2.4
 **Last Updated**: 2026-10-05

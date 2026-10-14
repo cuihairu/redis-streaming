@@ -829,6 +829,6 @@ List<ChangeEvent> events = connector.poll();
 - [可靠性模块：Reliability（含 Bloom Filter 去重）]
 - [连接器完成：Kafka/Redis Sink、Kafka/HTTP/Redis Source]
 - [CEP 完成：复杂事件处理（含 Kleene closure、高级模式操作）]
-- [监控集成：Prometheus Exporter、指标收集器]
+- [监控集成：Micrometer 指标桥接（经 Actuator / micrometer-registry-prometheus 导出）]
 - [Spring Boot 自动配置（含 @ServiceChangeListener 注解支持）]
 - [Runtime 模块：Redis runtime + in-memory runtime（见 `runtime/` 与 `docs/`）]

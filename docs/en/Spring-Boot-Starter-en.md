@@ -17,13 +17,13 @@ Maven:
 <dependency>
     <groupId>io.github.cuihairu.redis-streaming</groupId>
     <artifactId>spring-boot-starter</artifactId>
-    <version>0.2.0</version>
+    <version>0.2.4</version>
 </dependency>
 ```
 
 Gradle:
 ```groovy
-implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
+implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.4'
 ```
 
 ### 2. Enable Features (pick one)
@@ -75,11 +75,12 @@ server:
 | Class | Property switch (default) | Beans assembled |
 |---|---|---|
 | `RedisStreamingAutoConfiguration` | class-level `@ConditionalOnClass(RedissonClient)` | fallback `RedissonClient` (`@ConditionalOnMissingBean`; simplified single-server config, `password` blank/empty is not set), `RateLimitMicrometerCollector` + `installRateLimitCollector` |
-| `RedisStreamingRegistryAutoConfiguration` | `redis-streaming.registry.enabled` (default `true`) | `NamingService`, `ServiceChangeListenerProcessor`, `LoadBalancer`, `ClientSelector`, `RetryPolicy`, `RedisClientMetricsReporter`, `ClientInvoker`, `ClientInvokerMetricsBinder` |
+| `RedisStreamingRegistryAutoConfiguration` | `redis-streaming.registry.enabled` (default `true`) | `NamingService`, `ServiceChangeListenerProcessor`, `LoadBalancer` |
 | `RedisStreamingDiscoveryAutoConfiguration` | `redis-streaming.discovery.enabled` (default `true`) | `ServiceConsumer` (`RedisNamingService`) — only as a fallback when no `NamingService`/`ServiceConsumer` bean is present |
 | `RedisStreamingConfigServiceAutoConfiguration` | `redis-streaming.config.enabled` (default `true`) | `ConfigService` (started at `start()`) |
 | `RedisStreamingMqAutoConfiguration` | `redis-streaming.mq.enabled` (default `true`) | `MqOptions`, `BrokerFactory`/`BrokerRouter`, `MessageQueueFactory`, `MessageQueueAdmin`, `dlqReplayProducer`, `dlqReplayHandler`, `DeadLetterService`/`DeadLetterAdmin`/`DeadLetterConsumer`/`DeadLetterQueueManager`, the retained housekeeping `StreamRetentionHousekeeper` (destroyMethod=close), the Micrometer bridge (see "Metrics Export"), `MqHealthIndicator` |
 | `RedisStreamingRateLimitAutoConfiguration` | `redis-streaming.ratelimit.enabled` (default **`false`**) | `RateLimiterRegistry`, the `@Primary` `RateLimiter` (selected by `default-name`) |
+| `RedisStreamingRuntimeAutoConfiguration` | `redis-streaming.runtime.control-plane.enabled` (default **`false`**); the agent additionally requires `redis-streaming.runtime.agent.enabled` (default **`false`**) | `ControlPlaneAuthorizer` (allowAll by default, a user bean takes precedence), `RedisJobControlPlane` (i.e. `JobControlPlane`), and with the agent enabled: `JobLauncher` (default `RedisJobLauncher`, auto-registers every `JobPipelineFactory` bean in the context), `JobAgent` (initMethod=`start`, destroyMethod=`close`) |
 
 `LoadBalancer` picks its implementation by `load-balancer.strategy`: `wrr → WeightedRoundRobinLoadBalancer`, `weighted-random → WeightedRandomLoadBalancer`, `consistent-hash → ConsistentHashLoadBalancer`; anything else (including the default `scored`) → `ScoredLoadBalancer` + `RedisMetricsProvider`.
 `BrokerFactory` is selected by `mq.broker.type`: `jdbc` with a `DataSource` bean on the classpath uses `JdbcBrokerFactory`, otherwise (no `DataSource`, or `redis`) it falls back to `RedisBrokerFactory` with a warning.
@@ -144,9 +145,25 @@ Instance resolution rules (`AutoServiceRegistration`): an unset `service-name` o
 
 `strategy` (String, `scored`; one of `scored|wrr|weighted-random|consistent-hash`), `preferred-region` (String), `preferred-zone` (String), `cpu-weight` (double, `1.0`), `latency-weight` (double, `1.0`), `memory-weight` (double, `0.0`), `inflight-weight` (double, `0.0`), `queue-weight` (double, `0.0`), `error-rate-weight` (double, `0.0`), `target-latency-ms` (double, `50.0`), `max-cpu-percent`/`max-latency-ms`/`max-memory-percent`/`max-inflight`/`max-queue`/`max-error-rate-percent` (double, `-1` = unlimited, used by `scored` only).
 
-### `redis-streaming.invoker.*`
+### `redis-streaming.runtime.*` (job control plane, both **opt-in**)
 
-`max-attempts` (int, `3`), `initial-delay-ms` (long, `20`), `backoff-factor` (double, `2.0`), `max-delay-ms` (long, `200`), `jitter-ms` (long, `20`).
+`runtime.control-plane.*`:
+
+| Key | Type | Default |
+|---|---|---|
+| `enabled` | boolean | `false` (the control-plane beans are assembled only when explicitly enabled) |
+| `prefix` | String | `streaming:runtime:control:` (key families: jobs/versions/history:job/status:job/audit) |
+| `audit-max-entries` | int | `1000` (approximate cap on the audit stream) |
+| `history-max-entries` | int | `10` (old spec versions kept per job, for rollback) |
+
+`runtime.agent.*` (meaningful only with the control plane enabled):
+
+| Key | Type | Default |
+|---|---|---|
+| `enabled` | boolean | `false` (run the reconciliation agent in this process only when explicitly enabled) |
+| `instance-id` | String | `""` (auto-generated `hostname-8 random chars` when empty) |
+| `poll-interval` | Duration | `PT5S` (the first round runs immediately) |
+| `claim-prefix` | String | `null` (defaults to `<control-plane prefix>claim:`; set to the empty string to disable claiming — single-agent setups only) |
 
 ### `redis-streaming.mq.*` (flat keys, mapping to `MqProperties`)
 
@@ -243,7 +260,6 @@ public class ConfigWatch {
 | `RetentionMicrometerCollector` | `redis_streaming_mq_trim_attempts_total`/`trim_deleted_total` |
 | `CDCMetricsMicrometerBinder` | `redis.streaming.cdc.*` (11 gauges, tag `connector=<name>`; requires the cdc module on the classpath and a user-registered `CDCManager` bean) |
 | `RateLimitMicrometerCollector` | `redis_streaming_rl_allowed_total`/`rl_denied_total` |
-| `ClientInvokerMetricsBinder` | `client.invoker.total.{attempts,successes,failures,retries,cbOpenSkips}` |
 
 To export them through Spring Boot actuator, add a Micrometer registry implementation of your choice (version managed by the Spring Boot BOM), for example:
 
@@ -561,7 +577,7 @@ redis-streaming:
 
 ---
 
-**Version**: 0.2.0
+**Version**: 0.2.4
 **Last Updated**: 2026-10-05
 
 Related documentation:

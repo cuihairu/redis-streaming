@@ -20,5 +20,5 @@ Key points (from root `build.gradle` and `.github/workflows/ci.yml`):
 
 ---
 
-**Version**: 0.2.0
+**Version**: 0.2.4
 **Last Updated**: 2026-10-05

@@ -38,9 +38,9 @@ The project is a Gradle multi-module build (20 modules, matching `settings.gradl
 - `mq`: Redis Streams message queue — partitioned topics, consumer groups, leases, retry/DLQ, commit frontier, retention.
 - `registry`: Service registration & discovery — heartbeats, metadata/metrics filtering, change notifications, client-side load balancing.
 - `config`: Configuration center — versioned configs, change listeners, Redis-backed storage.
-- `state`: Keyed state abstractions + Redis-backed implementations (`RedisKeyedStateBackend`).
-- `checkpoint`: Checkpoint coordination, storage, and alignment barriers.
-- `watermark`: Watermark generators (periodic, punctuated, idle-source).
+- `state`: Keyed state abstractions + Redis-backed implementations (`RedisStateBackend`).
+- `checkpoint`: Checkpoint coordination and storage (stop-the-world per process; aligned in-process, no cross-instance barrier).
+- `watermark`: Watermark generators (ascending timestamps, bounded out-of-orderness).
 
 ### Tier 3: Functional Modules
 - `window`: Window assigners (tumbling, sliding, session), triggers, evictors.
@@ -56,8 +56,9 @@ The project is a Gradle multi-module build (20 modules, matching `settings.gradl
 - `cep`: Complex Event Processing (pattern detection on streams).
 
 ### Tier 5: Integration
-- `metrics`: Micrometer collectors/binders, Prometheus exporter.
 - `spring-boot-starter`: Auto-configuration for all modules, Redisson integration, health indicators.
+- `examples`: Runnable demos (not published as a library artifact).
+- `benchmark`: Throughput and checkpoint-duration benchmarks against a live Redis (not published).
 - `examples`: Runnable usage patterns.
 
 ## Technology Stack
@@ -82,7 +83,7 @@ The project is a Gradle multi-module build (20 modules, matching `settings.gradl
 ## Extension Points
 
 - `Partitioner` — custom partitioning logic for producers.
-- `HealthChecker` — protocol-specific health probes (HTTP, TCP, gRPC, custom).
+- `HealthChecker` — protocol-specific health probes (HTTP/HTTPS, TCP, WebSocket, custom; other protocol names fall back to TCP connectivity probing).
 - `RetryPolicy` — custom backoff strategies.
 - `BrokerFactory` / `BrokerRouter` / `BrokerPersistence` — swap the MQ backend (Redis vs JDBC).
 - `RateLimiter` algorithms (sliding window, token bucket, leaky bucket).
@@ -102,7 +103,7 @@ The project is a Gradle multi-module build (20 modules, matching `settings.gradl
 
 ---
 
-**Version**: 0.2.0
+**Version**: 0.2.4
 **Last Updated**: 2026-10-05
 
 Related documentation:

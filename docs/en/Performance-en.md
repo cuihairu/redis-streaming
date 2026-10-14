@@ -40,7 +40,7 @@ Defaults are taken from source code (`RedisRuntimeConfig`, `MqOptions`).
 
 ---
 
-**Version**: 0.2.0
+**Version**: 0.2.4
 **Last Updated**: 2026-10-05
 
 Related: [MQ-Design.md](../MQ-Design.md) / [MQ-Broker-Interaction.md](../MQ-Broker-Interaction.md)

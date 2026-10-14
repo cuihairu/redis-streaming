@@ -242,7 +242,7 @@ The core Redis commands the implementation actually uses, mapped to Kafka featur
 
 ---
 
-**Version**: 0.2.0
+**Version**: 0.2.4
 **Last Updated**: 2026-10-05
 
 References:

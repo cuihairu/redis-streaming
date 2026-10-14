@@ -22,7 +22,7 @@ This project's CI/CD uses GitHub Actions; workflow files live in `.github/workfl
 - Steps:
   1. `actions/checkout@v6` (`fetch-depth: 0`, so axion-release can read tags)
   2. `actions/setup-java@v5` (Temurin 17, `cache: gradle`)
-  3. `docker compose -f docker-compose.test.yml up -d`, waiting until all 4 services (Redis/MySQL/PostgreSQL/Elasticsearch) are healthy (`timeout 180`)
+  3. `docker compose -f docker-compose.test.yml up -d`, waiting until all 5 services (Redis/MySQL/PostgreSQL/Elasticsearch/Kafka) are healthy (`timeout 240`)
   4. `./gradlew clean check jacocoRootReport --warning-mode=all` (unit + integration tests + the aggregate coverage gate)
   5. `codecov/codecov-action@v5` uploads `build/reports/jacoco/jacocoRootReport/jacocoRootReport.xml` (`fail_ci_if_error: false`)
   6. Teardown `docker compose -f docker-compose.test.yml down -v`

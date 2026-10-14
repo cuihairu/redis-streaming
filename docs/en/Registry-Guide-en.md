@@ -12,7 +12,7 @@ Dependency (the starter assembles registry, discovery, config and the rest):
 
 ```gradle
 dependencies {
-    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.4'
 }
 ```
 
@@ -39,12 +39,6 @@ redis-streaming:
     healthy-only: true       # default true
   load-balancer:
     strategy: scored         # scored | wrr | weighted-random | consistent-hash
-  invoker:
-    max-attempts: 3          # default 3
-    initial-delay-ms: 20
-    backoff-factor: 2.0
-    max-delay-ms: 200
-    jitter-ms: 20
 ```
 
 Inject and use:
@@ -223,36 +217,9 @@ ServiceInstance chosen = ((RedisNamingService) naming)
 
 Metrics keys: `ScoredLoadBalancer` reads `cpu`, `latency`, `memory`, `inflight`, `queue`, `errorRate` by default (change with `cfg.setCpuKey(...)` etc.). The provider-side built-in collection (the former `registry.metrics` package, producing `processCpuLoad`, `heap_usagePercent`, `threadCount`) was removed on 2026-10-12; the instance-hash `metrics` field is now data-driven — business code or an external agent writes it (former client reporters wrote `clientInflight`, `clientLatencyMs`, `clientErrorRate`), while the read side (`RedisMetricsProvider`, metrics filters) is unchanged. Align written key names through `LoadBalancerConfig.setXxxKey(...)`.
 
-## 6) ClientSelector / ClientInvoker (selection and invocation wrapper)
+## 6) Client invocation (client package removed)
 
-```java
-import io.github.cuihairu.redis.streaming.registry.client.*;
-import io.github.cuihairu.redis.streaming.registry.client.metrics.RedisClientMetricsReporter;
-
-// selection: strict filter (metadata+metrics) -> drop metrics filter -> drop metadata filter -> all healthy
-// order and switches are controlled by ClientSelectorConfig, all enabled by default
-ClientSelector selector = new ClientSelector(naming, new ClientSelectorConfig());
-ServiceInstance picked = selector.select("order-service", md, mt,
-        new WeightedRoundRobinLoadBalancer(), Map.of());     // null when nothing matches
-
-// invocation: selection + per-instance circuit breaker + exponential-backoff retry + client metrics reporting
-RetryPolicy retry = new RetryPolicy(3, 20, 2.0, 200, 20);    // attempts, initialDelayMs, factor, maxDelayMs, jitterMs
-RedisClientMetricsReporter reporter =
-        new RedisClientMetricsReporter(redissonClient, consumerConfig);
-
-ClientInvoker invoker = new ClientInvoker(naming, scored, retry, reporter);
-
-String body = invoker.invoke("order-service", md, mt, Map.of(), ins -> {
-    String url = ins.getScheme() + "://" + ins.getHost() + ":" + ins.getPort() + "/api/orders";
-    // issue the HTTP call and return a result; exceptions count toward retry/circuit-breaker stats
-    return "ok";
-});
-
-// invocation counters: total + per service, keys attempts/successes/failures/retries/cbOpenSkips
-Map<String, Map<String, Long>> stats = invoker.getMetricsSnapshot();
-```
-
-Implementation details: `ClientInvoker` keeps one `CircuitBreaker` per `serviceName:instanceId` (window 20, failure-rate threshold 0.5, open for 5s, one half-open probe); a null `RetryPolicy` falls back to `new RetryPolicy(3, 10, 2.0, 200, 10)`. `invoke` declares `throws Exception`.
+The former `registry.client` package (`ClientSelector` / `ClientInvoker` / `RetryPolicy` / `CircuitBreaker` / `client.metrics.RedisClientMetricsReporter`) — a selection + circuit-breaker + retry + reporting RPC wrapper that overlapped with general-purpose HTTP/RPC clients — was removed on 2026-10-12. Equivalent composition: pick an instance with `naming.getInstancesByMetadata(...)` or `((RedisNamingService) naming).getHealthyInstancesByFilters(...)`, choose one via the built-in `LoadBalancer` (section 5), and make the call from business code; for circuit breaking / retries use a mature client-side library (e.g. resilience4j) or the in-memory retry primitives of the `reliability` module.
 
 ## 7) Admin API
 
@@ -280,7 +247,7 @@ consumerConfig.setHealthCheckTimeUnit(TimeUnit.SECONDS);
 consumerConfig.setHealthCheckTimeout(5000);       // milliseconds, <=0 falls back to 5000
 ```
 
-The probe implementation is chosen by protocol: HTTP/HTTPS uses `HttpHealthChecker` (GET `{uri}/health`, 2xx-3xx counts as healthy, request errors fall back to TCP connectivity); TCP/UDP uses `TcpHealthChecker` (connection test); WS/WSS uses `WebSocketHealthChecker` (TCP connectivity); everything else (including gRPC) goes through `StandardHealthChecker`'s default TCP connectivity probe. Custom logic extends `CustomHealthChecker` and implements `doCheck` (TCP connectivity first, 3s timeout). Probes share one daemon pool and fire `HEALTH_RECOVERY` / `HEALTH_FAILURE` on state changes.
+The probe implementation is chosen by protocol: HTTP/HTTPS uses `HttpHealthChecker` (GET `{uri}/health`, 2xx-3xx counts as healthy, request errors fall back to TCP connectivity); TCP/UDP uses `TcpHealthChecker` (connection test); WS/WSS uses `StandardHealthChecker`'s TCP connectivity probe (the former `WebSocketHealthChecker` was a bare TCP probe, removed on 2026-10-12, its branch folded into Standard); everything else (including gRPC) goes through `StandardHealthChecker`'s default TCP connectivity probe. Custom logic extends `CustomHealthChecker` and implements `doCheck` (TCP connectivity first, 3s timeout). Probes share one daemon pool and fire `HEALTH_RECOVERY` / `HEALTH_FAILURE` on state changes.
 
 ## References
 

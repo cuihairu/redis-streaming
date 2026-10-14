@@ -12,7 +12,7 @@ Gradle 多模块工程，模块清单与 `settings.gradle` 一致（20 个）：
 | Tier 2 基础设施 | `mq`、`registry`、`config`、`state`、`checkpoint`、`watermark` |
 | Tier 3 特性 | `window`、`aggregation`、`table`、`join`、`cdc`、`sink`、`source` |
 | Tier 4 高级特性 | `reliability`、`cep` |
-| Tier 5 集成 | `metrics`、`spring-boot-starter`、`examples` |
+| Tier 5 集成 | `spring-boot-starter`、`examples`、`benchmark` |
 
 ## 逻辑架构
 ```mermaid

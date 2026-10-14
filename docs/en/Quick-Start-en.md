@@ -60,9 +60,9 @@ Available example entry points in [Examples](../Examples.md).
 
 ## 5) Spring Boot Integration (Minimal)
 
-Gradle dependency (current 0.2.0):
+Gradle dependency (current 0.2.4):
 ```gradle
-implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
+implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.4'
 ```
 
 Enable in app:
@@ -96,5 +96,5 @@ Metrics (optional): see [Metrics](../Metrics.md) for Actuator/Prometheus setup.
 
 ---
 
-**Version**: 0.2.0
+**Version**: 0.2.4
 **Last Updated**: 2026-10-05

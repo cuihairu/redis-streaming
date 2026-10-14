@@ -839,6 +839,6 @@ Completeness: 20/20 modules; dynamic scaling and benchmarks in progress
 - [Reliability module: Reliability (incl. Bloom Filter dedup)]
 - [Connectors complete: Kafka/Redis Sinks, Kafka/HTTP/Redis Sources]
 - [CEP complete: complex event processing (incl. Kleene closure and advanced pattern operations)]
-- [Monitoring integration: Prometheus Exporter and metric collectors]
+- [Monitoring integration: Micrometer metrics bridge (export via Actuator / micrometer-registry-prometheus)]
 - [Spring Boot auto-configuration (incl. @ServiceChangeListener annotation support)]
 - [Runtime module: Redis runtime + in-memory runtime (see `runtime/` and `docs/`)]

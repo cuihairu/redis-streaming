@@ -166,7 +166,7 @@ Lua script cache: `RegistryLuaScriptExecutor` runs the scripts (register, deregi
 
 ---
 
-**Version**: 0.2.0
+**Version**: 0.2.4
 **Last Updated**: 2026-10-05
 
 Related documentation:
