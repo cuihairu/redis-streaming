@@ -1,8 +1,7 @@
 package io.github.cuihairu.redis.streaming.mq.partition;
 
+import io.github.cuihairu.redis.streaming.core.utils.Tenant;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
-
-import java.util.regex.Pattern;
 
 /**
  * Helper for naming stream and control keys. Keep ASCII and simple naming.
@@ -23,9 +22,7 @@ import java.util.regex.Pattern;
 public final class StreamKeys {
 
     /** Tenant used when no isolation is requested; produces no key segment. */
-    public static final String DEFAULT_TENANT = "default";
-
-    private static final Pattern TENANT_PATTERN = Pattern.compile("[A-Za-z0-9._-]{1,64}");
+    public static final String DEFAULT_TENANT = Tenant.DEFAULT_TENANT;
 
     private static volatile String CONTROL_PREFIX = "streaming:mq"; // meta/lease/retry
     private static volatile String STREAM_PREFIX = "stream:topic";  // data streams (partitions/DLQ)
@@ -91,14 +88,7 @@ public final class StreamKeys {
      * {@code [A-Za-z0-9._-]} so the derived keys stay unambiguous (no colon).
      */
     public static String normalizeTenant(String tenant) {
-        if (tenant == null || tenant.isBlank() || DEFAULT_TENANT.equals(tenant)) {
-            return DEFAULT_TENANT;
-        }
-        if (!TENANT_PATTERN.matcher(tenant).matches()) {
-            throw new IllegalArgumentException(
-                    "tenant must match [A-Za-z0-9._-]{1,64} (no colon), got: " + tenant);
-        }
-        return tenant;
+        return Tenant.normalize(tenant);
     }
 
     /** The normalized tenant of this view. */
@@ -112,7 +102,7 @@ public final class StreamKeys {
 
     /** @return "" for the default tenant, else ":" + tenant (insert after the prefix). */
     public String tenantSegment() {
-        return DEFAULT_TENANT.equals(tenant) ? "" : ":" + tenant;
+        return Tenant.segment(tenant);
     }
 
     public String partitionStreamKey(String topic, int partitionId) {

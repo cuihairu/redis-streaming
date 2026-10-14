@@ -1,6 +1,6 @@
 package io.github.cuihairu.redis.streaming.registry.keys;
 
-import java.util.regex.Pattern;
+import io.github.cuihairu.redis.streaming.core.utils.Tenant;
 
 import lombok.Getter;
 import org.slf4j.Logger;
@@ -19,10 +19,7 @@ public class RegistryKeys {
     private static final String DEFAULT_PREFIX = "registry";
 
     /** Default tenant: no tenant key segment, keys are byte-identical to the legacy layout. */
-    public static final String DEFAULT_TENANT = "default";
-
-    /** Tenant names: 1..64 chars of {@code [A-Za-z0-9._-]} (same contract as {@code StreamKeys}). */
-    private static final Pattern TENANT_PATTERN = Pattern.compile("[A-Za-z0-9._-]{1,64}");
+    public static final String DEFAULT_TENANT = Tenant.DEFAULT_TENANT;
 
     // Service registration and discovery key templates
     private static final String SERVICES_INDEX_TEMPLATE = "%s:services";                           // Level 1: Service index
@@ -67,19 +64,12 @@ public class RegistryKeys {
      * {@code [A-Za-z0-9._-]} so the derived keys stay unambiguous (no colon).
      */
     public static String normalizeTenant(String tenant) {
-        if (tenant == null || tenant.isBlank() || DEFAULT_TENANT.equals(tenant)) {
-            return DEFAULT_TENANT;
-        }
-        if (!TENANT_PATTERN.matcher(tenant).matches()) {
-            throw new IllegalArgumentException(
-                    "tenant must match [A-Za-z0-9._-]{1,64} (no colon), got: " + tenant);
-        }
-        return tenant;
+        return Tenant.normalize(tenant);
     }
 
     /** @return {@code ""} for the default tenant, else {@code ":" + tenant}. */
     public String tenantSegment() {
-        return DEFAULT_TENANT.equals(tenant) ? "" : ":" + tenant;
+        return Tenant.segment(tenant);
     }
 
     /** A view with this view's prefix and the given tenant (normalized). */
