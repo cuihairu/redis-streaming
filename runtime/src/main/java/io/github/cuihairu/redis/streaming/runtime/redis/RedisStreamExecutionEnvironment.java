@@ -19,6 +19,7 @@ import io.github.cuihairu.redis.streaming.mq.SubscriptionOptions;
 import io.github.cuihairu.redis.streaming.mq.control.PausableMessageConsumer;
 import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
+import io.github.cuihairu.redis.streaming.runtime.redis.internal.CheckpointGate;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisJoinEnvelopeCodec;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisLeaderElector;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisPipeline;
@@ -366,11 +367,11 @@ public final class RedisStreamExecutionEnvironment {
             RedisRuntimeMetrics.get().incJobStarted(config.getJobName());
         } catch (Exception ignore) {
         }
-        // copy-on-write: scaleParallelism mutates these under the checkpointing gate while
+        // copy-on-write: scaleParallelism mutates these under the control gate while
         // cancel() iterates them without any lock
         List<MessageConsumer> consumers = new java.util.concurrent.CopyOnWriteArrayList<>();
         List<RedisPipelineRunner<?>> runners = new java.util.concurrent.CopyOnWriteArrayList<>();
-        // per-subtask bookkeeping for scaleParallelism (mutated only under the same gate)
+        // per-subtask bookkeeping for scaleParallelism (mutated only under the same control gate)
         List<Subtask> subtasks = new ArrayList<>();
         // monotonically increasing consumer-name sequence across resizes (never reused)
         AtomicLong consumerSeq = new AtomicLong(0);
@@ -402,7 +403,9 @@ public final class RedisStreamExecutionEnvironment {
         List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys = new ArrayList<>();
         AtomicReference<ScheduledExecutorService> checkpointExecutorRef = new AtomicReference<>();
         ScheduledExecutorService leaderRenewExecutor = null;
-        AtomicBoolean checkpointing = new AtomicBoolean(false);
+        // control gate: serializes checkpoint flows and scaleParallelism; the full-silence
+        // level is what the aligned checkpoint and scale both need (see CheckpointGate)
+        CheckpointGate gate = new CheckpointGate();
         DeferredAcks deferredAcks = new DeferredAcks();
         TwoPhaseEpochTracker twoPhaseEpochs = new TwoPhaseEpochTracker();
         // set when at least one runner replayed a stored transaction during restore
@@ -483,11 +486,11 @@ public final class RedisStreamExecutionEnvironment {
 
             if (config.isLeaderElectionEnabled()) {
                 leaderRenewExecutor = startLeaderCoordination(checkpointExecutorRef, consumers, runners,
-                        checkpointManager, pipelineKeys, deferredAcks, twoPhaseEpochs, checkpointing,
+                        checkpointManager, pipelineKeys, deferredAcks, twoPhaseEpochs, gate,
                         isLeader, leaderElector);
             } else {
                 startCheckpointExecutor(checkpointExecutorRef, consumers, runners, checkpointManager,
-                        pipelineKeys, deferredAcks, twoPhaseEpochs, checkpointing);
+                        pipelineKeys, deferredAcks, twoPhaseEpochs, gate);
             }
         } catch (Exception e) {
             stopConsumersQuietly(consumers);
@@ -507,7 +510,7 @@ public final class RedisStreamExecutionEnvironment {
 
         return new LaunchedJobClient(checkpointExecutorRef, leaderRenewExecutor, leaderElector, isLeader,
                 sharedTimerExecutor, consumers, runners, subtasks, consumerSeq,
-                checkpointManager, pipelineKeys, deferredAcks, twoPhaseEpochs, checkpointing, restoredCheckpointIdRef);
+                checkpointManager, pipelineKeys, deferredAcks, twoPhaseEpochs, gate, restoredCheckpointIdRef);
     }
 
     /**
@@ -521,7 +524,7 @@ public final class RedisStreamExecutionEnvironment {
                                          List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
                                          DeferredAcks deferredAcks,
                                          TwoPhaseEpochTracker twoPhaseEpochs,
-                                         AtomicBoolean checkpointing) {
+                                         CheckpointGate gate) {
         Duration interval = config.getCheckpointInterval();
         if (interval == null || interval.isZero() || interval.isNegative()) {
             return;
@@ -532,7 +535,7 @@ public final class RedisStreamExecutionEnvironment {
         checkpointExecutorRef.set(ex);
         long ms = Math.max(50L, interval.toMillis());
         ex.scheduleWithFixedDelay(() -> {
-            if (!checkpointing.compareAndSet(false, true)) {
+            if (!gate.tryBeginAlignedCheckpoint()) {
                 return;
             }
             try {
@@ -541,7 +544,7 @@ public final class RedisStreamExecutionEnvironment {
             } catch (Exception e) {
                 log.debug("Periodic checkpoint failed (jobName={})", config.getJobName(), e);
             } finally {
-                checkpointing.set(false);
+                gate.endAlignedCheckpoint();
             }
         }, ms, ms, TimeUnit.MILLISECONDS);
     }
@@ -563,7 +566,7 @@ public final class RedisStreamExecutionEnvironment {
                                          List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
                                          DeferredAcks deferredAcks,
                                          TwoPhaseEpochTracker twoPhaseEpochs,
-                                         AtomicBoolean checkpointing,
+                                         CheckpointGate gate,
                                          AtomicBoolean isLeader,
                                          RedisLeaderElector elector) {
         long renewMs = Math.max(1000L, config.getLeaderRenewInterval().toMillis());
@@ -587,7 +590,7 @@ public final class RedisStreamExecutionEnvironment {
                     log.info("Acquired leadership for job {} (instance {}, fencingToken={})",
                             config.getJobName(), config.getJobInstanceId(), token);
                     startCheckpointExecutor(checkpointExecutorRef, consumers, runners, checkpointManager,
-                            pipelineKeys, deferredAcks, twoPhaseEpochs, checkpointing);
+                            pipelineKeys, deferredAcks, twoPhaseEpochs, gate);
                 }
             } catch (Exception e) {
                 log.debug("Leader coordination tick failed (jobName={})", config.getJobName(), e);
@@ -597,7 +600,7 @@ public final class RedisStreamExecutionEnvironment {
         // tick is one interval away)
         if (isLeader.get()) {
             startCheckpointExecutor(checkpointExecutorRef, consumers, runners, checkpointManager,
-                    pipelineKeys, deferredAcks, twoPhaseEpochs, checkpointing);
+                    pipelineKeys, deferredAcks, twoPhaseEpochs, gate);
         }
         return renewEx;
     }
@@ -622,7 +625,7 @@ public final class RedisStreamExecutionEnvironment {
         private final List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys;
         private final DeferredAcks deferredAcks;
         private final TwoPhaseEpochTracker twoPhaseEpochs;
-        private final AtomicBoolean checkpointing;
+        private final CheckpointGate gate;
         private final java.util.concurrent.atomic.AtomicReference<Long> restoredCheckpointId;
 
         private LaunchedJobClient(AtomicReference<ScheduledExecutorService> checkpointExecutorRef,
@@ -638,7 +641,7 @@ public final class RedisStreamExecutionEnvironment {
                                   List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
                                   DeferredAcks deferredAcks,
                                   TwoPhaseEpochTracker twoPhaseEpochs,
-                                  AtomicBoolean checkpointing,
+                                  CheckpointGate gate,
                                   java.util.concurrent.atomic.AtomicReference<Long> restoredCheckpointId) {
             this.checkpointExecutorRef = checkpointExecutorRef;
             this.leaderRenewExecutor = leaderRenewExecutor;
@@ -653,7 +656,7 @@ public final class RedisStreamExecutionEnvironment {
             this.pipelineKeys = pipelineKeys;
             this.deferredAcks = deferredAcks;
             this.twoPhaseEpochs = twoPhaseEpochs;
-            this.checkpointing = checkpointing;
+            this.gate = gate;
             this.restoredCheckpointId = restoredCheckpointId;
         }
 
@@ -692,14 +695,14 @@ public final class RedisStreamExecutionEnvironment {
             if (canceled.get()) {
                 return null;
             }
-            if (!checkpointing.compareAndSet(false, true)) {
+            if (!gate.tryBeginAlignedCheckpoint()) {
                 return null;
             }
             try {
                 return triggerCheckpointInternal(consumers, runners, checkpointManager, pipelineKeys,
                         deferredAcks, twoPhaseEpochs);
             } finally {
-                checkpointing.set(false);
+                gate.endAlignedCheckpoint();
             }
         }
 
@@ -760,7 +763,7 @@ public final class RedisStreamExecutionEnvironment {
                     // the same subtask lists): wait out an in-flight checkpoint instead of
                     // racing it on the list mutations
                     long deadline = System.currentTimeMillis() + 30_000;
-                    while (!checkpointing.compareAndSet(false, true)) {
+                    while (!gate.tryBeginScale()) {
                         if (canceled.get() || System.currentTimeMillis() > deadline) {
                             return false;
                         }
@@ -774,7 +777,7 @@ public final class RedisStreamExecutionEnvironment {
                     try {
                         return scaleSubtasks(newParallelism);
                     } finally {
-                        checkpointing.set(false);
+                        gate.endScale();
                     }
                 }
 
@@ -895,7 +898,8 @@ public final class RedisStreamExecutionEnvironment {
                         : Math.max(1, subtasks.size() / pipelineKeys.size()));
                         out.put("runnerCount", runners.size());
                         out.put("inFlight", inFlight());
-                        out.put("checkpointing", checkpointing.get());
+                        out.put("checkpointing", gate.isExclusive());
+                        out.put("fullSilence", gate.isFullSilence());
                         out.put("restoredCheckpointId", restoredCheckpointId.get());
                 out.put("leaderElectionEnabled", config.isLeaderElectionEnabled());
                 if (leaderElector != null) {

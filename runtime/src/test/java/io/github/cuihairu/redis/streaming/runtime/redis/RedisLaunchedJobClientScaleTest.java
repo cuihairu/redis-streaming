@@ -7,6 +7,7 @@ import io.github.cuihairu.redis.streaming.mq.MessageQueueFactory;
 import io.github.cuihairu.redis.streaming.mq.SubscriptionOptions;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
 import io.github.cuihairu.redis.streaming.mq.control.ReassignableMessageConsumer;
+import io.github.cuihairu.redis.streaming.runtime.redis.internal.CheckpointGate;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
 import io.github.cuihairu.redis.streaming.api.metrics.StreamingMetricsCollector;
 import org.junit.jupiter.api.AfterEach;
@@ -149,39 +150,39 @@ class RedisLaunchedJobClientScaleTest {
     @Test
     void scaleParallelismYieldsToInFlightCheckpointAndReportsCanceledWait() throws Exception {
         RedisJobClient j = launch(1);
-        AtomicBoolean checkpointing = field(j, "checkpointing");
+        CheckpointGate gate = field(j, "gate");
 
         // gate busy-held then released by a helper thread: the CAS loop sleeps and retries
-        checkpointing.set(true);
+        assertTrue(gate.tryBeginAlignedCheckpoint());
         Thread releaser = new Thread(() -> {
             try {
                 Thread.sleep(120);
             } catch (InterruptedException ignored) {
             }
-            checkpointing.set(false);
+            gate.endAlignedCheckpoint();
         });
         releaser.start();
         assertTrue(j.scaleParallelism(1), "released gate must let the scale through");
         releaser.join(5000);
 
         // interrupt flag set while the gate stays held: the retry sleep aborts into the false arm
-        checkpointing.set(true);
+        assertTrue(gate.tryBeginAlignedCheckpoint());
         Thread.currentThread().interrupt();
         try {
             assertFalse(j.scaleParallelism(1));
             assertTrue(Thread.currentThread().isInterrupted(), "interrupt status must be restored");
         } finally {
             Thread.interrupted(); // clear for the remaining tests
-            checkpointing.set(false);
+            gate.endAlignedCheckpoint();
         }
 
         // canceled while waiting beats the retry loop immediately
-        checkpointing.set(true);
+        assertTrue(gate.tryBeginAlignedCheckpoint());
         AtomicBoolean canceled = field(j, "canceled");
         canceled.set(true);
         assertFalse(j.scaleParallelism(1));
         canceled.set(false); // let the teardown cancel() do its full executor cleanup
-        checkpointing.set(false);
+        gate.endAlignedCheckpoint();
     }
 
     @Test
@@ -231,6 +232,7 @@ class RedisLaunchedJobClientScaleTest {
         assertFalse(j.scaleParallelism(2));
         assertEquals(1, subtasks().size(), "failed scale must not mutate the subtask list");
         assertEquals(Boolean.FALSE, j.diagnostics().get("checkpointing"), "scale gate must be released");
+        assertEquals(Boolean.FALSE, j.diagnostics().get("fullSilence"), "full-silence level must be released");
         assertTrue(j.scaleParallelism(2), "job stays scalable after the failed attempt");
     }
 

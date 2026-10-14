@@ -2,7 +2,7 @@
 
 本文供评审,不含代码改动。目标:`SourceContext.getCheckpointLock()` 目前是死契约(唯一生产实现是引擎自己,无任何快照方在这把锁上同步);厘清两引擎检查点模型,给锁语义真实化的最小路径,并论证 Flink 式跨算子屏障协议在 Redis 引擎上的真实收益边界。
 
-> 落地状态:P1 快照屏障已落地 2026-10-11、P2 注册面泛化已落地 2026-10-12、逐记录屏障已落地 2026-10-13、窗口累加器注册已落地 2026-10-14(见「方案 A」①②与「落地记录」);A③ Redis unaligned v2 评审结论已出 2026-10-14(方向正确、不在本批实施,拆独立批次,见「方案 A」③ 评审结论)。下文「现状」是落地前的事实盘点,与当前代码的差异以落地记录为准。
+> 落地状态:P1 快照屏障已落地 2026-10-11、P2 注册面泛化已落地 2026-10-12、逐记录屏障已落地 2026-10-13、窗口累加器注册已落地 2026-10-14(见「方案 A」①②与「落地记录」);A③ Redis unaligned v2 评审结论已出 2026-10-14(方向正确、不在本批实施,拆独立批次,见「方案 A」③ 评审结论),其前置第一步 CAS 门两级拆分已于同日落地(见「方案 A」③ 落地注记)。下文「现状」是落地前的事实盘点,与当前代码的差异以落地记录为准。
 
 ## 现状(事实盘点)
 
@@ -45,6 +45,8 @@
 **③ Redis 引擎 v2 unaligned 检查点(评审结论已出 2026-10-14)**:不停消费,epoch 冻结点从"全量 drain"缩到"2PC preCommit + defer-ack freeze"(这两步本来就不需要 pause 全场)——offsets 用 defer-ack 快照语义已存在;keyed 状态取 Redis 现值 + 快照版本号,恢复时按"记录 id > 快照 frontier 才重放"去重(幂等 sink 键已具备)。必须先解决:与 `scaleParallelism` 共享的 `checkpointing` CAS 门要拆成两级(扩缩容仍需全静默,检查点不再需要);多并行度下 preCommit 的 epoch 对齐。风险集中在 2PC 交互,收益只在长 `checkpointDrainTimeout`/高吞吐作业,不默认启用。
 
 > **评审结论(2026-10-14,巡检代决)**:方向正确但**不在本批实施**。草图自洽——preCommit + defer-ack freeze 是最小一致点,offsets 复用既有 defer-ack 快照语义,keyed 状态取 Redis 现值 + 版本号、按 frontier 去重重放均成立;但它是正确性关键路径且收益面窄(仅长 `checkpointDrainTimeout`/高吞吐作业可感知),前置有两项硬骨头:与 `scaleParallelism` 共享的 `checkpointing` CAS 门两级拆分、多并行度 preCommit epoch 对齐。**建议拆为独立批次、默认关**(`RedisRuntimeConfig` 新开关),落地顺序:先做 CAS 门两级拆分(独立可测,对既有对齐路径亦有收益),再评 epoch 对齐与 frontier 去重;2PC 交互为主要风险,需专项集成测试覆盖。本批不动代码。
+>
+> **落地注记(2026-10-14,P1014B 批次)**:上述落地顺序的第一步已执行——原单一 `AtomicBoolean checkpointing` 重构为 `runtime/redis/internal/CheckpointGate` 两级门(serialization 级:同一时刻至多一个控制操作;full-silence 级:消费者暂停/在途排空)。对齐检查点(周期与手动触发)与 `scaleParallelism` 仍同取两级(先 serialization 后 full-silence,逆序释放,类不变量 `fullSilence ⇒ serialization` 保证无死锁),**行为与拆分前逐点等价**——原门的三类持有者本就两两互斥,拆分只是把「互斥」与「全静默」两个关注点显式化,给未来 unaligned 检查点留出「只取 serialization 级、不停消费」的入口。诊断面 `checkpointing` 键改为 serialization 视图并新增 `fullSilence` 键。门晶格由 `CheckpointGateTest` 4 测试钉住:检查点/扩缩容互斥、二次 begin 拒绝、拒绝的 begin 不滞留 serialization 级(防卡死不变量)、4 线程 2000 次争用零重叠。epoch 对齐、frontier 去重与默认关开关仍待独立批次。
 
 ### 方案 B:两引擎全面对齐屏障(Flink 式)
 

@@ -2,7 +2,7 @@
 
 ## 未完成
 
-- [ ] Redis 引擎 unaligned checkpoint 方案 A③：评审结论已出 2026-10-14（方向正确、不在本批实施，拆独立批次、默认关，先做 CAS 门两级拆分再评 epoch 对齐与 frontier 去重，见 docs/Checkpoint-Barrier-Design.md 方案 A③ 评审结论）；实施待另立批次
+- [ ] Redis 引擎 unaligned checkpoint 方案 A③：评审结论已出 2026-10-14（方向正确、拆独立批次、默认关）；前置第一步 CAS 门两级拆分已落地 2026-10-14（runtime internal/CheckpointGate 两级 serialization/full-silence，行为等价重构，4 单测钉住晶格，见 docs/Checkpoint-Barrier-Design.md 方案 A③ 落地注记）；剩 epoch 对齐、frontier 去重、`RedisRuntimeConfig` 默认关开关与 2PC 专项集成测试，待另立批次
 - [ ] join/cep Phase 3：引擎级双源 pipeline、event-time 水位对齐、retract 语义（设计标注远期，与 P4 动态伸缩合并设计）
 - [ ] 多租户 v2：线程/内存/in-flight 配额、指标 tenant 维度、registry/config/state/checkpoint/cdc/sink 前缀租户注入、租户级迁移与运维 CLI，设计见 docs/Multi-Tenancy-Design.md（配额与 CLI 无规格；指标 tenant 维度需破坏性改 StreamingMetricsCollector SPI）
 
