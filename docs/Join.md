@@ -146,7 +146,8 @@ StreamJoiner<String, Integer, String, String> joiner =
 
 ```java
 // 左右两源各自 map 成 Envelope（joinKey/时间戳随信封携带，是算子路径的权威值），
-// 合并进同一个 join 输入 topic（内存引擎直接合并两个 source），然后：
+// 合并进同一个 join 输入流：Redis 引擎经 join 输入 topic（信封落地一次），
+// 内存引擎用 DataStream.union 直接交错合并，然后：
 env.fromMqTopic(joinInputTopic, "join-group")
     .map(m -> parseEnvelope(String.valueOf(m.getPayload())))
     .keyBy(Envelope::getJoinKey)
@@ -155,6 +156,7 @@ env.fromMqTopic(joinInputTopic, "join-group")
 ```
 
 - 语义与 `StreamJoiner` 逐点一致（窗口谓词有差分测试钉住）：左锚定窗口谓词、外连接立即发射 + 后到补配对、retention/maxStateSize 淘汰；
+- 内存引擎的合流用 `DataStream.union`（round-robin 交错，源内顺序保留、跨源顺序未定义，逐消费可复用），无需中转 topic；Redis 引擎仍走 join 输入 topic（跨引擎合流见 [双源汇合设计](Union-DualSource-Design.md)）；
 - 信封 key 须与 `JoinConfig` 的 selector 一致——不一致不会报错，只会让配对路由到互不相见的分区而**静默失配**；
 - **Phase 2 起（2026-10-12）缓冲进 keyed state**：每 key 一份 JSON 文档（自描述元素，跨重启可解码），经 `ctx.getState` 读写、随引擎 checkpoint 快照恢复——failover 后未配对的半边不再丢失，语义升级为 **at-least-once 重算**（MQ 重放的信封可能再次配对，去重交给下游）；`maxStateSize` 与 retention 从实例级收窄为 **per-key**（窗口谓词仍守护正确性，详见设计文档 §3.3/§3.4）。
 
