@@ -1,6 +1,6 @@
 # Union / 双源汇合原语设计（Blocker B 留档，2026-10-12）
 
-状态：**设计稿，待评审**。本文档回应 `docs/Join-CEP-Operators-Design.md` §5.2 的卡点 B——`DataStream.join(other)` 语法糖需要先把左右流汇入同一输入，而 `DataStream` API 没有汇合原语。本文把可选方案、取舍、推荐路径与未实施清单定下来。
+状态：**设计稿；推荐路径 step 1（union 原语）已落地 2026-10-14**。本文档回应 `docs/Join-CEP-Operators-Design.md` §5.2 的卡点 B——`DataStream.join(other)` 语法糖需要先把左右流汇入同一输入，而 `DataStream` API 没有汇合原语。本文把可选方案、取舍、推荐路径与未实施清单定下来。
 
 ## 1. 问题
 
@@ -41,12 +41,12 @@
 ## 4. 推荐路径
 
 1. **第一步（小原语，先评审）**：`DataStream.union(DataStream<? extends T>)` 只做内存引擎（迭代器交错），Redis 引擎默认抛不支持并写明「用 join topic 模式」——原语先立契约，Redis 落点指向 U3；
-2. **第二步（语法糖，U3 展开）**：`DataStream.join(other, config, fn)` 在 Redis 引擎展开为 U3 三段编排（自动生成 join topic 名、信封 map、合流消费 pipeline），内存引擎展开为 map + union + keyBy + 算子；join topic 生命周期跟随 job（trim 走 MQ 的 stream 保留治理）；
+2. **第二步（语法糖，U3 展开）**：`DataStream.join(other, config, fn)` 在 Redis 引擎展开为 U3 三段编排（自动生成 join topic 名、信封 map、合流消费 pipeline），内存引擎展开为 map + union + keyBy + 算子；join topic 生命周期跟随 job（trim 走 MQ 的 stream 保留治理）。实施注记（2026-10-14）：`Envelope`/`StreamJoinOperator` 在 join 模块而 `DataStream` 在 core——糖的签名不能直接引用算子类型，落点需在 join 模块扩展或运行时/starter 层，签名位置先定再实施；
 3. **第三步（Phase 3 合并设计）**：Redis 引擎原生多源读取（U1 的 Redis 侧）与 event-time 水位对齐一起做——那才是免中转 topic 的最终形态；U3 的语法糖届时切换底层实现，用户 API 不变。
 
 ## 5. 未实施清单（本批留档，待评审后另批实施）
 
-- [ ] `DataStream.union(...)` 契约 + 内存引擎实现 + Redis 引擎显式不支持（默认方法模式）；
+- [x] `DataStream.union(...)` 契约 + 内存引擎实现 + Redis 引擎显式不支持（默认方法模式）（2026-10-14，11 测试）；
 - [ ] `DataStream.join(other, ...)` 语法糖：Redis 侧 U3 三段编排（join topic 命名/trim/生命周期）、内存侧 union 展开；
 - [ ] 双引擎集成测试：join 糖的差分对照（直接信封路径 vs 糖展开路径输出一致）；
 - [ ] event-time join 窗口评估（依赖 `TimestampAssigner` 重载与水位对齐，随 Phase 3）。

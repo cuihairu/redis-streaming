@@ -98,4 +98,23 @@ public interface DataStream<T> {
             WatermarkGenerator<T> watermarkGenerator) {
         throw new UnsupportedOperationException("This runtime does not support event-time timestamp assignment");
     }
+
+    /**
+     * Merge this stream with another stream of a compatible element type.
+     *
+     * <p>Elements are interleaved round-robin: one from this stream, one from {@code other},
+     * until both are exhausted. Order within each source is preserved; relative order across
+     * the two sources is not defined. The result is a new stream that can be consumed
+     * independently of both inputs.</p>
+     *
+     * <p>Note: only the in-memory runtime supports this operation. Redis-backed streams
+     * must use join topic mode for cross-engine merging.</p>
+     *
+     * @param other the stream to merge with
+     * @return a new DataStream containing elements from both streams
+     */
+    default DataStream<T> union(DataStream<? extends T> other) {
+        throw new UnsupportedOperationException(
+                "union is only supported on in-memory streams; use join topic mode for cross-engine union");
+    }
 }

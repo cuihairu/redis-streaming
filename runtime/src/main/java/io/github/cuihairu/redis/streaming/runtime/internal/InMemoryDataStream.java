@@ -315,4 +315,52 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
             }
         }, state, checkpointCoordinator);
     }
+
+    @Override
+    public DataStream<T> union(DataStream<? extends T> other) {
+        Objects.requireNonNull(other, "other");
+        if (!(other instanceof InMemoryDataStream)) {
+            throw new UnsupportedOperationException(
+                    "union is only supported on in-memory streams; use join topic mode for cross-engine union");
+        }
+        return unionInMemory(this, (InMemoryDataStream<? extends T>) other);
+    }
+
+    private static <T, S extends T> DataStream<T> unionInMemory(InMemoryDataStream<T> a, InMemoryDataStream<S> b) {
+        Supplier<Iterator<InMemoryRecord<T>>> sa = a.recordIteratorSupplier;
+        Supplier<Iterator<InMemoryRecord<S>>> sb = b.recordIteratorSupplier;
+        return InMemoryDataStream.fromRecords(() -> new Iterator<InMemoryRecord<T>>() {
+            private final Iterator<InMemoryRecord<T>> ia = sa.get();
+            private final Iterator<InMemoryRecord<S>> ib = sb.get();
+            private boolean takeFromA = true;
+
+            @Override
+            public boolean hasNext() {
+                return ia.hasNext() || ib.hasNext();
+            }
+
+            @Override
+            public InMemoryRecord<T> next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                InMemoryRecord<? extends T> r;
+                if (takeFromA && ia.hasNext()) {
+                    takeFromA = false;
+                    r = ia.next();
+                } else if (ib.hasNext()) {
+                    takeFromA = true;
+                    r = ib.next();
+                } else {
+                    takeFromA = true;
+                    r = ia.next();
+                }
+                return new InMemoryRecord<>(r.value(), r.timestamp());
+            }
+        }, a.watermarkState, a.checkpointCoordinator);
+    }
+
+    Supplier<Iterator<InMemoryRecord<T>>> recordSupplier() {
+        return recordIteratorSupplier;
+    }
 }

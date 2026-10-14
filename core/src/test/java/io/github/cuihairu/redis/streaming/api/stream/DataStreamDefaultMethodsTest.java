@@ -64,4 +64,46 @@ class DataStreamDefaultMethodsTest {
         assertThrows(UnsupportedOperationException.class, () -> ds.assignTimestampsAndWatermarks(wm));
         assertThrows(UnsupportedOperationException.class, () -> ds.assignTimestampsAndWatermarks(ts, wm));
     }
+
+    @Test
+    void unionDefaultMethodThrowsWhenNotOverridden() {
+        DataStream<String> ds = new DataStream<>() {
+            @Override
+            public <R> DataStream<R> map(Function<String, R> mapper) {
+                throw new UnsupportedOperationException("not needed");
+            }
+
+            @Override
+            public DataStream<String> filter(Predicate<String> predicate) {
+                throw new UnsupportedOperationException("not needed");
+            }
+
+            @Override
+            public <R> DataStream<R> flatMap(Function<String, Iterable<R>> mapper) {
+                throw new UnsupportedOperationException("not needed");
+            }
+
+            @Override
+            public <K> KeyedStream<K, String> keyBy(Function<String, K> keySelector) {
+                throw new UnsupportedOperationException("not needed");
+            }
+
+            @Override
+            public DataStream<String> addSink(StreamSink<String> sink) {
+                throw new UnsupportedOperationException("not needed");
+            }
+
+            @Override
+            public DataStream<String> print() {
+                return this;
+            }
+
+            @Override
+            public DataStream<String> print(String prefix) {
+                return this;
+            }
+        };
+
+        assertThrows(UnsupportedOperationException.class, () -> ds.union(ds));
+    }
 }
