@@ -475,7 +475,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 if (!deferAck) {
                     ackViaBackend(topic, consumerGroup, partitionId, streamOrNull, messageId, messageData);
                     log.debug("Message {} acknowledged", messageId);
-                    MqMetrics.get().incAcked(message.getTopic(), partitionId);
+                    MqMetrics.get().incAcked(keys.getTenant(), message.getTopic(), partitionId);
                 } else {
                     log.debug("Message {} ack deferred by header {}", messageId, io.github.cuihairu.redis.streaming.mq.MqHeaders.DEFER_ACK);
                 }
@@ -488,7 +488,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
             case FAIL:
             case DEAD_LETTER:
                 if (sendToDeadLetterQueue(message, partitionId)) {
-                    MqMetrics.get().incDeadLetter(message.getTopic(), partitionId);
+                    MqMetrics.get().incDeadLetter(keys.getTenant(), message.getTopic(), partitionId);
                     ackViaBackend(topic, consumerGroup, partitionId, streamOrNull, messageId, messageData);
                 } else {
                     // DLQ write failed: leave the original un-acked in the PEL so it is not lost
@@ -563,13 +563,13 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         try {
             MessageHandleResult result = handler.handle(message);
             dispatchResult(topic, consumerGroup, messageId, partitionId, message, result, data, streamOrNull);
-            MqMetrics.get().recordHandleLatency(topic, pidInt, (System.nanoTime() - start) / 1_000_000);
-            MqMetrics.get().incConsumed(topic, pidInt);
+            MqMetrics.get().recordHandleLatency(keys.getTenant(), topic, pidInt, (System.nanoTime() - start) / 1_000_000);
+            MqMetrics.get().incConsumed(keys.getTenant(), topic, pidInt);
         } catch (Exception e) {
             log.error("Error handling message {} from {}:{}", messageId, topic, partitionId, e);
             requeueOrDeadLetter(streamOrNull, consumerGroup, messageId, partitionId, message, data);
-            MqMetrics.get().recordHandleLatency(topic, pidInt, (System.nanoTime() - start) / 1_000_000);
-            MqMetrics.get().incConsumed(topic, pidInt);
+            MqMetrics.get().recordHandleLatency(keys.getTenant(), topic, pidInt, (System.nanoTime() - start) / 1_000_000);
+            MqMetrics.get().incConsumed(keys.getTenant(), topic, pidInt);
         } finally {
             long after = inFlight.decrementAndGet();
             try {
@@ -636,7 +636,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
 
             // send to DLQ then ACK original (only ack when the DLQ write actually landed)
             if (sendToDeadLetterQueue(m, partitionId)) {
-                MqMetrics.get().incDeadLetter(topic, partitionId);
+                MqMetrics.get().incDeadLetter(keys.getTenant(), topic, partitionId);
                 try { MqMetrics.get().incPayloadMissing(topic, partitionId); } catch (Throwable ignore) {}
                 ackViaBackend(topic, group, partitionId, streamOrNull, messageId, messageData);
             } else {
@@ -683,7 +683,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
             // If current retry count already at/over limit, send to DLQ immediately
             if (message.getRetryCount() >= effectiveMax) {
                 if (sendToDeadLetterQueue(message, partitionId)) {
-                    MqMetrics.get().incDeadLetter(message.getTopic(), partitionId);
+                    MqMetrics.get().incDeadLetter(keys.getTenant(), message.getTopic(), partitionId);
                     ackViaBackend(message.getTopic(), consumerGroup, partitionId, stream, messageId, messageData);
                 } else {
                     log.error("DLQ write failed for exhausted message {}; left un-acked for redelivery", messageId);
@@ -715,7 +715,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
             // If next retry would exceed max retries, dead-letter instead of rescheduling.
             if (nextRetry > effectiveMax) {
                 if (sendToDeadLetterQueue(message, partitionId)) {
-                    MqMetrics.get().incDeadLetter(message.getTopic(), partitionId);
+                    MqMetrics.get().incDeadLetter(keys.getTenant(), message.getTopic(), partitionId);
                     ackViaBackend(message.getTopic(), consumerGroup, partitionId, stream, messageId, messageData);
                 } else {
                     log.error("DLQ write failed for exhausted message {}; left un-acked for redelivery", messageId);
@@ -752,7 +752,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                     log.error("Failed to directly re-enqueue message {} for retry", messageId, ex);
                 }
                 if (requeued) {
-                    MqMetrics.get().incRetried(topic, partitionId);
+                    MqMetrics.get().incRetried(keys.getTenant(), topic, partitionId);
                     ackViaBackend(message.getTopic(), consumerGroup, partitionId, stream, messageId, messageData);
                     log.debug("Message {} re-enqueued directly for retry ({} ms)", messageId, delayMs);
                 }
@@ -807,7 +807,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
                 log.error("Failed to schedule retry for message {} (topic {})", messageId, topic, ex);
             }
             if (scheduled) {
-                MqMetrics.get().incRetried(topic, partitionId);
+                MqMetrics.get().incRetried(keys.getTenant(), topic, partitionId);
                 ackViaBackend(message.getTopic(), consumerGroup, partitionId, stream, messageId, messageData);
                 log.debug("Message {} scheduled for retry at {} ({} ms)", messageId, dueAt, delayMs);
             }
