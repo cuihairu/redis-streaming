@@ -28,6 +28,14 @@ public class RedisDeadLetterService implements DeadLetterService {
         this(redissonClient, replayHandler, StreamKeys.shared());
     }
 
+    /**
+     * The key view this service operates on (the same tenant-scoped view its own
+     * DLQ keys are built from). Package-private: the admin scans with it.
+     */
+    StreamKeys keys() {
+        return keys;
+    }
+
     /** Key view carrying the tenant segment, so DLQ keys match a tenant-scoped topic. */
     public RedisDeadLetterService(RedissonClient redissonClient, ReplayHandler replayHandler, StreamKeys keys) {
         this.redissonClient = redissonClient;

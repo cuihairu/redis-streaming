@@ -1,5 +1,6 @@
 package io.github.cuihairu.redis.streaming.mq.dlq;
 
+import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RedissonClient;
 import org.redisson.api.stream.StreamMessageId;
@@ -17,19 +18,34 @@ public class RedisDeadLetterAdmin implements DeadLetterAdmin {
 
     private final RedissonClient redissonClient;
     private final DeadLetterService service;
+    private final StreamKeys keys;
 
     public RedisDeadLetterAdmin(RedissonClient redissonClient, DeadLetterService service) {
         this.redissonClient = redissonClient;
         this.service = service;
+        // Scan with the service's key view so tenant-scoped DLQ keys are listed as
+        // bare topic names; a tenant-blind DlqKeys.dlq() glob would surface
+        // "tenant:topic" and the follow-up size/list/replay calls would then miss.
+        this.keys = service instanceof RedisDeadLetterService redis ? redis.keys() : StreamKeys.shared();
+    }
+
+    /** SCAN glob matching every DLQ key of the key view, e.g. {@code stream:topic:<tenant>*:dlq}. */
+    static String scanPattern(StreamKeys keys) {
+        return keys.dlqKey("*");
+    }
+
+    /** The DLQ prefix (everything before {@code :dlq}), so scanned keys map back to bare topic names. */
+    static String scanStartToken(StreamKeys keys) {
+        String token = keys.dlqKey("");
+        return token.substring(0, Math.max(0, token.length() - ":dlq".length()));
     }
 
     @Override
     public List<String> listTopics() {
-        String pattern = DlqKeys.dlq("*");
+        String pattern = scanPattern(keys);
         List<String> topics = new ArrayList<>();
         try {
-            String startToken = DlqKeys.dlq("");
-            startToken = startToken.substring(0, Math.max(0, startToken.length() - ":dlq".length()));
+            String startToken = scanStartToken(keys);
             // MQ-12: scan with the DLQ pattern instead of walking the entire keyspace —
             // a plain getKeys() BLOCKING-SCANs every key of every other user of the DB.
             Iterable<String> all = redissonClient.getKeys().getKeys(
@@ -125,8 +141,7 @@ public class RedisDeadLetterAdmin implements DeadLetterAdmin {
         String suffix = ":dlq";
         int end = key.lastIndexOf(suffix);
         if (end <= 0) return null;
-        String probe = DlqKeys.dlq("");
-        String startToken = probe.substring(0, Math.max(0, probe.length() - suffix.length()));
+        String startToken = scanStartToken(keys);
         if (!key.startsWith(startToken)) return null;
         return key.substring(startToken.length(), end);
     }
