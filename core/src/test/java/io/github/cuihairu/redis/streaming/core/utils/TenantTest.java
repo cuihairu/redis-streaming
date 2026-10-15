@@ -51,10 +51,12 @@ class TenantTest {
     }
 
     @Test
-    void staticSegmentHelperFollowsTheSameRule() {
+    void staticHelpersFollowTheSameRule() {
         assertEquals("", Tenant.segment(null));
         assertEquals("", Tenant.segment("default"));
         assertEquals(":acme", Tenant.segment("acme"));
+        assertEquals("registry:acme", Tenant.scopedPrefix("registry", "acme"));
+        assertEquals("registry", Tenant.scopedPrefix("registry", null));
     }
 
     @Test

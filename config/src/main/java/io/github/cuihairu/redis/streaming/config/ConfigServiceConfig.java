@@ -1,5 +1,7 @@
 package io.github.cuihairu.redis.streaming.config;
 
+import io.github.cuihairu.redis.streaming.core.utils.Tenant;
+
 /**
  * Configuration service Redis configuration
  * Contains Redis key patterns and settings specific to the configuration service
@@ -32,6 +34,13 @@ public class ConfigServiceConfig extends BaseRedisConfig {
      */
     private String securePrefix = "secure.";
 
+    /**
+     * Tenant key segment. {@code default} yields keys byte-identical to the legacy
+     * layout; any other tenant inserts a single {@code :tenant} segment right after
+     * the key prefix (same contract as {@code StreamKeys} / {@code RegistryKeys}).
+     */
+    private String tenant = Tenant.DEFAULT_TENANT;
+
     public ConfigServiceConfig() {
         super();
     }
@@ -42,6 +51,34 @@ public class ConfigServiceConfig extends BaseRedisConfig {
 
     public ConfigServiceConfig(String keyPrefix, boolean enableKeyPrefix) {
         super(keyPrefix, enableKeyPrefix);
+    }
+
+    public ConfigServiceConfig(String keyPrefix, boolean enableKeyPrefix, String tenant) {
+        super(keyPrefix, enableKeyPrefix);
+        this.tenant = Tenant.normalize(tenant);
+    }
+
+    /** @return the normalized tenant name of this configuration */
+    public String getTenant() {
+        return tenant;
+    }
+
+    /** Set the tenant key segment (null/blank normalizes to the default tenant). */
+    public void setTenant(String tenant) {
+        this.tenant = Tenant.normalize(tenant);
+    }
+
+    /**
+     * Tenant-aware key formatting: the tenant segment goes right after the key
+     * prefix, so two tenants never share a config key. With the default tenant the
+     * result is byte-identical to {@link BaseRedisConfig#formatKey}.
+     */
+    @Override
+    public String formatKey(String keyPattern, Object... args) {
+        if (isEnableKeyPrefix() && getKeyPrefix() != null && !getKeyPrefix().isEmpty()) {
+            return Tenant.scopedPrefix(getKeyPrefix(), tenant) + ":" + String.format(keyPattern, args);
+        }
+        return String.format(keyPattern, args);
     }
 
     public int getHistorySize() {

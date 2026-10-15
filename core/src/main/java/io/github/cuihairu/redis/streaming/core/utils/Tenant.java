@@ -37,11 +37,16 @@ public final class Tenant {
 
     /** @return {@code prefix} followed by this tenant's segment */
     public String scopedPrefix(String prefix) {
-        return prefix + segment();
+        return Tenant.scopedPrefix(prefix, name);
     }
 
     public boolean isDefault() {
         return DEFAULT_TENANT.equals(name);
+    }
+
+    /** @return {@code prefix} followed by the given tenant's segment */
+    public static String scopedPrefix(String prefix, String tenant) {
+        return prefix + segment(tenant);
     }
 
     /**
