@@ -527,6 +527,14 @@ public class RedisJobControlPlane implements JobControlPlane {
         return prefix;
     }
 
+    /**
+     * The per-tenant capacity quota in effect ({@link TenantQuotaPolicy#none()} when no
+     * limit was configured; {@code 0} in a dimension means unlimited).
+     */
+    public TenantQuotaPolicy quotaPolicy() {
+        return quotaPolicy;
+    }
+
     private RMap<String, String> jobs(String tenant) {
         return redissonClient.<String, String>getMap(prefix + tenantSegment(tenant) + "jobs", StringCodec.INSTANCE);
     }

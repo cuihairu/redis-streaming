@@ -9,6 +9,7 @@ import io.github.cuihairu.redis.streaming.runtime.redis.control.JobPipelineFacto
 import io.github.cuihairu.redis.streaming.runtime.redis.control.JobSpec;
 import io.github.cuihairu.redis.streaming.runtime.redis.control.RedisJobControlPlane;
 import io.github.cuihairu.redis.streaming.runtime.redis.control.RedisJobLauncher;
+import io.github.cuihairu.redis.streaming.runtime.redis.control.TenantQuotaPolicy;
 import io.github.cuihairu.redis.streaming.starter.properties.RedisStreamingProperties;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RedissonClient;
@@ -59,6 +60,31 @@ class RedisStreamingRuntimeAutoConfigurationTest {
                     // agent stays off unless separately enabled
                     assertThat(ctx).doesNotHaveBean(JobAgent.class);
                     assertThat(ctx).doesNotHaveBean(JobLauncher.class);
+                });
+    }
+
+    @Test
+    void quotaCapsBindFromProperties() {
+        runner.withPropertyValues(
+                        "redis-streaming.runtime.control-plane.enabled=true",
+                        "redis-streaming.runtime.control-plane.max-jobs-per-tenant=3",
+                        "redis-streaming.runtime.control-plane.max-total-parallelism-per-tenant=12",
+                        "redis-streaming.runtime.control-plane.max-total-in-flight-per-tenant=2048")
+                .run(ctx -> {
+                    TenantQuotaPolicy quota = ctx.getBean(RedisJobControlPlane.class).quotaPolicy();
+                    assertThat(quota.getMaxJobsPerTenant()).isEqualTo(3);
+                    assertThat(quota.getMaxTotalParallelismPerTenant()).isEqualTo(12);
+                    assertThat(quota.getMaxTotalInFlightPerTenant()).isEqualTo(2048);
+                });
+    }
+
+    @Test
+    void quotaStaysUnlimitedWhenNoCapsAreSet() {
+        runner.withPropertyValues("redis-streaming.runtime.control-plane.enabled=true")
+                .run(ctx -> {
+                    // no caps configured -> every dimension stays open (zero migration)
+                    TenantQuotaPolicy quota = ctx.getBean(RedisJobControlPlane.class).quotaPolicy();
+                    assertThat(quota).isEqualTo(TenantQuotaPolicy.none());
                 });
     }
 

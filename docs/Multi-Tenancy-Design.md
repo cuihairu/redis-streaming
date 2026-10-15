@@ -70,7 +70,7 @@
 
 ## 落地记录：v2 配额增量（2026-10-16，已代决）
 
-**声明式 in-flight 配额**（内存闸门维度）：`JobSpec.maxInFlight` 声明每个消费者的 in-flight 上限（0 = 运行期默认，即无界），控制面按租户校验 `Σ(parallelism × maxInFlight) ≤ maxTotalInFlightPerTenant`（`TenantQuotaPolicy` 新增维度，0 = 不限，默认策略不变即零迁移），提交与升级时同步拒收**未声明**的作业——无界作业无法计入，放行等于让配额失效。声明经 `RedisJobLauncher.configFor` 透传到 `MqOptions.maxInFlight`，由既有 per-consumer Semaphore 执行；`maxInFlight` 已进入 `specHash` 语义输入，只改声明也会触发作业漂移检测。
+**声明式 in-flight 配额**（内存闸门维度）：`JobSpec.maxInFlight` 声明每个消费者的 in-flight 上限（0 = 运行期默认，即无界），控制面按租户校验 `Σ(parallelism × maxInFlight) ≤ maxTotalInFlightPerTenant`（`TenantQuotaPolicy` 新增维度，0 = 不限，默认策略不变即零迁移），提交与升级时同步拒收**未声明**的作业——无界作业无法计入，放行等于让配额失效。声明经 `RedisJobLauncher.configFor` 透传到 `MqOptions.maxInFlight`，由既有 per-consumer Semaphore 执行；`maxInFlight` 已进入 `specHash` 语义输入，只改声明也会触发作业漂移检测。**配置面**：配额三项均可由 starter 属性直接绑定（`redis-streaming.runtime.control-plane.max-jobs-per-tenant` / `max-total-parallelism-per-tenant` / `max-total-in-flight-per-tenant`，默认全 0 = 不限，零迁移），控制面 Bean 经 `RedisJobControlPlane.quotaPolicy()` 暴露生效策略；此前三项配额仅在 Java API 面可用，本批补齐 YAML 配置面。
 
 代决口径与理由（事后用户可推翻）：
 

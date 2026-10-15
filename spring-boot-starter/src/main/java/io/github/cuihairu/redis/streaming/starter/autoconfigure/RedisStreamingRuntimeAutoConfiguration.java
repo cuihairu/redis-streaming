@@ -6,6 +6,7 @@ import io.github.cuihairu.redis.streaming.runtime.redis.control.JobLauncher;
 import io.github.cuihairu.redis.streaming.runtime.redis.control.JobPipelineFactory;
 import io.github.cuihairu.redis.streaming.runtime.redis.control.RedisJobControlPlane;
 import io.github.cuihairu.redis.streaming.runtime.redis.control.RedisJobLauncher;
+import io.github.cuihairu.redis.streaming.runtime.redis.control.TenantQuotaPolicy;
 import io.github.cuihairu.redis.streaming.starter.properties.RedisStreamingProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RedissonClient;
@@ -56,9 +57,17 @@ public class RedisStreamingRuntimeAutoConfiguration {
                                                 ControlPlaneAuthorizer authorizer,
                                                 RedisStreamingProperties properties) {
         var p = properties.getRuntime().getControlPlane();
-        log.info("Initializing RedisJobControlPlane with prefix: {}", p.getPrefix());
+        // all caps 0 -> TenantQuotaPolicy.none(): quota checks are skipped (zero migration)
+        TenantQuotaPolicy quota = TenantQuotaPolicy.builder()
+                .maxJobsPerTenant(p.getMaxJobsPerTenant())
+                .maxTotalParallelismPerTenant(p.getMaxTotalParallelismPerTenant())
+                .maxTotalInFlightPerTenant(p.getMaxTotalInFlightPerTenant())
+                .build();
+        log.info("Initializing RedisJobControlPlane with prefix: {} (quota jobs={}, parallelism={}, inFlight={})",
+                p.getPrefix(), p.getMaxJobsPerTenant(), p.getMaxTotalParallelismPerTenant(),
+                p.getMaxTotalInFlightPerTenant());
         return new RedisJobControlPlane(redissonClient, p.getPrefix(), authorizer,
-                p.getAuditMaxEntries(), p.getHistoryMaxEntries());
+                p.getAuditMaxEntries(), p.getHistoryMaxEntries(), quota);
     }
 
     @Bean

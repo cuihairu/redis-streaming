@@ -190,6 +190,9 @@ server:
 | `prefix` | String | `streaming:runtime:control:`（键族：jobs/versions/history:job/status:job/audit） |
 | `audit-max-entries` | int | `1000`(审计流近似封顶) |
 | `history-max-entries` | int | `10`(每作业保留的旧版本 spec 数,供 rollback) |
+| `max-jobs-per-tenant` | int | `0`(=不限制;单租户作业数上限,存满即拒提交/升级) |
+| `max-total-parallelism-per-tenant` | int | `0`(=不限制;单租户 spec parallelism 总和上限) |
+| `max-total-in-flight-per-tenant` | int | `0`(=不限制;单租户声明的 in-flight 容量总和上限,= Σ(parallelism × maxInFlight)) |
 
 `runtime.agent.*`(仅控制面开启时有意义):
 

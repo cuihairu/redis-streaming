@@ -159,6 +159,9 @@ A non-default `tenant` inserts a `:tenant` segment right after the key prefix (`
 | `prefix` | String | `streaming:runtime:control:` (key families: jobs/versions/history:job/status:job/audit) |
 | `audit-max-entries` | int | `1000` (approximate cap on the audit stream) |
 | `history-max-entries` | int | `10` (old spec versions kept per job, for rollback) |
+| `max-jobs-per-tenant` | int | `0` (unlimited; cap on jobs registered per tenant, submit/upgrade rejected once reached) |
+| `max-total-parallelism-per-tenant` | int | `0` (unlimited; cap on the sum of spec parallelism per tenant) |
+| `max-total-in-flight-per-tenant` | int | `0` (unlimited; cap on the tenant's declared in-flight capacity, Σ(parallelism × maxInFlight)) |
 
 `runtime.agent.*` (meaningful only with the control plane enabled):
 

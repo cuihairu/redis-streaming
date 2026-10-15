@@ -473,6 +473,21 @@ public class RedisStreamingProperties {
 
         /** Per-job spec history entries kept for rollback */
         private int historyMaxEntries = 10;
+
+        /** Per-tenant cap on registered jobs; {@code 0} = unlimited. */
+        private int maxJobsPerTenant = 0;
+
+        /**
+         * Per-tenant cap on total parallelism, summed over the tenant's stored specs;
+         * {@code 0} = unlimited.
+         */
+        private int maxTotalParallelismPerTenant = 0;
+
+        /**
+         * Per-tenant cap on declared in-flight capacity ({@code parallelism * maxInFlight}
+         * per spec); {@code 0} = unlimited.
+         */
+        private int maxTotalInFlightPerTenant = 0;
     }
 
     @Data

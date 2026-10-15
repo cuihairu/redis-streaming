@@ -1,5 +1,6 @@
 package io.github.cuihairu.redis.streaming.runtime.redis.control;
 
+import lombok.EqualsAndHashCode;
 import lombok.Getter;
 
 /**
@@ -15,6 +16,7 @@ import lombok.Getter;
  * unlimited everywhere (plain deployments see no behavior change).</p>
  */
 @Getter
+@EqualsAndHashCode
 public final class TenantQuotaPolicy {
 
     private final int maxJobsPerTenant;
