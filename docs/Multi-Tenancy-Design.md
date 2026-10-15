@@ -55,6 +55,7 @@
 | registry | `RegistryKeys(keyPrefix, tenant)` / `BaseRedisConfig.setTenant`；Lua 脚本收到**生效前缀**（前缀 + 租户段） | `redis_streaming_registry:acme:services:{svc}:instance:{id}` |
 | config | `ConfigServiceConfig.formatKey` | `redis_streaming:acme:config:{group}:{dataId}` |
 | state / checkpoint / sink 去重 | `RedisRuntimeConfig.Builder.tenant`，在 `build()` 时统一派生 | `streaming:runtime:acme:...`、`streaming:runtime:checkpoint:acme:{job}:...` |
+| sink 数据面 | `RedisListSink` / `RedisStreamSink` / `RedisHashSink` 租户构造器，复用 `Tenant.scopedKey` 解析 `prefix:tenant:name`（测试先行 c9cb60e，落地 5a9847e）；List/Stream 空前缀=裸名原样，HashSink 空前缀回退默认前缀 `app`；旧构造器键形逐字节不变 | `app:acme:orders` |
 | starter | `redis-streaming.mq.tenant`、`redis-streaming.registry.tenant`、`redis-streaming.config.tenant` | — |
 
 四点需要注意：
@@ -63,7 +64,7 @@
 - **重投锁曾漏租户段**：`RedisMessageConsumer` 的重投 mover 此前把锁键写死为 `streaming:mq:retry:lock:{topic}`，既绕过控制前缀也绕过租户段——两个租户用同名 topic 会互相串行（一方的重投阻塞另一方）。现由 `StreamKeys.retryLockKey(topic)` 派生，默认租户键与旧版逐字节一致。
 - **DLQ 管理面曾漏租户段**：`RedisDeadLetterAdmin.listTopics()` 的 SCAN 用 `DlqKeys.dlq()`（不含租户段），而 DLQ 数据面写 `StreamKeys.dlqKey()`（含租户段）——租户部署下扫到 `acme:orders:dlq` 会把 topic 读成 `acme:orders`，随后的 size/list/replay 全部落到不存在的 `acme:acme:orders:dlq`（静默空转）。现改为跟随 service 的键视图（`RedisDeadLetterService.keys()`，与数据面同一来源），默认租户行为逐字节不变。
 - **starter MQ 管理面 bean 曾漏租户视图**：starter 的 `messageQueueAdmin` / `deadLetterService` / `deadLetterConsumer` / `deadLetterQueueManager` 四个 bean 此前各取 `StreamKeys.shared()`（进程级静态租户）。该静态租户只由 `MessageQueueFactory` 构造器副作用设置，依赖 bean 创建顺序；用户自带 factory bean（`@ConditionalOnMissingBean` 的正常后门）时完全不设置，四个 bean 全部落到 `default` 租户——`redis-streaming.mq.tenant` 静默失效，租户数据错写共享命名空间。现各 bean 自行从 `MqOptions` 建租户 key 视图（`StreamKeys.of(opts)` / `RedisMessageQueueAdmin(client, opts)`），与创建顺序无关；默认租户键逐字节不变。
-- **cdc 无需改动**：CDC 只投递到 MQ topic，而 topic 键已按租户分段；sink 的目标键由调用方显式给出，框架托管的去重键前缀已随 `RedisRuntimeConfig.Builder.tenant` 分段。
+- **cdc 无需改动**：CDC 只投递到 MQ topic，而 topic 键已按租户分段；sink 的目标键默认仍由调用方显式给出（旧构造器零变化），可选的租户构造器把键写成 `prefix:tenant:name`（见上表 sink 数据面行），框架托管的去重键前缀已随 `RedisRuntimeConfig.Builder.tenant` 分段。
 
 真实 Redis 上的隔离验证（`@Tag("integration")`）：registry 与 config 各一份「两租户同 group/dataId 不互读 + 默认租户保持旧键形」用例，runtime 一份「同一作业名、同一自定义前缀下两租户的状态键与检查点互不可见」用例（`RedisRuntimeTenantIsolationIntegrationTest`），mq 用例钉住重投锁键按租户分段。
 
