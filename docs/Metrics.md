@@ -19,11 +19,39 @@ CDC 是另一条通路：`CDCManager` 直接暴露 `CDCMetrics` 快照（无静�
 
 ## 命名规范（docs/Metrics-Unification-Design.md 方案 A v1）
 
-新指标一律使用 `redis.streaming.<module>.<metric>`（点分、Micrometer 原生风格），维度 tag 沿用 `job` / `topic` / `group` 等；多租户批后新增的 `tenant` 维度保留给控制面指标，业务指标暂不携带。
+新指标一律使用 `redis.streaming.<module>.<metric>`（点分、Micrometer 原生风格），维度 tag 沿用 `job` / `topic` / `group` 等；`tenant` 维度的携带范围与机制见下文「tenant 维度规格」。
 
 存量指标名（`redis_streaming_mq_*`、`redis_streaming_rl_*` 等蛇形前缀）**保持不变**，避免打爆已有 dashboard/告警；只有为它们补齐的缺口指标也沿用旧前缀（如 DLQ 重放 `redis_streaming_dlq_replay_success_total`）。v2（`metrics` 模块已删除、Prometheus 输出交给 `micrometer-registry-prometheus`，2026-10-12 落地）见 `Metrics-Unification-Design.md`。
 
 目前按新规范命名的只有 CDC 导出器（`redis.streaming.cdc.*`，tag `connector`）。
+
+## tenant 维度规格（MQ 业务指标）
+
+多租户部署下 MQ 指标的 `tenant` 维度按以下三条规则执行（设计依据 [Multi-Tenancy-Design.md](Multi-Tenancy-Design.md) 方案 A；SPI 先行落地于 commit a8f8a18，消费端补齐 wiring 于 2026-10-15）。
+
+**1. 哪些指标携带 tenant（清单，封闭集合）**
+
+| 指标（legacy 名） | 类型 | tenant 进入点 |
+|---|---|---|
+| `redis_streaming_mq_produced_total` | counter | `RedisMessageProducer` → `incProduced(tenant, topic, pid)` |
+| `redis_streaming_mq_consumed_total` | counter | `RedisMessageConsumer` → `incConsumed(tenant, topic, pid)` |
+| `redis_streaming_mq_acked_total` | counter | 同上（SUCCESS 路径） |
+| `redis_streaming_mq_retried_total` | counter | 同上（requeue 路径） |
+| `redis_streaming_mq_dead_total` | counter | 同上（DLQ 路径，含 payload-missing） |
+| `redis_streaming_mq_handle_latency_ms` | timer | 同上 |
+| `redis_streaming_mq_rate_limited_total`（命名待发） | counter | `SendQuota` → `incRateLimited(tenant, topic)`（tenant 原生，无 legacy 变体） |
+
+**不带** tenant 的：DLQ replay/delete/clear、in-flight/backpressure/partition lease gauge（已有 `consumer` 定位维度，且 DLQ 键本身按租户分段）；runtime 全部指标（以 `job` 定位，job 名租户内唯一即可）；CDC 指标（以 `connector` 定位）。控制面指标（未建）按设计带 tenant。
+
+**2. tenant 如何进入 collector（机制）**
+
+- SPI 层：`MqMetricsCollector` 为上表七个计数/计时提供 `(tenant, topic, partitionId)` `default` 重载，默认实现委托 legacy 签名——与 `StreamingMetricsCollector.incHandleError(..., result)` 同款非破坏加维模式，既有实现无需改动即可编译运行。
+- 调用层：生产者/消费者/SendQuota 一律调用 tenant-aware 变体，租户取自配置（`MqOptions.tenant`，经 `StreamKeys.of(options)` 归一化，默认 `default`）。
+- **导出层（默认不发 tag）**：starter 内置 `MqMicrometerCollector` 只覆写 legacy 签名，tenant 在导出面被丢弃——存量 dashboard/告警的序列集合逐字节不变。需要维度的部署自行扩展桥接（覆写 tenant-aware 变体并 `.tag("tenant", tenant)`）；内置桥接是否加 opt-in 开关（如 `redis-streaming.mq.metrics.tenant-tag`，默认关）待用户拍板，未拍板前不开工。
+
+**3. 基数预算**
+
+tenant tag 只乘在第 1 条清单的序列上，基数 = |tenant| × |topic| × |partition|（timer 另计百分位直方图桶）。单实例预算上限 **10 万条序列**：按 partition ≤ 8 估，|tenant| × |topic| ≤ 1 000 为绿区（≤ 8 000 条/指标）；1 000 到 12 000 为黄区（需评审，通常意味着 topic 应收敛或租户拆部署）；超 12 000 为红区（拒绝在该实例上启用 tenant tag，按方案 B 租户独立部署拆分）。租户名本身经 `Tenant.normalize` 约束为 `[A-Za-z0-9._-]{1,64}`，不构成基数放大点。
 
 ### MQ 指标（Micrometer）
 
