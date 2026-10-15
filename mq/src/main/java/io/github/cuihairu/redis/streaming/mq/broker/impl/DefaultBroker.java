@@ -51,7 +51,7 @@ public class DefaultBroker implements Broker {
         String id = persistence.append(message.getTopic(), pid, message);
         if (id != null) {
             message.setId(id);
-            MqMetrics.get().incProduced(message.getTopic(), pid);
+            MqMetrics.get().incProduced(keys.getTenant(), message.getTopic(), pid);
         }
         return id;
     }

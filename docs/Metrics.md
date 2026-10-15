@@ -33,7 +33,7 @@ CDC 是另一条通路：`CDCManager` 直接暴露 `CDCMetrics` 快照（无静�
 
 | 指标（legacy 名） | 类型 | tenant 进入点 |
 |---|---|---|
-| `redis_streaming_mq_produced_total` | counter | `RedisMessageProducer` → `incProduced(tenant, topic, pid)` |
+| `redis_streaming_mq_produced_total` | counter | `RedisMessageProducer` / `DefaultBroker`（两条生产写路径） → `incProduced(tenant, topic, pid)` |
 | `redis_streaming_mq_consumed_total` | counter | `RedisMessageConsumer` → `incConsumed(tenant, topic, pid)` |
 | `redis_streaming_mq_acked_total` | counter | 同上（SUCCESS 路径） |
 | `redis_streaming_mq_retried_total` | counter | 同上（requeue 路径） |
