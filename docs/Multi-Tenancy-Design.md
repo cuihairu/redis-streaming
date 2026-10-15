@@ -4,7 +4,7 @@
 
 ## 现状（事实盘点）
 
-1. **租户概念（v1 已落地 2026-10-11）**：`JobSpec.tenant`（默认 `StreamKeys.DEFAULT_TENANT`）、`MqOptions.tenant`、`AuditEntry.tenant`、`TenantQuotaPolicy` 均已存在；本设计剩余项（线程/内存/in-flight 配额、指标 tenant 维度、其余模块 key 前缀租户注入）待实施。
+1. **租户概念（v1 已落地 2026-10-11）**：`JobSpec.tenant`（默认 `StreamKeys.DEFAULT_TENANT`）、`MqOptions.tenant`、`AuditEntry.tenant`、`TenantQuotaPolicy` 均已存在；本设计剩余项（线程/内存/in-flight 配额、指标 tenant 维度）待实施——其余模块的 key 前缀租户注入见下方「落地记录」。
 2. **全局静态前缀**：`mq` 的 `StreamKeys.configure(controlPrefix, streamPrefix)` 是 `static volatile` 全局量（默认 `streaming:mq` / `stream:topic`），所有 MQ key（分区流、DLQ、meta、lease、retry、commit frontier、topics registry）由它派生。**多作业共用 JVM 时是全局配置；跨 JVM 部署时若两个应用不 configure 不同前缀，同名 topic 直接共用同一条 stream**。
 3. **runtime key**：checkpoint/dedup 走 `streaming:runtime:*` 前缀（可配）；keyed state key 带 job 维度（`{stateKeyPrefix}:{job}:...`），job 级隔离天然存在，但 stateKeyPrefix 本身是全局静态。
 4. **背压/配额粒度**：`maxInFlight` 等内存闸门是 per-consumer-instance 的；**没有任何跨租户的速率/容量配额**（无生产速率限制、无 stream 长度配额——autoTrim 只按 topic 配置裁剪）。
@@ -44,6 +44,23 @@
 1. **第 1 步**：`StreamKeys` 实例化（保留 static 入口兼容），`MqOptions`/`JobSpec` 加 `tenant` 字段，key 派生函数加 tenant 段；默认 tenant=`default` 时 key 与现状完全一致（**零迁移成本**）。
 2. **第 2 步**：生产速率配额（RateLimiter 挂 producer）+ autoTrim 租户上限；指标加 tenant 维度。
 3. **第 3 步**：控制面按 tenant 分段 spec 键空间 + 配额校验（分区/并行度）+ 审计维度。
+
+## 落地记录：key 前缀租户注入（2026-10-15）
+
+统一契约落在 `core` 的 `Tenant`：默认租户 `default` 不产生任何键段（与旧版键**逐字节一致**，零迁移），非默认租户在**键前缀之后**插入单个 `:tenant` 段；租户名必须匹配 `[A-Za-z0-9._-]{1,64}`（不含冒号），非法值在构造/启动时抛 `IllegalArgumentException`，不会静默降级成共享键空间。
+
+| 模块 | 注入点 | 键示例 |
+|---|---|---|
+| mq | `StreamKeys(prefix, streamPrefix, tenant)`（v1 已有） | `streaming:mq:acme:...` |
+| registry | `RegistryKeys(keyPrefix, tenant)` / `BaseRedisConfig.setTenant`；Lua 脚本收到**生效前缀**（前缀 + 租户段） | `redis_streaming_registry:acme:services:{svc}:instance:{id}` |
+| config | `ConfigServiceConfig.formatKey` | `redis_streaming:acme:config:{group}:{dataId}` |
+| state / checkpoint / sink 去重 | `RedisRuntimeConfig.Builder.tenant`，在 `build()` 时统一派生 | `streaming:runtime:acme:...`、`streaming:runtime:checkpoint:acme:{job}:...` |
+| starter | `redis-streaming.mq.tenant`、`redis-streaming.registry.tenant`、`redis-streaming.config.tenant` | — |
+
+两点需要注意：
+
+- **调用顺序无关**：`Builder.tenant(...)` 只记录租户，键段在 `build()` 时派生，因此自定义 `stateKeyPrefix`/`checkpointKeyPrefix`/`sinkDedupKeyPrefix` 同样会被加上租户段，且不受 setter 先后顺序影响（此前「自定义前缀获胜」会让租户被静默丢弃，即两个租户共用一套状态键）。
+- **cdc 无需改动**：CDC 只投递到 MQ topic，而 topic 键已按租户分段；sink 的目标键由调用方显式给出，框架托管的去重键前缀已随 `RedisRuntimeConfig.Builder.tenant` 分段。
 
 ## 非目标
 

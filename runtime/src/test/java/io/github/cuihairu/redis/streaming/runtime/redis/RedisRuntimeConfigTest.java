@@ -213,7 +213,7 @@ class RedisRuntimeConfigTest {
     }
 
     @Test
-    void customizedPrefixesWinOverTenantStamp() {
+    void customizedPrefixesAreStillTenantScoped() {
         RedisRuntimeConfig cfg = RedisRuntimeConfig.builder()
                 .stateKeyPrefix("my:state")
                 .checkpointKeyPrefix("my:ckpt:")
@@ -221,9 +221,39 @@ class RedisRuntimeConfigTest {
                 .tenant("acme")
                 .build();
 
-        assertEquals("my:state", cfg.getStateKeyPrefix());
-        assertEquals("my:ckpt:", cfg.getCheckpointKeyPrefix());
-        assertEquals("my:dedup:", cfg.getSinkDedupKeyPrefix());
+        assertEquals("my:state:acme", cfg.getStateKeyPrefix());
+        assertEquals("my:ckpt:acme:", cfg.getCheckpointKeyPrefix());
+        assertEquals("my:dedup:acme:", cfg.getSinkDedupKeyPrefix());
+    }
+
+    @Test
+    void tenantStampDoesNotDependOnBuilderCallOrder() {
+        RedisRuntimeConfig before = RedisRuntimeConfig.builder()
+                .tenant("acme")
+                .stateKeyPrefix("my:state")
+                .checkpointKeyPrefix("my:ckpt:")
+                .build();
+        RedisRuntimeConfig after = RedisRuntimeConfig.builder()
+                .stateKeyPrefix("my:state")
+                .checkpointKeyPrefix("my:ckpt:")
+                .tenant("acme")
+                .build();
+
+        assertEquals("my:state:acme", before.getStateKeyPrefix());
+        assertEquals(before.getStateKeyPrefix(), after.getStateKeyPrefix());
+        assertEquals(before.getCheckpointKeyPrefix(), after.getCheckpointKeyPrefix());
+    }
+
+    @Test
+    void rebuildingTheSameBuilderStampsTheSegmentOnce() {
+        RedisRuntimeConfig.Builder builder = RedisRuntimeConfig.builder().tenant("acme");
+        RedisRuntimeConfig first = builder.build();
+        RedisRuntimeConfig second = builder.build();
+
+        assertEquals("streaming:runtime:acme", first.getStateKeyPrefix());
+        assertEquals(first.getStateKeyPrefix(), second.getStateKeyPrefix());
+        assertEquals(first.getCheckpointKeyPrefix(), second.getCheckpointKeyPrefix());
+        assertEquals(first.getSinkDedupKeyPrefix(), second.getSinkDedupKeyPrefix());
     }
 
     @Test
@@ -257,6 +287,12 @@ class RedisRuntimeConfigTest {
         assertEquals(4, cfg.getMqOptions().getDefaultPartitionCount());
         // original options untouched
         assertEquals("default", mq.getTenant());
+    }
+
+    @Test
+    void builtConfigReportsItsTenant() {
+        assertEquals("acme", RedisRuntimeConfig.builder().tenant("acme").build().getTenant());
+        assertEquals("default", RedisRuntimeConfig.builder().build().getTenant());
     }
 
     @Test

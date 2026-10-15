@@ -1,5 +1,6 @@
 package io.github.cuihairu.redis.streaming.runtime.redis;
 
+import io.github.cuihairu.redis.streaming.core.utils.Tenant;
 import io.github.cuihairu.redis.streaming.mq.MessageHandleResult;
 import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
 import io.github.cuihairu.redis.streaming.core.utils.SystemUtils;
@@ -85,10 +86,39 @@ public final class RedisRuntimeConfig {
     private final Boolean jobControlGateEnabled;
     private final Duration controlGateWait;
 
+    /** Tenant namespace of this job; see {@link Builder#tenant(String)}. */
+    private final String tenant;
+
+    /**
+     * Prefixes whose consumers concatenate the job name directly ({@code prefix + jobName})
+     * get the tenant segment between the prefix and its trailing colon:
+     * {@code "streaming:runtime:checkpoint:" + "acme" + ":"}. The state prefix is different —
+     * its consumers append {@code ":"} themselves, so it only takes
+     * {@link Tenant#scopedPrefix(String, String)}.
+     */
+    private static String jobScopedPrefix(String prefix, String tenant) {
+        return Tenant.DEFAULT_TENANT.equals(tenant) ? prefix : prefix + tenant + ":";
+    }
+
+    /**
+     * MQ options carry the job's tenant, unless the caller already set one explicitly
+     * (an explicit tenant wins over the job-level one).
+     */
+    private static MqOptions tenantMqOptions(MqOptions options, String tenant) {
+        MqOptions resolved = options == null ? MqOptions.builder().build() : options;
+        if (Tenant.DEFAULT_TENANT.equals(tenant) || !Tenant.DEFAULT_TENANT.equals(resolved.getTenant())) {
+            return resolved;
+        }
+        return resolved.withTenant(tenant);
+    }
+
     private RedisRuntimeConfig(Builder b) {
         this.jobName = Objects.requireNonNull(b.jobName, "jobName");
         this.jobInstanceId = Objects.requireNonNull(b.jobInstanceId, "jobInstanceId");
-        this.stateKeyPrefix = Objects.requireNonNull(b.stateKeyPrefix, "stateKeyPrefix");
+        this.tenant = b.tenant == null ? Tenant.DEFAULT_TENANT : b.tenant;
+        // state consumers append ":" themselves: "streaming:runtime" -> "streaming:runtime:acme"
+        this.stateKeyPrefix = Tenant.scopedPrefix(
+                Objects.requireNonNull(b.stateKeyPrefix, "stateKeyPrefix"), this.tenant);
         this.stateTtl = b.stateTtl == null ? Duration.ZERO : b.stateTtl;
         if (b.stateSizeReportEveryNStateWrites < 0) {
             throw new IllegalArgumentException("stateSizeReportEveryNStateWrites must be >= 0");
@@ -113,7 +143,8 @@ public final class RedisRuntimeConfig {
         this.restoreConsumerGroupFromCommitFrontier = b.restoreConsumerGroupFromCommitFrontier;
         this.sinkDeduplicationEnabled = b.sinkDeduplicationEnabled;
         this.sinkDeduplicationTtl = b.sinkDeduplicationTtl == null ? Duration.ofDays(7) : b.sinkDeduplicationTtl;
-        this.sinkDedupKeyPrefix = Objects.requireNonNull(b.sinkDedupKeyPrefix, "sinkDedupKeyPrefix");
+        this.sinkDedupKeyPrefix = jobScopedPrefix(
+                Objects.requireNonNull(b.sinkDedupKeyPrefix, "sinkDedupKeyPrefix"), this.tenant);
         this.deferAckUntilCheckpoint = b.deferAckUntilCheckpoint;
         this.ackDeferredMessagesOnCheckpoint = b.ackDeferredMessagesOnCheckpoint;
         if (b.pipelineParallelism <= 0) {
@@ -155,13 +186,14 @@ public final class RedisRuntimeConfig {
         this.mdcSampleRate = b.mdcSampleRate;
         this.checkpointInterval = b.checkpointInterval == null ? Duration.ZERO : b.checkpointInterval;
         this.restoreFromLatestCheckpoint = b.restoreFromLatestCheckpoint;
-        this.checkpointKeyPrefix = Objects.requireNonNull(b.checkpointKeyPrefix, "checkpointKeyPrefix");
+        this.checkpointKeyPrefix = jobScopedPrefix(
+                Objects.requireNonNull(b.checkpointKeyPrefix, "checkpointKeyPrefix"), this.tenant);
         if (b.checkpointsToKeep < 0) {
             throw new IllegalArgumentException("checkpointsToKeep must be >= 0");
         }
         this.checkpointsToKeep = b.checkpointsToKeep;
         this.checkpointDrainTimeout = b.checkpointDrainTimeout == null ? Duration.ofSeconds(30) : b.checkpointDrainTimeout;
-        this.mqOptions = b.mqOptions == null ? MqOptions.builder().build() : b.mqOptions;
+        this.mqOptions = tenantMqOptions(b.mqOptions, this.tenant);
         this.processingErrorResult = b.processingErrorResult == null ? MessageHandleResult.RETRY : b.processingErrorResult;
         this.leaderElectionEnabled = b.leaderElectionEnabled;
         this.leaderLeaseTtl = b.leaderLeaseTtl == null ? Duration.ofSeconds(30) : b.leaderLeaseTtl;
@@ -451,6 +483,14 @@ public final class RedisRuntimeConfig {
     }
 
     /**
+     * Tenant namespace of this job (never null, normalized). The state/checkpoint/sink-dedup
+     * prefixes and the MQ options already carry the segment for a non-default tenant.
+     */
+    public String getTenant() {
+        return tenant;
+    }
+
+    /**
      * What to do when pipeline execution throws an exception.
      *
      * <p>Typical choices:</p>
@@ -534,6 +574,7 @@ public final class RedisRuntimeConfig {
 
         private String jobName = "redis-streaming-job";
         private String jobInstanceId = defaultInstanceId();
+        private String tenant = Tenant.DEFAULT_TENANT;
         private String stateKeyPrefix = DEFAULT_STATE_KEY_PREFIX;
         private Duration stateTtl = Duration.ZERO;
         private int stateSizeReportEveryNStateWrites = 0;
@@ -595,32 +636,15 @@ public final class RedisRuntimeConfig {
         }
 
         /**
-         * Stamp a tenant namespace onto the default key prefixes (state, checkpoint, sink
+         * Stamp a tenant namespace onto the key prefixes (state, checkpoint, sink
          * dedup) and onto MQ options left at the default tenant (docs/Multi-Tenancy-Design.md):
          * keys become {@code {prefix}:{tenant}:...} so two tenants can run the same job name
-         * without colliding. Explicitly customized prefixes win — callers who override them
-         * own their tenant segmentation. A null/blank tenant or {@code "default"} is a no-op.
+         * without colliding. The segment is derived in {@link Builder#build()}, so it lands
+         * on custom prefixes too and does not depend on the order of the builder calls.
+         * A null/blank tenant or {@code "default"} is a no-op.
          */
         public Builder tenant(String tenant) {
-            String t = io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.normalizeTenant(tenant);
-            if (io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.DEFAULT_TENANT.equals(t)) {
-                return this;
-            }
-            if (DEFAULT_STATE_KEY_PREFIX.equals(stateKeyPrefix)) {
-                stateKeyPrefix = stateKeyPrefix + ":" + t;
-            }
-            if (DEFAULT_CHECKPOINT_KEY_PREFIX.equals(checkpointKeyPrefix)) {
-                checkpointKeyPrefix = checkpointKeyPrefix + t + ":";
-            }
-            if (DEFAULT_SINK_DEDUP_KEY_PREFIX.equals(sinkDedupKeyPrefix)) {
-                sinkDedupKeyPrefix = sinkDedupKeyPrefix + t + ":";
-            }
-            if (mqOptions == null) {
-                mqOptions = MqOptions.builder().tenant(t).build();
-            } else if (io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.DEFAULT_TENANT
-                    .equals(mqOptions.getTenant())) {
-                mqOptions = mqOptions.withTenant(t);
-            }
+            this.tenant = Tenant.normalize(tenant);
             return this;
         }
 
