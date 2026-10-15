@@ -99,6 +99,10 @@ class RedisJobControlPlaneTenantTest {
                 .build();
     }
 
+    private JobSpec spec(String name, String tenant, int parallelism, int maxInFlight) {
+        return spec(name, tenant, parallelism).toBuilder().maxInFlight(maxInFlight).build();
+    }
+
     private String json(JobSpec spec) {
         try {
             return mapper.writeValueAsString(spec);
@@ -319,6 +323,88 @@ class RedisJobControlPlaneTenantTest {
         RedisJobControlPlane cp = cp(TenantQuotaPolicy.none());
 
         assertDoesNotThrow(() -> cp.submit(spec("j1", TENANT, 1), "alice"));
+    }
+
+    @Test
+    void quotaRejectsUndeclaredInflightWhenInflightBudgetSet() {
+        when(tenantJobs.readAllMap()).thenReturn(Map.of());
+        RedisJobControlPlane cp = cp(TenantQuotaPolicy.builder().maxTotalInFlightPerTenant(8).build());
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> cp.submit(spec("j1", TENANT, 1), "alice"));
+        assertTrue(ex.getMessage().contains("maxInFlight"));
+    }
+
+    @Test
+    void quotaBlocksSubmitWhenInflightBudgetExhausted() {
+        when(tenantJobs.readAllMap()).thenReturn(Map.of("j1", json(spec("j1", TENANT, 2, 1))));
+        RedisJobControlPlane cp = cp(TenantQuotaPolicy.builder().maxTotalInFlightPerTenant(2).build());
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> cp.submit(spec("j2", TENANT, 1, 1), "alice"));
+        assertTrue(ex.getMessage().contains("maxTotalInFlightPerTenant"));
+    }
+
+    @Test
+    void quotaAllowsInflightWithinBudget() {
+        when(tenantJobs.readAllMap()).thenReturn(Map.of());
+        RedisJobControlPlane cp = cp(TenantQuotaPolicy.builder().maxTotalInFlightPerTenant(2).build());
+
+        JobSpec stored = cp.submit(spec("j1", TENANT, 2, 1), "alice");
+        assertEquals(1, stored.getMaxInFlight());
+        verify(tenantJobs).putIfAbsent(eq("j1"), anyString());
+    }
+
+    @Test
+    void quotaBlocksUpgradeThatExceedsInflightBudget() {
+        when(tenantJobs.get("j1")).thenReturn(json(spec("j1", TENANT, 1, 1)));
+        when(tenantJobs.readAllMap()).thenReturn(Map.of("j1", json(spec("j1", TENANT, 1, 1))));
+        RedisJobControlPlane cp = cp(TenantQuotaPolicy.builder().maxTotalInFlightPerTenant(2).build());
+
+        assertThrows(IllegalStateException.class,
+                () -> cp.upgrade("j1", s -> {
+                    s.setParallelism(3);
+                    return s;
+                }, "alice"));
+        verify(script, never()).eval(any(), anyString(), any(), anyList(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void parallelismBudgetDoesNotRequireInflightDeclaration() {
+        when(tenantJobs.readAllMap()).thenReturn(Map.of());
+        RedisJobControlPlane cp = cp(TenantQuotaPolicy.builder().maxTotalParallelismPerTenant(16).build());
+
+        assertDoesNotThrow(() -> cp.submit(spec("j1", TENANT, 4), "alice"));
+    }
+
+    @Test
+    void quotaRejectsNegativeInflightDeclaration() {
+        when(tenantJobs.readAllMap()).thenReturn(Map.of());
+        RedisJobControlPlane cp = cp(TenantQuotaPolicy.builder().maxTotalInFlightPerTenant(8).build());
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> cp.submit(spec("j1", TENANT, 1, -1), "alice"));
+        assertTrue(ex.getMessage().contains("maxInFlight"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void storedSpecHashCoversInflightDeclaration() {
+        when(tenantJobs.readAllMap()).thenReturn(Map.of());
+        RedisJobControlPlane cp = cp(TenantQuotaPolicy.builder().maxTotalInFlightPerTenant(64).build());
+
+        JobSpec first = cp.submit(spec("j1", TENANT, 2, 1), "alice");
+        when(tenantJobs.get("j1")).thenReturn(json(first));
+        when(tenantJobs.readAllMap()).thenReturn(Map.of("j1", json(first)));
+        when(script.eval(any(), anyString(), any(),
+                anyList(), any(), any(), any(), any(), any(), any())).thenReturn(2L);
+        JobSpec second = cp.upgrade("j1", s -> {
+            s.setMaxInFlight(2);
+            return s;
+        }, "alice");
+
+        assertEquals(2, second.getMaxInFlight());
+        assertNotEquals(first.getSpecHash(), second.getSpecHash());
     }
 
     // ===== authorization / audit =====

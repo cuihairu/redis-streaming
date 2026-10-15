@@ -4,10 +4,10 @@
 
 ## 现状（事实盘点）
 
-1. **租户概念（v1 已落地 2026-10-11）**：`JobSpec.tenant`（默认 `StreamKeys.DEFAULT_TENANT`）、`MqOptions.tenant`、`AuditEntry.tenant`、`TenantQuotaPolicy` 均已存在；本设计剩余项（线程/内存/in-flight 配额、指标 tenant 维度）待实施——其余模块的 key 前缀租户注入见下方「落地记录」。
+1. **租户概念（v1 已落地 2026-10-11）**：`JobSpec.tenant`（默认 `StreamKeys.DEFAULT_TENANT`）、`MqOptions.tenant`、`AuditEntry.tenant`、`TenantQuotaPolicy` 均已存在；本设计剩余项的**已代决**口径（2026-10-16）：in-flight 配额已落地（见下方「v2 配额增量」）、指标 tenant 维度已落地、线程配额与内存配额不新增维度（理由见该节）、租户级迁移与运维 CLI 仍搁置——其余模块的 key 前缀租户注入见下方「落地记录」。
 2. **全局静态前缀**：`mq` 的 `StreamKeys.configure(controlPrefix, streamPrefix)` 是 `static volatile` 全局量（默认 `streaming:mq` / `stream:topic`），所有 MQ key（分区流、DLQ、meta、lease、retry、commit frontier、topics registry）由它派生。**多作业共用 JVM 时是全局配置；跨 JVM 部署时若两个应用不 configure 不同前缀，同名 topic 直接共用同一条 stream**。
 3. **runtime key**：checkpoint/dedup 走 `streaming:runtime:*` 前缀（可配）；keyed state key 带 job 维度（`{stateKeyPrefix}:{job}:...`），job 级隔离天然存在，但 stateKeyPrefix 本身是全局静态。
-4. **背压/配额粒度**：`maxInFlight` 等内存闸门是 per-consumer-instance 的；**没有任何跨租户的速率/容量配额**（无生产速率限制、无 stream 长度配额——autoTrim 只按 topic 配置裁剪）。
+4. **背压/配额粒度**：`maxInFlight` 等内存闸门是 per-consumer-instance 的；**没有任何跨租户的速率/容量配额**（无生产速率限制、无 stream 长度配额——autoTrim 只按 topic 配置裁剪）。〔2026-10-16 已代决增补：跨租户**声明式** in-flight 配额已落地（见「v2 配额增量」），运行期闸门仍为 per-consumer。〕
 5. **可观测性**：指标无 tenant/instance 维度（见指标统一设计）；控制面审计有 actor/job，无 tenant。
 6. 复用件：`reliability` 已有 `RateLimiter`（Redis 令牌桶，可按 key 限流）；控制面已有 spec 存储 + 授权器钩子 + 审计。
 
@@ -67,6 +67,16 @@
 - **cdc 无需改动**：CDC 只投递到 MQ topic，而 topic 键已按租户分段；sink 的目标键默认仍由调用方显式给出（旧构造器零变化），可选的租户构造器把键写成 `prefix:tenant:name`（见上表 sink 数据面行），框架托管的去重键前缀已随 `RedisRuntimeConfig.Builder.tenant` 分段。
 
 真实 Redis 上的隔离验证（`@Tag("integration")`）：registry 与 config 各一份「两租户同 group/dataId 不互读 + 默认租户保持旧键形」用例，runtime 一份「同一作业名、同一自定义前缀下两租户的状态键与检查点互不可见」用例（`RedisRuntimeTenantIsolationIntegrationTest`），mq 用例钉住重投锁键按租户分段。
+
+## 落地记录：v2 配额增量（2026-10-16，已代决）
+
+**声明式 in-flight 配额**（内存闸门维度）：`JobSpec.maxInFlight` 声明每个消费者的 in-flight 上限（0 = 运行期默认，即无界），控制面按租户校验 `Σ(parallelism × maxInFlight) ≤ maxTotalInFlightPerTenant`（`TenantQuotaPolicy` 新增维度，0 = 不限，默认策略不变即零迁移），提交与升级时同步拒收**未声明**的作业——无界作业无法计入，放行等于让配额失效。声明经 `RedisJobLauncher.configFor` 透传到 `MqOptions.maxInFlight`，由既有 per-consumer Semaphore 执行；`maxInFlight` 已进入 `specHash` 语义输入，只改声明也会触发作业漂移检测。
+
+代决口径与理由（事后用户可推翻）：
+
+- **线程配额不新增维度**：本引擎每条并行子任务配一条消费线程，线程数 ≡ `parallelism`，已被 v1 的 `maxTotalParallelismPerTenant` 覆盖；再加一个「线程配额」只是同量别名，徒增配置面而不增加约束力。
+- **内存配额以 in-flight 上限代理**：不做真实堆/字节计量——消息大小无上界、跨 JVM 无法归集，真实计量只能靠采样估算，误差大于收益；`in-flight × 消费线程数` 已给出可执行且可解释的内存上界。
+- **租户级迁移与运维 CLI 维持搁置**：需要独立承载面（新 admin 模块或挂 `reliability`）与真实 Redis 上的键搬迁隔离测试，属独立工作量，不随本增量顺带实现半成品工具。
 
 ## 非目标
 

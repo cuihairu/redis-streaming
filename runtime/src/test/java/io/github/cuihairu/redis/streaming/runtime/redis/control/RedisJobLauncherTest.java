@@ -1,6 +1,7 @@
 package io.github.cuihairu.redis.streaming.runtime.redis.control;
 
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisJobClient;
+import io.github.cuihairu.redis.streaming.runtime.redis.RedisRuntimeConfig;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisStreamExecutionEnvironment;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -116,5 +117,24 @@ class RedisJobLauncherTest {
                 .parallelism(1).version(1L).build();
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> launcher.launch(s));
         assertTrue(e.getMessage().contains("secret.token"));
+    }
+
+    @Test
+    void configForCarriesTheDeclaredInflightCapOntoMqOptions() {
+        JobSpec s = spec("j1", "f", 2).toBuilder().tenant("acme").maxInFlight(3).build();
+
+        RedisRuntimeConfig config = RedisJobLauncher.configFor(s);
+
+        assertEquals("j1", config.getJobName());
+        assertEquals(2, config.getPipelineParallelism());
+        assertEquals(3, config.getMqOptions().getMaxInFlight());
+        assertEquals("acme", config.getMqOptions().getTenant());
+    }
+
+    @Test
+    void configForKeepsInflightOpenWhenTheSpecDeclaresNone() {
+        RedisRuntimeConfig config = RedisJobLauncher.configFor(spec("j1", "f", 1));
+
+        assertEquals(0, config.getMqOptions().getMaxInFlight());
     }
 }

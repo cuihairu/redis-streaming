@@ -1,5 +1,6 @@
 package io.github.cuihairu.redis.streaming.runtime.redis.control;
 
+import io.github.cuihairu.redis.streaming.mq.config.MqOptions;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisJobClient;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisRuntimeConfig;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisStreamExecutionEnvironment;
@@ -39,6 +40,21 @@ public class RedisJobLauncher implements JobLauncher {
         factories.put(Objects.requireNonNull(name, "name"), Objects.requireNonNull(factory, "factory"));
     }
 
+    /**
+     * Runtime config for a spec: job identity, tenant, parallelism, and the declared
+     * per-consumer in-flight cap ({@code JobSpec.maxInFlight}) passed through to the
+     * consumer memory gate. The job's tenant is stamped onto the options by
+     * {@link RedisRuntimeConfig}, so producers/consumers derive tenant-scoped keys from it.
+     */
+    static RedisRuntimeConfig configFor(JobSpec spec) {
+        return RedisRuntimeConfig.builder()
+                .jobName(spec.getJobName())
+                .tenant(spec.getTenant())
+                .pipelineParallelism(spec.getParallelism())
+                .mqOptions(MqOptions.builder().maxInFlight(spec.getMaxInFlight()).build())
+                .build();
+    }
+
     @Override
     public RedisJobClient launch(JobSpec spec) {
         JobPipelineFactory factory = factories.get(spec.getPipelineFactory());
@@ -46,11 +62,7 @@ public class RedisJobLauncher implements JobLauncher {
             throw new IllegalStateException(
                     "No pipeline factory registered for '" + spec.getPipelineFactory() + "' (job " + spec.getJobName() + ")");
         }
-        RedisRuntimeConfig config = RedisRuntimeConfig.builder()
-                .jobName(spec.getJobName())
-                .tenant(spec.getTenant())
-                .pipelineParallelism(spec.getParallelism())
-                .build();
+        RedisRuntimeConfig config = configFor(spec);
         RedisStreamExecutionEnvironment env = RedisStreamExecutionEnvironment.create(redissonClient, config);
         factory.build(SecretRefs.resolvedSpec(spec), env);
         return env.executeAsync();

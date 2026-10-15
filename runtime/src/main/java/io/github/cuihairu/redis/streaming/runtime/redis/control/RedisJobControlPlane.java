@@ -112,7 +112,8 @@ public class RedisJobControlPlane implements JobControlPlane {
         String tenant = StreamKeys.normalizeTenant(spec.getTenant());
         String resolvedActor = resolveActor(actor);
         authorize(tenant, resolvedActor, JobControlOp.SUBMIT, name);
-        enforceQuota(tenant, name, spec.getParallelism(), spec.getParallelism());
+        long inflight = inflightContribution(spec.getParallelism(), spec.getMaxInFlight());
+        enforceQuota(tenant, name, spec.getParallelism(), inflight, inflight);
         JobSpec copy = toBuilder(spec);
         copy.setTenant(tenant);
         copy.setVersion(1L);
@@ -182,6 +183,7 @@ public class RedisJobControlPlane implements JobControlPlane {
         // and the CAS history entry must hold the pre-upgrade state
         String oldJson = writeJson(current);
         int currentParallelism = current.getParallelism();
+        long currentInflight = inflightContribution(current.getParallelism(), current.getMaxInFlight());
         JobSpec next = mutator.apply(current);
         validate(next);
         if (!next.getJobName().equals(jobName)) {
@@ -197,7 +199,9 @@ public class RedisJobControlPlane implements JobControlPlane {
         stored.setUpdatedAt(System.currentTimeMillis());
         stored.setSpecHash(specHash(stored));
         String newJson = writeJson(stored);
-        enforceQuota(tenant, jobName, stored.getParallelism(), Math.max(0, stored.getParallelism() - currentParallelism));
+        long storedInflight = inflightContribution(stored.getParallelism(), stored.getMaxInFlight());
+        enforceQuota(tenant, jobName, Math.max(0, stored.getParallelism() - currentParallelism),
+                storedInflight, Math.max(0L, storedInflight - currentInflight));
         long applied = casVersionAndWrite(tenant, jobName, current.getVersion(), newJson, oldJson);
         if (applied < 0) {
             throw new IllegalStateException("Concurrent modification on job " + jobName + " (code " + applied + "); retry the upgrade");
@@ -361,6 +365,9 @@ public class RedisJobControlPlane implements JobControlPlane {
         if (spec.getParallelism() < 1) {
             throw new IllegalArgumentException("Parallelism must be >= 1");
         }
+        if (spec.getMaxInFlight() < 0) {
+            throw new IllegalArgumentException("maxInFlight must be >= 0 (0 means unlimited)");
+        }
         if (spec.getConfig() == null) {
             throw new IllegalArgumentException("Config cannot be null");
         }
@@ -386,19 +393,25 @@ public class RedisJobControlPlane implements JobControlPlane {
     }
 
     /**
-     * Enforce the per-tenant capacity quota. The job count and parallelism sum are read
-     * from the stored specs of the tenant, so the quota can never drift from the actual
-     * state (no separate counter to fall out of sync). A limit of 0 is unlimited.
+     * Enforce the per-tenant capacity quota. The job count and the parallelism /
+     * in-flight sums are read from the stored specs of the tenant, so the quota can never
+     * drift from the actual state (no separate counter to fall out of sync). A limit of 0
+     * is unlimited. In-flight capacity is declared per spec ({@code parallelism *
+     * maxInFlight}); under a tenant in-flight cap a job that declares no cap is rejected
+     * rather than counted as zero, because an unbounded job would make the total unbounded.
      *
-     * @param tenant         tenant being checked
-     * @param jobName        job being written (used in the error message)
-     * @param parallelism    parallelism of the spec being written
+     * @param tenant          tenant being checked
+     * @param jobName         job being written (used in the error message)
      * @param parallelismDelta added parallelism vs. the currently stored spec (0 on submit)
+     * @param inflight        in-flight capacity of the spec being written
+     * @param inflightDelta   added in-flight capacity vs. the currently stored spec (0 on submit)
      */
-    private void enforceQuota(String tenant, String jobName, int parallelism, int parallelismDelta) {
+    private void enforceQuota(String tenant, String jobName, int parallelismDelta,
+                              long inflight, long inflightDelta) {
         int maxJobs = quotaPolicy.getMaxJobsPerTenant();
         int maxParallelism = quotaPolicy.getMaxTotalParallelismPerTenant();
-        if (maxJobs <= 0 && maxParallelism <= 0) {
+        int maxInflight = quotaPolicy.getMaxTotalInFlightPerTenant();
+        if (maxJobs <= 0 && maxParallelism <= 0 && maxInflight <= 0) {
             return;
         }
         Map<String, String> existing = jobs(tenant).readAllMap();
@@ -420,6 +433,25 @@ public class RedisJobControlPlane implements JobControlPlane {
                                 + parallelismDelta + " for " + jobName + ")");
             }
         }
+        if (maxInflight > 0) {
+            if (inflight <= 0) {
+                throw new IllegalStateException(
+                        "Tenant quota exceeded for tenant '" + tenant + "': maxTotalInFlightPerTenant="
+                                + maxInflight + " requires job '" + jobName
+                                + "' to declare maxInFlight (an unbounded job cannot be counted)");
+            }
+            long currentTotal = 0L;
+            for (Map.Entry<String, String> e : existing.entrySet()) {
+                currentTotal += specInflight(e.getValue());
+            }
+            long projected = currentTotal + inflightDelta;
+            if (projected > maxInflight) {
+                throw new IllegalStateException(
+                        "Tenant quota exceeded for tenant '" + tenant + "': maxTotalInFlightPerTenant="
+                                + maxInflight + " (current=" + currentTotal + ", requesting +"
+                                + inflightDelta + " for " + jobName + ")");
+            }
+        }
     }
 
     /** Tolerant parallelism read from a stored spec JSON (0 when the entry is unreadable). */
@@ -429,6 +461,21 @@ public class RedisJobControlPlane implements JobControlPlane {
         } catch (Exception e) {
             log.warn("Could not read spec parallelism for quota check", e);
             return 0;
+        }
+    }
+
+    /** Declared in-flight capacity of one spec: {@code parallelism * maxInFlight}, 0 when undeclared. */
+    private static long inflightContribution(int parallelism, int maxInFlight) {
+        return parallelism > 0 && maxInFlight > 0 ? (long) maxInFlight * parallelism : 0L;
+    }
+
+    private long specInflight(String json) {
+        try {
+            var node = objectMapper.readTree(json);
+            return inflightContribution(node.path("parallelism").asInt(0), node.path("maxInFlight").asInt(0));
+        } catch (Exception e) {
+            log.warn("Could not read spec in-flight capacity for quota check", e);
+            return 0L;
         }
     }
 
@@ -452,6 +499,7 @@ public class RedisJobControlPlane implements JobControlPlane {
                         .append(SecretRefs.displayValue(e.getKey(), e.getValue()))
                         .append(';'));
         sb.append('|').append(spec.getParallelism()).append('|')
+                .append(spec.getMaxInFlight()).append('|')
                 .append(spec.getDescription() == null ? "" : spec.getDescription());
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");

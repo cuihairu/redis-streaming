@@ -45,6 +45,17 @@ public class JobSpec {
     /** Pipeline parallelism (subtask count). */
     private int parallelism;
 
+    /**
+     * Declared per-consumer in-flight cap ({@code MqOptions.maxInFlight}) of this job's
+     * consumers: {@code 0} means the runtime default (unlimited). Declared so the control
+     * plane can bound the tenant's total in-flight capacity ({@link TenantQuotaPolicy}
+     * {@code maxTotalInFlightPerTenant} = sum over the tenant's specs of
+     * {@code parallelism * maxInFlight}) and so the launcher can pass it through to the
+     * consumers' memory gate; an unbounded job cannot be counted, so a tenant under an
+     * in-flight cap must declare it. docs/Multi-Tenancy-Design.md, v2 已代决.
+     */
+    private int maxInFlight;
+
     /** Monotonic spec version, assigned and CAS-checked by the control plane. */
     private long version;
 
