@@ -63,6 +63,8 @@
 - **重投锁曾漏租户段**：`RedisMessageConsumer` 的重投 mover 此前把锁键写死为 `streaming:mq:retry:lock:{topic}`，既绕过控制前缀也绕过租户段——两个租户用同名 topic 会互相串行（一方的重投阻塞另一方）。现由 `StreamKeys.retryLockKey(topic)` 派生，默认租户键与旧版逐字节一致。
 - **cdc 无需改动**：CDC 只投递到 MQ topic，而 topic 键已按租户分段；sink 的目标键由调用方显式给出，框架托管的去重键前缀已随 `RedisRuntimeConfig.Builder.tenant` 分段。
 
+真实 Redis 上的隔离验证（`@Tag("integration")`）：registry 与 config 各一份「两租户同 group/dataId 不互读 + 默认租户保持旧键形」用例，runtime 一份「同一作业名、同一自定义前缀下两租户的状态键与检查点互不可见」用例（`RedisRuntimeTenantIsolationIntegrationTest`），mq 用例钉住重投锁键按租户分段。
+
 ## 非目标
 
 - 不做租户认证/鉴权体系（仍走控制面可插拔授权器；认证属于安全设计范畴）。
