@@ -3,7 +3,7 @@
 ## 未完成
 
 - [ ] join/cep Phase 3：引擎级双源 pipeline、event-time 水位对齐、retract 语义（设计标注远期，与 P4 动态伸缩合并设计；2026-10-15 巡检代决：继续搁置）
-- [ ] 多租户 v2：线程/内存/in-flight 配额、指标 tenant 维度、租户级迁移与运维 CLI，设计见 docs/Multi-Tenancy-Design.md（配额/CLI 仍卡点：设计无规格，实施即自造需求；指标 tenant 维度规格已补——清单/机制/基数预算见 docs/Metrics.md「tenant 维度规格」节，消费端 wiring 已补（commit 3080ab6）、内置桥接 opt-in 开关待用户拍板）
+- [ ] 多租户 v2：线程/内存/in-flight 配额、指标 tenant 维度、租户级迁移与运维 CLI，设计见 docs/Multi-Tenancy-Design.md（配额/CLI 仍卡点：设计无规格，实施即自造需求；指标 tenant 维度已落地——规格见 docs/Metrics.md「tenant 维度规格」节，消费端 wiring 已补（commit 3080ab6），内置桥接 opt-in 开关 redis-streaming.mq.metrics-tenant-tag 已落地、默认关保存量 dashboard 不变）
 - [x] 多租户 v2 前缀租户注入：共享 Tenant 契约 + registry/config/state/checkpoint/sink-dedup 前缀注入 + starter 三个 tenant 属性（commits 961c21b、827fed1、59424d3、3ef95f8、42493d0）；扫漏补修 mq 重投锁键（commit 12d3f2a）；扫漏补修 DLQ 管理面租户盲扫（commit 8de45f7）；cdc 无需改动，落地记录见 docs/Multi-Tenancy-Design.md
 
 ## 已完成

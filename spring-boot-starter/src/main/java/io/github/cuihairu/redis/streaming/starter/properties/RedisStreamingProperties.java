@@ -301,6 +301,10 @@ public class RedisStreamingProperties {
         /** Tenant namespace of the MQ keyspace ("default" = no key segment) */
         private String tenant = "default";
 
+        /** Export-side tenant tag on topic-scoped Micrometer metrics (default off keeps
+         *  existing dashboards' series set byte-identical; docs/Metrics.md「tenant 维度规格」) */
+        private boolean metricsTenantTag = false;
+
         /** Default partition count (used when a topic is first written to) */
         private int defaultPartitionCount = 1;
 

@@ -195,8 +195,9 @@ public class RedisStreamingMqAutoConfiguration {
     @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
     @ConditionalOnBean(io.micrometer.core.instrument.MeterRegistry.class)
     public io.github.cuihairu.redis.streaming.starter.metrics.MqMicrometerCollector mqMicrometerCollector(
-            io.micrometer.core.instrument.MeterRegistry registry) {
-        return new io.github.cuihairu.redis.streaming.starter.metrics.MqMicrometerCollector(registry);
+            io.micrometer.core.instrument.MeterRegistry registry, RedisStreamingProperties props) {
+        return new io.github.cuihairu.redis.streaming.starter.metrics.MqMicrometerCollector(
+                registry, props.getMq().isMetricsTenantTag());
     }
 
     @Bean

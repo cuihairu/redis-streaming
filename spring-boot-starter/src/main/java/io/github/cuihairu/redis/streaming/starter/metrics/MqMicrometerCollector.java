@@ -5,23 +5,39 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import lombok.extern.slf4j.Slf4j;
 
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Micrometer-backed detailed MQ metrics (per topic/partition).
+ *
+ * <p>Tenant tag at the export boundary: the built-in bridge keeps dropping the
+ * tenant by default so existing dashboards keep their exact series set; with
+ * {@code tenantTag=true} the topic-scoped counters/latency also carry a
+ * {@code tenant} tag (docs/Metrics.md「tenant 维度规格」). Distinct
+ * {@code tenant×topic} pairs past {@code tenantTopicWarnThreshold} trip a
+ * one-shot WARN toward the operator (the documented cardinality budget).</p>
  */
+@Slf4j
 public class MqMicrometerCollector implements MqMetricsCollector {
 
     private final MeterRegistry registry;
+    private final boolean tenantTag;
+    private final int tenantTopicWarnThreshold;
+    private final Set<String> tenantTopicPairs = ConcurrentHashMap.newKeySet();
+    private final AtomicBoolean cardinalityWarned = new AtomicBoolean();
     private final Map<String, Counter> produced = new ConcurrentHashMap<>();
     private final Map<String, Counter> consumed = new ConcurrentHashMap<>();
     private final Map<String, Counter> acked = new ConcurrentHashMap<>();
     private final Map<String, Counter> retried = new ConcurrentHashMap<>();
     private final Map<String, Counter> dead = new ConcurrentHashMap<>();
     private final Map<String, Counter> payloadMissing = new ConcurrentHashMap<>();
+    private final Map<String, Counter> rateLimited = new ConcurrentHashMap<>();
     private final Map<String, Counter> dlqReplaySuccess = new ConcurrentHashMap<>();
     private final Map<String, Counter> dlqReplayFailure = new ConcurrentHashMap<>();
     private final Map<String, Timer> dlqReplayLatency = new ConcurrentHashMap<>();
@@ -33,7 +49,21 @@ public class MqMicrometerCollector implements MqMetricsCollector {
     private final Map<String, AtomicLong> gauges = new ConcurrentHashMap<>();
 
     public MqMicrometerCollector(MeterRegistry registry) {
+        this(registry, false, 1000);
+    }
+
+    public MqMicrometerCollector(MeterRegistry registry, boolean tenantTag) {
+        this(registry, tenantTag, 1000);
+    }
+
+    MqMicrometerCollector(MeterRegistry registry, boolean tenantTag, int tenantTopicWarnThreshold) {
         this.registry = registry;
+        this.tenantTag = tenantTag;
+        this.tenantTopicWarnThreshold = tenantTopicWarnThreshold;
+    }
+
+    boolean cardinalityWarned() {
+        return cardinalityWarned.get();
     }
 
     @Override
@@ -70,6 +100,58 @@ public class MqMicrometerCollector implements MqMetricsCollector {
     @Override
     public void incPayloadMissing(String topic, int partitionId) {
         counter(payloadMissing, "redis_streaming_mq_payload_missing_total", topic, partitionId).increment();
+    }
+
+    // Tenant-aware variants: default delegates to the legacy series (current
+    // behavior); only when the export flag is on do they carry the tenant tag.
+    @Override
+    public void incProduced(String tenant, String topic, int partitionId) {
+        if (!tenantTag) { incProduced(topic, partitionId); return; }
+        tenantCounter(produced, "redis_streaming_mq_produced_total", tenant, topic, partitionId).increment();
+    }
+
+    @Override
+    public void incConsumed(String tenant, String topic, int partitionId) {
+        if (!tenantTag) { incConsumed(topic, partitionId); return; }
+        tenantCounter(consumed, "redis_streaming_mq_consumed_total", tenant, topic, partitionId).increment();
+    }
+
+    @Override
+    public void incAcked(String tenant, String topic, int partitionId) {
+        if (!tenantTag) { incAcked(topic, partitionId); return; }
+        tenantCounter(acked, "redis_streaming_mq_acked_total", tenant, topic, partitionId).increment();
+    }
+
+    @Override
+    public void incRetried(String tenant, String topic, int partitionId) {
+        if (!tenantTag) { incRetried(topic, partitionId); return; }
+        tenantCounter(retried, "redis_streaming_mq_retried_total", tenant, topic, partitionId).increment();
+    }
+
+    @Override
+    public void incDeadLetter(String tenant, String topic, int partitionId) {
+        if (!tenantTag) { incDeadLetter(topic, partitionId); return; }
+        tenantCounter(dead, "redis_streaming_mq_dead_total", tenant, topic, partitionId).increment();
+    }
+
+    @Override
+    public void recordHandleLatency(String tenant, String topic, int partitionId, long millis) {
+        if (!tenantTag) { recordHandleLatency(topic, partitionId, millis); return; }
+        tenantTimer(handleLatency, "redis_streaming_mq_handle_latency_ms", tenant, topic, partitionId)
+                .record(millis, java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    /** Sends rejected by the {@link io.github.cuihairu.redis.streaming.mq.config.SendQuota} (tags: tenant, topic). */
+    @Override
+    public void incRateLimited(String tenant, String topic) {
+        String key = "redis_streaming_mq_rate_limited_total|" + tenant + "|" + topic;
+        rateLimited.computeIfAbsent(key, k -> {
+            trackTenantTopicPair(tenant, topic);
+            return Counter.builder("redis_streaming_mq_rate_limited_total")
+                    .tag("tenant", tenant)
+                    .tag("topic", topic)
+                    .register(registry);
+        }).increment();
     }
 
     @Override
@@ -145,6 +227,42 @@ public class MqMicrometerCollector implements MqMetricsCollector {
                 .tag("topic", topic)
                 .tag("partition", Integer.toString(pid))
                 .register(registry));
+    }
+
+    private Counter tenantCounter(Map<String, Counter> cache, String name, String tenant, String topic, int pid) {
+        String key = name + "|" + tenant + "|" + topic + "|" + pid;
+        return cache.computeIfAbsent(key, k -> {
+            trackTenantTopicPair(tenant, topic);
+            return Counter.builder(name)
+                    .tag("tenant", tenant)
+                    .tag("topic", topic)
+                    .tag("partition", Integer.toString(pid))
+                    .register(registry);
+        });
+    }
+
+    private Timer tenantTimer(Map<String, Timer> cache, String name, String tenant, String topic, int pid) {
+        String key = name + "|" + tenant + "|" + topic + "|" + pid;
+        return cache.computeIfAbsent(key, k -> {
+            trackTenantTopicPair(tenant, topic);
+            return Timer.builder(name)
+                    .tag("tenant", tenant)
+                    .tag("topic", topic)
+                    .tag("partition", Integer.toString(pid))
+                    .register(registry);
+        });
+    }
+
+    /** One-shot WARN when distinct tenant×topic pairs pass the documented cardinality budget. */
+    private void trackTenantTopicPair(String tenant, String topic) {
+        if (tenantTopicPairs.add(tenant + "|" + topic)
+                && tenantTopicPairs.size() > tenantTopicWarnThreshold
+                && cardinalityWarned.compareAndSet(false, true)) {
+            log.warn("MQ tenant metric cardinality: {} tenant×topic pairs past the configured budget of {} "
+                            + "(redis-streaming.mq.metrics-tenant-tag); consider a narrower tenant set or "
+                            + "tenant-separated deployments (docs/Metrics.md「tenant 维度规格」)",
+                    tenantTopicPairs.size(), tenantTopicWarnThreshold);
+        }
     }
 
     private AtomicLong gauge(String name, String tagK, String tagV) {

@@ -39,7 +39,7 @@ CDC 是另一条通路：`CDCManager` 直接暴露 `CDCMetrics` 快照（无静�
 | `redis_streaming_mq_retried_total` | counter | 同上（requeue 路径） |
 | `redis_streaming_mq_dead_total` | counter | 同上（DLQ 路径，含 payload-missing） |
 | `redis_streaming_mq_handle_latency_ms` | timer | 同上 |
-| `redis_streaming_mq_rate_limited_total`（命名待发） | counter | `SendQuota` → `incRateLimited(tenant, topic)`（tenant 原生，无 legacy 变体） |
+| `redis_streaming_mq_rate_limited_total`（tags：`tenant`、`topic`，无 `partition`） | counter | `SendQuota` → `incRateLimited(tenant, topic)`（tenant 原生，无 legacy 变体，故不带开关始终带 tenant tag） |
 
 **不带** tenant 的：DLQ replay/delete/clear、in-flight/backpressure/partition lease gauge（已有 `consumer` 定位维度，且 DLQ 键本身按租户分段）；runtime 全部指标（以 `job` 定位，job 名租户内唯一即可）；CDC 指标（以 `connector` 定位）。控制面指标（未建）按设计带 tenant。
 
@@ -47,7 +47,7 @@ CDC 是另一条通路：`CDCManager` 直接暴露 `CDCMetrics` 快照（无静�
 
 - SPI 层：`MqMetricsCollector` 为上表七个计数/计时提供 `(tenant, topic, partitionId)` `default` 重载，默认实现委托 legacy 签名——与 `StreamingMetricsCollector.incHandleError(..., result)` 同款非破坏加维模式，既有实现无需改动即可编译运行。
 - 调用层：生产者/消费者/SendQuota 一律调用 tenant-aware 变体，租户取自配置（`MqOptions.tenant`，经 `StreamKeys.of(options)` 归一化，默认 `default`）。
-- **导出层（默认不发 tag）**：starter 内置 `MqMicrometerCollector` 只覆写 legacy 签名，tenant 在导出面被丢弃——存量 dashboard/告警的序列集合逐字节不变。需要维度的部署自行扩展桥接（覆写 tenant-aware 变体并 `.tag("tenant", tenant)`）；内置桥接是否加 opt-in 开关（如 `redis-streaming.mq.metrics.tenant-tag`，默认关）待用户拍板，未拍板前不开工。
+- **导出层（默认不发 tag）**：starter 内置 `MqMicrometerCollector` 只覆写 legacy 签名，tenant 在导出面被丢弃——存量 dashboard/告警的序列集合逐字节不变。需要维度的部署自行扩展桥接（覆写 tenant-aware 变体并 `.tag("tenant", tenant)`）；内置桥接已提供 opt-in 开关 `redis-streaming.mq.metrics-tenant-tag`（默认关，仅 starter 属性，不进 `MqOptions`、不影响 mq 键布局）：开启后上表六个计数/计时改用带 `tenant` tag 的序列，legacy 签名写入的无 tenant 序列保持不动（两者共存于不同 cache key）。桥接同时在 distinct `tenant×topic` 对数超过阈值（默认 1 000，对应下节绿区上界）时打一条一次性 WARN 提示基数预算。
 
 **3. 基数预算**
 

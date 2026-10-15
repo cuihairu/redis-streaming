@@ -151,7 +151,7 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
             io.micrometer.core.instrument.simple.SimpleMeterRegistry reg =
                     new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
 
-            var mqCollector = cfg.mqMicrometerCollector(reg);
+            var mqCollector = cfg.mqMicrometerCollector(reg, new RedisStreamingProperties());
             cfg.installMqCollector(mqCollector);
             assertEquals(mqCollector, MqMetrics.get());
 
@@ -285,5 +285,29 @@ class RedisStreamingAutoConfigurationMoreBeanMethodsTest {
 
         RateLimiter rl = cfg.rateLimiter(new RateLimiterRegistry(Collections.emptyMap()), props);
         assertInstanceOf(InMemorySlidingWindowRateLimiter.class, rl);
+    }
+
+    @Test
+    void mqMetricsTenantTagPropertyDrivesTheBridgeFlag() {
+        RedisStreamingProperties props = new RedisStreamingProperties();
+        props.getMq().setMetricsTenantTag(true);
+        RedisStreamingMqAutoConfiguration cfg = new RedisStreamingMqAutoConfiguration();
+
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry reg =
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        io.github.cuihairu.redis.streaming.starter.metrics.MqMicrometerCollector on =
+                cfg.mqMicrometerCollector(reg, props);
+        on.incConsumed("acme", "t", 0);
+        assertEquals(1.0, reg.get("redis_streaming_mq_consumed_total")
+                .tag("tenant", "acme").tag("topic", "t").tag("partition", "0").counter().count(), 0.0001);
+
+        // off by default, so existing dashboards keep their series set
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry reg2 =
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        io.github.cuihairu.redis.streaming.starter.metrics.MqMicrometerCollector off =
+                cfg.mqMicrometerCollector(reg2, new RedisStreamingProperties());
+        off.incConsumed("acme", "t", 0);
+        assertEquals(1.0, reg2.get("redis_streaming_mq_consumed_total")
+                .tag("topic", "t").tag("partition", "0").counter().count(), 0.0001);
     }
 }
