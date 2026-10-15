@@ -34,10 +34,14 @@ public class RedisStreamingRegistryAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public NamingService namingService(RedissonClient redissonClient, RedisStreamingProperties properties) {
-        log.info("Initializing NamingService with heartbeat interval: {}s",
-                properties.getRegistry().getHeartbeatInterval());
+        var registryProps = properties.getRegistry();
+        log.info("Initializing NamingService with heartbeat interval: {}s, tenant: {}",
+                registryProps.getHeartbeatInterval(), registryProps.getTenant());
 
-        NamingService registry = new RedisNamingService(redissonClient);
+        io.github.cuihairu.redis.streaming.registry.NamingServiceConfig config =
+                new io.github.cuihairu.redis.streaming.registry.NamingServiceConfig();
+        config.setTenant(registryProps.getTenant());
+        NamingService registry = new RedisNamingService(redissonClient, config);
         registry.start();
         return registry;
     }

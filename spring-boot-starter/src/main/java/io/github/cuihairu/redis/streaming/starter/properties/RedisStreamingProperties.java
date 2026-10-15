@@ -135,6 +135,14 @@ public class RedisStreamingProperties {
         private boolean autoRegister = true;
 
         /**
+         * Tenant namespace of the registry keyspace: a non-default tenant inserts a
+         * {@code :tenant} segment right after the key prefix, so several tenants can share
+         * one Redis without seeing each other's instances. {@code default} (the default)
+         * keeps the legacy keys unchanged.
+         */
+        private String tenant = io.github.cuihairu.redis.streaming.registry.keys.RegistryKeys.DEFAULT_TENANT;
+
+        /**
          * Service instance configuration
          */
         private InstanceProperties instance = new InstanceProperties();
@@ -244,6 +252,14 @@ public class RedisStreamingProperties {
          * Whether to enable key prefix
          */
         private boolean enableKeyPrefix = true;
+
+        /**
+         * Tenant namespace of the config-center keyspace: a non-default tenant inserts a
+         * {@code :tenant} segment right after the key prefix, so several tenants can share
+         * one Redis without reading each other's configs. {@code default} (the default)
+         * keeps the legacy keys unchanged.
+         */
+        private String tenant = io.github.cuihairu.redis.streaming.core.utils.Tenant.DEFAULT_TENANT;
 
         /**
          * DataId prefix marking a config as at-rest-encrypted when a {@code ContentCipher}

@@ -100,7 +100,9 @@ server:
 
 ### `redis-streaming.registry.*`
 
-`enabled`(boolean,`true`)、`heartbeat-interval`(int 秒,`30`)、`heartbeat-timeout`(int 秒,`90`)、`auto-register`(boolean,`true`)、`instance.*`:
+`enabled`(boolean,`true`)、`heartbeat-interval`(int 秒,`30`)、`heartbeat-timeout`(int 秒,`90`)、`auto-register`(boolean,`true`)、`tenant`(String,`default`)、`instance.*`:
+
+`tenant` 为非默认值时在键前缀后插入 `:tenant` 段(`redis_streaming_registry:acme:services:...`),多租户共用一套 Redis 时互不可见;取 `default` 时键与旧版完全一致。命名规则 `[A-Za-z0-9._-]{1,64}`(不允许冒号),非法值启动即报错。
 
 | 键 | 类型 | 默认 |
 |---|---|---|
@@ -120,7 +122,9 @@ server:
 
 ### `redis-streaming.config.*`
 
-`enabled`(boolean,`true`)、`default-group`(String,`DEFAULT_GROUP`)、`refresh-interval`(int 秒,`30`)、`auto-refresh`(boolean,`true`)、`history-size`(int,`10`)、`key-prefix`(String,`redis_streaming`)、`enable-key-prefix`(boolean,`true`)、`secure-key-prefix`(String,`secure.`；容器内有 `ContentCipher` Bean 时命中该前缀的 dataId 落库加密,详见 docs/config.md「内容加密」)。
+`enabled`(boolean,`true`)、`default-group`(String,`DEFAULT_GROUP`)、`refresh-interval`(int 秒,`30`)、`auto-refresh`(boolean,`true`)、`history-size`(int,`10`)、`key-prefix`(String,`redis_streaming`)、`enable-key-prefix`(boolean,`true`)、`tenant`(String,`default`)、`secure-key-prefix`(String,`secure.`；容器内有 `ContentCipher` Bean 时命中该前缀的 dataId 落库加密,详见 docs/config.md「内容加密」)。
+
+`tenant` 与 registry 同一套命名规则,非默认值在 `key-prefix` 后插入 `:tenant` 段(`redis_streaming:acme:config:...`),同一 group/dataId 在不同租户互不可见;`default` 时键与旧版一致。多租户键空间总览见 [多租户隔离与配额设计](Multi-Tenancy-Design.md)。
 
 ### `redis-streaming.load-balancer.*`
 
@@ -153,6 +157,7 @@ server:
 | `retry-lock-lease-ms` | long | `500` |
 | `key-prefix` | String | `streaming:mq` |
 | `stream-key-prefix` | String | `stream:topic` |
+| `tenant` | String | `default`(非默认值在两个前缀后插入 `:tenant` 段) |
 | `consumer-name-prefix` | String | `consumer-` |
 | `dlq-consumer-suffix` | String | `-dlq` |
 | `default-consumer-group` | String | `default-group` |

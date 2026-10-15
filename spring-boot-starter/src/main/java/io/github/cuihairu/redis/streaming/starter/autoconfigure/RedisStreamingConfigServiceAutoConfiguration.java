@@ -24,13 +24,13 @@ public class RedisStreamingConfigServiceAutoConfiguration {
     @ConditionalOnMissingBean
     public ConfigService configService(RedissonClient redissonClient, RedisStreamingProperties properties,
                                        ObjectProvider<ContentCipher> contentCipher) {
-        log.info("Initializing ConfigService with default group: {}",
-                properties.getConfig().getDefaultGroup());
+        log.info("Initializing ConfigService with default group: {}, tenant: {}",
+                properties.getConfig().getDefaultGroup(), properties.getConfig().getTenant());
 
         var cfgProps = properties.getConfig();
         io.github.cuihairu.redis.streaming.config.ConfigServiceConfig cfg =
                 new io.github.cuihairu.redis.streaming.config.ConfigServiceConfig(
-                        cfgProps.getKeyPrefix(), cfgProps.isEnableKeyPrefix());
+                        cfgProps.getKeyPrefix(), cfgProps.isEnableKeyPrefix(), cfgProps.getTenant());
         cfg.setHistorySize(cfgProps.getHistorySize());
         cfg.setSecurePrefix(cfgProps.getSecureKeyPrefix());
         ConfigService configService = new RedisConfigService(redissonClient, cfg,

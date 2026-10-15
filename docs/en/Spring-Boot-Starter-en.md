@@ -117,7 +117,9 @@ Instance resolution rules (`AutoServiceRegistration`): an unset `service-name` o
 
 ### `redis-streaming.registry.*`
 
-`enabled` (boolean, `true`), `heartbeat-interval` (int seconds, `30`), `heartbeat-timeout` (int seconds, `90`), `auto-register` (boolean, `true`), and `instance.*`:
+`enabled` (boolean, `true`), `heartbeat-interval` (int seconds, `30`), `heartbeat-timeout` (int seconds, `90`), `auto-register` (boolean, `true`), `tenant` (String, `default`), and `instance.*`:
+
+A non-default `tenant` inserts a `:tenant` segment right after the key prefix (`redis_streaming_registry:acme:services:...`), so several tenants sharing one Redis never see each other's instances; `default` keeps the legacy keys unchanged. Names must match `[A-Za-z0-9._-]{1,64}` (no colon) — an illegal name fails startup.
 
 | Key | Type | Default |
 |---|---|---|
@@ -139,7 +141,9 @@ Instance resolution rules (`AutoServiceRegistration`): an unset `service-name` o
 
 ### `redis-streaming.config.*`
 
-`enabled` (boolean, `true`), `default-group` (String, `DEFAULT_GROUP`), `refresh-interval` (int seconds, `30`), `auto-refresh` (boolean, `true`), `history-size` (int, `10`), `key-prefix` (String, `redis_streaming`), `enable-key-prefix` (boolean, `true`).
+`enabled` (boolean, `true`), `default-group` (String, `DEFAULT_GROUP`), `refresh-interval` (int seconds, `30`), `auto-refresh` (boolean, `true`), `history-size` (int, `10`), `key-prefix` (String, `redis_streaming`), `enable-key-prefix` (boolean, `true`), `tenant` (String, `default`), `secure-key-prefix` (String, `secure.`).
+
+`tenant` follows the same naming rule as the registry one: a non-default value inserts a `:tenant` segment after `key-prefix` (`redis_streaming:acme:config:...`), so the same group/dataId stays invisible across tenants; `default` keeps the legacy keys unchanged. See the Chinese [multi-tenancy design](../Multi-Tenancy-Design.md) for the whole keyspace.
 
 ### `redis-streaming.load-balancer.*`
 
@@ -192,6 +196,7 @@ Instance resolution rules (`AutoServiceRegistration`): an unset `service-name` o
 | `retry-lock-lease-ms` | long | `500` |
 | `key-prefix` | String | `streaming:mq` |
 | `stream-key-prefix` | String | `stream:topic` |
+| `tenant` | String | `default` (a non-default value inserts a `:tenant` segment after both prefixes) |
 | `consumer-name-prefix` | String | `consumer-` |
 | `dlq-consumer-suffix` | String | `-dlq` |
 | `default-consumer-group` | String | `default-group` |

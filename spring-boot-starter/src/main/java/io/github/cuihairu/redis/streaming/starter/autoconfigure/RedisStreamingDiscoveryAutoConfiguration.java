@@ -22,10 +22,14 @@ public class RedisStreamingDiscoveryAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean({NamingService.class, ServiceConsumer.class})
     public ServiceConsumer serviceConsumer(RedissonClient redissonClient, RedisStreamingProperties properties) {
-        log.info("Initializing service consumer (NamingService) with healthy-only: {}",
-                properties.getDiscovery().isHealthyOnly());
+        var registryProps = properties.getRegistry();
+        log.info("Initializing service consumer (NamingService) with healthy-only: {}, tenant: {}",
+                properties.getDiscovery().isHealthyOnly(), registryProps.getTenant());
 
-        NamingService namingService = new RedisNamingService(redissonClient);
+        io.github.cuihairu.redis.streaming.registry.NamingServiceConfig config =
+                new io.github.cuihairu.redis.streaming.registry.NamingServiceConfig();
+        config.setTenant(registryProps.getTenant());
+        NamingService namingService = new RedisNamingService(redissonClient, config);
         namingService.start();
         return namingService;
     }
