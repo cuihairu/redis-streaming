@@ -40,6 +40,11 @@ public final class Tenant {
         return Tenant.scopedPrefix(prefix, name);
     }
 
+    /** @return {@link #scopedKey(String, String, String)} for this tenant */
+    public String scopedKey(String prefix, String key) {
+        return Tenant.scopedKey(prefix, name, key);
+    }
+
     public boolean isDefault() {
         return DEFAULT_TENANT.equals(name);
     }
@@ -47,6 +52,20 @@ public final class Tenant {
     /** @return {@code prefix} followed by the given tenant's segment */
     public static String scopedPrefix(String prefix, String tenant) {
         return prefix + segment(tenant);
+    }
+
+    /**
+     * Namespace a caller-given Redis key name under a prefix and tenant, for the
+     * data-plane components that take a bare key name (sinks, sources, dedups):
+     * {@code prefix:tenant:key}, or just {@code key} when the prefix is null/blank
+     * (the caller owns the name, the framework adds nothing) and with no tenant
+     * segment for the default tenant.
+     */
+    public static String scopedKey(String prefix, String tenant, String key) {
+        if (prefix == null || prefix.isBlank()) {
+            return key;
+        }
+        return scopedPrefix(prefix, tenant) + ":" + key;
     }
 
     /**

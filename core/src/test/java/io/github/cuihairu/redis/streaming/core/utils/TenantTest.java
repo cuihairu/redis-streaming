@@ -60,6 +60,28 @@ class TenantTest {
     }
 
     @Test
+    void scopedKeyNamespacesACallerGivenNameUnderThePrefix() {
+        assertEquals("app:acme:orders", Tenant.scopedKey("app", "acme", "orders"));
+        assertEquals("app:acme:orders", new Tenant("acme").scopedKey("app", "orders"));
+        assertEquals("app:orders", Tenant.scopedKey("app", null, "orders"));
+        assertEquals("app:orders", Tenant.scopedKey("app", "default", "orders"));
+    }
+
+    @Test
+    void scopedKeyWithoutPrefixKeepsTheCallerGivenName() {
+        assertEquals("orders", Tenant.scopedKey(null, "acme", "orders"));
+        assertEquals("orders", Tenant.scopedKey("", "acme", "orders"));
+        assertEquals("orders", Tenant.scopedKey("  ", "acme", "orders"));
+        assertEquals("orders", Tenant.scopedKey(null, null, "orders"));
+        assertEquals("orders", new Tenant("acme").scopedKey(null, "orders"));
+    }
+
+    @Test
+    void scopedKeyStillValidatesTheTenantName() {
+        assertThrows(IllegalArgumentException.class, () -> Tenant.scopedKey("app", "a:b", "orders"));
+    }
+
+    @Test
     void equalityIsNameBased() {
         assertEquals(new Tenant("acme"), new Tenant("acme"));
         assertEquals(new Tenant("acme").hashCode(), new Tenant("acme").hashCode());
