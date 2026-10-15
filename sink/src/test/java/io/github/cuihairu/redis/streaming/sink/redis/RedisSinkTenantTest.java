@@ -86,9 +86,9 @@ class RedisSinkTenantTest {
         RMap<String, String> map = mock(RMap.class);
         @SuppressWarnings("unchecked")
         RStream<String, String> stream = mock(RStream.class);
-        when(client.getList(any(String.class))).thenReturn(list);
-        when(client.getMap(any(String.class))).thenReturn(map);
-        when(client.getStream(any(String.class), any(org.redisson.client.codec.Codec.class))).thenReturn(stream);
+        when(client.<String>getList(any(String.class))).thenReturn(list);
+        when(client.<String, String>getMap(any(String.class))).thenReturn(map);
+        when(client.<String, String>getStream(any(String.class), any(org.redisson.client.codec.Codec.class))).thenReturn(stream);
         when(list.add(any(String.class))).thenReturn(true);
         when(map.put(any(String.class), any(String.class))).thenReturn(null);
         when(stream.add(any(org.redisson.api.stream.StreamAddArgs.class)))

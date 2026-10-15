@@ -1,6 +1,7 @@
 package io.github.cuihairu.redis.streaming.sink.redis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.cuihairu.redis.streaming.core.utils.Tenant;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RMap;
 import org.redisson.api.RedissonClient;
@@ -19,6 +20,13 @@ import java.util.concurrent.TimeUnit;
  */
 @Slf4j
 public class RedisHashSink<K, V> {
+
+    /**
+     * Key prefix the tenant-aware constructors apply when the caller gives none:
+     * a hash sink built for a tenant is always namespaced ({@code app:tenant:hashName})
+     * so two tenants never share the bare hash name.
+     */
+    public static final String DEFAULT_KEY_PREFIX = "app";
 
     private final RedissonClient redissonClient;
     private final String hashName;
@@ -66,6 +74,62 @@ public class RedisHashSink<K, V> {
             ObjectMapper objectMapper,
             Duration ttl) {
         this(redissonClient, hashName, objectMapper, ttl, null);
+    }
+
+    /**
+     * Create a Redis Hash sink whose key is namespaced under a prefix and tenant:
+     * {@code prefix:tenant:hashName} (see {@link Tenant#scopedKey(String, String, String)}).
+     * Unlike the list/stream sinks, a null/blank prefix here falls back to
+     * {@link #DEFAULT_KEY_PREFIX} instead of the bare name, so a tenant-aware hash
+     * sink is always namespaced; a null/blank or {@code "default"} tenant adds no segment.
+     *
+     * @param redissonClient the Redisson client
+     * @param hashName       the Redis Hash name
+     * @param objectMapper   the JSON object mapper
+     * @param keyPrefix      the key prefix (null/blank for {@link #DEFAULT_KEY_PREFIX})
+     * @param tenant         the tenant namespace (null/blank/{@code "default"} for none)
+     * @throws IllegalArgumentException when the tenant name violates the shared grammar
+     */
+    public RedisHashSink(
+            RedissonClient redissonClient,
+            String hashName,
+            ObjectMapper objectMapper,
+            String keyPrefix,
+            String tenant) {
+        this(redissonClient, hashName, objectMapper, null, keyPrefix, tenant);
+    }
+
+    /**
+     * Create a Redis Hash sink with TTL whose key is namespaced under a prefix and
+     * tenant: {@code prefix:tenant:hashName}. A null/blank prefix falls back to
+     * {@link #DEFAULT_KEY_PREFIX}; a null/blank or {@code "default"} tenant adds no segment.
+     *
+     * @param redissonClient the Redisson client
+     * @param hashName       the Redis Hash name
+     * @param objectMapper   the JSON object mapper
+     * @param ttl            time-to-live for the hash (null for no expiration)
+     * @param keyPrefix      the key prefix (null/blank for {@link #DEFAULT_KEY_PREFIX})
+     * @param tenant         the tenant namespace (null/blank/{@code "default"} for none)
+     * @throws IllegalArgumentException when the tenant name violates the shared grammar
+     */
+    public RedisHashSink(
+            RedissonClient redissonClient,
+            String hashName,
+            ObjectMapper objectMapper,
+            Duration ttl,
+            String keyPrefix,
+            String tenant) {
+        Objects.requireNonNull(redissonClient, "RedissonClient cannot be null");
+        Objects.requireNonNull(hashName, "Hash name cannot be null");
+        Objects.requireNonNull(objectMapper, "ObjectMapper cannot be null");
+
+        String prefix = keyPrefix == null || keyPrefix.isBlank() ? DEFAULT_KEY_PREFIX : keyPrefix;
+
+        this.redissonClient = redissonClient;
+        this.hashName = Tenant.scopedKey(prefix, tenant, hashName);
+        this.objectMapper = objectMapper;
+        this.ttl = ttl;
+        this.valueClass = null;
     }
 
     private RedisHashSink(

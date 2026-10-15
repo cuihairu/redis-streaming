@@ -2,6 +2,7 @@ package io.github.cuihairu.redis.streaming.sink.redis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.cuihairu.redis.streaming.api.stream.StreamSink;
+import io.github.cuihairu.redis.streaming.core.utils.Tenant;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
@@ -64,6 +65,39 @@ public class RedisStreamSink<T> implements StreamSink<T> {
 
         this.redissonClient = redissonClient;
         this.streamName = streamName;
+        this.valueField = valueField;
+        this.objectMapper = objectMapper;
+    }
+
+    /**
+     * Create a Redis Stream sink whose key is namespaced under a prefix and tenant:
+     * {@code prefix:tenant:streamName} (see {@link Tenant#scopedKey(String, String, String)}).
+     * A null/blank prefix keeps the caller-given name verbatim (no prefix, no tenant
+     * segment) so the legacy layout is unchanged; a null/blank or {@code "default"}
+     * tenant adds no segment.
+     *
+     * @param redissonClient the Redisson client
+     * @param streamName     the Redis Stream name
+     * @param valueField     the stream entry field holding the payload
+     * @param objectMapper   the JSON object mapper
+     * @param keyPrefix      the key prefix (null/blank for none)
+     * @param tenant         the tenant namespace (null/blank/{@code "default"} for none)
+     * @throws IllegalArgumentException when the tenant name violates the shared grammar
+     */
+    public RedisStreamSink(
+            RedissonClient redissonClient,
+            String streamName,
+            String valueField,
+            ObjectMapper objectMapper,
+            String keyPrefix,
+            String tenant) {
+        Objects.requireNonNull(redissonClient, "RedissonClient cannot be null");
+        Objects.requireNonNull(streamName, "Stream name cannot be null");
+        Objects.requireNonNull(valueField, "Value field cannot be null");
+        Objects.requireNonNull(objectMapper, "ObjectMapper cannot be null");
+
+        this.redissonClient = redissonClient;
+        this.streamName = Tenant.scopedKey(keyPrefix, tenant, streamName);
         this.valueField = valueField;
         this.objectMapper = objectMapper;
     }

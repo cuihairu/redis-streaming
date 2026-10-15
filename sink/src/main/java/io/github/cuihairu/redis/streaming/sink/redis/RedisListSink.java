@@ -2,6 +2,7 @@ package io.github.cuihairu.redis.streaming.sink.redis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.cuihairu.redis.streaming.api.stream.StreamSink;
+import io.github.cuihairu.redis.streaming.core.utils.Tenant;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RList;
 import org.redisson.api.RedissonClient;
@@ -51,6 +52,35 @@ public class RedisListSink<T> implements StreamSink<T> {
 
         this.redissonClient = redissonClient;
         this.listName = listName;
+        this.objectMapper = objectMapper;
+    }
+
+    /**
+     * Create a Redis List sink whose key is namespaced under a prefix and tenant:
+     * {@code prefix:tenant:listName} (see {@link Tenant#scopedKey(String, String, String)}).
+     * A null/blank prefix keeps the caller-given name verbatim (no prefix, no tenant
+     * segment) so the legacy layout is unchanged; a null/blank or {@code "default"}
+     * tenant adds no segment.
+     *
+     * @param redissonClient the Redisson client
+     * @param listName       the Redis List name
+     * @param objectMapper   the JSON object mapper
+     * @param keyPrefix      the key prefix (null/blank for none)
+     * @param tenant         the tenant namespace (null/blank/{@code "default"} for none)
+     * @throws IllegalArgumentException when the tenant name violates the shared grammar
+     */
+    public RedisListSink(
+            RedissonClient redissonClient,
+            String listName,
+            ObjectMapper objectMapper,
+            String keyPrefix,
+            String tenant) {
+        Objects.requireNonNull(redissonClient, "RedissonClient cannot be null");
+        Objects.requireNonNull(listName, "List name cannot be null");
+        Objects.requireNonNull(objectMapper, "ObjectMapper cannot be null");
+
+        this.redissonClient = redissonClient;
+        this.listName = Tenant.scopedKey(keyPrefix, tenant, listName);
         this.objectMapper = objectMapper;
     }
 
