@@ -138,7 +138,7 @@ new PatternSequenceProcessFunction<>(pattern, timestampExtractor)
 - `join` / `cep`：两算子缓冲迁 keyed `ValueState<String>`（自管 JSON 编解码，见 §3.4），failover 语义升级（§3.3/§4.2）；
 - 证明：模块级测试以「同一 store + 全新函数实例」模拟重启——join 配对与 cep partial 均从上一实例状态续跑。
 
-### 5.2 卡点 B：`DataStream.join(other)` 语法糖——内存侧已解除（2026-10-14），Redis 侧仍开
+### 5.2 卡点 B：`DataStream.join(other)` 语法糖——已解除（2026-10-14，内存侧与 Redis 侧 U3 均落地）
 
 设计走「编译期展开为信封 + 桥接」，需要把左右流汇入同一 join 输入（MQ topic 或引擎内 union）——`DataStream` API 现在没有 union/双源汇合原语，内存引擎无 topic 基底；设计本身把「引擎级双源 pipeline（方案 A）」放在 Phase 3。
 
@@ -147,11 +147,11 @@ new PatternSequenceProcessFunction<>(pattern, timestampExtractor)
 - `DataStream.union(DataStream<? extends T>)` 默认方法立契约（Redis 引擎默认抛不支持并指向 join topic 模式），内存引擎 round-robin 交错实现（11 测试）；
 - `StreamJoinOperator.join(left, right, config, fn)` 静态工厂（join 模块）：信封 map + union + keyBy 信封键 + 算子，与手工信封路径差分对照钉住（7 测试）——键即分区键，「信封键与 keyBy 选择器不一致静默失配」在糖路径结构性不存在。
 
-**仍开的部分（Redis 侧 U3）**：静态工厂拿不到执行环境（`RedisStreamBuilder.env` 私有），无法注册「信封落地 join topic」的左右 pipeline；API 形态（带 env 参数工厂 / `env.join(...)` / `DataStream` 暴露 env）与 join topic 生命周期（命名/trim/随 job 清理）待定，详见 `docs/Union-DualSource-Design.md` §5 注记。
+**Redis 侧 U3 已落地（2026-10-14）**：静态工厂拿不到执行环境（`RedisStreamBuilder.env` 私有）的缺口以实例方法落点解决——`RedisStreamExecutionEnvironment.join(joinTopic, left, right, config, fn)` 注册「信封落地 join topic」的左右 pipeline 与合流消费 pipeline（三选一代决与被否选项见 `docs/Union-DualSource-Design.md` §5）。join topic 生命周期规则随代决一并定：topic 名由用户显式给定（字符集 `[A-Za-z0-9_.-]+`，喂稳定 source id `join-<topic>`）、消费组派生 `<topic>-join`、trim/TTL 走 MQ 既有 stream 保留治理（糖不擅自删 topic）、同一 joinTopic 二次调用被稳定 source id 的重复注册守卫拒绝（fail-fast）。双引擎差分对照已钉住（Redis 侧 `RedisEnvJoinSugarTest#redisJoinSugarMatchesTheHandWrittenEnvelopeExpansion`）。
 
 **未实施清单**（留档）：
 - ~~`DataStream.union(...)`（或等价汇合原语）双引擎实现~~（2026-10-14：内存侧落地，Redis 侧按设计走 join topic 模式即 U3，不另做引擎级实现）；
-- ~~`DataStream.join(other)` 语法糖展开为 envelope map + 汇合 + keyBy + `StreamJoinOperator`~~（2026-10-14：内存侧以 `StreamJoinOperator.join` 落地；Redis 侧 U3 编排仍开）；
+- ~~`DataStream.join(other)` 语法糖展开为 envelope map + 汇合 + keyBy + `StreamJoinOperator`~~（2026-10-14：内存侧以 `StreamJoinOperator.join` 落地；Redis 侧以 `RedisStreamExecutionEnvironment.join` 三段编排落地，双引擎差分对照钉住）；
 - event-time join 窗口评估（依赖 `TimestampAssigner` 重载接入）。
 
 ## 6. 影响面与兼容性
