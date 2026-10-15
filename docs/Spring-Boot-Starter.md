@@ -158,6 +158,7 @@ server:
 | `key-prefix` | String | `streaming:mq` |
 | `stream-key-prefix` | String | `stream:topic` |
 | `tenant` | String | `default`(非默认值在两个前缀后插入 `:tenant` 段) |
+| `metrics-tenant-tag` | boolean | `false`(开启后 MQ 计数/计时序列加 `tenant` tag,默认关保存量 dashboard 不变;详见 [Metrics](Metrics.md)「tenant 维度规格」) |
 | `consumer-name-prefix` | String | `consumer-` |
 | `dlq-consumer-suffix` | String | `-dlq` |
 | `default-consumer-group` | String | `default-group` |

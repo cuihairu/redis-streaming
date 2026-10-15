@@ -3,7 +3,7 @@
 ## 未完成
 
 - [ ] join/cep Phase 3：引擎级双源 pipeline、event-time 水位对齐、retract 语义（设计标注远期，与 P4 动态伸缩合并设计；2026-10-15 巡检代决：继续搁置）
-- [ ] 多租户 v2：线程/内存/in-flight 配额、指标 tenant 维度、租户级迁移与运维 CLI，设计见 docs/Multi-Tenancy-Design.md（线程/内存/in-flight 配额与迁移/CLI 仍卡点：设计第 28 行圈定 v1 配额仅三项且已全部落地（SendQuota=fe73aa5、autoTrim 租户上限=StreamRetentionHousekeeper、并行度/分区配额=TenantQuotaPolicy），设计第 10 行明确 in-flight 为 per-consumer 无跨租户容量配额——超出这三项即自造规格，实施需用户先定 v2 配额规格；指标 tenant 维度已落地——规格见 docs/Metrics.md「tenant 维度规格」节，消费端 wiring 已补（commit 3080ab6），扫漏补修 broker 写路径 produced 计数（2026-10-15，DefaultBroker 与 RedisMessageProducer 两条生产路径均带 tenant），内置桥接 opt-in 开关 redis-streaming.mq.metrics-tenant-tag 已落地、默认关保存量 dashboard 不变）
+- [ ] 多租户 v2：线程/内存/in-flight 配额、指标 tenant 维度、租户级迁移与运维 CLI，设计见 docs/Multi-Tenancy-Design.md（线程/内存/in-flight 配额与迁移/CLI 仍卡点：设计第 28 行圈定 v1 配额仅三项且已全部落地（SendQuota=fe73aa5、autoTrim 租户上限=StreamRetentionHousekeeper、并行度/分区配额=TenantQuotaPolicy），设计第 10 行明确 in-flight 为 per-consumer 无跨租户容量配额——超出这三项即自造规格，实施需用户先定 v2 配额规格；指标 tenant 维度已落地——规格见 docs/Metrics.md「tenant 维度规格」节，消费端 wiring 已补（commit 3080ab6），扫漏补修 broker 写路径 produced 计数（2026-10-15，DefaultBroker 与 RedisMessageProducer 两条生产路径均带 tenant），内置桥接 opt-in 开关 redis-streaming.mq.metrics-tenant-tag 已落地、默认关保存量 dashboard 不变，starter 配置参考表 zh/en 双份已同步该属性行）
 - [x] 多租户 v2 前缀租户注入：共享 Tenant 契约 + registry/config/state/checkpoint/sink-dedup 前缀注入 + starter 三个 tenant 属性（commits 961c21b、827fed1、59424d3、3ef95f8、42493d0）；扫漏补修 mq 重投锁键（commit 12d3f2a）；扫漏补修 DLQ 管理面租户盲扫（commit 8de45f7）；cdc 无需改动，落地记录见 docs/Multi-Tenancy-Design.md
 
 ## 已完成

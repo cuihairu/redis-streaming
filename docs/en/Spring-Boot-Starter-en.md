@@ -197,6 +197,7 @@ A non-default `tenant` inserts a `:tenant` segment right after the key prefix (`
 | `key-prefix` | String | `streaming:mq` |
 | `stream-key-prefix` | String | `stream:topic` |
 | `tenant` | String | `default` (a non-default value inserts a `:tenant` segment after both prefixes) |
+| `metrics-tenant-tag` | boolean | `false` (adds a `tenant` tag to the MQ counter/timer series; off keeps existing dashboards unchanged — see [Metrics.md](../Metrics.md)) |
 | `consumer-name-prefix` | String | `consumer-` |
 | `dlq-consumer-suffix` | String | `-dlq` |
 | `default-consumer-group` | String | `default-group` |
