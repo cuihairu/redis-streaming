@@ -140,7 +140,7 @@ new PatternSequenceProcessFunction<>(pattern, timestampExtractor)
 
 ### 5.2 卡点 B：`DataStream.join(other)` 语法糖——已解除（2026-10-14，内存侧与 Redis 侧 U3 均落地）
 
-设计走「编译期展开为信封 + 桥接」，需要把左右流汇入同一 join 输入（MQ topic 或引擎内 union）——`DataStream` API 现在没有 union/双源汇合原语，内存引擎无 topic 基底；设计本身把「引擎级双源 pipeline（方案 A）」放在 Phase 3。
+设计走「编译期展开为信封 + 桥接」，需要把左右流汇入同一 join 输入（MQ topic 或引擎内 union）——`DataStream.union(...)` 双源汇合原语已落地（默认方法立契约 + 内存引擎 round-robin 实现，2026-10-14），内存引擎仍无 topic 基底；设计本身把「引擎级双源 pipeline（方案 A）」放在 Phase 3。
 
 **解除方式（内存侧，2026-10-14，按 `docs/Union-DualSource-Design.md` 推荐路径）**：
 
