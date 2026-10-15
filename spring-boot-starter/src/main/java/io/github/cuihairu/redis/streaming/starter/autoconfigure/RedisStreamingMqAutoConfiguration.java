@@ -116,8 +116,11 @@ public class RedisStreamingMqAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public MessageQueueAdmin messageQueueAdmin(RedissonClient redissonClient) {
-        return new RedisMessageQueueAdmin(redissonClient);
+    public MessageQueueAdmin messageQueueAdmin(RedissonClient redissonClient, MqOptions opts) {
+        // Build the tenant-scoped key view from the options instead of leaning on the
+        // process-wide static tenant (set as a side effect of MessageQueueFactory's
+        // constructor, i.e. bean-order dependent — docs/Multi-Tenancy-Design.md).
+        return new RedisMessageQueueAdmin(redissonClient, opts);
     }
 
     @Bean(name = "dlqReplayProducer", destroyMethod = "close")
@@ -153,8 +156,10 @@ public class RedisStreamingMqAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public DeadLetterService deadLetterService(RedissonClient redissonClient,
-                                               io.github.cuihairu.redis.streaming.mq.dlq.ReplayHandler dlqReplayHandler) {
-        return new RedisDeadLetterService(redissonClient, dlqReplayHandler);
+                                               io.github.cuihairu.redis.streaming.mq.dlq.ReplayHandler dlqReplayHandler,
+                                               MqOptions opts) {
+        return new RedisDeadLetterService(redissonClient, dlqReplayHandler,
+                io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.of(opts));
     }
 
     /**
@@ -172,15 +177,17 @@ public class RedisStreamingMqAutoConfiguration {
                                                  io.github.cuihairu.redis.streaming.mq.dlq.ReplayHandler dlqReplayHandler) {
         // Ensure DLQ keys prefix aligns even if DeadLetterService bean was not requested
         io.github.cuihairu.redis.streaming.mq.dlq.DlqKeys.configure(opts.getStreamKeyPrefix());
-        return new RedisDeadLetterConsumer(redissonClient, opts.getConsumerNamePrefix() + "dlq", opts.getDefaultDlqGroup(), dlqReplayHandler);
+        return new RedisDeadLetterConsumer(redissonClient, opts.getConsumerNamePrefix() + "dlq", opts.getDefaultDlqGroup(),
+                dlqReplayHandler, io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.of(opts));
     }
 
     @Bean
     @SuppressWarnings("deprecation")
     @ConditionalOnMissingBean
-    public DeadLetterQueueManager deadLetterQueueManager(RedissonClient redissonClient) {
+    public DeadLetterQueueManager deadLetterQueueManager(RedissonClient redissonClient, MqOptions opts) {
         // Backwards-compatible bean; internally delegates to reliability DLQ service
-        return new DeadLetterQueueManager(redissonClient);
+        return new DeadLetterQueueManager(redissonClient,
+                io.github.cuihairu.redis.streaming.mq.partition.StreamKeys.of(opts));
     }
 
     @Bean

@@ -35,10 +35,10 @@ class MqAutoConfigurationBeanMethodsCoverageTest {
         assertNotNull(cfg.messageQueueFactory(redisson, opts, brokerFactory));
         assertNotNull(cfg.brokerRouter());
         assertNotNull(cfg.brokerFactory(new RedisStreamingProperties(), null));
-        assertNotNull(cfg.messageQueueAdmin(redisson));
-        assertNotNull(cfg.deadLetterQueueManager(redisson));
+        assertNotNull(cfg.messageQueueAdmin(redisson, opts));
+        assertNotNull(cfg.deadLetterQueueManager(redisson, opts));
 
-        MessageQueueAdmin admin = cfg.messageQueueAdmin(redisson);
+        MessageQueueAdmin admin = cfg.messageQueueAdmin(redisson, opts);
         MessageProducer producer = mock(MessageProducer.class);
         ReplayHandler handler = cfg.dlqReplayHandler(redisson, opts, producer);
         assertNotNull(handler);
@@ -62,7 +62,7 @@ class MqAutoConfigurationBeanMethodsCoverageTest {
         boolean ok = handler.publish("t", 0, "payload", java.util.Map.of("h", "1"), 3);
         assertTrue(!ok || ok, "handler completes without throwing on producer failure");
 
-        DeadLetterService service = cfg.deadLetterService(redisson, handler);
+        DeadLetterService service = cfg.deadLetterService(redisson, handler, opts);
         assertNotNull(service);
         assertNotNull(cfg.deadLetterAdmin(redisson, service));
     }
