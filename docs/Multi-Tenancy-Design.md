@@ -57,9 +57,10 @@
 | state / checkpoint / sink 去重 | `RedisRuntimeConfig.Builder.tenant`，在 `build()` 时统一派生 | `streaming:runtime:acme:...`、`streaming:runtime:checkpoint:acme:{job}:...` |
 | starter | `redis-streaming.mq.tenant`、`redis-streaming.registry.tenant`、`redis-streaming.config.tenant` | — |
 
-两点需要注意：
+三点需要注意：
 
 - **调用顺序无关**：`Builder.tenant(...)` 只记录租户，键段在 `build()` 时派生，因此自定义 `stateKeyPrefix`/`checkpointKeyPrefix`/`sinkDedupKeyPrefix` 同样会被加上租户段，且不受 setter 先后顺序影响（此前「自定义前缀获胜」会让租户被静默丢弃，即两个租户共用一套状态键）。
+- **重投锁曾漏租户段**：`RedisMessageConsumer` 的重投 mover 此前把锁键写死为 `streaming:mq:retry:lock:{topic}`，既绕过控制前缀也绕过租户段——两个租户用同名 topic 会互相串行（一方的重投阻塞另一方）。现由 `StreamKeys.retryLockKey(topic)` 派生，默认租户键与旧版逐字节一致。
 - **cdc 无需改动**：CDC 只投递到 MQ topic，而 topic 键已按租户分段；sink 的目标键由调用方显式给出，框架托管的去重键前缀已随 `RedisRuntimeConfig.Builder.tenant` 分段。
 
 ## 非目标

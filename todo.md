@@ -3,8 +3,8 @@
 ## 未完成
 
 - [ ] join/cep Phase 3：引擎级双源 pipeline、event-time 水位对齐、retract 语义（设计标注远期，与 P4 动态伸缩合并设计；2026-10-15 巡检代决：继续搁置）
-- [ ] 多租户 v2：线程/内存/in-flight 配额、指标 tenant 维度、租户级迁移与运维 CLI，设计见 docs/Multi-Tenancy-Design.md（配额与 CLI 无规格；指标 tenant 维度需破坏性改 StreamingMetricsCollector SPI；2026-10-15 巡检代决：继续搁置）
-- [x] 多租户 v2 前缀租户注入：共享 Tenant 契约 + registry/config/state/checkpoint/sink-dedup 前缀注入 + starter 三个 tenant 属性（commits 961c21b、827fed1、59424d3、3ef95f8；cdc 无需改动，落地记录见 docs/Multi-Tenancy-Design.md）
+- [ ] 多租户 v2：线程/内存/in-flight 配额、指标 tenant 维度、租户级迁移与运维 CLI，设计见 docs/Multi-Tenancy-Design.md（三项均卡点：配额/CLI 设计无规格；指标 tenant 维度须破坏性改 core 公开 SPI StreamingMetricsCollector，2026-10-15 前缀注入完成后重判仍为卡点）
+- [x] 多租户 v2 前缀租户注入：共享 Tenant 契约 + registry/config/state/checkpoint/sink-dedup 前缀注入 + starter 三个 tenant 属性（commits 961c21b、827fed1、59424d3、3ef95f8、42493d0；cdc 无需改动，落地记录见 docs/Multi-Tenancy-Design.md）
 
 ## 已完成
 

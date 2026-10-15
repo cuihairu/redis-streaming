@@ -69,6 +69,21 @@ class StreamKeysTenantTest {
         assertNotEquals(a.partitionStreamKey("t", 0), b.partitionStreamKey("t", 0));
         assertNotEquals(a.dlqKey("t"), b.dlqKey("t"));
         assertNotEquals(a.topicsRegistryKey(), b.topicsRegistryKey());
+        assertNotEquals(a.retryLockKey("t"), b.retryLockKey("t"));
+    }
+
+    /**
+     * The retry mover's per-topic lock must live in the same tenant namespace as the
+     * bucket it guards — otherwise two tenants running the same topic name block each
+     * other on one shared lock.
+     */
+    @Test
+    void retryLockKeyFollowsPrefixAndTenant() {
+        assertEquals("streaming:mq:retry:lock:t", StreamKeys.shared().retryLockKey("t"));
+        assertEquals("streaming:mq:acme:retry:lock:t",
+                new StreamKeys("streaming:mq", "stream:topic", "acme").retryLockKey("t"));
+        assertEquals("custom:control:retry:lock:t",
+                new StreamKeys("custom:control", "custom:stream", StreamKeys.DEFAULT_TENANT).retryLockKey("t"));
     }
 
     // ===== tenant normalization =====

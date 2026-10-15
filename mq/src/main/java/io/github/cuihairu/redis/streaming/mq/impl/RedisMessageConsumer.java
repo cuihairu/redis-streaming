@@ -979,7 +979,7 @@ public class RedisMessageConsumer implements MessageConsumer, PausableMessageCon
         if (paused.get()) return;
         // Process per subscribed topic; use a per-topic lock to avoid duplicate movers
         subscriptions.forEach((topic, sub) -> {
-            String lockKey = "streaming:mq:retry:lock:" + topic;
+            String lockKey = keys.retryLockKey(topic);
             RLock lock = redissonClient.getLock(lockKey);
             boolean locked = false;
             try {

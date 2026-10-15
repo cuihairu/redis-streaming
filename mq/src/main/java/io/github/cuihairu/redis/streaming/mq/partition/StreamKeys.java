@@ -133,6 +133,15 @@ public final class StreamKeys {
         return controlPrefix + tenantSegment() + ":retry:item:" + topic + ":" + id;
     }
 
+    /**
+     * Lock guarding the retry mover of one topic: it must sit in the same namespace as
+     * {@link #retryBucketKey(String)}, otherwise two tenants subscribing to the same topic
+     * name would serialize on one shared lock.
+     */
+    public String retryLockKey(String topic) {
+        return controlPrefix + tenantSegment() + ":retry:lock:" + topic;
+    }
+
     /** Global topics registry set key: {controlPrefix}[:tenant]:topics:registry */
     public String topicsRegistryKey() {
         return controlPrefix + tenantSegment() + ":topics:registry";
