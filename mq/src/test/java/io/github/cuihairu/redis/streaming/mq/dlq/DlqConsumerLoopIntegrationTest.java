@@ -167,6 +167,15 @@ class DlqConsumerLoopIntegrationTest {
             });
             consumer.start();
 
+            // the 4 records above must be drained by the RETRY-aware handler before the
+            // second subscribe below: subscribe(topic, handler) REPLACES the topic's
+            // subscription, so a slow runner could otherwise let the SUCCESS-only handler
+            // claim ad-retry, ack it, and never replay it to the partition stream
+            assertTrue(waitUntil(() -> handled.size() >= 4, 20_000), "handled=" + handled);
+            // RETRY via adapter's replay lambda republished to the partition stream
+            assertTrue(waitUntil(() -> partitionStream().size() > 0, 15_000),
+                    "adapter RETRY should republish to partition stream");
+
             // also exercise the 2-arg subscribe overload (its handler-adapting lambda)
             RedisDeadLetterService extra = new RedisDeadLetterService(redis);
             DeadLetterRecord er = record("ad-default-group");
@@ -175,11 +184,7 @@ class DlqConsumerLoopIntegrationTest {
                 handled.add(String.valueOf(m.getPayload()));
                 return MessageHandleResult.SUCCESS;
             });
-
             assertTrue(waitUntil(() -> handled.size() >= 5, 20_000), "handled=" + handled);
-            // RETRY via adapter's replay lambda republished to the partition stream
-            assertTrue(waitUntil(() -> partitionStream().size() > 0, 15_000),
-                    "adapter RETRY should republish to partition stream");
         } finally {
             consumer.close();
         }
