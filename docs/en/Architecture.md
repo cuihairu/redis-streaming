@@ -1,9 +1,5 @@
 # Streaming Framework Architecture
 
-[中文](../Architecture.md) | [English](Architecture-en.md)
-
----
-
 ## Architecture Overview
 
 This document outlines the overall architecture of the streaming framework and highlights the role and interactions of the MQ (Redis Streams) subsystem. Detailed design is in [MQ-Design.md](./MQ-Design.md).
@@ -107,7 +103,7 @@ The project is a Gradle multi-module build (20 modules, matching `settings.gradl
 **Last Updated**: 2026-10-05
 
 Related documentation:
-- [MQ Design](MQ-Design-en.md)
-- [MQ Broker Interaction](MQ-Broker-Interaction-en.md)
-- [Registry Design](Registry-Design-en.md)
-- [Spring Boot Starter](Spring-Boot-Starter-en.md)
+- [MQ Design](MQ-Design.md)
+- [MQ Broker Interaction](MQ-Broker-Interaction.md)
+- [Registry Design](Registry-Design.md)
+- [Spring Boot Starter](Spring-Boot-Starter.md)

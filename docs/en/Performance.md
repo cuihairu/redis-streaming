@@ -1,9 +1,5 @@
 # Performance Notes
 
-[中文](../Performance.md) | [English](Performance-en.md)
-
----
-
 Defaults are taken from source code (`RedisRuntimeConfig`, `MqOptions`).
 
 ## Partitioning & Throughput

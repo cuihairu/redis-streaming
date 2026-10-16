@@ -1,10 +1,6 @@
 # Troubleshooting
 
-[中文](../troubleshooting.md) | [English](Troubleshooting-en.md)
-
----
-
-Common issues across build, test, and runtime. Defaults are taken from the source; for the test flow see [Testing-en](Testing-en.md) and the root `TESTING.md`.
+Common issues across build, test, and runtime. Defaults are taken from the source; for the test flow see [Testing](Testing.md) and the root `TESTING.md`.
 
 ## Build
 
@@ -40,7 +36,7 @@ docker exec streaming-redis-test redis-cli ping   # should return PONG
 
 ### CDC integration tests "don't run"
 - Lifecycle/concurrency cases run on an embedded H2 — no external services needed.
-- MySQL/PostgreSQL connector cases (`DatabasePollingCDCConnectorIntegrationTest` etc.) require `MYSQL_URL` / `POSTGRES_URL`; without them they are skipped via JUnit assumptions (not failures). See [Testing-en](Testing-en.md) for how to enable them.
+- MySQL/PostgreSQL connector cases (`DatabasePollingCDCConnectorIntegrationTest` etc.) require `MYSQL_URL` / `POSTGRES_URL`; without them they are skipped via JUnit assumptions (not failures). See [Testing](Testing.md) for how to enable them.
 
 ## Runtime
 
@@ -73,5 +69,5 @@ npm run docs:dev
 ```
 
 ## References
-- Testing troubleshooting details: root `TESTING.md` and [Testing-en](Testing-en.md)
-- CI behavior (health-check waits, publish conditions): [GitHub Actions](GitHub-Actions-en.md)
+- Testing troubleshooting details: root `TESTING.md` and [Testing](Testing.md)
+- CI behavior (health-check waits, publish conditions): [GitHub Actions](GitHub-Actions.md)

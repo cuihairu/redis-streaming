@@ -1,9 +1,5 @@
 # Registry Usage Guide
 
-[中文](../Registry-Guide.md) | [English](Registry-Guide-en.md)
-
----
-
 Usage of service registration, discovery, change subscription, metadata/metrics filtering, and client-side load balancing. Every class name, method and default in this page is aligned with the current implementation under `registry/src/main/java` and `spring-boot-starter/src/main/java`.
 
 ## 1) Spring Boot auto-configuration
@@ -251,5 +247,5 @@ The probe implementation is chosen by protocol: HTTP/HTTPS uses `HttpHealthCheck
 
 ## References
 
-- Design: [Registry-Design-en.md](Registry-Design-en.md)
+- Design: [Registry-Design.md](Registry-Design.md)
 - Module overview: the Chinese [Registry.md](../Registry.md)

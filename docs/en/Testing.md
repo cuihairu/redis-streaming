@@ -1,9 +1,5 @@
 # Testing (EN)
 
-[中文](../Testing.md) | [English](Testing-en.md)
-
----
-
 ## 1) Unit Tests
 
 ```bash

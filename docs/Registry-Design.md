@@ -1,9 +1,5 @@
 # Registry 模块设计
 
-[中文](Registry-Design) | [English](en/Registry-Design-en)
-
----
-
 ## 概述
 
 基于 Redis 的服务注册与发现模块。键结构与操作对齐 `registry/src/main/java` 的当前实现；配置中心能力已拆分到 `config` 模块（见 [config.md](config.md)）。

@@ -1,9 +1,5 @@
 # Installation & Deployment
 
-[中文](../Deployment.md) | [English](Deployment-en.md)
-
----
-
 Minimum production-readiness points and key configuration defaults. Defaults are taken from the repository source (`MqOptions`, `RedisRuntimeConfig`, `RedisStreamingProperties`).
 
 ## 1) Runtime requirements
@@ -103,7 +99,7 @@ spring:
 
 ## 9) Job control plane (optional, declarative upgrade/rollback)
 
-Job submit/upgrade/rollback/stop can be managed centrally through the Redis control plane (design and key layout in the Chinese [Control-Plane-Design.md](../Control-Plane-Design.md); starter wiring in the "Job control plane" section of [Spring-Boot-Starter-en.md](Spring-Boot-Starter-en.md)):
+Job submit/upgrade/rollback/stop can be managed centrally through the Redis control plane (design and key layout in the Chinese [Control-Plane-Design.md](../Control-Plane-Design.md); starter wiring in the "Job control plane" section of [Spring-Boot-Starter.md](Spring-Boot-Starter.md)):
 
 - **Topology**: any process with `redis-streaming.runtime.control-plane.enabled=true` acts as the submit entry point (CLI / ops service / application); executor-side instances enable `redis-streaming.runtime.agent.enabled=true`. The control plane only writes the spec (desired state); agents reconcile periodically: claim (`SET NX EX`, TTL=max(3×poll,10s)) → deploy → report status.
 - **Upgrade semantics**: a config/factory/descriptor change is a full upgrade (best-effort checkpoint → cancel → redeploy, brief interruption); a parallelism-only change takes the `scaleParallelism` fast path (no restart). `rollback` returns to the previous spec version.

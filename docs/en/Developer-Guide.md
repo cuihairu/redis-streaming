@@ -1,9 +1,5 @@
 # Developer Guide
 
-[中文](../Developer-Guide.md) | [English](Developer-Guide-en.md)
-
----
-
 - **Project Structure**: Multi-module Gradle (module list in `settings.gradle`, 20 modules; see [Architecture](../Architecture.md) module table)
 - **Full Build**: `./gradlew build` (includes unit + integration tests; `check` depends on `integrationTest`, requires Redis)
 - **Unit Tests Only**: `./gradlew test`; Integration Tests: `./gradlew integrationTest`

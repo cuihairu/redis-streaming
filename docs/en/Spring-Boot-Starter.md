@@ -1,9 +1,5 @@
 # Spring Boot Starter Guide
 
-[中文](../Spring-Boot-Starter.md) | [English](Spring-Boot-Starter-en.md)
-
----
-
 Module directory: `spring-boot-starter/`. It assembles the core/runtime/mq/registry/config/reliability components as Spring beans and provides a fallback `RedissonClient`, service registration/discovery, a configuration center, MQ with DLQ, rate limiters, retained housekeeping background tasks, health checks, and the Micrometer metrics bridge.
 
 Maven coordinates: `io.github.cuihairu.redis-streaming:spring-boot-starter` (transitive: `core`/`registry`/`config`/`mq`/`runtime`/`reliability`/`spring-boot-starter`; `micrometer-core` is `api`, `actuator` is `compileOnly` and is not pulled in forcibly).

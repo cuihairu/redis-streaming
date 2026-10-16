@@ -1,9 +1,5 @@
 # MQ Broker Interaction
 
-[中文](../MQ-Broker-Interaction.md) | [English](MQ-Broker-Interaction-en.md)
-
----
-
 This document catalogs the Redis commands actually used by the `mq/` module, with sequence diagrams and Kafka semantic mappings, to aid understanding and troubleshooting. The command list has been verified against `mq/src/main/java`; implementation goes through Redisson APIs (`RStream`/`RScript`/`RBucket` etc.), and the tables below show the corresponding raw commands.
 
 Key conventions: control key prefix `keyPrefix` (default `streaming:mq`), data stream prefix `streamKeyPrefix` (default `stream:topic`), see `partition/StreamKeys`.

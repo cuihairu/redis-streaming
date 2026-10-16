@@ -1,9 +1,5 @@
 # CI/CD
 
-[中文](../GitHub-Actions.md) | [English](GitHub-Actions-en.md)
-
----
-
 This project's CI/CD uses GitHub Actions; workflow files live in `.github/workflows/` (see the `README.md` in that directory).
 
 ## Workflows (the 2 that exist)

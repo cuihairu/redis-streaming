@@ -69,6 +69,6 @@ npm run docs:dev
 ```
 
 ## 参考
-- 英文版：[en/Troubleshooting-en.md](./en/Troubleshooting-en.md)
+- 英文版：[en/Troubleshooting.md](./en/Troubleshooting.md)
 - 测试排障细节：根目录 `TESTING.md` 与 [Testing](/Testing)
 - CI 行为（健康检查等待、发布条件）：[GitHub Actions](/GitHub-Actions)

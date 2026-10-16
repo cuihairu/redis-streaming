@@ -1,9 +1,5 @@
 # Registry Module Design
 
-[中文](../Registry-Design.md) | [English](Registry-Design-en.md)
-
----
-
 ## Overview
 
 A Redis-based service registration and discovery module. Key structures and operations follow the current implementation under `registry/src/main/java`. Configuration-center capability lives in the separate `config` module (see the Chinese [config.md](../config.md)).
@@ -170,5 +166,5 @@ Lua script cache: `RegistryLuaScriptExecutor` runs the scripts (register, deregi
 **Last Updated**: 2026-10-05
 
 Related documentation:
-- [Overall Architecture](Architecture-en.md)
-- [Spring Boot Integration](Spring-Boot-Starter-en.md)
+- [Overall Architecture](Architecture.md)
+- [Spring Boot Integration](Spring-Boot-Starter.md)

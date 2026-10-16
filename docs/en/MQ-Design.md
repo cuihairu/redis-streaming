@@ -1,9 +1,5 @@
 # MQ Design (Redis Streams)
 
-[中文](../MQ-Design.md) | [English](MQ-Design-en.md)
-
----
-
 This document is the design specification for the `mq/` module (Redis Streams-based message queue), covering partitioning, consumer groups & rebalance, retry & DLQ, admin & observability. Class names, method names, key names, and defaults are aligned with `mq/src/main/java`; Redis command-level interactions are in [MQ-Broker-Interaction.md](./MQ-Broker-Interaction.md).
 
 ## Goals

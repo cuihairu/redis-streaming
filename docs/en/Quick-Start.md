@@ -1,9 +1,5 @@
 # Quick Start (EN)
 
-[中文](../Quick-Start.md) | [English](Quick-Start-en.md)
-
----
-
 This page covers build, test, and example execution. For full details see:
 - Root docs: [QUICK_START.md](https://github.com/cuihairu/redis-streaming/blob/main/QUICK_START.md), [RUNNING_EXAMPLES.md](https://github.com/cuihairu/redis-streaming/blob/main/RUNNING_EXAMPLES.md), [TESTING.md](https://github.com/cuihairu/redis-streaming/blob/main/TESTING.md)
 - Spring Boot: [Spring-Boot-Starter](../Spring-Boot-Starter.md) and [spring-boot-starter-guide](../spring-boot-starter-guide.md)
