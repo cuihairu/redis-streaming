@@ -6,7 +6,7 @@
 - **Coverage Gate**: Root project `jacocoRootCoverageVerification` (unit-test deterministic gate: INSTRUCTION ≥ 0.95 AND CLASS ≥ 0.99), report `./gradlew jacocoRootReport` (unit+integration union, uploaded to Codecov)
 - **Code Style**: Java 17 (`options.release = 17`) / UTF-8 / 4-space indent; logging via SLF4J; main code uses `-Xlint:deprecation -Xlint:unchecked -Werror` (tests exempt from `-Werror` and unchecked)
 - **Version Management**: Version derived by axion-release from `v*` git tags (root `build.gradle` `scmVersion`)
-- **Recommended Reading**: [Architecture](../Architecture.md) / [Design](../Design.md) / [Spring-Boot-Starter](../Spring-Boot-Starter.md) / [CEP](../CEP.md)
+- **Recommended Reading**: [Architecture](../Architecture.md) / [Spring-Boot-Starter](../Spring-Boot-Starter.md) / [CEP](../CEP.md)
 
 ---
 
