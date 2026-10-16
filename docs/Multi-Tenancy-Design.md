@@ -4,7 +4,7 @@
 
 ## 现状（事实盘点）
 
-1. **租户概念（v1 已落地 2026-10-11）**：`JobSpec.tenant`（默认 `StreamKeys.DEFAULT_TENANT`）、`MqOptions.tenant`、`AuditEntry.tenant`、`TenantQuotaPolicy` 均已存在；本设计剩余项的**已代决**口径（2026-10-16）：in-flight 配额已落地（见下方「v2 配额增量」）、指标 tenant 维度已落地、线程配额与内存配额不新增维度（理由见该节）、租户级迁移与运维 CLI 仍搁置——其余模块的 key 前缀租户注入见下方「落地记录」。
+1. **租户概念（v1 已落地 2026-10-11）**：`JobSpec.tenant`（默认 `StreamKeys.DEFAULT_TENANT`）、`MqOptions.tenant`、`AuditEntry.tenant`、`TenantQuotaPolicy` 均已存在；本设计剩余项的**已代决**口径（2026-10-16）：in-flight 配额已落地（见下方「v2 配额增量」）、指标 tenant 维度已落地、线程配额与内存配额不新增维度（理由见该节）、租户级迁移与运维 CLI 已落地（见下方「落地记录：租户键迁移引擎」）——其余模块的 key 前缀租户注入见下方「落地记录」。
 2. **全局静态前缀**：`mq` 的 `StreamKeys.configure(controlPrefix, streamPrefix)` 是 `static volatile` 全局量（默认 `streaming:mq` / `stream:topic`），所有 MQ key（分区流、DLQ、meta、lease、retry、commit frontier、topics registry）由它派生。**多作业共用 JVM 时是全局配置；跨 JVM 部署时若两个应用不 configure 不同前缀，同名 topic 直接共用同一条 stream**。
 3. **runtime key**：checkpoint/dedup 走 `streaming:runtime:*` 前缀（可配）；keyed state key 带 job 维度（`{stateKeyPrefix}:{job}:...`），job 级隔离天然存在，但 stateKeyPrefix 本身是全局静态。
 4. **背压/配额粒度**：`maxInFlight` 等内存闸门是 per-consumer-instance 的；**没有任何跨租户的速率/容量配额**（无生产速率限制、无 stream 长度配额——autoTrim 只按 topic 配置裁剪）。〔2026-10-16 已代决增补：跨租户**声明式** in-flight 配额已落地（见「v2 配额增量」），运行期闸门仍为 per-consumer。〕
@@ -76,7 +76,7 @@
 
 - **线程配额不新增维度**：本引擎每条并行子任务配一条消费线程，线程数 ≡ `parallelism`，已被 v1 的 `maxTotalParallelismPerTenant` 覆盖；再加一个「线程配额」只是同量别名，徒增配置面而不增加约束力。
 - **内存配额以 in-flight 上限代理**：不做真实堆/字节计量——消息大小无上界、跨 JVM 无法归集，真实计量只能靠采样估算，误差大于收益；`in-flight × 消费线程数` 已给出可执行且可解释的内存上界。
-- **租户级迁移与运维 CLI**：承载面已代决定为挂 `reliability`，迁移**引擎**同日落地（见下方「落地记录：租户键迁移引擎」，16 单测 + 6 集成）；剩余仅可运行 CLI 入口与各模块默认搬迁对派生，待真实运维场景出现再立项。
+- **租户级迁移与运维 CLI**：承载面已代决定为挂 `reliability`，迁移引擎、家族表与 CLI 入口均已落地（见下方「落地记录：租户键迁移引擎」；CLI 入口原列「待真实运维场景再立项」，2026-10-16 第二轮代决认定其解锁条件并非外部条件、属排期类，撤销搁置直接落地）。
 
 ## 落地记录：租户键迁移引擎（2026-10-16，已代决）
 
@@ -93,24 +93,41 @@
 - **扫描在搬迁之前**：一族键先收集完再逐键 rename，因为 rename 会改动 SCAN 正走着的键空间。
 - **先停写者**：迁移期间旧命名空间仍在写入的键会落在旧空间、切换后不可见；作业先停、族键搬完、再切配置。
 
-各家族默认搬迁对（`tenant = acme` 示例；租户段取 `Tenant` 契约，非法租户名在建搬迁对前即抛错）：
+各家族默认搬迁对（`tenant = acme` 示例；租户段取 `Tenant` 契约，非法租户名在建搬迁对前即抛错）。表中前缀是各模块源码里的**真实默认值**，已固化进 `TenantKeyFamilies`（CLI `--family` 取第一列的名字，`--prefix` 可覆盖第二列）：
 
-| 家族 | 源前缀 | 目标前缀 |
+| 家族（CLI 名） | 源前缀 | 收编目标前缀 |
 |---|---|---|
-| mq 控制面 | `streaming:mq:` | `streaming:mq:acme:` |
-| mq 数据面 | `stream:topic:` | `stream:topic:acme:` |
-| runtime 状态 | `streaming:runtime:` | `streaming:runtime:acme:` |
+| mq-control | `streaming:mq` | `streaming:mq:acme` |
+| mq-data | `stream:topic` | `stream:topic:acme` |
+| runtime-state | `streaming:runtime` | `streaming:runtime:acme` |
 | checkpoint | `streaming:runtime:checkpoint:` | `streaming:runtime:checkpoint:acme:` |
-| sink 去重 | `streaming:runtime:sinkDedup:` | `streaming:runtime:sinkDedup:acme:` |
-| 控制面 | `streaming:runtime:control:` | `streaming:runtime:control:acme:` |
-| registry | `redis_streaming_registry:` | `redis_streaming_registry:acme:` |
-| config | `redis_streaming:` | `redis_streaming:acme:` |
+| sink-dedup | `streaming:runtime:sinkDedup:` | `streaming:runtime:sinkDedup:acme:` |
+| control-plane | `streaming:runtime:control:` | `streaming:runtime:control:acme:` |
+| registry | `redis_streaming_registry` | `redis_streaming_registry:acme` |
+| config | `redis_streaming` | `redis_streaming:acme` |
 
-runtime 状态行与 checkpoint / sink 去重 / 控制面三行是**嵌套关系**（前者是后三者的字符串前缀）：这四行必须**同单搬迁**，引擎按最长前缀归属分发；只搬宽前缀会把检查点搬到 `streaming:runtime:acme:checkpoint:...` 的错误位置。退出租户段就是同一张表左右两列对调着填。另外源前缀必须**精确圈定要搬的族**：`stream:topic:` 的扫描会同时命中所有已带租户段的键，收编前先跑 dry-run 核对 `wouldMove` 计数。
+两个形状细节：
 
-验证：`TenantKeyMigratorTest` 16 单测（mock `RKeys`，钉住前缀校验、校验期失败关闭、dry-run 默认、碰撞拒绝、逐键失败隔离、嵌套归属、嵌套目标不重搬、公共入口）+ `TenantKeyMigratorIntegrationTest` 6 集成（真实 Redis：hash/string/list 多类型搬迁且 TTL 与 payload 保持、dry-run 原样、目标碰撞不覆盖、二次跑 no-op、回滚方向、嵌套家族分发）。
+- **尾冒号两态**：mq / runtime 状态 / registry / config 四族前缀**不带**尾冒号（消费方自拼冒号），checkpoint / sink 去重 / 控制面三族**带**尾冒号（runtime config 直接拼租户段收尾）。`TenantKeyFamilies.scopedPrefix` 对两态各给正确拼法；机械用 `Tenant.scopedPrefix` 会给带冒号前缀拼出 `checkpoint::acme` 双冒号。
+- **两处嵌套**：runtime 状态是 checkpoint / sink 去重 / 控制面三行的字符串前缀；**config（`redis_streaming`）是 registry（`redis_streaming_registry`）的字符串前缀**。嵌套对必须**同单搬迁**，引擎按最长前缀归属分发；只搬宽前缀会把检查点搬到 `streaming:runtime:acme:checkpoint:...`、把 registry 键搬到 `redis_streaming:acme_registry:...` 的错误位置。CLI 对会吞没未选家族的 `--family` 子集**拒跑**（列出被吞家族，`--allow-overlap` 显式放行）。退出租户段就是同一张表左右两列对调（`--dir out`）。
 
-剩余项（维持已代决口径，引擎就位后范围已收窄）：可运行 CLI 入口与上表一键派生（把默认搬迁对固化成代码默认值），待真实运维场景出现再立项。
+源前缀必须**精确圈定要搬的族**：宽前缀的扫描会同时命中所有已带租户段的键，收编前先跑 dry-run 核对 `wouldMove` 计数；若存量键空间里本就存在与租户同名的段（如 topic 恰叫 `acme`），dry-run 的 `wouldMove` 偏少就是信号。
+
+### 运行入口（CLI，`reliability` 的 `TenantKeyMigrationCli`）
+
+```
+java -cp <依赖> io.github.cuihairu.redis.streaming.reliability.migration.TenantKeyMigrationCli   --tenant acme                      # dry run，全部 8 族，默认 redis://127.0.0.1:6379
+  --tenant acme --apply              # 真搬
+  --tenant acme --dir out --apply    # 回滚（租户段搬出）
+  --tenant acme --family mq-data     # 子集（嵌套对子集会被拒跑）
+  --tenant acme --prefix mq-data=myapp:stream   # 定制过前缀的部署
+```
+
+dry-run 默认、`--scan-count` 透传 SCAN COUNT；退出码 `0` 干净 / `1` 不干净（碰撞或逐键失败）/ `2` 用法错。运维顺序不变：先停作业与写者 → 搬键 → 切租户配置。
+
+验证：`TenantKeyMigratorTest` 16 单测（mock `RKeys`：前缀校验、失败关闭、dry-run 默认、碰撞拒绝、逐键失败隔离、嵌套归属、嵌套目标不重搬）+ `TenantKeyMigrationCliTest` 21 单测（解析全旗标与全错误、退出码、吞没拒跑与放行、方向与定制前缀、help 不连 Redis）+ `TenantKeyFamiliesTest` 16 单测（表真值、收编/退出互逆、租户契约、定制覆盖、两处嵌套吞没判定）+ `TenantKeyMigratorIntegrationTest` 6 集成 + `TenantKeyMigrationCliIntegrationTest` 6 集成（真实 Redis：CLI 端到端收编保 TTL/payload、dry-run 原样、二次跑 no-op、回滚、碰撞退出码 1、吞没拒跑不连接）。
+
+至此本设计**无剩余项**：迁移引擎、家族表与运行入口均已落地（原「待真实运维场景再立项」的 CLI 入口于 2026-10-16 第二轮代决撤销搁置并落地，理由：解锁条件并非外部条件，属排期类可代决）。
 
 ## 非目标
 
