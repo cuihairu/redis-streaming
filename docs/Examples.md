@@ -32,3 +32,8 @@ docker compose up -d redis
 ## 参考
 - 根目录 `RUNNING_EXAMPLES.md`（完整步骤与环境变量）
 - 该模块不参与发布（根 `build.gradle` 对 `examples` 跳过 maven-publish 插件）
+
+---
+
+**Version**: 0.2.4
+**Last Updated**: 2026-10-16

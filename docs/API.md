@@ -41,3 +41,8 @@ env.fromElements("a b", "c", "d e")
 ```
 
 (`java` 插件为每个模块生成 `javadoc` 任务;发布时由 `withSourcesJar()` 与 maven-publish 插件配套,见根 `build.gradle`。)
+
+---
+
+**Version**: 0.2.4
+**Last Updated**: 2026-10-16
