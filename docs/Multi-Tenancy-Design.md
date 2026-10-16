@@ -76,7 +76,41 @@
 
 - **线程配额不新增维度**：本引擎每条并行子任务配一条消费线程，线程数 ≡ `parallelism`，已被 v1 的 `maxTotalParallelismPerTenant` 覆盖；再加一个「线程配额」只是同量别名，徒增配置面而不增加约束力。
 - **内存配额以 in-flight 上限代理**：不做真实堆/字节计量——消息大小无上界、跨 JVM 无法归集，真实计量只能靠采样估算，误差大于收益；`in-flight × 消费线程数` 已给出可执行且可解释的内存上界。
-- **租户级迁移与运维 CLI 维持搁置**：需要独立承载面（新 admin 模块或挂 `reliability`）与真实 Redis 上的键搬迁隔离测试，属独立工作量，不随本增量顺带实现半成品工具。
+- **租户级迁移与运维 CLI**：承载面已代决定为挂 `reliability`，迁移**引擎**同日落地（见下方「落地记录：租户键迁移引擎」，16 单测 + 6 集成）；剩余仅可运行 CLI 入口与各模块默认搬迁对派生，待真实运维场景出现再立项。
+
+## 落地记录：租户键迁移引擎（2026-10-16，已代决）
+
+租户段插在键前缀**之后**，所以一族键的租户收编（或退出）就是一次纯**前缀搬迁**：`stream:topic:orders:p:0 → stream:topic:acme:orders:p:0`。引擎落在 `reliability` 的 `TenantKeyMigrator`，承载面选 `reliability`（`core` 已 `api` 暴露 Redisson，不引入新分层边）；引擎**只搬键**，不认识模块语义，搬迁清单由调用方给出（默认清单见下表）。
+
+语义要点：
+
+- **原子且零损**：每键一条 `RENAMENX`，payload、键类型、TTL 原样保留，没有半搬状态；目标键已存在**拒绝覆盖**（记 skipped，源键留在原地），绝不 force rename。
+- **dry-run 默认**：`MigrationOptions.dryRun` 默认 `true`，只扫只数不动键，且同样探测目标碰撞，所以试跑就能看出真跑是否干净。
+- **可重入**：搬迁按键幂等，中断后重跑只搬仍在源前缀下的键；一族搬完后重跑是干净 no-op。
+- **嵌套目标不再二段收编**：收编方向 `stream:topic:` → `stream:topic:acme:` 时目标命名空间落在源扫描模式**内部**，已在目标前缀下的键视为已迁移并跳过（否则重跑会把 `acme:` 段叠成两层）。回滚方向目标不嵌套，无需特判。
+- **重叠家族最长前缀归属**：`streaming:runtime:` 与 `streaming:runtime:checkpoint:` 等前缀互相嵌套时，一个键归**最长**匹配的源前缀所有，只搬一次、绝不搬错家。
+- **坏搬迁单失败关闭**：清单里出现重复源前缀或恒等搬迁（源=目标）时整单拒跑，连扫描都不做——一个家族的笔误不可能顺带搬动另一个家族。
+- **扫描在搬迁之前**：一族键先收集完再逐键 rename，因为 rename 会改动 SCAN 正走着的键空间。
+- **先停写者**：迁移期间旧命名空间仍在写入的键会落在旧空间、切换后不可见；作业先停、族键搬完、再切配置。
+
+各家族默认搬迁对（`tenant = acme` 示例；租户段取 `Tenant` 契约，非法租户名在建搬迁对前即抛错）：
+
+| 家族 | 源前缀 | 目标前缀 |
+|---|---|---|
+| mq 控制面 | `streaming:mq:` | `streaming:mq:acme:` |
+| mq 数据面 | `stream:topic:` | `stream:topic:acme:` |
+| runtime 状态 | `streaming:runtime:` | `streaming:runtime:acme:` |
+| checkpoint | `streaming:runtime:checkpoint:` | `streaming:runtime:checkpoint:acme:` |
+| sink 去重 | `streaming:runtime:sinkDedup:` | `streaming:runtime:sinkDedup:acme:` |
+| 控制面 | `streaming:runtime:control:` | `streaming:runtime:control:acme:` |
+| registry | `redis_streaming_registry:` | `redis_streaming_registry:acme:` |
+| config | `redis_streaming:` | `redis_streaming:acme:` |
+
+runtime 状态行与 checkpoint / sink 去重 / 控制面三行是**嵌套关系**（前者是后三者的字符串前缀）：这四行必须**同单搬迁**，引擎按最长前缀归属分发；只搬宽前缀会把检查点搬到 `streaming:runtime:acme:checkpoint:...` 的错误位置。退出租户段就是同一张表左右两列对调着填。另外源前缀必须**精确圈定要搬的族**：`stream:topic:` 的扫描会同时命中所有已带租户段的键，收编前先跑 dry-run 核对 `wouldMove` 计数。
+
+验证：`TenantKeyMigratorTest` 16 单测（mock `RKeys`，钉住前缀校验、校验期失败关闭、dry-run 默认、碰撞拒绝、逐键失败隔离、嵌套归属、嵌套目标不重搬、公共入口）+ `TenantKeyMigratorIntegrationTest` 6 集成（真实 Redis：hash/string/list 多类型搬迁且 TTL 与 payload 保持、dry-run 原样、目标碰撞不覆盖、二次跑 no-op、回滚方向、嵌套家族分发）。
+
+剩余项（维持已代决口径，引擎就位后范围已收窄）：可运行 CLI 入口与上表一键派生（把默认搬迁对固化成代码默认值），待真实运维场景出现再立项。
 
 ## 非目标
 
