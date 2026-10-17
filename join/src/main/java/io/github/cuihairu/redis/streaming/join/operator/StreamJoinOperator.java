@@ -10,6 +10,7 @@ import io.github.cuihairu.redis.streaming.api.stream.KeyedProcessFunction;
 import io.github.cuihairu.redis.streaming.join.JoinConfig;
 import io.github.cuihairu.redis.streaming.join.JoinFunction;
 import io.github.cuihairu.redis.streaming.join.JoinMatching;
+import io.github.cuihairu.redis.streaming.join.JoinType;
 import io.github.cuihairu.redis.streaming.join.TimestampedElement;
 
 import java.io.Serializable;
@@ -42,6 +43,20 @@ import java.util.function.Function;
  * retention/maxStateSize eviction are delegated to the shared per-key core): left-anchored
  * window predicate, outer joins emit the unmatched element immediately and re-emit when a
  * peer arrives later.
+ *
+ * <p><b>Waiting/retract outer join (Phase 3).</b> With
+ * {@code JoinConfig.emitUnmatchedImmediately=false} the unmatched outer row is held back
+ * until the element's window can no longer accept a peer ({@code ts + after} on the left,
+ * {@code ts - before} on the right), which the operator schedules as an event-time timer and
+ * settles in {@link #onEventTime}. Pairs are still emitted on arrival, so a key owes exactly
+ * one row per join partner instead of the immediate null row plus a second row when the peer
+ * arrives. The buffered element is not dropped at its close — retention still owns that — so
+ * a peer that arrives only after the close still pairs, and that late-record double row is
+ * the pre-existing window-predicate corner rather than a regression. Two consequences to
+ * plan for: an element evicted by {@code maxStateSize} before its close loses its unmatched
+ * row (best effort, like every state cap), and a close is only settled once the event-time
+ * watermark passes it, so a pipeline whose source went quiet settles through the engine's
+ * idle watermark flush.
  *
  * <p><b>State.</b> Both side buffers of a key are persisted into keyed {@link ValueState}
  * (one JSON document per key, obtained from {@code ctx.getState}), so buffers survive a
@@ -175,13 +190,74 @@ public final class StreamJoinOperator {
                 long timestamp = value.getTimestamp();
                 buffers.left.add(new TimestampedElement<>(element, timestamp));
                 evictBeyondCap(buffers);
-                results = JoinMatching.matchArrivingLeft(config, joinFunction, element, timestamp, buffers.right);
+                results = JoinMatching.matchArrivingLeft(config, joinFunction, element, timestamp,
+                        buffers.right, config.isEmitUnmatchedImmediately());
+                scheduleClose(ctx, JoinMatching.closeMillisLeft(config.getJoinWindow(), timestamp));
             } else {
                 R element = value.getRight();
                 long timestamp = value.getTimestamp();
                 buffers.right.add(new TimestampedElement<>(element, timestamp));
                 evictBeyondCap(buffers);
-                results = JoinMatching.matchArrivingRight(config, joinFunction, element, timestamp, buffers.left);
+                results = JoinMatching.matchArrivingRight(config, joinFunction, element, timestamp,
+                        buffers.left, config.isEmitUnmatchedImmediately());
+                scheduleClose(ctx, JoinMatching.closeMillisRight(config.getJoinWindow(), timestamp));
+            }
+            cleanup(buffers);
+            writeBuffers(state, buffers);
+            for (O result : results) {
+                out.collect(result);
+            }
+        }
+
+        /**
+         * Phase 3 waiting/retract mode: schedule this element's close emission. Pairs are
+         * already out on arrival, so the timer only owes the unmatched outer row; an INNER
+         * join (and immediate mode) owes nothing and must not spend a timer slot.
+         */
+        private void scheduleClose(Context ctx, long closeMillis) {
+            if (!emitsUnmatchedRows()) {
+                return;
+            }
+            ctx.registerEventTimeTimer(closeMillis);
+        }
+
+        private boolean emitsUnmatchedRows() {
+            if (config.isEmitUnmatchedImmediately()) {
+                return false;
+            }
+            JoinType type = config.getJoinType();
+            return type == JoinType.LEFT || type == JoinType.RIGHT || type == JoinType.FULL_OUTER;
+        }
+
+        /**
+         * Phase 3 waiting/retract mode: the window of one buffered element has closed.
+         * Emit its unmatched outer row when no in-window peer is still buffered — pairs are
+         * never re-emitted here, which is what makes a key owe exactly one row per join
+         * partner. Left closes are drained first: at a zero-width window both sides close at
+         * the same time, and the left must still see the right that closes with it.
+         */
+        @Override
+        public void onEventTime(long timestamp, K key, Context ctx, Collector<O> out) throws Exception {
+            if (!emitsUnmatchedRows()) {
+                return;
+            }
+            ValueState<String> state = ctx.getState(new StateDescriptor<>(stateName, String.class));
+            SideBuffers buffers = readBuffers(state);
+
+            List<O> results = new ArrayList<>();
+            for (TimestampedElement<L> buffered : new ArrayList<>(buffers.left)) {
+                if (JoinMatching.closeMillisLeft(config.getJoinWindow(), buffered.timestamp()) != timestamp) {
+                    continue;
+                }
+                results.addAll(JoinMatching.unmatchedCloseLeft(config, joinFunction, buffered.element(),
+                        buffered.timestamp(), buffers.right));
+            }
+            for (TimestampedElement<R> buffered : new ArrayList<>(buffers.right)) {
+                if (JoinMatching.closeMillisRight(config.getJoinWindow(), buffered.timestamp()) != timestamp) {
+                    continue;
+                }
+                results.addAll(JoinMatching.unmatchedCloseRight(config, joinFunction, buffered.element(),
+                        buffered.timestamp(), buffers.left));
             }
             cleanup(buffers);
             writeBuffers(state, buffers);

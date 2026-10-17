@@ -25,6 +25,21 @@ public final class JoinMatching {
                                                   L element,
                                                   long timestamp,
                                                   List<TimestampedElement<R>> rightElements) throws Exception {
+        return matchArrivingLeft(config, joinFunction, element, timestamp, rightElements, true);
+    }
+
+    /**
+     * Same as {@link #matchArrivingLeft(JoinConfig, JoinFunction, Object, long, List)} but
+     * with the unmatched outer row controlled explicitly, for the operator's Phase 3
+     * waiting/retract mode ({@code JoinConfig.emitUnmatchedImmediately=false}): pairs are
+     * still emitted on arrival, the unmatched row is deferred to the close emission instead.
+     */
+    public static <L, R, K, O> List<O> matchArrivingLeft(JoinConfig<L, R, K> config,
+                                                  JoinFunction<L, R, O> joinFunction,
+                                                  L element,
+                                                  long timestamp,
+                                                  List<TimestampedElement<R>> rightElements,
+                                                  boolean emitUnmatched) throws Exception {
         List<O> results = new ArrayList<>();
         if (rightElements != null) {
             for (TimestampedElement<R> rightElem : rightElements) {
@@ -33,8 +48,8 @@ public final class JoinMatching {
                 }
             }
         }
-        if ((config.getJoinType() == JoinType.LEFT || config.getJoinType() == JoinType.FULL_OUTER)
-                && results.isEmpty()) {
+        if (emitUnmatched && results.isEmpty()
+                && (config.getJoinType() == JoinType.LEFT || config.getJoinType() == JoinType.FULL_OUTER)) {
             results.add(joinFunction.join(element, null));
         }
         return results;
@@ -49,6 +64,20 @@ public final class JoinMatching {
                                                    R element,
                                                    long timestamp,
                                                    List<TimestampedElement<L>> leftElements) throws Exception {
+        return matchArrivingRight(config, joinFunction, element, timestamp, leftElements, true);
+    }
+
+    /**
+     * Same as {@link #matchArrivingRight(JoinConfig, JoinFunction, Object, long, List)}
+     * with the unmatched outer row controlled explicitly (see
+     * {@link #matchArrivingLeft(JoinConfig, JoinFunction, Object, long, List, boolean)}).
+     */
+    public static <L, R, K, O> List<O> matchArrivingRight(JoinConfig<L, R, K> config,
+                                                   JoinFunction<L, R, O> joinFunction,
+                                                   R element,
+                                                   long timestamp,
+                                                   List<TimestampedElement<L>> leftElements,
+                                                   boolean emitUnmatched) throws Exception {
         List<O> results = new ArrayList<>();
         if (leftElements != null) {
             for (TimestampedElement<L> leftElem : leftElements) {
@@ -57,11 +86,76 @@ public final class JoinMatching {
                 }
             }
         }
-        if ((config.getJoinType() == JoinType.RIGHT || config.getJoinType() == JoinType.FULL_OUTER)
-                && results.isEmpty()) {
+        if (emitUnmatched && results.isEmpty()
+                && (config.getJoinType() == JoinType.RIGHT || config.getJoinType() == JoinType.FULL_OUTER)) {
             results.add(joinFunction.join(null, element));
         }
         return results;
+    }
+
+    /**
+     * Phase 3 waiting/retract close emission for an arriving LEFT element whose window can no
+     * longer accept a peer: emit its unmatched outer-join row only when no in-window peer is
+     * still buffered. Pairs are never emitted here — they were emitted on arrival — so the
+     * close cannot re-emit them.
+     *
+     * <p>The peer check is the same window predicate as matching, and the buffered peer is
+     * <em>not</em> dropped at the close (retention owns that), so a late peer that arrives
+     * after the close still pairs; that late-record double row is the pre-existing corner of
+     * the window predicate, unchanged by waiting mode.
+     */
+    public static <L, R, O> List<O> unmatchedCloseLeft(JoinConfig<L, R, ?> config,
+                                                       JoinFunction<L, R, O> joinFunction,
+                                                       L element,
+                                                       long timestamp,
+                                                       List<TimestampedElement<R>> rightElements) throws Exception {
+        if (rightElements != null) {
+            for (TimestampedElement<R> rightElem : rightElements) {
+                if (config.getJoinWindow().contains(timestamp, rightElem.timestamp())) {
+                    return List.of(); // a peer is still buffered: the pair is already out
+                }
+            }
+        }
+        if (config.getJoinType() == JoinType.LEFT || config.getJoinType() == JoinType.FULL_OUTER) {
+            return List.of(joinFunction.join(element, null));
+        }
+        return List.of();
+    }
+
+    /**
+     * Waiting/retract close emission for an arriving RIGHT element (see
+     * {@link #unmatchedCloseLeft}).
+     */
+    public static <L, R, O> List<O> unmatchedCloseRight(JoinConfig<L, R, ?> config,
+                                                        JoinFunction<L, R, O> joinFunction,
+                                                        R element,
+                                                        long timestamp,
+                                                        List<TimestampedElement<L>> leftElements) throws Exception {
+        if (leftElements != null) {
+            for (TimestampedElement<L> leftElem : leftElements) {
+                if (config.getJoinWindow().contains(leftElem.timestamp(), timestamp)) {
+                    return List.of();
+                }
+            }
+        }
+        if (config.getJoinType() == JoinType.RIGHT || config.getJoinType() == JoinType.FULL_OUTER) {
+            return List.of(joinFunction.join(null, element));
+        }
+        return List.of();
+    }
+
+    /**
+     * Event time at which a LEFT element's window can no longer accept a peer.
+     */
+    public static long closeMillisLeft(JoinWindow window, long elementTimestamp) {
+        return elementTimestamp + window.getAfterMillis();
+    }
+
+    /**
+     * Event time at which a RIGHT element's window can no longer accept a peer.
+     */
+    public static long closeMillisRight(JoinWindow window, long elementTimestamp) {
+        return elementTimestamp - window.getBeforeMillis();
     }
 
     /**

@@ -61,6 +61,22 @@ public class JoinConfig<L, R, K> implements Serializable {
     private final long stateRetentionTime = 3600000; // 1 hour default
 
     /**
+     * Whether an unmatched outer-join element emits its {@code join(elem, null)} /
+     * {@code join(null, elem)} row as soon as it arrives (the B-36 immediate semantics,
+     * which also emits the pair later when a peer arrives inside the window — one row per
+     * partner plus a row per unmatched half) or holds it until the element's window can no
+     * longer accept a peer (Phase 3 waiting/retract semantics: exactly one row per join
+     * partner, the unmatched row arriving at the close time via an event-time timer).
+     *
+     * <p>Default {@code true} keeps the historical behavior; {@code false} requires an
+     * engine that fires event-time timers (both built-in engines do). The flag is honored
+     * by the pipeline operator ({@code join.operator.StreamJoinOperator}); the standalone
+     * {@code StreamJoiner} always emits immediately, since it has no event-time clock.
+     */
+    @Builder.Default
+    private final boolean emitUnmatchedImmediately = true;
+
+    /**
      * Validate the configuration
      */
     public void validate() {
