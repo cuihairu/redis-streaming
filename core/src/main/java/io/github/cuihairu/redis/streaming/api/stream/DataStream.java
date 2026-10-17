@@ -100,6 +100,27 @@ public interface DataStream<T> {
     }
 
     /**
+     * Assign event-time timestamps and watermarks to this stream with one generator instance
+     * <em>per source</em>. A stateful watermark generator (e.g. bounded out-of-orderness max
+     * tracking) must never see another source's records, or its candidates run ahead of the
+     * slower source's data and windows close early. On runtimes that merge several MQ sources
+     * into one operator chain (the dual-source pipeline), this factory form is the only way to
+     * keep that isolation; single-source pipelines and stateless generators may use the
+     * instance overloads.
+     *
+     * <p>The factory is invoked lazily, once per source, on the source's first record.</p>
+     *
+     * @param timestampAssigner event timestamp extractor
+     * @param generatorFactory  one watermark generator per source
+     * @return a stream with event-time timestamps and per-source watermark tracking enabled
+     */
+    default DataStream<T> assignTimestampsAndWatermarks(
+            TimestampAssigner<T> timestampAssigner,
+            java.util.function.Supplier<WatermarkGenerator<T>> generatorFactory) {
+        throw new UnsupportedOperationException("This runtime does not support event-time timestamp assignment");
+    }
+
+    /**
      * Merge this stream with another stream of a compatible element type.
      *
      * <p>Elements are interleaved round-robin: one from this stream, one from {@code other},

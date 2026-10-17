@@ -316,6 +316,21 @@ public final class InMemoryDataStream<T> implements DataStream<T>, Iterable<T> {
         }, state, checkpointCoordinator);
     }
 
+    /**
+     * Per-source factory form (see {@code DataStream}). The in-memory engine has no shared
+     * multi-source operator chain — a union of two assigned branches keeps each branch's
+     * instance because {@code assignTimestampsAndWatermarks} was called once per branch —
+     * so one eagerly-built instance per call preserves exactly that semantics.
+     */
+    @Override
+    public DataStream<T> assignTimestampsAndWatermarks(
+            TimestampAssigner<T> timestampAssigner,
+            Supplier<WatermarkGenerator<T>> generatorFactory) {
+        Objects.requireNonNull(timestampAssigner, "timestampAssigner");
+        Objects.requireNonNull(generatorFactory, "generatorFactory");
+        return assignTimestampsAndWatermarks(timestampAssigner, generatorFactory.get());
+    }
+
     @Override
     public DataStream<T> union(DataStream<? extends T> other) {
         Objects.requireNonNull(other, "other");
