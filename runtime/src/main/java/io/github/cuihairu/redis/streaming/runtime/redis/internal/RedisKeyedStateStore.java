@@ -36,6 +36,8 @@ public final class RedisKeyedStateStore<K> {
 
     private final ThreadLocal<K> currentKey = new ThreadLocal<>();
     private final ThreadLocal<Integer> currentPartitionId = new ThreadLocal<>();
+    /** per-key mutual exclusion for keyed sections (see {@link #keyFence(Object)}) */
+    private final java.util.concurrent.locks.ReentrantLock[] keyFence;
     private final RedissonClient redissonClient;
     private final ObjectMapper objectMapper;
     private final String stateKeyPrefix;
@@ -64,6 +66,8 @@ public final class RedisKeyedStateStore<K> {
     private final ConcurrentHashMap<String, Long> hotKeyLastWarnAtMs = new ConcurrentHashMap<>();
     /** per redisKey: epoch ms until which hot-key handling applies to every write */
     private final ConcurrentHashMap<String, Long> hotKeyActiveUntilMs = new ConcurrentHashMap<>();
+
+    private static final int KEY_FENCE_STRIPES = 512;
 
     public RedisKeyedStateStore(RedissonClient redissonClient,
                                ObjectMapper objectMapper,
@@ -103,6 +107,10 @@ public final class RedisKeyedStateStore<K> {
         this.stateKeyIndex = redissonClient.getSet(this.stateKeyIndexKey, StringCodec.INSTANCE);
         this.stateSchemaKey = stateKeyPrefix + ":" + jobName + ":stateSchema";
         this.stateSchema = redissonClient.getMap(this.stateSchemaKey, StringCodec.INSTANCE);
+        this.keyFence = new java.util.concurrent.locks.ReentrantLock[KEY_FENCE_STRIPES];
+        for (int i = 0; i < keyFence.length; i++) {
+            keyFence[i] = new java.util.concurrent.locks.ReentrantLock();
+        }
     }
 
     /** Package-private access for same-package state impls that need raw batch writes. */
@@ -119,6 +127,25 @@ public final class RedisKeyedStateStore<K> {
     }
 
     record StateMapRef(String redisKey, RMap<String, String> map) {
+    }
+
+    /**
+     * Fence a keyed section: the lock to hold while state for {@code key} is read or written.
+     *
+     * <p>Partitioning alone used to serialise a key's records, because one partition is read by
+     * one worker. A dual-source pipeline breaks that: the same join key arrives on two topics,
+     * hence two streams and two partition workers, so both sides can run the same keyed
+     * read-modify-write at once and one side's write is lost (a join pair silently disappears).
+     * Striping by key restores the guarantee without serialising unrelated keys, and records that
+     * collide on a stripe merely queue up.
+     *
+     * <p>Striped, not one lock per key: the stripe count is fixed, so a stream of distinct keys
+     * cannot grow the lock table.
+     */
+    public java.util.concurrent.locks.ReentrantLock keyFence(K key) {
+        int h = key == null ? 0 : key.hashCode();
+        h ^= (h >>> 16); // spread, so hashCodes that differ only in high bits share stripes evenly
+        return keyFence[(h & 0x7fffffff) % keyFence.length];
     }
 
     public void setCurrentKey(K key) {

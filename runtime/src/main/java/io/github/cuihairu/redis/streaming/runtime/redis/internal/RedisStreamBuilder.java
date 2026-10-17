@@ -29,11 +29,13 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -51,6 +53,10 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
     private final String topic;
     private final String consumerGroup;
     private final SubscriptionOptions subscriptionOptions;
+    /** Phase 3: the pipeline's MQ sources in order (index 0 is {@link #topic}). */
+    private final List<String> sourceTopics;
+    private final List<String> sourceConsumerGroups;
+    private final List<SubscriptionOptions> sourceSubscriptionOptions;
     private final List<RedisOperatorNode> operators;
     private final boolean assignerOwnedEventTime;
 
@@ -78,6 +84,26 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                               SubscriptionOptions subscriptionOptions,
                               List<RedisOperatorNode> operators,
                               boolean assignerOwnedEventTime) {
+        // singletonList, not List.of: a null subscriptionOptions means "MQ defaults" and is the
+        // documented default of fromMqTopic(topic, group)
+        this(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions,
+                List.of(topic), List.of(consumerGroup), Collections.singletonList(subscriptionOptions),
+                operators, assignerOwnedEventTime);
+    }
+
+    private RedisStreamBuilder(RedisStreamExecutionEnvironment env,
+                              RedisRuntimeConfig config,
+                              RedissonClient redissonClient,
+                              ObjectMapper objectMapper,
+                              String streamId,
+                              String topic,
+                              String consumerGroup,
+                              SubscriptionOptions subscriptionOptions,
+                              List<String> sourceTopics,
+                              List<String> sourceConsumerGroups,
+                              List<SubscriptionOptions> sourceSubscriptionOptions,
+                              List<RedisOperatorNode> operators,
+                              boolean assignerOwnedEventTime) {
         this.assignerOwnedEventTime = assignerOwnedEventTime;
 
         this.env = Objects.requireNonNull(env, "env");
@@ -88,6 +114,11 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
         this.topic = Objects.requireNonNull(topic, "topic");
         this.consumerGroup = Objects.requireNonNull(consumerGroup, "consumerGroup");
         this.subscriptionOptions = subscriptionOptions;
+        this.sourceTopics = List.copyOf(sourceTopics);
+        this.sourceConsumerGroups = List.copyOf(sourceConsumerGroups);
+        // per-source options are nullable (null = MQ defaults), so copy defensively instead of
+        // List.copyOf, which rejects null elements
+        this.sourceSubscriptionOptions = Collections.unmodifiableList(new ArrayList<>(sourceSubscriptionOptions));
         this.operators = List.copyOf(operators);
     }
 
@@ -102,11 +133,41 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
         return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, List.of(), false);
     }
 
+    /**
+     * Phase 3 dual-source (plan A) builder: one pipeline reading several MQ topics, each with its
+     * own consumer group and per-subscription options. The sources share one operator chain and
+     * one keyed-state key (source 0's topic/group), so both sides of a join keyed by the same
+     * partition land in the same state — the sources must therefore be keyed by the join key and
+     * carry the same partition count.
+     */
+    public static RedisStreamBuilder<Message> forMqSources(RedisStreamExecutionEnvironment env,
+                                                          RedisRuntimeConfig config,
+                                                          RedissonClient redissonClient,
+                                                          ObjectMapper objectMapper,
+                                                          String streamId,
+                                                          List<String> topics,
+                                                          List<String> consumerGroups,
+                                                          List<SubscriptionOptions> subscriptionOptions) {
+        Objects.requireNonNull(topics, "topics");
+        Objects.requireNonNull(consumerGroups, "consumerGroups");
+        Objects.requireNonNull(subscriptionOptions, "subscriptionOptions");
+        if (topics.isEmpty()) {
+            throw new IllegalArgumentException("A source builder needs at least one MQ source");
+        }
+        if (topics.size() != consumerGroups.size() || topics.size() != subscriptionOptions.size()) {
+            throw new IllegalArgumentException("topics, consumerGroups and subscriptionOptions must have the same size");
+        }
+        return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId,
+                topics.get(0), consumerGroups.get(0), subscriptionOptions.get(0),
+                topics, consumerGroups, subscriptionOptions, List.of(), false);
+    }
+
     private RedisStreamBuilder<T> withOperator(RedisOperatorNode node) {
         List<RedisOperatorNode> next = new ArrayList<>(operators.size() + 1);
         next.addAll(operators);
         next.add(node);
-        return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, next,
+        return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup,
+                subscriptionOptions, sourceTopics, sourceConsumerGroups, sourceSubscriptionOptions, next,
                 assignerOwnedEventTime);
     }
 
@@ -150,7 +211,8 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                 config.getKeyedStateHotKeyPolicy(), config.getKeyedStateHotKeyThrottleMaxMs(),
                 config.isStateSchemaEvolutionEnabled(), config.getStateSchemaMismatchPolicy());
         return new RedisKeyedStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup,
-                subscriptionOptions, operators, keySelector, store, operatorId, assignerOwnedEventTime);
+                subscriptionOptions, sourceTopics, sourceConsumerGroups, sourceSubscriptionOptions,
+                operators, keySelector, store, operatorId, assignerOwnedEventTime);
     }
 
     @Override
@@ -202,18 +264,51 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
      * ({@code RedisPipelineRunner} assigner-owned mode). A generator that never emits
      * leaves the watermark at {@code MIN_VALUE}: pair it with
      * {@code watermarkIdleTimeout} (RT-M3 idle flush) if quiet periods are expected.
+     *
+     * <p>This overload wires <em>one</em> generator instance for the whole pipeline. On a
+     * dual-source pipeline a stateful generator's max-timestamp crosses the sources and its
+     * candidates run ahead of the slower source's data — use the
+     * {@link #assignTimestampsAndWatermarks(TimestampAssigner, java.util.function.Supplier)
+     * per-source factory overload} there.
      */
     @Override
     public DataStream<T> assignTimestampsAndWatermarks(TimestampAssigner<T> timestampAssigner,
                                                       WatermarkGenerator<T> watermarkGenerator) {
         Objects.requireNonNull(timestampAssigner, "timestampAssigner");
         Objects.requireNonNull(watermarkGenerator, "watermarkGenerator");
+        java.util.function.Supplier<WatermarkGenerator<T>> shared = () -> watermarkGenerator;
+        return assignTimestampsAndWatermarks(timestampAssigner, shared,
+                new java.util.concurrent.atomic.AtomicReferenceArray<>(sourceTopics.size()), true);
+    }
+
+    /**
+     * Per-source factory overload (see {@code DataStream}): the factory builds one generator
+     * instance per MQ source, lazily on that source's first record, so a stateful generator
+     * only ever sees its own source's records. Both builder overloads funnel into this method;
+     * {@code shareOneInstance} marks the single-instance form (still one entry, but resolved
+     * through the same path so the wiring cannot drift).
+     */
+    @Override
+    public DataStream<T> assignTimestampsAndWatermarks(TimestampAssigner<T> timestampAssigner,
+                                                      java.util.function.Supplier<WatermarkGenerator<T>> generatorFactory) {
+        Objects.requireNonNull(timestampAssigner, "timestampAssigner");
+        Objects.requireNonNull(generatorFactory, "generatorFactory");
+        return assignTimestampsAndWatermarks(timestampAssigner, generatorFactory,
+                new java.util.concurrent.atomic.AtomicReferenceArray<>(sourceTopics.size()), false);
+    }
+
+    private DataStream<T> assignTimestampsAndWatermarks(TimestampAssigner<T> timestampAssigner,
+                                                        java.util.function.Supplier<WatermarkGenerator<T>> generatorFactory,
+                                                        java.util.concurrent.atomic.AtomicReferenceArray<WatermarkGenerator<T>> perSource,
+                                                        boolean shareOneInstance) {
         List<RedisOperatorNode> next = new ArrayList<>(operators.size() + 1);
         next.addAll(operators);
         next.add((value, ctx, emit) -> {
             T v = castValue(value);
             long assigned = timestampAssigner.extractTimestamp(v, ctx.currentEventTime());
             ctx.overrideEventTimeMs(assigned);
+            WatermarkGenerator<T> generator = generatorFor(generatorFactory, perSource, shareOneInstance,
+                    ctx.currentSourceIndex());
             WatermarkGenerator.WatermarkOutput output = new WatermarkGenerator.WatermarkOutput() {
                 @Override
                 public void emitWatermark(Watermark watermark) {
@@ -233,12 +328,29 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                     ctx.markActive();
                 }
             };
-            watermarkGenerator.onEvent(v, assigned, output);
-            watermarkGenerator.onPeriodicEmit(output);
+            generator.onEvent(v, assigned, output);
+            generator.onPeriodicEmit(output);
             emit.emit(v);
         });
         return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup,
-                subscriptionOptions, next, true);
+                subscriptionOptions, sourceTopics, sourceConsumerGroups, sourceSubscriptionOptions, next, true);
+    }
+
+    /**
+     * The generator instance this record drives: slot 0 for the single-instance form, the
+     * record's own source otherwise, built lazily on first use ({@code AtomicReferenceArray}
+     * for cross-worker visibility; a racy double build discards one instance harmlessly).
+     */
+    private WatermarkGenerator<T> generatorFor(java.util.function.Supplier<WatermarkGenerator<T>> generatorFactory,
+                                               java.util.concurrent.atomic.AtomicReferenceArray<WatermarkGenerator<T>> perSource,
+                                               boolean shareOneInstance, int sourceIndex) {
+        int slot = shareOneInstance ? 0 : sourceIndex;
+        WatermarkGenerator<T> generator = perSource.get(slot);
+        if (generator == null) {
+            perSource.compareAndSet(slot, null, generatorFactory.get());
+            generator = perSource.get(slot);
+        }
+        return generator;
     }
 
     @Override
@@ -256,9 +368,11 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
         if (registeredDefinition != null) {
             return registeredDefinition;
         }
-        RedisPipelineDefinition def = new RedisPipelineDefinition(
-                config, redissonClient, objectMapper, topic, consumerGroup, subscriptionOptions, operators,
-                assignerOwnedEventTime);
+        RedisPipelineDefinition def = sourceTopics.size() == 1
+                ? new RedisPipelineDefinition(config, redissonClient, objectMapper, topic, consumerGroup,
+                        subscriptionOptions, operators, assignerOwnedEventTime)
+                : new RedisPipelineDefinition(config, redissonClient, objectMapper, sourceTopics, sourceConsumerGroups,
+                        sourceSubscriptionOptions, operators, assignerOwnedEventTime);
         env.registerPipelineDefinition(def);
         registeredDefinition = def;
         return def;
@@ -283,6 +397,9 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
         private final String topic;
         private final String consumerGroup;
         private final SubscriptionOptions subscriptionOptions;
+        private final List<String> sourceTopics;
+        private final List<String> sourceConsumerGroups;
+        private final List<SubscriptionOptions> sourceSubscriptionOptions;
         private final List<RedisOperatorNode> upstreamOperators;
         private final Function<V, K> keySelector;
         private final RedisKeyedStateStore<K> stateStore;
@@ -297,6 +414,9 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                                        String topic,
                                        String consumerGroup,
                                        SubscriptionOptions subscriptionOptions,
+                                       List<String> sourceTopics,
+                                       List<String> sourceConsumerGroups,
+                                       List<SubscriptionOptions> sourceSubscriptionOptions,
                                        List<RedisOperatorNode> upstreamOperators,
                                        Function<V, K> keySelector,
                                        RedisKeyedStateStore<K> stateStore,
@@ -311,6 +431,9 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
             this.topic = topic;
             this.consumerGroup = consumerGroup;
             this.subscriptionOptions = subscriptionOptions;
+            this.sourceTopics = sourceTopics;
+            this.sourceConsumerGroups = sourceConsumerGroups;
+            this.sourceSubscriptionOptions = sourceSubscriptionOptions;
             this.upstreamOperators = upstreamOperators;
             this.keySelector = keySelector;
             this.stateStore = stateStore;
@@ -345,7 +468,8 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
             };
 
             return new RedisKeyedStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup,
-                    subscriptionOptions, ops, inheritedKeySelector, stateStore, operatorId, assignerOwnedEventTime);
+                    subscriptionOptions, sourceTopics, sourceConsumerGroups, sourceSubscriptionOptions,
+                    ops, inheritedKeySelector, stateStore, operatorId, assignerOwnedEventTime);
         }
 
         @Override
@@ -358,6 +482,10 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                 V v = castValue(value);
                 K key = keySelector.apply(v);
                 int partitionId = ctx.currentPartitionId();
+                // one section per key: the record's own read-modify-write of keyed state must not
+                // interleave with another record of the same key (see RedisKeyedStateStore#keyFence)
+                ReentrantLock fence = stateStore.keyFence(key);
+                fence.lock();
                 stateStore.setCurrentPartitionId(partitionId);
                 stateStore.setCurrentKey(key);
                 try {
@@ -437,10 +565,12 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                 } finally {
                     stateStore.clearCurrentKey();
                     stateStore.clearCurrentPartitionId();
+                    fence.unlock();
                 }
             });
 
-            return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops, assignerOwnedEventTime);
+            return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup,
+                    subscriptionOptions, sourceTopics, sourceConsumerGroups, sourceSubscriptionOptions, ops, assignerOwnedEventTime);
         }
 
         @Override
@@ -608,7 +738,8 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                         stateStore.clearCurrentPartitionId();
                     }
                 });
-                return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops, assignerOwnedEventTime);
+                return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup,
+                    subscriptionOptions, sourceTopics, sourceConsumerGroups, sourceSubscriptionOptions, ops, assignerOwnedEventTime);
             }
 
             @FunctionalInterface
@@ -1256,7 +1387,8 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                 }
             });
 
-            return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops, assignerOwnedEventTime);
+            return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup,
+                    subscriptionOptions, sourceTopics, sourceConsumerGroups, sourceSubscriptionOptions, ops, assignerOwnedEventTime);
         }
 
         @Override
@@ -1295,7 +1427,8 @@ public final class RedisStreamBuilder<T> implements DataStream<T> {
                 }
             });
 
-            return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup, subscriptionOptions, ops, assignerOwnedEventTime);
+            return new RedisStreamBuilder<>(env, config, redissonClient, objectMapper, streamId, topic, consumerGroup,
+                    subscriptionOptions, sourceTopics, sourceConsumerGroups, sourceSubscriptionOptions, ops, assignerOwnedEventTime);
         }
 
         @Override

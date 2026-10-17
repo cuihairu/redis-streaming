@@ -26,6 +26,7 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicLongArray;
 
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
 
@@ -42,8 +43,9 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
     private final RedisRuntimeConfig config;
     private final RedissonClient redissonClient;
     private final ObjectMapper objectMapper;
-    private final String topic;
-    private final String consumerGroup;
+    /** The pipeline's MQ sources (index 0 is the historical single source). */
+    private final List<String> topics;
+    private final List<String> consumerGroups;
     private final List<RedisOperatorNode> operators;
     private final List<StreamSink<Object>> sinks;
     /** Aligned with {@link #sinks}; null for sinks that are not two-phase-commit sinks. */
@@ -52,7 +54,15 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
     private final ScheduledExecutorService timerExecutor;
     private final boolean closeTimerExecutor;
     private final boolean assignerOwnedEventTime;
-    private final AtomicLong maxEventTimeMs = new AtomicLong(Long.MIN_VALUE);
+    /**
+     * Phase 3: per-source max event time. An entry still at {@code Long.MIN_VALUE} means the
+     * source has not delivered a record in the current epoch, so it contributes
+     * {@code Long.MIN_VALUE} to the aligned watermark and thereby blocks it — a live but silent
+     * source must not let the other source's windows close early.
+     */
+    private final AtomicLongArray sourceMaxEventTimeMs;
+    /** Phase 3: per-source watermark candidate (what the source currently owes). */
+    private final AtomicLongArray sourceWatermarkMs;
     private final AtomicLong watermarkMs = new AtomicLong(Long.MIN_VALUE);
     /** RT-M3: idle watermark flush period in ms; 0 = disabled (record-driven only). */
     private final long watermarkIdleTimeoutMs;
@@ -115,13 +125,43 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
                               ScheduledExecutorService timerExecutor,
                               boolean closeTimerExecutor,
                               boolean assignerOwnedEventTime) {
+        this(config, redissonClient, objectMapper, List.of(topic), List.of(consumerGroup), operators, sinks,
+                timerExecutor, closeTimerExecutor, assignerOwnedEventTime);
+    }
+
+    /**
+     * Phase 3 dual-source constructor. One runner consumes every source of the pipeline; the
+     * event-time watermark is the <em>minimum</em> over the per-source candidates (see
+     * {@link #updateAlignedWatermark()}), so a window only closes once every source has advanced
+     * past it.
+     */
+    public RedisPipelineRunner(RedisRuntimeConfig config,
+                              RedissonClient redissonClient,
+                              ObjectMapper objectMapper,
+                              List<String> topics,
+                              List<String> consumerGroups,
+                              List<RedisOperatorNode> operators,
+                              List<StreamSink<Object>> sinks,
+                              ScheduledExecutorService timerExecutor,
+                              boolean closeTimerExecutor,
+                              boolean assignerOwnedEventTime) {
+        Objects.requireNonNull(topics, "topics");
+        Objects.requireNonNull(consumerGroups, "consumerGroups");
+        if (topics.isEmpty()) {
+            throw new IllegalArgumentException("A pipeline runner needs at least one MQ source");
+        }
+        if (topics.size() != consumerGroups.size()) {
+            throw new IllegalArgumentException("topics and consumerGroups must have the same size");
+        }
         this.config = Objects.requireNonNull(config, "config");
         this.redissonClient = Objects.requireNonNull(redissonClient, "redissonClient");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
-        this.topic = Objects.requireNonNull(topic, "topic");
-        this.consumerGroup = Objects.requireNonNull(consumerGroup, "consumerGroup");
+        this.topics = List.copyOf(topics);
+        this.consumerGroups = List.copyOf(consumerGroups);
         this.operators = List.copyOf(Objects.requireNonNull(operators, "operators"));
         this.sinks = List.copyOf(Objects.requireNonNull(sinks, "sinks"));
+        this.sourceMaxEventTimeMs = unseeded(topics.size());
+        this.sourceWatermarkMs = unseeded(topics.size());
         this.twoPhaseCoordinators = buildTwoPhaseCoordinators(this.sinks);
         if (timerExecutor != null) {
             this.timerExecutor = timerExecutor;
@@ -189,34 +229,66 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
                     hook.run();
                 } catch (Exception e) {
                     log.warn("Idle flush hook failed (jobName={}, topic={}, group={})",
-                            config.getJobName(), topic, consumerGroup, e);
+                            config.getJobName(), primaryTopic(), primaryGroup(), e);
                 }
             }
             try {
-                RedisRuntimeMetrics.get().setWatermarkMs(config.getJobName(), topic, consumerGroup, watermarkMs.get());
+                RedisRuntimeMetrics.get().setWatermarkMs(config.getJobName(), primaryTopic(), primaryGroup(), watermarkMs.get());
             } catch (Exception ignore) {
             }
         } catch (Exception e) {
             log.warn("Idle watermark flush failed (jobName={}, topic={}, group={})",
-                    config.getJobName(), topic, consumerGroup, e);
+                    config.getJobName(), primaryTopic(), primaryGroup(), e);
         }
     }
 
     public boolean handle(Message message) throws Exception {
+        return handle(message, 0);
+    }
+
+    /**
+     * Handle one record from the {@code sourceIndex}-th source. The source owns the record's
+     * watermark contribution (aligned minimum) and its sink-dedup key.
+     */
+    public boolean handle(Message message, int sourceIndex) throws Exception {
         if (message == null) {
             return true;
+        }
+        int source = sourceIndex;
+        if (source < 0 || source >= topics.size()) {
+            source = 0;
         }
         ensureSinksOpen();
         long now = System.currentTimeMillis();
         lastActivityMs.set(now);
         idleNow.set(false);
         long eventTime = extractEventTimeMs(message, now);
-        updateWatermark(eventTime);
-        Context ctx = new Context(message, now, eventTime);
+        updateSourceWatermark(source, eventTime);
+        Context ctx = new Context(message, now, eventTime, source);
 
         emitFrom(0, message, ctx);
         fireDueEventTimers();
         return true;
+    }
+
+    /** The index of the {@code message}'s topic among this pipeline's sources, or {@code -1} when it
+     * reads none of ours (the caller decides the fallback). */
+    public int sourceIndexOf(Message message) {
+        String topic = message == null ? null : message.getTopic();
+        for (int i = 0; i < topics.size(); i++) {
+            if (topics.get(i).equals(topic)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private String primaryTopic() {
+        return topics.get(0);
+    }
+
+    private String primaryGroup() {
+        return consumerGroups.get(0);
     }
 
     private long extractEventTimeMs(Message message, long fallback) {
@@ -224,24 +296,83 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
         return ts == null ? fallback : ts.toEpochMilli();
     }
 
-    private void updateWatermark(long eventTimeMs) {
-        if (idleFlushed.compareAndSet(true, false)) {
+    /**
+     * Fold one record's event time into its source's watermark and re-publish the aligned
+     * watermark (the minimum over the sources).
+     */
+    private void updateSourceWatermark(int sourceIndex, long eventTimeMs) {
+        boolean freshEpoch = idleFlushed.compareAndSet(true, false);
+        if (freshEpoch) {
             // RT-M3: first record after an idle flush. The flush pinned the watermark at
             // MAX_VALUE — max() would keep it there forever — so this record starts a fresh
-            // watermark epoch from its own event time. With an assigner-owned event time the
-            // heuristic cannot seed it either (the Message timestamp is not the event time);
-            // start from MIN_VALUE and let the user generator raise the first watermark.
-            maxEventTimeMs.set(eventTimeMs);
-            watermarkMs.set(assignerOwnedEventTime ? Long.MIN_VALUE : candidateFor(eventTimeMs));
-        } else if (!assignerOwnedEventTime) {
+            // watermark epoch. The flush voided every source's "no event <= w arrives again"
+            // promise, so all sources restart unseeded; the aligned watermark is re-derived
+            // (set, not max) and only rises again once each source has delivered a record.
+            for (int i = 0; i < sourceMaxEventTimeMs.length(); i++) {
+                sourceMaxEventTimeMs.set(i, Long.MIN_VALUE);
+                sourceWatermarkMs.set(i, Long.MIN_VALUE);
+            }
+            seedSource(sourceIndex, eventTimeMs);
+            publishAlignedWatermark(true);
+            return;
+        }
+        if (!assignerOwnedEventTime) {
             // assigner-owned: the user generator raises watermarks via Context#raiseWatermark;
             // a message-timestamp heuristic here could run ahead of assigned event times and
             // close windows early.
-            maxEventTimeMs.updateAndGet(prev -> Math.max(prev, eventTimeMs));
-            watermarkMs.updateAndGet(prev -> Math.max(prev, candidateFor(maxEventTimeMs.get())));
+            sourceMaxEventTimeMs.accumulateAndGet(sourceIndex, eventTimeMs, Math::max);
+            sourceWatermarkMs.set(sourceIndex, candidateFor(sourceMaxEventTimeMs.get(sourceIndex)));
+        }
+        publishAlignedWatermark(false);
+    }
+
+    private void seedSource(int sourceIndex, long eventTimeMs) {
+        sourceMaxEventTimeMs.set(sourceIndex, eventTimeMs);
+        sourceWatermarkMs.set(sourceIndex, assignerOwnedEventTime ? Long.MIN_VALUE : candidateFor(eventTimeMs));
+    }
+
+    /**
+     * A watermark array where no source has spoken yet: {@link AtomicLongArray} defaults to 0,
+     * which would read as a real watermark of 0 and fire every timer at or below 0 before the
+     * first record arrives — the historical behavior is {@code Long.MIN_VALUE} (no timer is due).
+     */
+    private static AtomicLongArray unseeded(int size) {
+        AtomicLongArray array = new AtomicLongArray(size);
+        for (int i = 0; i < size; i++) {
+            array.set(i, Long.MIN_VALUE);
+        }
+        return array;
+    }
+
+    /**
+     * The aligned watermark: the minimum over the per-source candidates. A source that has not
+     * delivered a record in the current epoch still owes {@code MIN_VALUE}, so it holds the
+     * whole pipeline back — the conservative choice for a join, where a window may only close
+     * once every side has advanced past it. A source that goes permanently quiet is unblocked by
+     * the RT-M3 idle flush, which raises the watermark to MAX_VALUE and fires everything due.
+     */
+    private long alignedWatermark() {
+        long aligned = Long.MAX_VALUE;
+        for (int i = 0; i < sourceWatermarkMs.length(); i++) {
+            aligned = Math.min(aligned, sourceWatermarkMs.get(i));
+        }
+        // Every entry starts at MIN_VALUE, so a pipeline whose sources have not all spoken yet
+        // yields MIN_VALUE and fires no event-time timer — which is the point: a join must not
+        // close a window before the peer side has had a chance to contribute.
+        return aligned;
+    }
+
+    private void publishAlignedWatermark(boolean rederive) {
+        long aligned = alignedWatermark();
+        if (rederive) {
+            // Fresh epoch after an idle flush: the previous value (MAX_VALUE) is void, so the
+            // watermark is re-derived rather than max-merged.
+            watermarkMs.set(aligned);
+        } else {
+            watermarkMs.accumulateAndGet(aligned, Math::max);
         }
         try {
-            RedisRuntimeMetrics.get().setWatermarkMs(config.getJobName(), topic, consumerGroup, watermarkMs.get());
+            RedisRuntimeMetrics.get().setWatermarkMs(config.getJobName(), primaryTopic(), primaryGroup(), watermarkMs.get());
         } catch (Exception ignore) {
         }
     }
@@ -297,7 +428,7 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
                 next = eventTimers.peek();
                 if (next == null || next.timestampMs > watermark) {
                     try {
-                        RedisRuntimeMetrics.get().setEventTimeTimerQueueSize(config.getJobName(), topic, consumerGroup, eventTimers.size());
+                        RedisRuntimeMetrics.get().setEventTimeTimerQueueSize(config.getJobName(), primaryTopic(), primaryGroup(), eventTimers.size());
                     } catch (Exception ignore) {
                     }
                     return;
@@ -325,7 +456,7 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
             return true;
         }
         try {
-            String key = sinkDedupKey(sinkIndex, pid);
+            String key = sinkDedupKey(sinkIndex, pid, ctx.sourceIndex);
             RSetCache<String> set = redissonClient.getSetCache(key, StringCodec.INSTANCE);
             return !set.contains(mid);
         } catch (Exception ignore) {
@@ -346,7 +477,7 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
             return;
         }
         try {
-            String key = sinkDedupKey(sinkIndex, pid);
+            String key = sinkDedupKey(sinkIndex, pid, ctx.sourceIndex);
             RSetCache<String> set = redissonClient.getSetCache(key, StringCodec.INSTANCE);
             Duration ttl = config.getSinkDeduplicationTtl();
             if (ttl == null || ttl.isZero() || ttl.isNegative()) {
@@ -378,11 +509,11 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
         }
     }
 
-    private String sinkDedupKey(int sinkIndex, int partitionId) {
+    private String sinkDedupKey(int sinkIndex, int partitionId, int sourceIndex) {
         return config.getSinkDedupKeyPrefix()
                 + config.getJobName()
-                + ":topic:" + topic
-                + ":cg:" + consumerGroup
+                + ":topic:" + topics.get(sourceIndex)
+                + ":cg:" + consumerGroups.get(sourceIndex)
                 + ":sink:" + sinkIndex
                 + ":p:" + partitionId;
     }
@@ -413,7 +544,7 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
                     sink.close();
                 } catch (Exception e) {
                     log.warn("Failed to close sink for jobName={}, topic={}, group={}",
-                            config.getJobName(), topic, consumerGroup, e);
+                            config.getJobName(), primaryTopic(), primaryGroup(), e);
                 }
             }
             sinksClosed = true;
@@ -537,7 +668,7 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
         TwoPhaseCommitCoordinator coordinator = twoPhaseCoordinators.get(sinkIndex);
         if (coordinator == null) {
             throw new IllegalStateException(
-                    "sink " + sinkIndex + " of " + topic + "/" + consumerGroup + " is not a TwoPhaseCommitSink");
+                    "sink " + sinkIndex + " of " + primaryTopic() + "/" + primaryGroup() + " is not a TwoPhaseCommitSink");
         }
         coordinator.recoverAndCommit(encodedTxn);
     }
@@ -550,7 +681,7 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
         TwoPhaseCommitCoordinator coordinator = twoPhaseCoordinators.get(sinkIndex);
         if (coordinator == null) {
             throw new IllegalStateException(
-                    "sink " + sinkIndex + " of " + topic + "/" + consumerGroup + " is not a TwoPhaseCommitSink");
+                    "sink " + sinkIndex + " of " + primaryTopic() + "/" + primaryGroup() + " is not a TwoPhaseCommitSink");
         }
         coordinator.recoverAndAbort(encodedTxn);
     }
@@ -559,11 +690,18 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
         private final Message message;
         private long eventTimeMs;
         private final int partitionId;
+        /** Phase 3: the source this record arrived on (0 for the historical single source). */
+        final int sourceIndex;
 
         private Context(Message message, long processingTimeMs, long eventTimeMs) {
+            this(message, processingTimeMs, eventTimeMs, 0);
+        }
+
+        private Context(Message message, long processingTimeMs, long eventTimeMs, int sourceIndex) {
             this.message = message;
             this.eventTimeMs = eventTimeMs;
             this.partitionId = extractPartitionId(message);
+            this.sourceIndex = sourceIndex;
         }
 
         public Message message() {
@@ -572,6 +710,21 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
 
         public int currentPartitionId() {
             return partitionId;
+        }
+
+        /** Phase 3: the topic this record arrived on (its source). */
+        public String currentTopic() {
+            return topics.get(sourceIndex);
+        }
+
+        /** Phase 3: the consumer group this record arrived on (its source). */
+        public String currentConsumerGroup() {
+            return consumerGroups.get(sourceIndex);
+        }
+
+        /** Phase 3: the source index this record arrived on. */
+        public int currentSourceIndex() {
+            return sourceIndex;
         }
 
         public long currentProcessingTime() {
@@ -599,16 +752,17 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
         }
 
         /**
-         * Monotonically raise the pipeline watermark (never lowers it). Used by user-supplied
+         * Monotonically raise this record's source watermark (never lowers it), then re-publish
+         * the aligned minimum over the sources. Used by user-supplied
          * {@link io.github.cuihairu.redis.streaming.api.watermark.WatermarkGenerator}s attached
-         * via {@code assignTimestampsAndWatermarks}.
+         * via {@code assignTimestampsAndWatermarks}: in a multi-source pipeline a generator's
+         * raise only counts for the source it rides, so the pipeline watermark still waits for
+         * the slower source. Per-source state isolation is the generator holder's job — see
+         * the per-source factory overload of {@code assignTimestampsAndWatermarks}.
          */
         public void raiseWatermark(long watermarkMs) {
-            RedisPipelineRunner.this.watermarkMs.updateAndGet(prev -> Math.max(prev, watermarkMs));
-            try {
-                RedisRuntimeMetrics.get().setWatermarkMs(config.getJobName(), topic, consumerGroup, RedisPipelineRunner.this.watermarkMs.get());
-            } catch (Exception ignore) {
-            }
+            sourceWatermarkMs.accumulateAndGet(sourceIndex, watermarkMs, Math::max);
+            publishAlignedWatermark(false);
         }
 
         /**
@@ -689,13 +843,13 @@ public final class RedisPipelineRunner<T> implements AutoCloseable {
                     throw new IllegalStateException(
                             "Redis runtime event-time timer queue is full (size=" + eventTimers.size()
                                     + ", maxSize=" + max + ", jobName=" + config.getJobName()
-                                    + ", topic=" + topic + ", group=" + consumerGroup
+                                    + ", topic=" + primaryTopic() + ", group=" + primaryGroup()
                                     + "); failing the record instead of silently dropping the timer — "
                                     + "raise RedisRuntimeConfig.eventTimeTimerMaxSize or fix the timer leak");
                 }
                 eventTimers.add(new EventTimer(timerSeq++, triggerTimeMs, callback));
                 try {
-                    RedisRuntimeMetrics.get().setEventTimeTimerQueueSize(config.getJobName(), topic, consumerGroup, eventTimers.size());
+                    RedisRuntimeMetrics.get().setEventTimeTimerQueueSize(config.getJobName(), primaryTopic(), primaryGroup(), eventTimers.size());
                 } catch (Exception ignore) {
                 }
             }

@@ -42,6 +42,7 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -201,11 +202,6 @@ public final class RedisStreamExecutionEnvironment {
      *
      * <p>The id is used to derive operator/state identifiers; keep it stable across restarts.</p>
      */
-    /**
-     * Create a streaming source backed by MQ (Redis Streams) with an explicit stable source id.
-     *
-     * <p>The id is used to derive operator/state identifiers; keep it stable across restarts.</p>
-     */
     public DataStream<Message> fromMqTopicWithId(String sourceId, String topic, String consumerGroup) {
         return fromMqTopicWithId(sourceId, topic, consumerGroup, null);
     }
@@ -221,6 +217,73 @@ public final class RedisStreamExecutionEnvironment {
         String sid = requireValidId(sourceId);
         registerStreamId(sid);
         return RedisStreamBuilder.forMqSource(this, config, redissonClient, objectMapper, sid, topic, consumerGroup, subscriptionOptions);
+    }
+
+    /**
+     * Create a dual-source streaming pipeline (Phase 3, plan A): one pipeline consuming two MQ
+     * topics, each with its own consumer group. Both sources feed one operator chain and one
+     * keyed-state space (keyed by source 0's topic/group), so this is the shape a stream-stream
+     * join wants without a relay topic: tag both sides into envelopes, key by the join key, and
+     * process the join operator on the merged stream.
+     *
+     * <p><b>Event-time alignment.</b> The pipeline watermark is the minimum over the two
+     * sources' candidates, so a window only closes once <em>both</em> sources have advanced past
+     * it — one side going quiet holds the join open rather than letting the other side's
+     * unmatched rows fire early. A source that goes permanently quiet is unblocked by
+     * {@code watermarkIdleTimeout} (RT-M3 idle flush), which fires everything due after the
+     * timeout; size that timeout to how late the slower side may run.
+     *
+     * <p><b>Preconditions.</b> Both topics must be produced with the <em>join key</em> as the MQ
+     * key and the <em>same partition count</em>: keyed state is partitioned by the arrival partition,
+     * so the same key must land on the same partition in both topics or the two sides never meet
+     * in one buffer ({@code executeAsync} fails fast when the partition counts differ). The
+     * duplicate (topic, group) guard applies per source.
+     *
+     * @param topic1          first topic (its group also keys the pipeline's keyed state)
+     * @param consumerGroup1  first topic's consumer group
+     * @param topic2          second topic
+     * @param consumerGroup2  second topic's consumer group
+     * @return a stream fed by both sources
+     */
+    public DataStream<Message> fromMqTopics(String topic1, String consumerGroup1, String topic2, String consumerGroup2) {
+        return fromMqTopics(topic1, consumerGroup1, null, topic2, consumerGroup2, null);
+    }
+
+    /**
+     * Dual-source variant of {@link #fromMqTopics(String, String, String, String)} with
+     * per-subscription overrides (batch size, poll timeout).
+     */
+    public DataStream<Message> fromMqTopics(String topic1, String consumerGroup1, SubscriptionOptions subscriptionOptions1,
+                                            String topic2, String consumerGroup2, SubscriptionOptions subscriptionOptions2) {
+        Objects.requireNonNull(topic1, "topic1");
+        Objects.requireNonNull(consumerGroup1, "consumerGroup1");
+        Objects.requireNonNull(topic2, "topic2");
+        Objects.requireNonNull(consumerGroup2, "consumerGroup2");
+        String streamId = "source-" + streamSeq.incrementAndGet();
+        registerStreamId(streamId);
+        return RedisStreamBuilder.forMqSources(this, config, redissonClient, objectMapper, streamId,
+                List.of(topic1, topic2), List.of(consumerGroup1, consumerGroup2),
+                // Arrays.asList, not List.of: a null option means "MQ defaults", which is what the
+                // 4-arg convenience overload passes
+                Arrays.asList(subscriptionOptions1, subscriptionOptions2));
+    }
+
+    /**
+     * Dual-source variant with an explicit stable source id (see {@link #fromMqTopicWithId}).
+     * The id keeps operator/state identifiers stable across restarts.
+     */
+    public DataStream<Message> fromMqTopicsWithId(String sourceId,
+                                                  String topic1, String consumerGroup1, SubscriptionOptions subscriptionOptions1,
+                                                  String topic2, String consumerGroup2, SubscriptionOptions subscriptionOptions2) {
+        Objects.requireNonNull(topic1, "topic1");
+        Objects.requireNonNull(consumerGroup1, "consumerGroup1");
+        Objects.requireNonNull(topic2, "topic2");
+        Objects.requireNonNull(consumerGroup2, "consumerGroup2");
+        String sid = requireValidId(sourceId);
+        registerStreamId(sid);
+        return RedisStreamBuilder.forMqSources(this, config, redissonClient, objectMapper, sid,
+                List.of(topic1, topic2), List.of(consumerGroup1, consumerGroup2),
+                Arrays.asList(subscriptionOptions1, subscriptionOptions2));
     }
 
     /**
@@ -351,16 +414,19 @@ public final class RedisStreamExecutionEnvironment {
             throw new IllegalStateException("Cannot register new pipelines after executeAsync() is called");
         }
         Objects.requireNonNull(pipelineDefinition, "pipelineDefinition");
-        TopicGroup topicGroup = new TopicGroup(pipelineDefinition.topic(), pipelineDefinition.consumerGroup());
-        if (!registeredTopicGroups.add(topicGroup)) {
-            throw new IllegalStateException(
-                    "Duplicate pipeline for topic '" + pipelineDefinition.topic() + "' and consumer group '"
-                            + pipelineDefinition.consumerGroup() + "': two pipelines sharing one consumer group "
-                            + "split the stream between them instead of each reading every message (Redis Streams "
-                            + "consumer-group semantics), and chains forked from the same source also collide on "
-                            + "keyed-state names. Give each independent chain its own consumer group, e.g. "
-                            + "env.fromMqTopic(\"" + pipelineDefinition.topic() + "\", \""
-                            + pipelineDefinition.consumerGroup() + "-fork2\").");
+        // the guard is per source: a dual-source pipeline claims every (topic, group) pair it reads
+        for (int i = 0; i < pipelineDefinition.sourceCount(); i++) {
+            String t = pipelineDefinition.topicAt(i);
+            String g = pipelineDefinition.consumerGroupAt(i);
+            TopicGroup topicGroup = new TopicGroup(t, g);
+            if (!registeredTopicGroups.add(topicGroup)) {
+                throw new IllegalStateException(
+                        "Duplicate pipeline for topic '" + t + "' and consumer group '" + g + "': two pipelines "
+                                + "sharing one consumer group split the stream between them instead of each reading "
+                                + "every message (Redis Streams consumer-group semantics), and chains forked from the "
+                                + "same source also collide on keyed-state names. Give each independent chain its own "
+                                + "consumer group, e.g. env.fromMqTopic(\"" + t + "\", \"" + g + "-fork2\").");
+            }
         }
         pipelineDefinitions.add(pipelineDefinition);
     }
@@ -446,8 +512,13 @@ public final class RedisStreamExecutionEnvironment {
 
         try {
             for (RedisPipelineDefinition def : pipelineDefinitions) {
-                pipelineKeys.add(new RedisRuntimeCheckpointManager.PipelineKey(def.topic(), def.consumerGroup()));
+                // one checkpoint key per source: offsets are tracked per (topic, group), so a
+                // dual-source pipeline restores each side independently
+                for (int i = 0; i < def.sourceCount(); i++) {
+                    pipelineKeys.add(new RedisRuntimeCheckpointManager.PipelineKey(def.topicAt(i), def.consumerGroupAt(i)));
+                }
             }
+            validateMultiSourcePartitionCounts(pipelineDefinitions, partitionRegistry);
             if (config.isRestoreFromLatestCheckpoint()) {
                 // RT-M4: a requested restore that fails must abort the start instead of
                 // silently consuming from scratch without the restored state — the outer
@@ -493,8 +564,10 @@ public final class RedisStreamExecutionEnvironment {
                     consumers.add(consumer);
 
                     if (config.isRestoreConsumerGroupFromCommitFrontier()) {
-                        ensureConsumerGroupStartsFromCommitFrontierIfMissing(
-                                partitionRegistry, script, ENSURE_GROUP_LUA, p.topic(), p.consumerGroup());
+                        for (int s = 0; s < p.sourceCount(); s++) {
+                            ensureConsumerGroupStartsFromCommitFrontierIfMissing(
+                                    partitionRegistry, script, ENSURE_GROUP_LUA, p.topicAt(s), p.consumerGroupAt(s));
+                        }
                     }
 
                     startSubtaskConsumer(consumer, consumerName, p, subtask, parallelism, runner, deferredAcks);
@@ -838,7 +911,9 @@ public final class RedisStreamExecutionEnvironment {
                 }
 
                 private boolean scaleSubtasks(int newParallelism) {
-                    int pipelines = Math.max(1, pipelineKeys.size());
+                    // one subtask unit per pipeline, not per checkpoint key: a dual-source
+                    // pipeline contributes two (topic, group) keys but is still one chain
+                    int pipelines = Math.max(1, pipelineDefinitions.size());
                     List<List<Subtask>> byPipeline = new ArrayList<>(pipelines);
                     for (int i = 0; i < pipelines; i++) {
                         byPipeline.add(new ArrayList<>());
@@ -895,7 +970,12 @@ public final class RedisStreamExecutionEnvironment {
 
                 private void repin(Subtask st, int parallelism, int subtask) {
                     if (st.consumer instanceof io.github.cuihairu.redis.streaming.mq.control.ReassignableMessageConsumer rmc) {
-                        rmc.updatePartitionAssignment(pipelineKeys.get(st.pipelineIndex).topic(), parallelism, subtask);
+                        // every source of the pipeline keeps the same modulo/remainder, so a
+                        // dual-source subtask stays pinned consistently on both topics
+                        RedisPipelineDefinition def = pipelineDefinitions.get(st.pipelineIndex);
+                        for (int s = 0; s < def.sourceCount(); s++) {
+                            rmc.updatePartitionAssignment(def.topicAt(s), parallelism, subtask);
+                        }
                     }
                 }
 
@@ -949,9 +1029,11 @@ public final class RedisStreamExecutionEnvironment {
                 out.put("eventTimeTimerMaxSize", config.getEventTimeTimerMaxSize());
                 out.put("consumerCount", consumers.size());
                 // parallelism is live after scaleParallelism; the config value is the start-time setting
-                out.put("liveParallelism", subtasks.isEmpty() || pipelineKeys.isEmpty()
+                // (pipeline definitions, not checkpoint keys — a dual-source pipeline contributes
+                // two keys but is still one subtask unit)
+                out.put("liveParallelism", subtasks.isEmpty() || pipelineDefinitions.isEmpty()
                         ? config.getPipelineParallelism()
-                        : Math.max(1, subtasks.size() / pipelineKeys.size()));
+                        : Math.max(1, subtasks.size() / pipelineDefinitions.size()));
                         out.put("runnerCount", runners.size());
                         out.put("inFlight", inFlight());
                         out.put("checkpointing", gate.isExclusive());
@@ -1039,12 +1121,21 @@ public final class RedisStreamExecutionEnvironment {
                                                  String consumerName, DeferredAcks deferredAcks) {
         return (Message m) -> {
             long startNs = System.nanoTime();
+            // the arriving record's source: a Message carries its topic (RedisMessageConsumer
+            // fills it), and the source decides the watermark contribution and dedup scope
+            int sourceIndex = p.sourceCount() > 1 ? p.sourceIndex(m == null ? null : m.getTopic()) : 0;
+            if (sourceIndex < 0) {
+                // unknown topic: never subscribed by us, but resolve defensively to source 0
+                sourceIndex = 0;
+            }
+            String topic = p.topicAt(sourceIndex);
+            String group = p.consumerGroupAt(sourceIndex);
             boolean installMdc = config.isMdcEnabled() && shouldInstallMdc(m);
             if (installMdc) {
                 try {
                     MDC.put("rs.job", config.getJobName());
-                    MDC.put("rs.topic", p.topic());
-                    MDC.put("rs.group", p.consumerGroup());
+                    MDC.put("rs.topic", topic);
+                    MDC.put("rs.group", group);
                     MDC.put("rs.consumer", consumerName);
                     if (m != null) {
                         try { MDC.put("rs.id", m.getId()); } catch (Exception ignore) {}
@@ -1061,15 +1152,15 @@ public final class RedisStreamExecutionEnvironment {
                 }
             }
             try {
-                boolean ok = runner.handle(m);
+                boolean ok = runner.handle(m, sourceIndex);
                 try {
-                    RedisRuntimeMetrics.get().recordHandleLatency(config.getJobName(), p.topic(), p.consumerGroup(),
+                    RedisRuntimeMetrics.get().recordHandleLatency(config.getJobName(), topic, group,
                             (System.nanoTime() - startNs) / 1_000_000);
                     if (ok) {
-                        RedisRuntimeMetrics.get().incHandleSuccess(config.getJobName(), p.topic(), p.consumerGroup());
+                        RedisRuntimeMetrics.get().incHandleSuccess(config.getJobName(), topic, group);
                     } else {
                         // this arm returns MessageHandleResult.RETRY below — pin the dimension to it
-                        RedisRuntimeMetrics.get().incHandleError(config.getJobName(), p.topic(), p.consumerGroup(), "retry");
+                        RedisRuntimeMetrics.get().incHandleError(config.getJobName(), topic, group, "retry");
                     }
                 } catch (Exception ignore) {
                 }
@@ -1077,15 +1168,15 @@ public final class RedisStreamExecutionEnvironment {
                     return MessageHandleResult.RETRY;
                 }
                 if (config.isDeferAckUntilCheckpoint()) {
-                    markDeferAck(m, deferredAcks, p.topic(), p.consumerGroup());
+                    markDeferAck(m, deferredAcks, topic, group);
                 }
                 return MessageHandleResult.SUCCESS;
             } catch (Exception e) {
-                annotateRuntimeError(m, p.consumerGroup(), e);
+                annotateRuntimeError(m, group, e);
                 try {
-                    RedisRuntimeMetrics.get().recordHandleLatency(config.getJobName(), p.topic(), p.consumerGroup(),
+                    RedisRuntimeMetrics.get().recordHandleLatency(config.getJobName(), topic, group,
                             (System.nanoTime() - startNs) / 1_000_000);
-                    RedisRuntimeMetrics.get().incHandleError(config.getJobName(), p.topic(), p.consumerGroup(),
+                    RedisRuntimeMetrics.get().incHandleError(config.getJobName(), topic, group,
                             config.getProcessingErrorResult().name().toLowerCase(java.util.Locale.ROOT));
                 } catch (Exception ignore) {
                 }
@@ -1093,7 +1184,7 @@ public final class RedisStreamExecutionEnvironment {
                     String id = m == null ? null : m.getId();
                     String key = m == null ? null : m.getKey();
                     log.error("Redis runtime pipeline failed (jobName={}, topic={}, group={}, consumer={}, id={}, key={})",
-                            config.getJobName(), p.topic(), p.consumerGroup(), consumerName, id, key, e);
+                            config.getJobName(), topic, group, consumerName, id, key, e);
                 } catch (Exception ignore) {
                     // best-effort logging only
                 }
@@ -1118,24 +1209,36 @@ public final class RedisStreamExecutionEnvironment {
     /**
      * Subscribe and start one subtask's consumer (handler wiring, metrics, failure
      * surfacing). Shared by the initial start loop and {@code scaleParallelism} scale-up.
+     * A dual-source pipeline subscribes one consumer instance to both topics: the handler
+     * resolves the source from the Message's topic, so each source keeps its own offsets,
+     * defer-ack scope and partition pinning ({@code RedisMessageConsumer} keys its workers
+     * by (topic, group, partition)).
      */
     private void startSubtaskConsumer(MessageConsumer consumer, String consumerName, RedisPipeline<?> p,
                                       int subtask, int parallelism, RedisPipelineRunner<?> runner,
                                       DeferredAcks deferredAcks) {
         MessageHandler handler = createMessageHandler(runner, p, consumerName, deferredAcks);
-        io.github.cuihairu.redis.streaming.mq.SubscriptionOptions opts =
-                optionsForSubtask(p.subscriptionOptions(), parallelism, subtask);
         try {
-            consumer.subscribe(p.topic(), p.consumerGroup(), handler, opts);
+            // both (all) sources before start(): the consumer's initial rebalance then covers
+            // every subscription in one pass
+            for (int s = 0; s < p.sourceCount(); s++) {
+                io.github.cuihairu.redis.streaming.mq.SubscriptionOptions opts =
+                        optionsForSubtask(p.subscriptionOptionsAt(s), parallelism, subtask);
+                consumer.subscribe(p.topicAt(s), p.consumerGroupAt(s), handler, opts);
+            }
             consumer.start();
-            try {
-                RedisRuntimeMetrics.get().incPipelineStarted(config.getJobName(), p.topic(), p.consumerGroup());
-            } catch (Exception ignore) {
+            for (int s = 0; s < p.sourceCount(); s++) {
+                try {
+                    RedisRuntimeMetrics.get().incPipelineStarted(config.getJobName(), p.topicAt(s), p.consumerGroupAt(s));
+                } catch (Exception ignore) {
+                }
             }
         } catch (Exception e) {
-            try {
-                RedisRuntimeMetrics.get().incPipelineStartFailed(config.getJobName(), p.topic(), p.consumerGroup());
-            } catch (Exception ignore) {
+            for (int s = 0; s < p.sourceCount(); s++) {
+                try {
+                    RedisRuntimeMetrics.get().incPipelineStartFailed(config.getJobName(), p.topicAt(s), p.consumerGroupAt(s));
+                } catch (Exception ignore) {
+                }
             }
             throw e;
         }
@@ -1785,6 +1888,39 @@ public final class RedisStreamExecutionEnvironment {
             return Long.compare(ase, bse);
         } catch (Exception ignore) {
             return a.compareTo(b);
+        }
+    }
+
+    /**
+     * Phase 3 dual-source precondition: every source of a multi-source pipeline must carry the
+     * same partition count. Keyed state (the join buffers) is partitioned by the <em>arrival</em>
+     * partition and one runner consumes all sources, so a key that hashes to partition 2 of the
+     * left topic but partition 0 of the right topic never meets in one buffer — the join would
+     * silently emit nothing but the unmatched rows. Fail fast at start rather than at runtime.
+     *
+     * <p>Single-source pipelines are untouched: the check is about co-locating two sources in one
+     * keyed-state space, which only the dual-source form does.
+     */
+    private void validateMultiSourcePartitionCounts(List<RedisPipelineDefinition> definitions,
+                                                    TopicPartitionRegistry partitionRegistry) {
+        for (RedisPipelineDefinition def : definitions) {
+            if (def.sourceCount() < 2) {
+                continue;
+            }
+            int expected = Math.max(1, partitionRegistry.getPartitionCount(def.topicAt(0)));
+            for (int i = 1; i < def.sourceCount(); i++) {
+                int actual = Math.max(1, partitionRegistry.getPartitionCount(def.topicAt(i)));
+                if (actual != expected) {
+                    throw new IllegalStateException(
+                            "Dual-source pipeline sources must have the same partition count, but topic '"
+                                    + def.topicAt(0) + "' has " + expected + " and topic '" + def.topicAt(i)
+                                    + "' has " + actual + ": keyed state is partitioned by the arrival partition, "
+                                    + "so a join key landing on different partitions in the two topics never "
+                                    + "meets in one buffer. Produce both topics with the same partition count (and "
+                                    + "the same key so the partition hash agrees), or route both sides through one "
+                                    + "relay topic with env.join(...), which tags them into a single source.");
+                }
+            }
         }
     }
 

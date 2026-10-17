@@ -40,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -354,11 +355,19 @@ class RedisStreamExecutionEnvironmentGapClosureTest {
         RedisPipelineRunner<Object> runner = mock(RedisPipelineRunner.class);
         when(def.topic()).thenReturn("t");
         when(def.consumerGroup()).thenReturn("g");
+        // the engine walks a definition source by source, so the single-source shape has to be
+        // stated that way too (topic()/consumerGroup() alone would leave sourceCount() at 0)
+        when(def.sourceCount()).thenReturn(1);
+        when(def.topicAt(0)).thenReturn("t");
+        when(def.consumerGroupAt(0)).thenReturn("g");
         when(def.freeze()).thenReturn(pipeline);
         when(pipeline.topic()).thenReturn("t");
         when(pipeline.consumerGroup()).thenReturn("g");
+        when(pipeline.sourceCount()).thenReturn(1);
+        when(pipeline.topicAt(0)).thenReturn("t");
+        when(pipeline.consumerGroupAt(0)).thenReturn("g");
         when(pipeline.buildRunner(any())).thenReturn(runner);
-        when(runner.handle(any())).thenReturn(false);
+        when(runner.handle(any(), anyInt())).thenReturn(false);
 
         RedisRuntimeConfig cfg = baseConfig().build();
         RedisStreamExecutionEnvironment env = environment(cfg);
@@ -367,7 +376,7 @@ class RedisStreamExecutionEnvironmentGapClosureTest {
         try {
             MessageHandler handler = consumers.get(0).handler;
             assertEquals(MessageHandleResult.RETRY, handler.handle(message("1-1", null)));
-            verify(runner).handle(any());
+            verify(runner).handle(any(), eq(0));
         } finally {
             job.cancel();
         }
@@ -381,11 +390,19 @@ class RedisStreamExecutionEnvironmentGapClosureTest {
         RedisPipelineRunner<Object> runner = mock(RedisPipelineRunner.class);
         when(def.topic()).thenReturn("t");
         when(def.consumerGroup()).thenReturn("g");
+        // the engine walks a definition source by source, so the single-source shape has to be
+        // stated that way too (topic()/consumerGroup() alone would leave sourceCount() at 0)
+        when(def.sourceCount()).thenReturn(1);
+        when(def.topicAt(0)).thenReturn("t");
+        when(def.consumerGroupAt(0)).thenReturn("g");
         when(def.freeze()).thenReturn(pipeline);
         when(pipeline.topic()).thenReturn("t");
         when(pipeline.consumerGroup()).thenReturn("g");
+        when(pipeline.sourceCount()).thenReturn(1);
+        when(pipeline.topicAt(0)).thenReturn("t");
+        when(pipeline.consumerGroupAt(0)).thenReturn("g");
         when(pipeline.buildRunner(any())).thenReturn(runner);
-        when(runner.handle(any())).thenReturn(false);
+        when(runner.handle(any(), anyInt())).thenReturn(false);
 
         RecordingOutcomeCollector metrics = new RecordingOutcomeCollector();
         StreamingMetricsCollector before = RedisRuntimeMetrics.get();
@@ -412,11 +429,19 @@ class RedisStreamExecutionEnvironmentGapClosureTest {
         RedisPipelineRunner<Object> runner = mock(RedisPipelineRunner.class);
         when(def.topic()).thenReturn("t");
         when(def.consumerGroup()).thenReturn("g");
+        // the engine walks a definition source by source, so the single-source shape has to be
+        // stated that way too (topic()/consumerGroup() alone would leave sourceCount() at 0)
+        when(def.sourceCount()).thenReturn(1);
+        when(def.topicAt(0)).thenReturn("t");
+        when(def.consumerGroupAt(0)).thenReturn("g");
         when(def.freeze()).thenReturn(pipeline);
         when(pipeline.topic()).thenReturn("t");
         when(pipeline.consumerGroup()).thenReturn("g");
+        when(pipeline.sourceCount()).thenReturn(1);
+        when(pipeline.topicAt(0)).thenReturn("t");
+        when(pipeline.consumerGroupAt(0)).thenReturn("g");
         when(pipeline.buildRunner(any())).thenReturn(runner);
-        when(runner.handle(any())).thenThrow(new IllegalStateException("boom"));
+        when(runner.handle(any(), anyInt())).thenThrow(new IllegalStateException("boom"));
 
         RecordingOutcomeCollector metrics = new RecordingOutcomeCollector();
         StreamingMetricsCollector before = RedisRuntimeMetrics.get();
