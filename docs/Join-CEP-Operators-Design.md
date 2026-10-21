@@ -125,7 +125,7 @@ new PatternSequenceProcessFunction<>(pattern, timestampExtractor)
 |---|---|---|
 | Phase 1 | `Envelope` + `StreamJoinOperator` + `PatternSequenceProcessFunction`；InMemory / Redis 双引擎集成测试；`docs/Join.md`、`docs/CEP.md` 增「算子化」章节；本文档落稿 | 本批实现 |
 | Phase 2 | `DataStream.join(other)` 语法糖（编译期展开为信封 + 桥接）；两算子缓冲迁 keyed `ValueState` 进 checkpoint；`TimestampAssigner` 重载接入后评估 event-time join 窗口 | **缓冲迁移本批落地**（2026-10-12，卡点 A 解除，见 §5.1）；语法糖内存侧已落地（2026-10-14，见 §5.2）；Redis 侧 U3 三段编排亦已落地（2026-10-14，落点 `RedisStreamExecutionEnvironment.join`，见 docs/Union-DualSource-Design.md §5），卡点 B 解除 |
-| Phase 3 | 引擎级双源 pipeline（方案 A）、event-time 水位对齐窗口、retract/waiting 语义（外连接二次发射消除） | 远期，与 P4 动态伸缩合并设计 |
+| Phase 3 | 引擎级双源 pipeline（方案 A）、event-time 水位对齐窗口、retract/waiting 语义（外连接二次发射消除） | **已落地**：`fromMqTopics` 双源读取与逐源对齐水位（781485d、8538f14）；`emitUnmatchedImmediately=false` 等待/收口语义（5dc27c2）；join 172 单测 + runtime 918 单测绿 |
 
 ### 5.1 卡点 A：Context 状态访问面——已解除（2026-10-12）
 
