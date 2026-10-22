@@ -16,6 +16,7 @@ const sharedThemeConfig = {
 
 export default withMermaid(
   defineConfig({
+    head: [['link', { rel: 'icon', type: 'image/svg+xml', href: `${base}logo.svg` }]],
     // 顶层 lang 作为 fallback；各 locale 在下方 locales.*.lang 中显式声明
     lang: 'zh-CN',
     title: 'Redis Streaming',
