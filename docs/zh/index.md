@@ -67,19 +67,19 @@ if (typeof window !== 'undefined') {{
 模块清单与 `settings.gradle` 一致，共 20 个 Gradle 模块。
 
 **核心抽象层（Tier 1）**
-- [Core](/Core) · [Runtime](/runtime)
+- [Core](/zh/Core) · [Runtime](/zh/runtime)
 
 **基础设施层（Tier 2）**
-- [MQ](/MQ) · [Registry](/Registry) · [Config](/config) · [State](/state) · [Checkpoint](/checkpoint) · [Watermark](/watermark)
+- [MQ](/zh/MQ) · [Registry](/zh/Registry) · [Config](/zh/config) · [State](/zh/state) · [Checkpoint](/zh/checkpoint) · [Watermark](/zh/watermark)
 
 **特性层（Tier 3）**
-- [Window](/window) · [Aggregation](/Aggregation) · [Table](/Table) · [Join](/Join) · [CDC](/CDC) · [Source & Sink](/source-sink)（`source`、`sink` 两个模块由该页合并介绍）
+- [Window](/zh/window) · [Aggregation](/zh/Aggregation) · [Table](/zh/Table) · [Join](/zh/Join) · [CDC](/zh/CDC) · [Source & Sink](/zh/source-sink)（`source`、`sink` 两个模块由该页合并介绍）
 
 **高级特性层（Tier 4）**
-- [Reliability](/reliability) · [CEP](/CEP)
+- [Reliability](/zh/reliability) · [CEP](/zh/CEP)
 
 **集成层（Tier 5）**
-- [Metrics](/Metrics) · [Spring Boot Starter](/Spring-Boot-Starter) · [Examples](/Examples)
+- [Metrics](/zh/Metrics) · [Spring Boot Starter](/Spring-Boot-Starter) · [Examples](/Examples)
 
 **设计与运维**
-- [架构总览](/Architecture) · [Exactly-Once 语义](/exactly-once) · [故障排查](/troubleshooting) · [测试指南](/Testing)
+- [架构总览](/Architecture) · [Exactly-Once 语义](/zh/exactly-once) · [故障排查](/zh/troubleshooting) · [测试指南](/Testing)

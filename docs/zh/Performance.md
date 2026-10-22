@@ -23,7 +23,7 @@
 
 ## 压测建议
 - 使用接近真实的 payload；分别测 P、batchSize、并行度的影响
-- 关注指标：生产/消费速率、p99 处理延迟、DLQ 速率、Redis CPU/内存/网络（指标清单见 [Metrics](/Metrics)）
+- 关注指标：生产/消费速率、p99 处理延迟、DLQ 速率、Redis CPU/内存/网络（指标清单见 [Metrics](/zh/Metrics)）
 
 ## 取舍
 - 分区越多并行越强，但总 PEL/worker 也增加；结合硬件与负载选择合适 P

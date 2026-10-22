@@ -229,5 +229,5 @@ starter 未映射 `resyncIntervalMs`，需要时自行构造 `ConfigServiceConfi
 ## 相关文档
 
 - [Registry 模块](Registry.md) - 服务注册与发现
-- [config 模块 README](../config/README.md) - 模块内说明
+- config 模块 README - 模块内说明
 - [Spring Boot Starter](Spring-Boot-Starter.md) - Spring Boot 集成

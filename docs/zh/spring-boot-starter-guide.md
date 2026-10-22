@@ -1,6 +1,6 @@
 # Spring Boot 集成指南
 
-本文是快速上手篇;完整配置项参考、自动装配 Bean 清单与指标名见 [Spring-Boot-Starter](./Spring-Boot-Starter.md)(英文版:[Spring-Boot-Starter](./en/Spring-Boot-Starter.md))。
+本文是快速上手篇;完整配置项参考、自动装配 Bean 清单与指标名见 [Spring-Boot-Starter](./Spring-Boot-Starter.md)(英文版:[Spring-Boot-Starter](/Spring-Boot-Starter))。
 
 ## 模块职责
 

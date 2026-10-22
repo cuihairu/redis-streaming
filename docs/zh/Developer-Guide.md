@@ -6,4 +6,4 @@
 - 覆盖率门禁：根项目 `jacocoRootCoverageVerification`（单测口径确定性门禁：INSTRUCTION ≥ 0.95 且 CLASS ≥ 0.99），报告 `./gradlew jacocoRootReport`（单测+集成并集，上传 Codecov）
 - 代码规范：Java 17（`options.release = 17`）/ UTF-8 / 4 空格缩进；日志用 SLF4J；主代码开 `-Xlint:deprecation -Xlint:unchecked -Werror`（测试豁免 `-Werror` 与 unchecked）
 - 版本管理：版本号由 axion-release 从 `v*` git 标签推导（根 `build.gradle` 的 `scmVersion`）
-- 推荐阅读：[Architecture](/Architecture) / [Design](/Design) / [Spring-Boot-Starter](/Spring-Boot-Starter) / [CEP](/CEP)
+- 推荐阅读：[Architecture](/Architecture) / Design / [Spring-Boot-Starter](/Spring-Boot-Starter) / [CEP](/zh/CEP)

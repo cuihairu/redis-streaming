@@ -2,7 +2,7 @@
 
 本页覆盖构建、测试与示例运行；完整细节见根目录文档：
 - [QUICK_START.md](https://github.com/cuihairu/redis-streaming/blob/main/QUICK_START.md)、[RUNNING_EXAMPLES.md](https://github.com/cuihairu/redis-streaming/blob/main/RUNNING_EXAMPLES.md)、[TESTING.md](https://github.com/cuihairu/redis-streaming/blob/main/TESTING.md)
-- Spring Boot 入门：[Spring-Boot-Starter](/Spring-Boot-Starter) 与 [spring-boot-starter-guide](/spring-boot-starter-guide)
+- Spring Boot 入门：[Spring-Boot-Starter](/Spring-Boot-Starter) 与 [spring-boot-starter-guide](/zh/spring-boot-starter-guide)
 
 ## 1) 环境准备
 - Java 17+（构建脚本将 `options.release` 固定为 17）
@@ -76,7 +76,7 @@ redis-streaming:
     enabled: true                      # 缺省即为 true（matchIfMissing）
 ```
 
-指标（可选）：参考 [Metrics](/Metrics) 的 Actuator/Prometheus 配置。
+指标（可选）：参考 [Metrics](/zh/Metrics) 的 Actuator/Prometheus 配置。
 
 ## 6) 常见问题
 - 确认 Java 17：`java -version`

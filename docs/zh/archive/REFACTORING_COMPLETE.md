@@ -127,14 +127,14 @@ docker exec streaming-redis-test redis-cli FLUSHALL
 
 ### 已更新文档
 
-1. [[README.md](README.md) - 项目主文档，包含新的 Maven 坐标]
-2. [[CLAUDE.md](CLAUDE.md) - 开发文档，更新包名引用]
-3. [[PUBLISHING.md](PUBLISHING.md) - 发布指南，更新 Maven Central 坐标]
-4. [[QUICK_START.md](QUICK_START.md) - 快速入门，更新示例代码]
-5. [[RUNNING_EXAMPLES.md](RUNNING_EXAMPLES.md) - 示例运行指南]
-6. [[TESTING.md](TESTING.md) - 测试指南（已存在）]
-7. [[docs/maven-publish.md](docs/maven-publish.md) - Maven 发布详细文档]
-8. [[docs/spring-boot-starter-guide.md](docs/spring-boot-starter-guide.md) - Spring Boot 集成指南]
+1. [README.md - 项目主文档，包含新的 Maven 坐标]
+2. [CLAUDE.md - 开发文档，更新包名引用]
+3. [PUBLISHING.md - 发布指南，更新 Maven Central 坐标]
+4. [QUICK_START.md - 快速入门，更新示例代码]
+5. [RUNNING_EXAMPLES.md - 示例运行指南]
+6. [TESTING.md - 测试指南（已存在）]
+7. [[docs/maven-publish.md](/zh/maven-publish) - Maven 发布详细文档]
+8. [[docs/spring-boot-starter-guide.md](/zh/spring-boot-starter-guide) - Spring Boot 集成指南]
 
 ### 新增文档
 

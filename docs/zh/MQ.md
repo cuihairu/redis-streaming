@@ -248,4 +248,4 @@ dlqAdmin.clear("orders");
 - 设计与取舍：[MQ-Design.md](./MQ-Design.md)
 - Redis 命令级交互与序列图：[MQ-Broker-Interaction.md](./MQ-Broker-Interaction.md)
 - 使用指南：[MQ-Guide.md](./MQ-Guide.md)
-- 英文文档：[en/MQ-Design.md](./en/MQ-Design.md)、[en/MQ-Broker-Interaction.md](./en/MQ-Broker-Interaction.md)
+- 英文文档：[MQ-Design.md](/MQ-Design)、[MQ-Broker-Interaction.md](/MQ-Broker-Interaction)

@@ -84,7 +84,7 @@ spring:
   - `redis_streaming_runtime_*`（job/pipeline/handle 延迟、checkpoint、keyed state、window、watermark、timer 队列）
   - `redis_streaming_rl_*`（限流 allow/deny）
   - `redis_streaming_dlq_*`（DLQ 回放/删除/清理）
-  - 完整清单见 [Metrics](/Metrics)
+  - 完整清单见 [Metrics](/zh/Metrics)
 - Trace/日志关联：`RedisRuntimeConfig.mdcEnabled(true)` + `mdcSampleRate(0~1)`（MDC keys：`rs.job` / `rs.topic` / `rs.group` / `rs.consumer` / `rs.id` / `rs.key` / `rs.partition`）
 
 ## 7) 上线自检

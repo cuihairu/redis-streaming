@@ -1,7 +1,7 @@
 # 发布流程
 
 发布到 Maven Central（Central Portal）：
-- 项目指南：[../PUBLISHING.md](../PUBLISHING.md)
+- 项目指南：[PUBLISHING.md](/Publishing)
 - 发布说明：[maven-publish.md](./maven-publish.md)
 - 迁移记录：[archive/MIGRATION_TO_CENTRAL_PORTAL.md](./archive/MIGRATION_TO_CENTRAL_PORTAL.md)
 
