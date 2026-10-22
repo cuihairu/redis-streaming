@@ -248,4 +248,4 @@ The probe implementation is chosen by protocol: HTTP/HTTPS uses `HttpHealthCheck
 ## References
 
 - Design: [Registry-Design.md](Registry-Design.md)
-- Module overview: the Chinese [Registry.md](../Registry.md)
+- Module overview: the Chinese Registry.md

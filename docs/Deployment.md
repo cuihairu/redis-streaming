@@ -84,7 +84,7 @@ spring:
   - `redis_streaming_runtime_*` (job/pipeline/handle latency, checkpoints, keyed state, windows, watermark, timer queue)
   - `redis_streaming_rl_*` (rate-limit allow/deny)
   - `redis_streaming_dlq_*` (DLQ replay/delete/clear)
-  - Full list: the Chinese [Metrics](../Metrics.md)
+  - Full list: the Chinese Metrics
 - Trace/log correlation: `RedisRuntimeConfig.mdcEnabled(true)` + `mdcSampleRate(0~1)` (MDC keys: `rs.job` / `rs.topic` / `rs.group` / `rs.consumer` / `rs.id` / `rs.key` / `rs.partition`)
 
 ## 7) Go-live checklist
@@ -94,12 +94,12 @@ spring:
 
 ## 8) Multi-instance and rolling upgrade notes
 - Scale one job horizontally through consumer groups; combine with `MqOptions.maxLeasedPartitionsPerConsumer` (default 0 = follows `workerThreads`) to avoid lease over-provisioning.
-- Checkpointing is single-process stop-the-world; with the optional job-global control gate (`jobControlGateEnabled`, default follows `leaderElectionEnabled`) enabled, checkpoints and scaling of same-`jobName` instances are serialized across instances via Redis leases (see [runtime.md](../runtime.md) §2.6). For end-to-end semantics still prefer idempotent sinks or Redis-only atomic sinks.
+- Checkpointing is single-process stop-the-world; with the optional job-global control gate (`jobControlGateEnabled`, default follows `leaderElectionEnabled`) enabled, checkpoints and scaling of same-`jobName` instances are serialized across instances via Redis leases (see runtime.md §2.6). For end-to-end semantics still prefer idempotent sinks or Redis-only atomic sinks.
 - Rolling upgrade: scale up new-version instances first, watch leased partitions and error rates until stable, then scale old-version instances down gradually.
 
 ## 9) Job control plane (optional, declarative upgrade/rollback)
 
-Job submit/upgrade/rollback/stop can be managed centrally through the Redis control plane (design and key layout in the Chinese [Control-Plane-Design.md](../Control-Plane-Design.md); starter wiring in the "Job control plane" section of [Spring-Boot-Starter.md](Spring-Boot-Starter.md)):
+Job submit/upgrade/rollback/stop can be managed centrally through the Redis control plane (design and key layout in the Chinese Control-Plane-Design.md; starter wiring in the "Job control plane" section of [Spring-Boot-Starter.md](Spring-Boot-Starter.md)):
 
 - **Topology**: any process with `redis-streaming.runtime.control-plane.enabled=true` acts as the submit entry point (CLI / ops service / application); executor-side instances enable `redis-streaming.runtime.agent.enabled=true`. The control plane only writes the spec (desired state); agents reconcile periodically: claim (`SET NX EX`, TTL=max(3×poll,10s)) → deploy → report status.
 - **Upgrade semantics**: a config/factory/descriptor change is a full upgrade (best-effort checkpoint → cancel → redeploy, brief interruption); a parallelism-only change takes the `scaleParallelism` fast path (no restart). `rollback` returns to the previous spec version.
@@ -109,7 +109,7 @@ Job submit/upgrade/rollback/stop can be managed centrally through the Redis cont
 
 ## 10) Security hardening (Redis ACL / TLS / credential management)
 
-By default the framework creates only a minimal "single server + optional password" client (details in the Chinese [Security-Hardening-Design.md](../Security-Hardening-Design.md)). Three paths for production:
+By default the framework creates only a minimal "single server + optional password" client (details in the Chinese Security-Hardening-Design.md). Three paths for production:
 
 ### a) ACL username (Redis 6+)
 ```yaml

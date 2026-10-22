@@ -2,9 +2,9 @@
 
 Publish to Maven Central (Central Portal):
 
-- Project guide: [PUBLISHING.md](../../PUBLISHING.md)
-- Release notes: [maven-publish.md](../maven-publish.md)
-- Migration record: [archive/MIGRATION_TO_CENTRAL_PORTAL.md](../archive/MIGRATION_TO_CENTRAL_PORTAL.md)
+- Project guide: [PUBLISHING.md](../PUBLISHING.md)
+- Release notes: maven-publish.md
+- Migration record: archive/MIGRATION_TO_CENTRAL_PORTAL.md
 
 Key points (from root `build.gradle` and `.github/workflows/ci.yml`):
 

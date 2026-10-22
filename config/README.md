@@ -409,8 +409,6 @@ configService.addListener("app.config", "DEFAULT_GROUP",
 
 ## 相关链接
 
-- [模块文档 docs/config.md](../docs/config.md)
-- [Registry 模块](../docs/Registry.md)
 - [主项目 README](../README.md)
 - [集成指南 INTEGRATION_GUIDE.md](../INTEGRATION_GUIDE.md)
 - [问题反馈](https://github.com/cuihairu/redis-streaming/issues)

@@ -139,7 +139,7 @@ A non-default `tenant` inserts a `:tenant` segment right after the key prefix (`
 
 `enabled` (boolean, `true`), `default-group` (String, `DEFAULT_GROUP`), `refresh-interval` (int seconds, `30`), `auto-refresh` (boolean, `true`), `history-size` (int, `10`), `key-prefix` (String, `redis_streaming`), `enable-key-prefix` (boolean, `true`), `tenant` (String, `default`), `secure-key-prefix` (String, `secure.`).
 
-`tenant` follows the same naming rule as the registry one: a non-default value inserts a `:tenant` segment after `key-prefix` (`redis_streaming:acme:config:...`), so the same group/dataId stays invisible across tenants; `default` keeps the legacy keys unchanged. See the Chinese [multi-tenancy design](../Multi-Tenancy-Design.md) for the whole keyspace.
+`tenant` follows the same naming rule as the registry one: a non-default value inserts a `:tenant` segment after `key-prefix` (`redis_streaming:acme:config:...`), so the same group/dataId stays invisible across tenants; `default` keeps the legacy keys unchanged. See the Chinese multi-tenancy design for the whole keyspace.
 
 ### `redis-streaming.load-balancer.*`
 
@@ -196,7 +196,7 @@ A non-default `tenant` inserts a `:tenant` segment right after the key prefix (`
 | `key-prefix` | String | `streaming:mq` |
 | `stream-key-prefix` | String | `stream:topic` |
 | `tenant` | String | `default` (a non-default value inserts a `:tenant` segment after both prefixes) |
-| `metrics-tenant-tag` | boolean | `false` (adds a `tenant` tag to the MQ counter/timer series; off keeps existing dashboards unchanged — see [Metrics.md](../Metrics.md)) |
+| `metrics-tenant-tag` | boolean | `false` (adds a `tenant` tag to the MQ counter/timer series; off keeps existing dashboards unchanged — see Metrics.md) |
 | `consumer-name-prefix` | String | `consumer-` |
 | `dlq-consumer-suffix` | String | `-dlq` |
 | `default-consumer-group` | String | `default-group` |
@@ -285,7 +285,7 @@ management:
         enabled: true
 ```
 
-Scrape `/actuator/prometheus` for the `redis_streaming_*` meters above. Tags include `topic`/`partition`/`consumer` on MQ meters. A separate non-actuator route — a self-managed `PrometheusMeterRegistry` from `micrometer-registry-prometheus` — is documented in [Metrics.md](../Metrics.md).
+Scrape `/actuator/prometheus` for the `redis_streaming_*` meters above. Tags include `topic`/`partition`/`consumer` on MQ meters. A separate non-actuator route — a self-managed `PrometheusMeterRegistry` from `micrometer-registry-prometheus` — is documented in Metrics.md.
 
 ## Background & Health Components
 
@@ -510,7 +510,7 @@ public class InventoryService {
 }
 ```
 
-`MessageHandleResult` values are `SUCCESS`/`RETRY`/`FAIL`/`DEAD_LETTER`; `subscribe()` only registers the handler — actual pulling starts at `start()`. Pipelines that need windows/exactly-once semantics use the runtime entry point `RedisStreamExecutionEnvironment.fromMqTopic(...)`, see [runtime.md](../runtime.md).
+`MessageHandleResult` values are `SUCCESS`/`RETRY`/`FAIL`/`DEAD_LETTER`; `subscribe()` only registers the handler — actual pulling starts at `start()`. Pipelines that need windows/exactly-once semantics use the runtime entry point `RedisStreamExecutionEnvironment.fromMqTopic(...)`, see runtime.md.
 
 MQ tuning example (values below are illustrative — defaults for every key are in "Configuration Reference"; prefix is `redis-streaming.mq`, the historical `streaming.mq` is deprecated):
 
@@ -528,7 +528,7 @@ redis-streaming:
 
 ## Job Control Plane (runtime)
 
-The starter can optionally wire the Redis job control plane (declarative spec + executor-side reconciliation; design and Redis key layout in the Chinese [Control-Plane-Design.md](../Control-Plane-Design.md)):
+The starter can optionally wire the Redis job control plane (declarative spec + executor-side reconciliation; design and Redis key layout in the Chinese Control-Plane-Design.md):
 
 ```yaml
 redis-streaming:
@@ -637,8 +637,3 @@ redis-streaming:
 **Last Updated**: 2026-10-05
 
 Related documentation:
-- [Runtime](../runtime.md)
-- [MQ](../MQ.md)
-- [Registry](../Registry.md)
-- [Config](../config.md)
-- [Metrics](../Metrics.md)

@@ -2,7 +2,7 @@
 
 This page covers build, test, and example execution. For full details see:
 - Root docs: [QUICK_START.md](https://github.com/cuihairu/redis-streaming/blob/main/QUICK_START.md), [RUNNING_EXAMPLES.md](https://github.com/cuihairu/redis-streaming/blob/main/RUNNING_EXAMPLES.md), [TESTING.md](https://github.com/cuihairu/redis-streaming/blob/main/TESTING.md)
-- Spring Boot: [Spring-Boot-Starter](../Spring-Boot-Starter.md) and [spring-boot-starter-guide](../spring-boot-starter-guide.md)
+- Spring Boot: [Spring-Boot-Starter](./Spring-Boot-Starter.md) and spring-boot-starter-guide
 
 ## 1) Prerequisites
 
@@ -52,7 +52,7 @@ docker compose up -d
 ./gradlew :examples:run -PmainClass=io.github.cuihairu.redis.streaming.examples.mq.MessageQueueExample
 ```
 
-Available example entry points in [Examples](../Examples.md).
+Available example entry points in [Examples](./Examples.md).
 
 ## 5) Spring Boot Integration (Minimal)
 
@@ -82,13 +82,13 @@ redis-streaming:
     enabled: true                      # true by default (matchIfMissing)
 ```
 
-Metrics (optional): see [Metrics](../Metrics.md) for Actuator/Prometheus setup.
+Metrics (optional): see Metrics for Actuator/Prometheus setup.
 
 ## 6) Troubleshooting
 
 - Verify Java 17: `java -version`
 - Integration tests fail/hang: check Redis is running (`redis-cli PING` should return PONG)
-- CI/CD reference: [GitHub Actions](../GitHub-Actions.md)
+- CI/CD reference: [GitHub Actions](./GitHub-Actions.md)
 
 ---
 

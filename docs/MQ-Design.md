@@ -245,4 +245,4 @@ References:
 - Redis Streams: XADD / XREADGROUP / XACK / XPENDING / XCLAIM / XTRIM / XDEL
 - Kafka: Partition & Consumer Group design
 - Command-level interactions & sequence diagrams: [MQ-Broker-Interaction.md](./MQ-Broker-Interaction.md)
-- Full configuration table: [MQ.md](../MQ.md)
+- Full configuration table: MQ.md

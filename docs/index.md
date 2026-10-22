@@ -56,9 +56,9 @@ The English section covers the pages listed below. The complete module reference
 
 ### Full Module Reference (Chinese)
 
-- Core abstractions — [Core](/Core) · [Runtime](/runtime)
-- Infrastructure — [Config](/config) · [Registry](/Registry) · [MQ](/MQ) · [State](/state) · [Checkpoint](/checkpoint) · [Watermark](/watermark)
-- Functional modules — [Window](/window) · [Aggregation](/Aggregation) · [Table](/Table) · [Join](/Join) · [CDC](/CDC) · [Source & Sink](/source-sink)
-- Advanced features — [Reliability](/reliability) · [CEP](/CEP)
-- Observability — [Metrics](/Metrics)
-- Design docs — [Exactly-Once](/exactly-once) · [Architectural overview](/Architecture) · [Spring Boot Starter](/Spring-Boot-Starter)
+- Core abstractions — Core · Runtime
+- Infrastructure — Config · Registry · MQ · State · Checkpoint · Watermark
+- Functional modules — Window · Aggregation · Table · Join · CDC · Source & Sink
+- Advanced features — Reliability · CEP
+- Observability — Metrics
+- Design docs — Exactly-Once · [Architectural overview](/Architecture) · [Spring Boot Starter](/Spring-Boot-Starter)

@@ -1,6 +1,6 @@
 # MQ Usage Guide
 
-This is the usage guide for the `mq/` module; every class and method signature can be checked against `mq/src/main/java/io/github/cuihairu/redis/streaming/mq` and `mq/src/test`. For design principles see [MQ-Design.md](MQ-Design.md); for the full configuration table see the Chinese [MQ.md](../MQ.md).
+This is the usage guide for the `mq/` module; every class and method signature can be checked against `mq/src/main/java/io/github/cuihairu/redis/streaming/mq` and `mq/src/test`. For design principles see [MQ-Design.md](MQ-Design.md); for the full configuration table see the Chinese MQ.md.
 
 ## 1) Assembly (MessageQueueFactory)
 
@@ -154,12 +154,12 @@ admin.range("order_events", 0, "-", "+", 10, true);
 
 ## 8) Configuration and integration
 
-- Every `MqOptions` field and default is listed in the Chinese [MQ.md](../MQ.md).
+- Every `MqOptions` field and default is listed in the Chinese MQ.md.
 - Spring Boot: `spring-boot-starter` auto-configures `MessageQueueFactory` / `MessageQueueAdmin` / the DLQ beans under the `redis-streaming.mq.*` prefix, with Micrometer metrics and retention housekeeping (`StreamRetentionHousekeeper`) — see [Spring-Boot-Starter.md](Spring-Boot-Starter.md).
-- Runtime integration (`RedisStreamExecutionEnvironment`): see the Chinese [runtime.md](../runtime.md).
+- Runtime integration (`RedisStreamExecutionEnvironment`): see the Chinese runtime.md.
 
 ## References
 
 - Design: [MQ-Design.md](MQ-Design.md)
 - Redis command interaction: [MQ-Broker-Interaction.md](MQ-Broker-Interaction.md)
-- Module overview: the Chinese [MQ.md](../MQ.md)
+- Module overview: the Chinese MQ.md

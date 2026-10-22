@@ -2,7 +2,7 @@
 
 ## Overview
 
-A Redis-based service registration and discovery module. Key structures and operations follow the current implementation under `registry/src/main/java`. Configuration-center capability lives in the separate `config` module (see the Chinese [config.md](../config.md)).
+A Redis-based service registration and discovery module. Key structures and operations follow the current implementation under `registry/src/main/java`. Configuration-center capability lives in the separate `config` module (see the Chinese config.md).
 
 ## Core Roles
 

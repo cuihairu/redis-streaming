@@ -9,13 +9,13 @@ The public programming model lives in the `api` package of the `core` module; ev
 
 | Package | Contents | Details |
 |---|---|---|
-| `api.stream` | `DataStream`, `KeyedStream`, `WindowedStream`, `StreamSource`, `StreamSink`, `CheckpointAwareSink`, `TwoPhaseCommitSink`, `IdempotentRecord`, `KeyedProcessFunction`, `WindowAssigner`, `WindowFunction`, `AggregateFunction`, `ReduceFunction` | [Core.md](../Core.md) |
-| `api.state` | `State`, `ValueState`, `ListState`, `MapState`, `SetState`, `StateDescriptor` | [Core.md](../Core.md) · [state.md](../state.md) |
-| `api.checkpoint` | `Checkpoint` (including `StateSnapshot`), `CheckpointCoordinator` | [Core.md](../Core.md) · [checkpoint.md](../checkpoint.md) |
-| `api.watermark` | `Watermark`, `WatermarkGenerator`, `TimestampAssigner` | [Core.md](../Core.md) · [watermark.md](../watermark.md) |
+| `api.stream` | `DataStream`, `KeyedStream`, `WindowedStream`, `StreamSource`, `StreamSink`, `CheckpointAwareSink`, `TwoPhaseCommitSink`, `IdempotentRecord`, `KeyedProcessFunction`, `WindowAssigner`, `WindowFunction`, `AggregateFunction`, `ReduceFunction` | Core.md |
+| `api.state` | `State`, `ValueState`, `ListState`, `MapState`, `SetState`, `StateDescriptor` | Core.md · state.md |
+| `api.checkpoint` | `Checkpoint` (including `StateSnapshot`), `CheckpointCoordinator` | Core.md · checkpoint.md |
+| `api.watermark` | `Watermark`, `WatermarkGenerator`, `TimestampAssigner` | Core.md · watermark.md |
 | `api` (root) | `StreamingApiExample` (documentation-only class, no logic) | — |
 
-For the full list of interface defaults (such as `StateDescriptor.schemaVersion = 1`, the `DataStream.assignTimestampsAndWatermarks` default that throws `UnsupportedOperationException`, and `WindowAssigner.supportsWindowMerging() = false`), see [section 3 of Core.md](../Core.md).
+For the full list of interface defaults (such as `StateDescriptor.schemaVersion = 1`, the `DataStream.assignTimestampsAndWatermarks` default that throws `UnsupportedOperationException`, and `WindowAssigner.supportsWindowMerging() = false`), see section 3 of Core.md.
 
 ## Minimal Example
 
@@ -30,7 +30,7 @@ env.fromElements("a b", "c", "d e")
         .print("api> ");
 ```
 
-The in-memory engine has no `execute()`: a terminal operation (`addSink` / `print`) triggers a full run. The Redis engine is built via `RedisStreamExecutionEnvironment.create(redissonClient, config)` and returns a `RedisJobClient` from `executeAsync()` (see [runtime.md](../runtime.md)).
+The in-memory engine has no `execute()`: a terminal operation (`addSink` / `print`) triggers a full run. The Redis engine is built via `RedisStreamExecutionEnvironment.create(redissonClient, config)` and returns a `RedisJobClient` from `executeAsync()` (see runtime.md).
 
 Module-level getting-started samples: the `state`, `checkpoint`, `mq`, `registry`, `window`, `streaming` and other packages under `examples/src/main/java/io/github/cuihairu/redis/streaming/examples/`.
 

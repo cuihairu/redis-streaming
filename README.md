@@ -764,7 +764,7 @@ All modules are in place (20/20), but "modules complete ≠ framework complete" 
 ### Quick Start
 - [Quick Start Tutorial](QUICK_START.md) - get up and running in 5 minutes
 - [Running Examples](RUNNING_EXAMPLES.md) - end-to-end examples and demos
-- [Completion Report](docs/archive/COMPLETION_REPORT.md) - module completeness and coverage
+- Completion Report - module completeness and coverage
 - [Testing Guide](TESTING.md) - unit tests / integration tests
 
 ### Design Documents
@@ -777,7 +777,7 @@ All modules are in place (20/20), but "modules complete ≠ framework complete" 
 
 ### Development Guides
 - [Development Docs](CLAUDE.md) - developer guide
-- [Documentation Center](docs/README.md) - documentation site and index (VitePress)
+- Documentation Center - documentation site and index (VitePress)
 
 ## Contributing
 

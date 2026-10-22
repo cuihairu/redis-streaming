@@ -27,7 +27,7 @@ Defaults are taken from source code (`RedisRuntimeConfig`, `MqOptions`).
 ## Benchmarking Suggestions
 
 - Use realistic payloads; vary P, batchSize, parallelism independently.
-- Watch metrics: produce/consume rate, p99 handle latency, DLQ rate, Redis CPU/memory/network (metric inventory in [Metrics](../Metrics.md)).
+- Watch metrics: produce/consume rate, p99 handle latency, DLQ rate, Redis CPU/memory/network (metric inventory in Metrics).
 
 ## Trade-offs
 
@@ -39,4 +39,4 @@ Defaults are taken from source code (`RedisRuntimeConfig`, `MqOptions`).
 **Version**: 0.2.4
 **Last Updated**: 2026-10-05
 
-Related: [MQ-Design.md](../MQ-Design.md) / [MQ-Broker-Interaction.md](../MQ-Broker-Interaction.md)
+Related: [MQ-Design.md](./MQ-Design.md) / [MQ-Broker-Interaction.md](./MQ-Broker-Interaction.md)

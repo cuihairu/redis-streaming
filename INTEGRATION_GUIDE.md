@@ -361,7 +361,7 @@ public class MetadataFilteringExample {
 
 过滤针对实例 `metadata`（`Map<String, String>`）中已存在的键：两边都能转成数字时按数值比较，否则按字典序比较（实现见 `registry` 模块的 `GET_INSTANCES_BY_METADATA_SCRIPT` Lua 脚本）。因此上例中的 `weight`、`cpu_usage` 需要作为键写入实例 metadata 才能参与过滤。
 
-详细文档见 [Registry 文档](docs/Registry.md)
+详细文档见 Registry 文档
 
 ### 5. 配置中心使用
 
@@ -458,7 +458,7 @@ public class ConfigCenterExample {
 - 历史记录：`getConfigHistory(dataId, group, size)` 查询最近 N 个版本
 - 热加载：监听器在配置变更时触发
 
-详细文档见 [配置中心文档](config/README.md) 与 [docs/config.md](docs/config.md)
+详细文档见 [配置中心文档](config/README.md) 与 docs/config.md
 
 ### 6. 传统方式监听服务变更
 
@@ -660,9 +660,7 @@ A: 检查 Redis 是否启动，地址配置是否正确
 
 ## 更多文档
 
-- [Spring Boot Starter 使用指南](docs/spring-boot-starter-guide.md)
 - [服务注册发现文档](registry/README.md)
-- [Registry 文档（含 Metadata 过滤）](docs/Registry.md)
 - [配置管理文档](config/README.md)
 
 ---

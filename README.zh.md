@@ -754,7 +754,7 @@ List<ChangeEvent> events = connector.poll();
 ### 快速开始
 - [快速入门教程](QUICK_START.md) - 5分钟上手指南
 - [运行示例](RUNNING_EXAMPLES.md) - 端到端示例与演示程序
-- [完成报告](docs/archive/COMPLETION_REPORT.md) - 模块完成度与覆盖率
+- 完成报告 - 模块完成度与覆盖率
 - [测试指南](TESTING.md) - 单元测试 / 集成测试
 
 ### 设计文档
@@ -767,7 +767,7 @@ List<ChangeEvent> events = connector.poll();
 
 ### 开发指南
 - [开发文档](CLAUDE.md) - 开发者指南
-- [文档中心](docs/README.md) - 文档站点与索引（VitePress）
+- 文档中心 - 文档站点与索引（VitePress）
 
 ## 贡献
 

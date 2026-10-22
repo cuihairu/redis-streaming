@@ -322,7 +322,6 @@ docker-compose up -d
 
 ## 相关链接
 
-- [模块文档 docs/Registry.md](../docs/Registry.md)
 - [使用指南 docs/Registry-Guide.md](../docs/Registry-Guide.md)
 - [设计文档 docs/Registry-Design.md](../docs/Registry-Design.md)
 - [主项目 README](../README.md)
