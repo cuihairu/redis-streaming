@@ -18,9 +18,9 @@ export default withMermaid(
   defineConfig({
     head: [['link', { rel: 'icon', type: 'image/svg+xml', href: `${base}logo.svg` }]],
     // 顶层 lang 作为 fallback；各 locale 在下方 locales.*.lang 中显式声明
-    lang: 'zh-CN',
+    lang: 'en-US',
     title: 'Redis Streaming',
-    description: '基于 Redis 的流处理框架',
+    description: 'Redis-based streaming processing framework',
     base,
 
     // 忽略死链接检查（链接大小写敏感问题）
@@ -34,62 +34,47 @@ export default withMermaid(
       },
     },
 
-    // 每个 locale 各自声明 label/lang/title/description 与独立的 nav/sidebar。
+    // 官方 locales 结构：root = English（docs/*.md），zh = 简体中文（docs/zh/*.md）。
     // label 是默认主题右上角语言切换器（VPNavBarTranslations）的数据源，
     // 两个 label 都声明后切换器才会出现，并自动把当前页映射到另一语言的同路径。
     locales: {
       root: {
-        label: '中文',
-        lang: 'zh-CN',
+        label: 'English',
+        lang: 'en-US',
         title: 'Redis Streaming',
-        description: '基于 Redis 的流处理框架',
+        description: 'Redis-based streaming processing framework',
         themeConfig: {
           ...sharedThemeConfig,
-          langMenuLabel: '切换语言',
+          langMenuLabel: 'Switch language',
 
           nav: [
-            { text: '首页', link: '/' },
-            { text: '快速开始', link: '/Quick-Start' },
+            { text: 'Home', link: '/' },
+            { text: 'Quick Start', link: '/Quick-Start' },
             {
-              text: '模块文档',
+              text: 'Modules',
               items: [
-                { text: '核心 API', link: '/Core' },
-                { text: 'Runtime', link: '/runtime' },
-                { text: 'Config', link: '/config' },
-                { text: 'State', link: '/state' },
-                { text: 'Checkpoint', link: '/checkpoint' },
-                { text: 'Watermark', link: '/watermark' },
-                { text: 'Window', link: '/window' },
-                { text: 'Source & Sink', link: '/source-sink' },
-                { text: 'Reliability', link: '/reliability' },
-                { text: 'Registry', link: '/Registry' },
-                { text: 'MQ', link: '/MQ' },
+                { text: 'API Overview', link: '/API' },
+                { text: 'Spring Boot Starter', link: '/Spring-Boot-Starter' },
+                { text: 'Examples', link: '/Examples' },
               ]
             },
             {
-              text: '设计文档',
+              text: 'Design',
               items: [
-                { text: '架构设计', link: '/Architecture' },
-                { text: 'Exactly-Once', link: '/exactly-once' },
-                { text: 'MQ 设计', link: '/MQ-Design' },
-                { text: 'Registry 设计', link: '/Registry-Design' },
-                { text: 'Join/CEP 算子化', link: '/Join-CEP-Operators-Design' },
-                { text: '控制面设计', link: '/Control-Plane-Design' },
-                { text: '表变更流设计', link: '/Table-Changelog-Design' },
-                { text: '聚合体系统一', link: '/Aggregation-Unification-Design' },
-                { text: '指标体系统一', link: '/Metrics-Unification-Design' },
-                { text: '状态后端统一', link: '/State-Unification-Design' },
-                { text: '多租户隔离', link: '/Multi-Tenancy-Design' },
-                { text: '安全加固', link: '/Security-Hardening-Design' },
-                { text: '重试/死信/去重划界', link: '/Dedup-Retry-DLQ-Boundary-Design' },
+                { text: 'Architecture', link: '/Architecture' },
+                { text: 'MQ Design', link: '/MQ-Design' },
+                { text: 'MQ Broker Interaction', link: '/MQ-Broker-Interaction' },
+                { text: 'MQ Guide', link: '/MQ-Guide' },
+                { text: 'Registry Design', link: '/Registry-Design' },
+                { text: 'Registry Guide', link: '/Registry-Guide' },
               ]
             },
             {
-              text: '运维指南',
+              text: 'Operations',
               items: [
-                { text: '部署指南', link: '/Deployment' },
-                { text: '性能调优', link: '/Performance' },
-                { text: '故障排查', link: '/troubleshooting' },
+                { text: 'Deployment', link: '/Deployment' },
+                { text: 'Performance', link: '/Performance' },
+                { text: 'Troubleshooting', link: '/Troubleshooting' },
               ]
             },
           ],
@@ -97,95 +82,50 @@ export default withMermaid(
           sidebar: {
             '/': [
               {
-                text: '快速开始',
+                text: 'Getting Started',
                 collapsed: false,
                 items: [
-                  { text: '5分钟上手', link: '/Quick-Start' },
-                  { text: 'Spring Boot 集成', link: '/spring-boot-starter-guide' },
+                  { text: 'Quick Start', link: '/Quick-Start' },
+                  { text: 'Spring Boot Starter', link: '/Spring-Boot-Starter' },
+                  { text: 'Examples', link: '/Examples' },
                 ]
               },
               {
-                text: '核心概念',
+                text: 'Core Concepts',
                 collapsed: false,
                 items: [
-                  { text: '架构概述', link: '/Architecture' },
-                  { text: '核心 API', link: '/Core' },
-                  { text: '运行时环境', link: '/runtime' },
+                  { text: 'Architecture', link: '/Architecture' },
+                  { text: 'API Overview', link: '/API' },
                 ]
               },
               {
-                text: '基础设施模块',
+                text: 'Infrastructure Modules',
                 collapsed: false,
                 items: [
-                  { text: 'Config 配置中心', link: '/config' },
-                  { text: 'Registry 服务注册', link: '/Registry' },
-                  { text: 'MQ 消息队列', link: '/MQ' },
+                  { text: 'MQ Guide', link: '/MQ-Guide' },
+                  { text: 'MQ Design', link: '/MQ-Design' },
+                  { text: 'MQ Broker Interaction', link: '/MQ-Broker-Interaction' },
+                  { text: 'Registry Guide', link: '/Registry-Guide' },
+                  { text: 'Registry Design', link: '/Registry-Design' },
                 ]
               },
               {
-                text: '流处理核心',
+                text: 'Operations',
                 collapsed: false,
                 items: [
-                  { text: 'State 状态管理', link: '/state' },
-                  { text: 'Checkpoint 检查点', link: '/checkpoint' },
-                  { text: 'Watermark 水位线', link: '/watermark' },
-                  { text: 'Window 窗口', link: '/window' },
-                ]
-              },
-              {
-                text: '数据集成',
-                collapsed: false,
-                items: [
-                  { text: 'Source & Sink', link: '/source-sink' },
-                  { text: 'CDC 变更捕获', link: '/CDC' },
-                  { text: 'Aggregation 聚合', link: '/Aggregation' },
-                  { text: 'Table 表操作', link: '/Table' },
-                  { text: 'Join 流连接', link: '/Join' },
-                ]
-              },
-              {
-                text: '可靠性',
-                collapsed: false,
-                items: [
-                  { text: 'Reliability 组件', link: '/reliability' },
-                  { text: 'Metrics 监控', link: '/Metrics' },
-                ]
-              },
-              {
-                text: '设计文档',
-                collapsed: false,
-                items: [
-                  { text: 'Exactly-Once 语义', link: '/exactly-once' },
-                  { text: 'MQ 设计', link: '/MQ-Design' },
-                  { text: 'Registry 设计', link: '/Registry-Design' },
-                  { text: 'Join/CEP 算子化', link: '/Join-CEP-Operators-Design' },
-                  { text: '控制面设计', link: '/Control-Plane-Design' },
-                  { text: '表变更流设计', link: '/Table-Changelog-Design' },
-                  { text: '聚合体系统一', link: '/Aggregation-Unification-Design' },
-                  { text: '指标体系统一', link: '/Metrics-Unification-Design' },
-                  { text: '状态后端统一', link: '/State-Unification-Design' },
-                  { text: '多租户隔离', link: '/Multi-Tenancy-Design' },
-                  { text: '安全加固', link: '/Security-Hardening-Design' },
-                  { text: '重试/死信/去重划界', link: '/Dedup-Retry-DLQ-Boundary-Design' },
-                ]
-              },
-              {
-                text: '运维',
-                collapsed: false,
-                items: [
-                  { text: '部署指南', link: '/Deployment' },
-                  { text: '性能调优', link: '/Performance' },
-                  { text: '故障排查', link: '/troubleshooting' },
+                  { text: 'Deployment', link: '/Deployment' },
+                  { text: 'Performance', link: '/Performance' },
+                  { text: 'Troubleshooting', link: '/Troubleshooting' },
                   { text: 'CI/CD', link: '/GitHub-Actions' },
                 ]
               },
               {
-                text: '开发',
+                text: 'Development',
                 collapsed: false,
                 items: [
-                  { text: '开发指南', link: '/Developer-Guide' },
-                  { text: '测试指南', link: '/Testing' },
-                  { text: '发布流程', link: '/maven-publish' },
+                  { text: 'Developer Guide', link: '/Developer-Guide' },
+                  { text: 'Testing', link: '/Testing' },
+                  { text: 'Publishing', link: '/Publishing' },
                 ]
               },
             ],
@@ -193,93 +133,155 @@ export default withMermaid(
         }
       },
 
-      en: {
-        label: 'English',
-        lang: 'en-US',
+      zh: {
+        label: '简体中文',
+        lang: 'zh-CN',
+        link: '/zh/',
         title: 'Redis Streaming',
-        description: 'Redis-based streaming processing framework',
+        description: '基于 Redis 的流处理框架',
         themeConfig: {
           ...sharedThemeConfig,
+          langMenuLabel: '切换语言',
 
           nav: [
-            { text: 'Home', link: '/en/' },
-            { text: 'Quick Start', link: '/en/Quick-Start' },
+            { text: '首页', link: '/zh/' },
+            { text: '快速开始', link: '/zh/Quick-Start' },
             {
-              text: 'Modules',
+              text: '模块文档',
               items: [
-                { text: 'API Overview', link: '/en/API' },
-                { text: 'Spring Boot Starter', link: '/en/Spring-Boot-Starter' },
-                { text: 'Examples', link: '/en/Examples' },
+                { text: '核心 API', link: '/zh/Core' },
+                { text: 'Runtime', link: '/zh/runtime' },
+                { text: 'Config', link: '/zh/config' },
+                { text: 'State', link: '/zh/state' },
+                { text: 'Checkpoint', link: '/zh/checkpoint' },
+                { text: 'Watermark', link: '/zh/watermark' },
+                { text: 'Window', link: '/zh/window' },
+                { text: 'Source & Sink', link: '/zh/source-sink' },
+                { text: 'Reliability', link: '/zh/reliability' },
+                { text: 'Registry', link: '/zh/Registry' },
+                { text: 'MQ', link: '/zh/MQ' },
               ]
             },
             {
-              text: 'Design',
+              text: '设计文档',
               items: [
-                { text: 'Architecture', link: '/en/Architecture' },
-                { text: 'MQ Design', link: '/en/MQ-Design' },
-                { text: 'MQ Broker Interaction', link: '/en/MQ-Broker-Interaction' },
-                { text: 'MQ Guide', link: '/en/MQ-Guide' },
-                { text: 'Registry Design', link: '/en/Registry-Design' },
-                { text: 'Registry Guide', link: '/en/Registry-Guide' },
+                { text: '架构设计', link: '/zh/Architecture' },
+                { text: 'Exactly-Once', link: '/zh/exactly-once' },
+                { text: 'MQ 设计', link: '/zh/MQ-Design' },
+                { text: 'Registry 设计', link: '/zh/Registry-Design' },
+                { text: 'Join/CEP 算子化', link: '/zh/Join-CEP-Operators-Design' },
+                { text: '控制面设计', link: '/zh/Control-Plane-Design' },
+                { text: '表变更流设计', link: '/zh/Table-Changelog-Design' },
+                { text: '聚合体系统一', link: '/zh/Aggregation-Unification-Design' },
+                { text: '指标体系统一', link: '/zh/Metrics-Unification-Design' },
+                { text: '状态后端统一', link: '/zh/State-Unification-Design' },
+                { text: '多租户隔离', link: '/zh/Multi-Tenancy-Design' },
+                { text: '安全加固', link: '/zh/Security-Hardening-Design' },
+                { text: '重试/死信/去重划界', link: '/zh/Dedup-Retry-DLQ-Boundary-Design' },
               ]
             },
             {
-              text: 'Operations',
+              text: '运维指南',
               items: [
-                { text: 'Deployment', link: '/en/Deployment' },
-                { text: 'Performance', link: '/en/Performance' },
-                { text: 'Troubleshooting', link: '/en/Troubleshooting' },
+                { text: '部署指南', link: '/zh/Deployment' },
+                { text: '性能调优', link: '/zh/Performance' },
+                { text: '故障排查', link: '/zh/troubleshooting' },
               ]
             },
           ],
 
           sidebar: {
-            '/en/': [
+            '/zh/': [
               {
-                text: 'Getting Started',
+                text: '快速开始',
                 collapsed: false,
                 items: [
-                  { text: 'Quick Start', link: '/en/Quick-Start' },
-                  { text: 'Spring Boot Starter', link: '/en/Spring-Boot-Starter' },
-                  { text: 'Examples', link: '/en/Examples' },
+                  { text: '5分钟上手', link: '/zh/Quick-Start' },
+                  { text: 'Spring Boot 集成', link: '/zh/spring-boot-starter-guide' },
                 ]
               },
               {
-                text: 'Core Concepts',
+                text: '核心概念',
                 collapsed: false,
                 items: [
-                  { text: 'Architecture', link: '/en/Architecture' },
-                  { text: 'API Overview', link: '/en/API' },
+                  { text: '架构概述', link: '/zh/Architecture' },
+                  { text: '核心 API', link: '/zh/Core' },
+                  { text: '运行时环境', link: '/zh/runtime' },
                 ]
               },
               {
-                text: 'Infrastructure Modules',
+                text: '基础设施模块',
                 collapsed: false,
                 items: [
-                  { text: 'MQ Guide', link: '/en/MQ-Guide' },
-                  { text: 'MQ Design', link: '/en/MQ-Design' },
-                  { text: 'MQ Broker Interaction', link: '/en/MQ-Broker-Interaction' },
-                  { text: 'Registry Guide', link: '/en/Registry-Guide' },
-                  { text: 'Registry Design', link: '/en/Registry-Design' },
+                  { text: 'Config 配置中心', link: '/zh/config' },
+                  { text: 'Registry 服务注册', link: '/zh/Registry' },
+                  { text: 'MQ 消息队列', link: '/zh/MQ' },
                 ]
               },
               {
-                text: 'Operations',
+                text: '流处理核心',
                 collapsed: false,
                 items: [
-                  { text: 'Deployment', link: '/en/Deployment' },
-                  { text: 'Performance', link: '/en/Performance' },
-                  { text: 'Troubleshooting', link: '/en/Troubleshooting' },
-                  { text: 'CI/CD', link: '/en/GitHub-Actions' },
+                  { text: 'State 状态管理', link: '/zh/state' },
+                  { text: 'Checkpoint 检查点', link: '/zh/checkpoint' },
+                  { text: 'Watermark 水位线', link: '/zh/watermark' },
+                  { text: 'Window 窗口', link: '/zh/window' },
                 ]
               },
               {
-                text: 'Development',
+                text: '数据集成',
                 collapsed: false,
                 items: [
-                  { text: 'Developer Guide', link: '/en/Developer-Guide' },
-                  { text: 'Testing', link: '/en/Testing' },
-                  { text: 'Publishing', link: '/en/Publishing' },
+                  { text: 'Source & Sink', link: '/zh/source-sink' },
+                  { text: 'CDC 变更捕获', link: '/zh/CDC' },
+                  { text: 'Aggregation 聚合', link: '/zh/Aggregation' },
+                  { text: 'Table 表操作', link: '/zh/Table' },
+                  { text: 'Join 流连接', link: '/zh/Join' },
+                ]
+              },
+              {
+                text: '可靠性',
+                collapsed: false,
+                items: [
+                  { text: 'Reliability 组件', link: '/zh/reliability' },
+                  { text: 'Metrics 监控', link: '/zh/Metrics' },
+                ]
+              },
+              {
+                text: '设计文档',
+                collapsed: false,
+                items: [
+                  { text: 'Exactly-Once 语义', link: '/zh/exactly-once' },
+                  { text: 'MQ 设计', link: '/zh/MQ-Design' },
+                  { text: 'Registry 设计', link: '/zh/Registry-Design' },
+                  { text: 'Join/CEP 算子化', link: '/zh/Join-CEP-Operators-Design' },
+                  { text: '控制面设计', link: '/zh/Control-Plane-Design' },
+                  { text: '表变更流设计', link: '/zh/Table-Changelog-Design' },
+                  { text: '聚合体系统一', link: '/zh/Aggregation-Unification-Design' },
+                  { text: '指标体系统一', link: '/zh/Metrics-Unification-Design' },
+                  { text: '状态后端统一', link: '/zh/State-Unification-Design' },
+                  { text: '多租户隔离', link: '/zh/Multi-Tenancy-Design' },
+                  { text: '安全加固', link: '/zh/Security-Hardening-Design' },
+                  { text: '重试/死信/去重划界', link: '/zh/Dedup-Retry-DLQ-Boundary-Design' },
+                ]
+              },
+              {
+                text: '运维',
+                collapsed: false,
+                items: [
+                  { text: '部署指南', link: '/zh/Deployment' },
+                  { text: '性能调优', link: '/zh/Performance' },
+                  { text: '故障排查', link: '/zh/troubleshooting' },
+                  { text: 'CI/CD', link: '/zh/GitHub-Actions' },
+                ]
+              },
+              {
+                text: '开发',
+                collapsed: false,
+                items: [
+                  { text: '开发指南', link: '/zh/Developer-Guide' },
+                  { text: '测试指南', link: '/zh/Testing' },
+                  { text: '发布流程', link: '/zh/maven-publish' },
                 ]
               },
             ],

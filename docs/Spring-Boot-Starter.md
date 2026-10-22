@@ -1,21 +1,31 @@
-# Spring Boot Starter 使用指南
+# Spring Boot Starter Guide
 
-模块目录:`spring-boot-starter/`。职责:把 core/runtime/mq/registry/config/reliability 组件装配成 Spring Bean,提供兜底 `RedissonClient`、服务注册/发现/配置中心、MQ 与 DLQ、限流器、保留治理后台任务、健康检查与 Micrometer 指标桥。
+Module directory: `spring-boot-starter/`. It assembles the core/runtime/mq/registry/config/reliability components as Spring beans and provides a fallback `RedissonClient`, service registration/discovery, a configuration center, MQ with DLQ, rate limiters, retained housekeeping background tasks, health checks, and the Micrometer metrics bridge.
 
-Maven 坐标 `io.github.cuihairu.redis-streaming:spring-boot-starter`(传递依赖:`core`/`registry`/`config`/`mq`/`runtime`/`reliability`/`spring-boot-starter`;`micrometer-core` 为 `api`,`actuator` 为 `compileOnly`,不强制引入)。
+Maven coordinates: `io.github.cuihairu.redis-streaming:spring-boot-starter` (transitive: `core`/`registry`/`config`/`mq`/`runtime`/`reliability`/`spring-boot-starter`; `micrometer-core` is `api`, `actuator` is `compileOnly` and is not pulled in forcibly).
 
-## 快速开始
+## Quick Start
 
-### 1. 添加依赖
+### 1. Add Dependency
 
+Maven:
+```xml
+<dependency>
+    <groupId>io.github.cuihairu.redis-streaming</groupId>
+    <artifactId>spring-boot-starter</artifactId>
+    <version>0.2.4</version>
+</dependency>
+```
+
+Gradle:
 ```groovy
 implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.4'
 ```
 
-### 2. 启用方式(二选一)
+### 2. Enable Features (pick one)
 
-- 标准 Boot 应用:starter 在 classpath 即自动装配(注册入口是 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`,目前只列了 `RedisStreamingAutoConfiguration`,由它 `@Import` 各功能域配置);
-- 或在配置类/启动类上显式标注 `@EnableRedisStreaming`(`@Import(RedisStreamingAutoConfiguration.class)` 的别名注解)。
+- Standard Boot application: with the starter on the classpath, auto-configuration kicks in by itself (the registration entry is `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`, which currently lists only `RedisStreamingAutoConfiguration`; it `@Import`s the per-domain configuration classes);
+- Or annotate your configuration/main class with `@EnableRedisStreaming` (an alias for `@Import(RedisStreamingAutoConfiguration.class)`):
 
 ```java
 @SpringBootApplication
@@ -27,10 +37,13 @@ public class Application {
 }
 ```
 
-### 3. 配置文件(前缀固定为 `redis-streaming`,不是 `streaming`)
+### 3. Configuration (prefix is fixed as `redis-streaming`, not `streaming`)
 
-完整可运行样例:`examples/src/main/resources/application.yml`
-启动示例:`./gradlew :examples:run -PmainClass=io.github.cuihairu.redis.streaming.examples.springboot.StarterExampleApplication`
+A complete runnable sample: `examples/src/main/resources/application.yml`.
+Run the example with:
+```bash
+./gradlew :examples:run -PmainClass=io.github.cuihairu.redis.streaming.examples.springboot.StarterExampleApplication
+```
 
 ```yaml
 redis-streaming:
@@ -53,86 +66,111 @@ server:
   port: 8080
 ```
 
-## 自动配置结构
+## Auto-Configuration Structure
 
-| 类 | 属性开关(默认值) | 装配的 Bean |
+| Class | Property switch (default) | Beans assembled |
 |---|---|---|
-| `RedisStreamingAutoConfiguration` | 类级 `@ConditionalOnClass(RedissonClient)` | 兜底 `RedissonClient`(`@ConditionalOnMissingBean`;单机简化配置,`password` 为空/空白时不设置密码)、`RateLimitMicrometerCollector` + `installRateLimitCollector` |
-| `RedisStreamingRegistryAutoConfiguration` | `redis-streaming.registry.enabled`(默认 `true`) | `NamingService`、`ServiceChangeListenerProcessor`、`LoadBalancer` |
-| `RedisStreamingDiscoveryAutoConfiguration` | `redis-streaming.discovery.enabled`(默认 `true`) | `ServiceConsumer`（`RedisNamingService`）——仅当容器无 `NamingService`/`ServiceConsumer` Bean 时兜底 |
-| `RedisStreamingConfigServiceAutoConfiguration` | `redis-streaming.config.enabled`(默认 `true`) | `ConfigService`(启动即 `start()`) |
-| `RedisStreamingMqAutoConfiguration` | `redis-streaming.mq.enabled`(默认 `true`) | `MqOptions`、`BrokerFactory`/`BrokerRouter`、`MessageQueueFactory`、`MessageQueueAdmin`、`dlqReplayProducer`、`dlqReplayHandler`、`DeadLetterService`/`DeadLetterAdmin`/`DeadLetterConsumer`/`DeadLetterQueueManager`、保留治理 `StreamRetentionHousekeeper`(destroyMethod=close)、Micrometer 桥(见「指标导出」)、`MqHealthIndicator` |
-| `RedisStreamingRateLimitAutoConfiguration` | `redis-streaming.ratelimit.enabled`(默认 **`false`**) | `RateLimiterRegistry`、`@Primary RateLimiter`(按 `default-name` 取) |
-| `RedisStreamingRuntimeAutoConfiguration` | `redis-streaming.runtime.control-plane.enabled`(默认 **`false`**);agent 另需 `redis-streaming.runtime.agent.enabled`(默认 **`false`**) | `ControlPlaneAuthorizer`(默认 allowAll,用户 Bean 优先)、`RedisJobControlPlane`(即 `JobControlPlane`)、agent 开启时:`JobLauncher`(默认 `RedisJobLauncher`,自动注册容器内全部 `JobPipelineFactory` Bean)、`JobAgent`(initMethod=`start`,destroyMethod=`close`) |
+| `RedisStreamingAutoConfiguration` | class-level `@ConditionalOnClass(RedissonClient)` | fallback `RedissonClient` (`@ConditionalOnMissingBean`; simplified single-server config, `password` blank/empty is not set), `RateLimitMicrometerCollector` + `installRateLimitCollector` |
+| `RedisStreamingRegistryAutoConfiguration` | `redis-streaming.registry.enabled` (default `true`) | `NamingService`, `ServiceChangeListenerProcessor`, `LoadBalancer` |
+| `RedisStreamingDiscoveryAutoConfiguration` | `redis-streaming.discovery.enabled` (default `true`) | `ServiceConsumer` (`RedisNamingService`) — only as a fallback when no `NamingService`/`ServiceConsumer` bean is present |
+| `RedisStreamingConfigServiceAutoConfiguration` | `redis-streaming.config.enabled` (default `true`) | `ConfigService` (started at `start()`) |
+| `RedisStreamingMqAutoConfiguration` | `redis-streaming.mq.enabled` (default `true`) | `MqOptions`, `BrokerFactory`/`BrokerRouter`, `MessageQueueFactory`, `MessageQueueAdmin`, `dlqReplayProducer`, `dlqReplayHandler`, `DeadLetterService`/`DeadLetterAdmin`/`DeadLetterConsumer`/`DeadLetterQueueManager`, the retained housekeeping `StreamRetentionHousekeeper` (destroyMethod=close), the Micrometer bridge (see "Metrics Export"), `MqHealthIndicator` |
+| `RedisStreamingRateLimitAutoConfiguration` | `redis-streaming.ratelimit.enabled` (default **`false`**) | `RateLimiterRegistry`, the `@Primary` `RateLimiter` (selected by `default-name`) |
+| `RedisStreamingRuntimeAutoConfiguration` | `redis-streaming.runtime.control-plane.enabled` (default **`false`**); the agent additionally requires `redis-streaming.runtime.agent.enabled` (default **`false`**) | `ControlPlaneAuthorizer` (allowAll by default, a user bean takes precedence), `RedisJobControlPlane` (i.e. `JobControlPlane`), and with the agent enabled: `JobLauncher` (default `RedisJobLauncher`, auto-registers every `JobPipelineFactory` bean in the context), `JobAgent` (initMethod=`start`, destroyMethod=`close`) |
 
-`LoadBalancer` 按 `load-balancer.strategy` 选择实现:`wrr → WeightedRoundRobinLoadBalancer`、`weighted-random → WeightedRandomLoadBalancer`、`consistent-hash → ConsistentHashLoadBalancer`,其余(含默认 `scored`)→ `ScoredLoadBalancer` + `RedisMetricsProvider`。
-`BrokerFactory` 按 `mq.broker.type` 选择:`jdbc` 且 classpath 有 `DataSource` Bean 时用 `JdbcBrokerFactory`,否则(无 DataSource 或 `redis`)用 `RedisBrokerFactory` 并记录告警。
+`LoadBalancer` picks its implementation by `load-balancer.strategy`: `wrr → WeightedRoundRobinLoadBalancer`, `weighted-random → WeightedRandomLoadBalancer`, `consistent-hash → ConsistentHashLoadBalancer`; anything else (including the default `scored`) → `ScoredLoadBalancer` + `RedisMetricsProvider`.
+`BrokerFactory` is selected by `mq.broker.type`: `jdbc` with a `DataSource` bean on the classpath uses `JdbcBrokerFactory`, otherwise (no `DataSource`, or `redis`) it falls back to `RedisBrokerFactory` with a warning.
 
-可选依赖都有守卫,不引 actuator/micrometer 也能启动:
-- 所有 Micrometer collector/binder Bean 均有 `@ConditionalOnClass(MeterRegistry)` 守卫,`install*Collector` 额外要求对应 collector Bean 已存在;
-- `MqHealthIndicator` 位于 `RedisStreamingMqAutoConfiguration` 的独立嵌套配置类,以类级 `@ConditionalOnClass(HealthIndicator)` 守卫;
-- Redisson 仅在项目里没有 `RedissonClient` Bean 时创建简化单机客户端;集群/哨兵/SSL 请自行提供 `RedissonClient`(本 Bean 自动让位)。
+Optional dependencies are guarded, so the application starts even without actuator/micrometer:
+- every Micrometer collector/binder bean is guarded by `@ConditionalOnClass(MeterRegistry)`, and `install*Collector` additionally requires the corresponding collector bean to exist;
+- `MqHealthIndicator` lives in a separate nested configuration class inside `RedisStreamingMqAutoConfiguration`, guarded by a class-level `@ConditionalOnClass(HealthIndicator)`;
+- the Redisson client is created only when the application has no `RedissonClient` bean; for cluster/sentinel/SSL, provide your own `RedissonClient` (this bean stands down automatically).
 
-## 注解与组件
+## Annotations & Components
 
-| 注解/类 | 作用 | 生效条件 |
+| Annotation / class | Purpose | Effective when |
 |---|---|---|
-| `@EnableRedisStreaming` | `@Import(RedisStreamingAutoConfiguration)`;含 `registry`/`discovery`/`config` 三个 boolean 属性(默认 `true`) | 属性目前只是声明(全仓没有代码读取它们),实际装配开关仍是 `redis-streaming.*.enabled` |
-| `@ServiceChangeListener(services, actions)` | 标注方法为服务变更回调(`actions` 默认 `added,removed,updated`);由 `ServiceChangeListenerProcessor`(`BeanPostProcessor`)扫描注册 | 依赖 `NamingService` Bean 存在;支持的方法签名:`(String serviceName, ServiceChangeAction action, ServiceInstance instance, List<ServiceInstance> allInstances)`、`(ServiceInstance instance)`、`(ServiceChangeAction action, ServiceInstance instance)`、`(String serviceName, String action, ServiceInstance instance, List<ServiceInstance> allInstances)` |
-| `@ConfigChangeListener(dataId, group, autoRefresh)` | 声明配置变更方法(`group` 默认 `DEFAULT_GROUP`,`autoRefresh` 默认 `true`);**当前 starter 内没有对应处理器,自动装配不会注册该注解的方法** | 若要监听配置变更,请直接调用 `ConfigService.addListener(dataId, group, ConfigChangeListener)`(`config.ConfigChangeListener` 是 `(dataId, group, content, version)` 函数式接口) |
-| `AutoServiceRegistration` | 应用就绪后自动注册服务实例并(临时实例)按 `heartbeat-interval` 发心跳,`@PreDestroy` 注销;`@ConditionalOnProperty(redis-streaming.registry.auto-register=true)`,且 `NamingService` 存在、`registry.enabled=true` | 该类是 `@Component`,**不在自动装配 imports 中**——需要用户组件扫描覆盖 `io.github.cuihairu.redis.streaming.starter.service`(如 `@SpringBootApplication(scanBasePackages=...)`)或手动注册为 Bean 才生效;`instance.ephemeral` 未配置时按临时实例处理 |
+| `@EnableRedisStreaming` | `@Import(RedisStreamingAutoConfiguration)`; carries three boolean attributes (`registry`/`discovery`/`config`, default `true`) | the attributes are declared only (no code in the repository reads them); the real assembly switches remain `redis-streaming.*.enabled` |
+| `@ServiceChangeListener(services, actions)` | Marks a method as a service-change callback (`actions` defaults to `added,removed,updated`); scanned and registered by `ServiceChangeListenerProcessor` (a `BeanPostProcessor`) | requires a `NamingService` bean; supported method signatures: `(String serviceName, ServiceChangeAction action, ServiceInstance instance, List<ServiceInstance> allInstances)`, `(ServiceInstance instance)`, `(ServiceChangeAction action, ServiceInstance instance)`, `(String serviceName, String action, ServiceInstance instance, List<ServiceInstance> allInstances)` |
+| `@ConfigChangeListener(dataId, group, autoRefresh)` | Declares a configuration-change method (`group` defaults to `DEFAULT_GROUP`, `autoRefresh` defaults to `true`); **the starter currently has no processor for it — auto-configuration never registers methods carrying this annotation** | to listen for configuration changes, call `ConfigService.addListener(dataId, group, ConfigChangeListener)` directly (`config.ConfigChangeListener` is a functional interface of `(dataId, group, content, version)`) |
+| `AutoServiceRegistration` | Registers the service instance after the application is ready, heartbeats it (temporary instances) at `heartbeat-interval`, and deregisters via `@PreDestroy`; guarded by `@ConditionalOnProperty(redis-streaming.registry.auto-register=true)` and requires `NamingService` with `registry.enabled=true` | this class is a `@Component` and is **not in the auto-configuration imports** — your component scan must cover `io.github.cuihairu.redis.streaming.starter.service` (e.g. `@SpringBootApplication(scanBasePackages=...)`) or you must register it as a bean manually; an unconfigured `instance.ephemeral` is treated as a temporary instance |
 
-实例解析规则(`AutoServiceRegistration`):`service-name` 未配置或含 `${}` 占位时用 `spring.application.name`;`instance-id` 未配置时按服务名+端口生成;`host` 未配置时取本机 IP;`port` 未配置时取 `server.port`(默认 8080);`protocol` 支持 `http/https/tcp`(未知值回退 `http`);注册时附加 metadata `application.name`/`server.port`/`startup.time`。
+Instance resolution rules (`AutoServiceRegistration`): an unset `service-name` or one containing `${}` placeholders falls back to `spring.application.name`; an unset `instance-id` is derived from service name + port; an unset `host` resolves to the local IP; an unset `port` resolves to `server.port` (default 8080); `protocol` accepts `http/https/tcp` (unknown values fall back to `http`); registration attaches the metadata `application.name`/`server.port`/`startup.time`.
 
-## 配置项参考(键名+类型+默认值,取自 `RedisStreamingProperties`)
+## Configuration Reference (key, type, default — taken from `RedisStreamingProperties`)
 
-### `redis-streaming.redis.*`(单机兜底 Redisson)
+### `redis-streaming.redis.*` (fallback single-server Redisson)
 
-| 键 | 类型 | 默认 |
+| Key | Type | Default |
 |---|---|---|
 | `address` | String | `redis://127.0.0.1:6379` |
-| `password` | String | `null`(空/空白不设置) |
+| `password` | String | `null` (blank/empty is not set) |
 | `database` | int | `0` |
-| `connect-timeout` | int(ms) | `3000` |
-| `timeout` | int(ms) | `3000` |
+| `connect-timeout` | int (ms) | `3000` |
+| `timeout` | int (ms) | `3000` |
 | `connection-pool-size` | int | `64` |
 | `connection-minimum-idle-size` | int | `10` |
 
 ### `redis-streaming.registry.*`
 
-`enabled`(boolean,`true`)、`heartbeat-interval`(int 秒,`30`)、`heartbeat-timeout`(int 秒,`90`)、`auto-register`(boolean,`true`)、`tenant`(String,`default`)、`instance.*`:
+`enabled` (boolean, `true`), `heartbeat-interval` (int seconds, `30`), `heartbeat-timeout` (int seconds, `90`), `auto-register` (boolean, `true`), `tenant` (String, `default`), and `instance.*`:
 
-`tenant` 为非默认值时在键前缀后插入 `:tenant` 段(`redis_streaming_registry:acme:services:...`),多租户共用一套 Redis 时互不可见;取 `default` 时键与旧版完全一致。命名规则 `[A-Za-z0-9._-]{1,64}`(不允许冒号),非法值启动即报错。
+A non-default `tenant` inserts a `:tenant` segment right after the key prefix (`redis_streaming_registry:acme:services:...`), so several tenants sharing one Redis never see each other's instances; `default` keeps the legacy keys unchanged. Names must match `[A-Za-z0-9._-]{1,64}` (no colon) — an illegal name fails startup.
 
-| 键 | 类型 | 默认 |
+| Key | Type | Default |
 |---|---|---|
 | `instance.service-name` | String | `${spring.application.name}` |
-| `instance.instance-id` | String | `null`(自动按服务名+端口生成) |
-| `instance.host` | String | `null`(自动探测) |
-| `instance.port` | Integer | `null`(取 `server.port`) |
+| `instance.instance-id` | String | `null` (generated from service name + port) |
+| `instance.host` | String | `null` (auto-detected) |
+| `instance.port` | Integer | `null` (takes `server.port`) |
 | `instance.weight` | int | `1` |
 | `instance.enabled` | boolean | `true` |
-| `instance.protocol` | String | `http`(可选 `http/https/tcp`) |
-| `instance.ephemeral` | Boolean | `null` → 按临时实例 |
+| `instance.protocol` | String | `http` (one of `http/https/tcp`) |
+| `instance.ephemeral` | Boolean | `null` → treated as a temporary instance |
 | `instance.metadata.*` | `Map<String,String>` | `{}` |
+
+`metrics.*` (provider metrics): `enabled` (`Set<String>`, default `memory,cpu,application,disk,network`), `intervals` (`Map<String,Duration>`, `{}`), `default-interval` (Duration, `PT1M`), `immediate-update-on-significant-change` (boolean, `true`), `timeout` (Duration, `PT5S`).
 
 ### `redis-streaming.discovery.*`
 
-`enabled`(boolean,`true`)、`healthy-only`(boolean,`true`)、`cache-time`(int 秒,`30`)。
+`enabled` (boolean, `true`), `healthy-only` (boolean, `true`), `cache-time` (int seconds, `30`).
 
 ### `redis-streaming.config.*`
 
-`enabled`(boolean,`true`)、`default-group`(String,`DEFAULT_GROUP`)、`refresh-interval`(int 秒,`30`)、`auto-refresh`(boolean,`true`)、`history-size`(int,`10`)、`key-prefix`(String,`redis_streaming`)、`enable-key-prefix`(boolean,`true`)、`tenant`(String,`default`)、`secure-key-prefix`(String,`secure.`；容器内有 `ContentCipher` Bean 时命中该前缀的 dataId 落库加密,详见 docs/config.md「内容加密」)。
+`enabled` (boolean, `true`), `default-group` (String, `DEFAULT_GROUP`), `refresh-interval` (int seconds, `30`), `auto-refresh` (boolean, `true`), `history-size` (int, `10`), `key-prefix` (String, `redis_streaming`), `enable-key-prefix` (boolean, `true`), `tenant` (String, `default`), `secure-key-prefix` (String, `secure.`).
 
-`tenant` 与 registry 同一套命名规则,非默认值在 `key-prefix` 后插入 `:tenant` 段(`redis_streaming:acme:config:...`),同一 group/dataId 在不同租户互不可见;`default` 时键与旧版一致。多租户键空间总览见 [多租户隔离与配额设计](Multi-Tenancy-Design.md)。
+`tenant` follows the same naming rule as the registry one: a non-default value inserts a `:tenant` segment after `key-prefix` (`redis_streaming:acme:config:...`), so the same group/dataId stays invisible across tenants; `default` keeps the legacy keys unchanged. See the Chinese [multi-tenancy design](../Multi-Tenancy-Design.md) for the whole keyspace.
 
 ### `redis-streaming.load-balancer.*`
 
-`strategy`(String,`scored`;可选 `scored|wrr|weighted-random|consistent-hash`)、`preferred-region`(String)、`preferred-zone`(String)、`cpu-weight`(double,`1.0`)、`latency-weight`(double,`1.0`)、`memory-weight`(double,`0.0`)、`inflight-weight`(double,`0.0`)、`queue-weight`(double,`0.0`)、`error-rate-weight`(double,`0.0`)、`target-latency-ms`(double,`50.0`)、`max-cpu-percent`/`max-latency-ms`/`max-memory-percent`/`max-inflight`/`max-queue`/`max-error-rate-percent`(double,`-1` = 不限,仅 `scored` 使用)。
+`strategy` (String, `scored`; one of `scored|wrr|weighted-random|consistent-hash`), `preferred-region` (String), `preferred-zone` (String), `cpu-weight` (double, `1.0`), `latency-weight` (double, `1.0`), `memory-weight` (double, `0.0`), `inflight-weight` (double, `0.0`), `queue-weight` (double, `0.0`), `error-rate-weight` (double, `0.0`), `target-latency-ms` (double, `50.0`), `max-cpu-percent`/`max-latency-ms`/`max-memory-percent`/`max-inflight`/`max-queue`/`max-error-rate-percent` (double, `-1` = unlimited, used by `scored` only).
 
-### `redis-streaming.mq.*`(扁平键,对应 `MqProperties`)
+### `redis-streaming.runtime.*` (job control plane, both **opt-in**)
 
-| 键 | 类型 | 默认 |
+`runtime.control-plane.*`:
+
+| Key | Type | Default |
+|---|---|---|
+| `enabled` | boolean | `false` (the control-plane beans are assembled only when explicitly enabled) |
+| `prefix` | String | `streaming:runtime:control:` (key families: jobs/versions/history:job/status:job/audit) |
+| `audit-max-entries` | int | `1000` (approximate cap on the audit stream) |
+| `history-max-entries` | int | `10` (old spec versions kept per job, for rollback) |
+| `max-jobs-per-tenant` | int | `0` (unlimited; cap on jobs registered per tenant, submit/upgrade rejected once reached) |
+| `max-total-parallelism-per-tenant` | int | `0` (unlimited; cap on the sum of spec parallelism per tenant) |
+| `max-total-in-flight-per-tenant` | int | `0` (unlimited; cap on the tenant's declared in-flight capacity, Σ(parallelism × maxInFlight)) |
+
+`runtime.agent.*` (meaningful only with the control plane enabled):
+
+| Key | Type | Default |
+|---|---|---|
+| `enabled` | boolean | `false` (run the reconciliation agent in this process only when explicitly enabled) |
+| `instance-id` | String | `""` (auto-generated `hostname-8 random chars` when empty) |
+| `poll-interval` | Duration | `PT5S` (the first round runs immediately) |
+| `claim-prefix` | String | `null` (defaults to `<control-plane prefix>claim:`; set to the empty string to disable claiming — single-agent setups only) |
+
+### `redis-streaming.mq.*` (flat keys, mapping to `MqProperties`)
+
+| Key | Type | Default |
 |---|---|---|
 | `enabled` | boolean | `true` |
 | `default-partition-count` | int | `1` |
@@ -146,8 +184,8 @@ server:
 | `pending-scan-interval-sec` | int | `30` |
 | `claim-idle-ms` | long | `300000` |
 | `claim-batch-size` | int | `50` |
-| `max-in-flight` | int | `0`(0=关闭) |
-| `max-leased-partitions-per-consumer` | int | `0`(0=跟随 `worker-threads`) |
+| `max-in-flight` | int | `0` (0 = disabled) |
+| `max-leased-partitions-per-consumer` | int | `0` (0 = follows `worker-threads`) |
 | `retry-max-attempts` | int | `5` |
 | `retry-base-backoff-ms` | long | `1000` |
 | `retry-max-backoff-ms` | long | `60000` |
@@ -157,61 +195,37 @@ server:
 | `retry-lock-lease-ms` | long | `500` |
 | `key-prefix` | String | `streaming:mq` |
 | `stream-key-prefix` | String | `stream:topic` |
-| `tenant` | String | `default`(非默认值在两个前缀后插入 `:tenant` 段) |
-| `metrics-tenant-tag` | boolean | `false`(开启后 MQ 计数/计时序列加 `tenant` tag,默认关保存量 dashboard 不变;详见 [Metrics](Metrics.md)「tenant 维度规格」) |
+| `tenant` | String | `default` (a non-default value inserts a `:tenant` segment after both prefixes) |
+| `metrics-tenant-tag` | boolean | `false` (adds a `tenant` tag to the MQ counter/timer series; off keeps existing dashboards unchanged — see [Metrics.md](../Metrics.md)) |
 | `consumer-name-prefix` | String | `consumer-` |
 | `dlq-consumer-suffix` | String | `-dlq` |
 | `default-consumer-group` | String | `default-group` |
 | `default-dlq-group` | String | `dlq-group` |
 | `retention-max-len-per-partition` | int | `100000` |
-| `retention-ms` | long | `0`(0=按长度截断,不按时长) |
+| `retention-ms` | long | `0` (0 = trim by length, not by age) |
 | `trim-interval-sec` | int | `60` |
-| `ack-delete-policy` | String | `none`(可选 `none|immediate|all-groups-ack`) |
+| `ack-delete-policy` | String | `none` (one of `none|immediate|all-groups-ack`) |
 | `ackset-ttl-sec` | int | `86400` |
 | `dlq-retention-max-len` | int | `0` |
 | `dlq-retention-ms` | long | `0` |
-| `broker.type` | String | `redis`(可选 `redis|jdbc`) |
+| `broker.type` | String | `redis` (one of `redis|jdbc`) |
 | `broker.jdbc.driver-class-name` | String | `com.mysql.cj.jdbc.Driver` |
-| `broker.jdbc.url` / `username` / `password` | String | `null`(提供 `DataSource` Bean 时忽略) |
+| `broker.jdbc.url` / `username` / `password` | String | `null` (ignored when a `DataSource` bean is provided) |
 
 ### `redis-streaming.ratelimit.*`
 
-`enabled`(boolean,`false`)、`backend`(`memory|redis`,默认 `memory`)、`window-ms`(long,`1000`)、`limit`(int,`100`)、`key-prefix`(String,`streaming:rl`)、`default-name`(String,`default`),以及命名策略集合 `policies.<名称>.*`:`algorithm`(`sliding|token-bucket|leaky-bucket`,默认 `sliding`)、`backend`(`memory|redis`,默认 `memory`)、`window-ms`(long,`1000`)、`limit`(int,`100`)、`capacity`(double,`100.0`)、`rate-per-second`(double,`100.0`)、`key-prefix`(String,`streaming:rl`)。
+`enabled` (boolean, `false`), `backend` (`memory|redis`, default `memory`), `window-ms` (long, `1000`), `limit` (int, `100`), `key-prefix` (String, `streaming:rl`), `default-name` (String, `default`), plus the named policy set `policies.<name>.*`: `algorithm` (`sliding|token-bucket|leaky-bucket`, default `sliding`), `backend` (`memory|redis`, default `memory`), `window-ms` (long, `1000`), `limit` (int, `100`), `capacity` (double, `100.0`), `rate-per-second` (double, `100.0`), `key-prefix` (String, `streaming:rl`).
 
-组装规则:`policies` 为空时用顶层键构建单个默认限流器;非空时逐个构建,并保证 `default-name` 存在。算法与后端对应 `InMemory/Redis SlidingWindow`、`InMemory/Redis TokenBucket`、`InMemory LeakyBucket`——`leaky-bucket` 只有内存实现;请求 `redis` 后端但没有 `RedissonClient` 时回退内存实现并告警;未知算法回退 sliding。
+Assembly rules: with an empty `policies` map, one default limiter is built from the top-level keys; otherwise each policy is built in turn and `default-name` is guaranteed to exist. Algorithms/backends map to `InMemory/Redis SlidingWindow`, `InMemory/Redis TokenBucket`, `InMemory LeakyBucket` — `leaky-bucket` has an in-memory implementation only; requesting the `redis` backend without a `RedissonClient` falls back to the in-memory implementation with a warning; unknown algorithms fall back to sliding.
 
-### `redis-streaming.runtime.*`(作业控制面,两项均 **opt-in**)
-
-`runtime.control-plane.*`:
-
-| 键 | 类型 | 默认 |
-|---|---|---|
-| `enabled` | boolean | `false`(显式开启才装配控制面 Bean) |
-| `prefix` | String | `streaming:runtime:control:`（键族：jobs/versions/history:job/status:job/audit） |
-| `audit-max-entries` | int | `1000`(审计流近似封顶) |
-| `history-max-entries` | int | `10`(每作业保留的旧版本 spec 数,供 rollback) |
-| `max-jobs-per-tenant` | int | `0`(=不限制;单租户作业数上限,存满即拒提交/升级) |
-| `max-total-parallelism-per-tenant` | int | `0`(=不限制;单租户 spec parallelism 总和上限) |
-| `max-total-in-flight-per-tenant` | int | `0`(=不限制;单租户声明的 in-flight 容量总和上限,= Σ(parallelism × maxInFlight)) |
-
-`runtime.agent.*`(仅控制面开启时有意义):
-
-| 键 | 类型 | 默认 |
-|---|---|---|
-| `enabled` | boolean | `false`(显式开启才在本进程运行对账器) |
-| `instance-id` | String | `""`(空则自动生成 `主机名-8位随机`) |
-| `poll-interval` | Duration | `PT5S`(首轮立即执行) |
-| `claim-prefix` | String | `null`(缺省取 `<control-plane prefix>claim:`;置空串禁用认领,仅单 agent 场景) |
-
-
-## 注入示例
+## Injection Examples
 
 ```java
 @RestController
 public class DemoController {
     private final MessageQueueFactory mq;
     private final ConfigService configService;
-    private final RateLimiter rateLimiter; // 仅 ratelimit.enabled=true 时存在
+    private final RateLimiter rateLimiter; // present only when ratelimit.enabled=true
 
     public DemoController(MessageQueueFactory mq, ConfigService configService,
                           @Autowired(required = false) RateLimiter rateLimiter) {
@@ -220,39 +234,39 @@ public class DemoController {
 
     @PostMapping("/orders")
     public String publish(@RequestBody String body) throws Exception {
-        // MessageQueueFactory.createProducer() → CompletableFuture<String> send(...)
+        // MessageQueueFactory.createProducer() -> CompletableFuture<String> send(...)
         return mq.createProducer().send("orders", "k1", body).get();
     }
 }
 ```
 
-配置变更监听(当前唯一有处理器装配的监听方式):
+Configuration-change listening (the only listener wiring the starter currently assembles):
 
 ```java
 @Component
 public class ConfigWatch {
     public ConfigWatch(ConfigService configService) {
         configService.addListener("database.config", "DEFAULT_GROUP",
-                (dataId, group, content, version) -> { /* 读取到新内容 */ });
+                (dataId, group, content, version) -> { /* new content received */ });
     }
 }
 ```
 
-## 指标导出
+## Metrics Export
 
-`micrometer-core` 为 `api` 依赖、`actuator` 为 `compileOnly`。桥接链路:模块内单例(`RedisRuntimeMetrics`/`MqMetrics`/`RetentionMetrics`/`RateLimitMetrics`)→ `*MicrometerCollector` → `MeterRegistry`。实际指标名(取自各 collector 源码):
+`micrometer-core` is an `api` dependency and `actuator` is `compileOnly`. Bridge chain: per-module singletons (`RedisRuntimeMetrics`/`MqMetrics`/`RetentionMetrics`/`RateLimitMetrics`) → `*MicrometerCollector` → `MeterRegistry`. The actual meter names (taken from each collector's source):
 
-| 来源 | 指标名 |
+| Source | Meter names |
 |---|---|
-| `RedisRuntimeMicrometerCollector` | `redis_streaming_runtime_*`:`job_started_total`/`job_canceled_total`、`pipeline_started_total`/`pipeline_start_failed_total`、`handle_success_total`/`handle_error_total`/`handle_latency_ms`、`checkpoint_triggered_total`/`checkpoint_completed_total`/`checkpoint_failed_total`、`checkpoint_duration_ms` 与 `checkpoint_drain/store/sink_commit_duration_ms`、`keyed_state_read/write/delete_total`、`keyed_state_read/write_latency_ms`、`keyed_state_size_fields`、`keyed_state_hot_key_total`、`event_time_timer_queue_size`、`watermark_ms`、`window_fired_total`/`window_late_dropped_total` |
-| `MqMicrometerCollector` | `redis_streaming_mq_produced/consumed/acked/retried/dead/payload_missing_total`、`handle_latency_ms`、`inflight`/`max_inflight`、`backpressure_wait_total`/`backpressure_wait_ms`、`eligible_partitions`/`leased_partitions`/`max_leased_partitions`、DLQ 重放 `redis_streaming_dlq_replay_success_total`/`replay_failure_total`/`replay_latency_ms`、`redis_streaming_dlq_deleted_total`/`dlq_cleared_total`(tags: `topic`、`partition`) |
-| `MqMetricsBinder` | `redis_streaming_mq_topics_total`/`messages_total`/`dlq_total`(Gauge) |
+| `RedisRuntimeMicrometerCollector` | `redis_streaming_runtime_*`: `job_started_total`/`job_canceled_total`, `pipeline_started_total`/`pipeline_start_failed_total`, `handle_success_total`/`handle_error_total`/`handle_latency_ms`, `checkpoint_triggered_total`/`checkpoint_completed_total`/`checkpoint_failed_total`, `checkpoint_duration_ms` plus `checkpoint_drain/store/sink_commit_duration_ms`, `keyed_state_read/write/delete_total`, `keyed_state_read/write_latency_ms`, `keyed_state_size_fields`, `keyed_state_hot_key_total`, `event_time_timer_queue_size`, `watermark_ms`, `window_fired_total`/`window_late_dropped_total` |
+| `MqMicrometerCollector` | `redis_streaming_mq_produced/consumed/acked/retried/dead/payload_missing_total`, `handle_latency_ms`, `inflight`/`max_inflight`, `backpressure_wait_total`/`backpressure_wait_ms`, `eligible_partitions`/`leased_partitions`/`max_leased_partitions`, DLQ replay `redis_streaming_dlq_replay_success_total`/`replay_failure_total`/`replay_latency_ms`, `redis_streaming_dlq_deleted_total`/`dlq_cleared_total` (tags: `topic`, `partition`) |
+| `MqMetricsBinder` | `redis_streaming_mq_topics_total`/`messages_total`/`dlq_total` (Gauge) |
 | `RetentionFrontierMetricsBinder` | `redis_streaming_mq_frontier_age_ms` |
 | `RetentionMicrometerCollector` | `redis_streaming_mq_trim_attempts_total`/`trim_deleted_total` |
-| `CDCMetricsMicrometerBinder` | `redis.streaming.cdc.*`(11 个 gauge,tag `connector=<name>`;需 cdc 模块在 classpath 且应用注册了 `CDCManager` Bean) |
+| `CDCMetricsMicrometerBinder` | `redis.streaming.cdc.*` (11 gauges, tag `connector=<name>`; requires the cdc module on the classpath and a user-registered `CDCManager` bean) |
 | `RateLimitMicrometerCollector` | `redis_streaming_rl_allowed_total`/`rl_denied_total` |
 
-经 Spring Boot actuator 导出时，自行引入任一 Micrometer registry 实现（版本交给 Boot BOM 管理），例如：
+To export them through Spring Boot actuator, add a Micrometer registry implementation of your choice (version managed by the Spring Boot BOM), for example:
 
 ```gradle
 implementation 'org.springframework.boot:spring-boot-starter-actuator'
@@ -271,21 +285,20 @@ management:
         enabled: true
 ```
 
-之后抓取 `/actuator/prometheus` 即可拿到上表 `redis_streaming_*` 指标（MQ 指标带 `topic`/`partition`/`consumer` 等 tag）。不走 actuator 的手动路由用 `micrometer-registry-prometheus` 自行托管 `PrometheusMeterRegistry`，见 [Metrics.md](Metrics.md)。
+Scrape `/actuator/prometheus` for the `redis_streaming_*` meters above. Tags include `topic`/`partition`/`consumer` on MQ meters. A separate non-actuator route — a self-managed `PrometheusMeterRegistry` from `micrometer-registry-prometheus` — is documented in [Metrics.md](../Metrics.md).
 
-## 后台与健康组件
+## Background & Health Components
 
-- `StreamRetentionHousekeeper`:按 `mq.trim-interval-sec` 周期执行 `XTRIM`(长度上限 `retention-max-len-per-partition`,可选 `retention-ms` 时长截断),同时清理 DLQ 与过期 commit frontier;`AutoCloseable`,上下文关闭时停止。
-- `MqHealthIndicator`:调用 `MessageQueueAdmin.listAllTopics()`,成功为 `UP` 并带 `topics` 数量,异常为 `DOWN` 并携带原因。
+- `StreamRetentionHousekeeper`: periodically runs `XTRIM` on the `mq.trim-interval-sec` schedule (length cap `retention-max-len-per-partition`, optional time-based trim via `retention-ms`), and cleans DLQs and expired commit frontiers along the way; `AutoCloseable`, stops when the context closes.
+- `MqHealthIndicator`: calls `MessageQueueAdmin.listAllTopics()`; success reports `UP` with a `topics` count, an exception reports `DOWN` with the cause.
 
-## Redisson 集成与部署模式
+## Redisson Integration & Deployment Modes
 
-starter 复用应用里已有的 `RedissonClient`,只有在没有时才创建简化单机客户端。
+The starter reuses an existing `RedissonClient` in your application and only creates a simple single-server client if none is present.
 
-- 集群/哨兵/SSL 建议走 `redisson-spring-boot-starter`(例如 `implementation 'org.redisson:redisson-spring-boot-starter:4.7.0'`,与 `gradle/libs.versions.toml` 中的 Redisson 版本一致),用 `spring.redis.redisson.file` 指向 YAML。
+- Recommended: configure cluster/sentinel/SSL via `redisson-spring-boot-starter` (for example `implementation 'org.redisson:redisson-spring-boot-starter:4.7.0'`, the Redisson version in `gradle/libs.versions.toml`) and point `spring.redis.redisson.file` at your YAML.
 
-集群(redisson-cluster.yaml):
-
+Cluster (redisson-cluster.yaml)
 ```yaml
 clusterServersConfig:
   nodeAddresses: ["redis://10.0.0.1:6379", "redis://10.0.0.2:6379"]
@@ -294,7 +307,6 @@ clusterServersConfig:
   connectTimeout: 10000
   timeout: 3000
 ```
-
 ```yaml
 spring:
   redis:
@@ -302,8 +314,7 @@ spring:
       file: classpath:redisson-cluster.yaml
 ```
 
-哨兵(redisson-sentinel.yaml):
-
+Sentinel (redisson-sentinel.yaml)
 ```yaml
 sentinelServersConfig:
   masterName: mymaster
@@ -312,7 +323,6 @@ sentinelServersConfig:
   database: 0
   checkSentinelsList: true
 ```
-
 ```yaml
 spring:
   redis:
@@ -320,31 +330,31 @@ spring:
       file: classpath:redisson-sentinel.yaml
 ```
 
-引入 redisson-spring-boot-starter 后,`redis-streaming.redis.*` 可以不再配置——starter 探测到外部 `RedissonClient` 会跳过内部单机客户端。
+Tip: once redisson-spring-boot-starter is in place you can drop `redis-streaming.redis.*`; the starter detects your `RedissonClient` and skips its internal single-server client.
 
-## Codec 与 Lua 注意
+## Codec & Lua Best Practices
 
-registry/MQ 的 Lua 脚本以字符串/JSON 读写这些键空间:
+Lua scripts in registry/MQ read and write strings/JSON in these keyspaces:
 
-- registry:`{prefix}:services`(Set)、`{prefix}:services:{service}:heartbeats`(ZSet)、`{prefix}:services:{service}:instance:{id}`(Hash)
-- MQ 重试:`streaming:mq:retry:{topic}`(ZSet)、`streaming:mq:retry:item:{topic}:{uuid}`(Hash);重试锁键是字面常量 `streaming:mq:retry:lock:{topic}`,不随 `key-prefix` 变化
+- Registry: `{prefix}:services` (Set), `{prefix}:services:{service}:heartbeats` (ZSet), `{prefix}:services:{service}:instance:{id}` (Hash)
+- MQ retry: `streaming:mq:retry:{topic}` (ZSet), `streaming:mq:retry:item:{topic}:{uuid}` (Hash); the retry lock key is the literal `streaming:mq:retry:lock:{topic}` (it does not follow `key-prefix`)
 
-约定:
+Guidelines:
 
-- 这些键用 `StringCodec` 访问,值保持字符串/JSON;用对象型 codec(如 Kryo)读字符串回复(SMEMBERS/HGET)可能反序列化失败。
-- 自己的键用 Kryo/JSON 没问题,只要 Lua 脚本不碰它们。
-- 最省事的做法:Redisson 配置里全局 `codec: !<org.redisson.codec.StringCodec>`。
+- Access these keys with `StringCodec`; values should be strings/JSON. Reading string replies (SMEMBERS/HGET) with object codecs (e.g. Kryo) can fail deserialization.
+- Kryo/JSON codecs are fine for your own keys as long as no Lua script touches them.
+- Simplest: set a global `codec: !<org.redisson.codec.StringCodec>` in the Redisson config.
 
-## 典型用例
+## Typical Use Cases
 
-### 服务注册与发现
+### Service registration & discovery
 
 ```java
-// 服务提供方
+// service provider
 @SpringBootApplication
 @EnableRedisStreaming
 public class UserServiceProvider {
-    // registry.auto-register=true 时启动即注册 user-service
+    // registers user-service at startup when registry.auto-register=true
 }
 ```
 
@@ -359,7 +369,7 @@ redis-streaming:
         version: 2.0.0
 ```
 
-手动注册外部服务(`NamingService` 同时实现 `ServiceProvider`/`ServiceConsumer`,两个视角都可注入):
+Manually register external services (`NamingService` implements both `ServiceProvider` and `ServiceConsumer`; either view can be injected):
 
 ```java
 @Service
@@ -389,7 +399,7 @@ public class UserService {
 }
 ```
 
-### 配置发布
+### Config publishing
 
 ```java
 @Service
@@ -412,7 +422,7 @@ public class ConfigPublisher {
 }
 ```
 
-### 服务变更监听
+### Service change listening
 
 ```java
 @Component
@@ -429,12 +439,12 @@ public class ServiceListener {
 }
 ```
 
-支持的方法签名见「注解与组件」。
+Supported method signatures: see "Annotations & Components".
 
-### 事件驱动
+### Event-driven
 
 ```java
-// 订单服务——生产者
+// order service — producer
 @Service
 public class OrderService {
     @Autowired
@@ -448,7 +458,7 @@ public class OrderService {
 ```
 
 ```java
-// 支付服务——同一 topic 上自己的消费组
+// payment service — its own consumer group on the same topic
 @Component
 public class PaymentService {
     @Autowired
@@ -477,7 +487,7 @@ public class PaymentService {
 ```
 
 ```java
-// 库存服务——另一个独立消费组
+// inventory service — another independent consumer group
 @Component
 public class InventoryService {
     @Autowired
@@ -500,9 +510,9 @@ public class InventoryService {
 }
 ```
 
-`MessageHandleResult` 取值 `SUCCESS`/`RETRY`/`FAIL`/`DEAD_LETTER`;`subscribe()` 只登记处理器,真正拉取从 `start()` 开始。需要窗口/精确语义的流水线用运行时入口 `RedisStreamExecutionEnvironment.fromMqTopic(...)`,见 [runtime.md](runtime.md)。
+`MessageHandleResult` values are `SUCCESS`/`RETRY`/`FAIL`/`DEAD_LETTER`; `subscribe()` only registers the handler — actual pulling starts at `start()`. Pipelines that need windows/exactly-once semantics use the runtime entry point `RedisStreamExecutionEnvironment.fromMqTopic(...)`, see [runtime.md](../runtime.md).
 
-MQ 调优示例(下面值仅作示意——所有键的默认值见「配置项参考」,前缀为 `redis-streaming.mq`,历史文档中的 `streaming.mq` 已废弃):
+MQ tuning example (values below are illustrative — defaults for every key are in "Configuration Reference"; prefix is `redis-streaming.mq`, the historical `streaming.mq` is deprecated):
 
 ```yaml
 redis-streaming:
@@ -516,9 +526,9 @@ redis-streaming:
     claim-idle-ms: 300000
 ```
 
-## 作业控制面(runtime)
+## Job Control Plane (runtime)
 
-starter 可选装配 Redis 作业控制面(声明式 spec + 执行侧对账,设计与 Redis 键布局见 [Control-Plane-Design.md](Control-Plane-Design.md)):
+The starter can optionally wire the Redis job control plane (declarative spec + executor-side reconciliation; design and Redis key layout in the Chinese [Control-Plane-Design.md](../Control-Plane-Design.md)):
 
 ```yaml
 redis-streaming:
@@ -526,11 +536,11 @@ redis-streaming:
     control-plane:
       enabled: true
     agent:
-      enabled: true        # 本进程作为执行侧 agent
-      instance-id: node-a  # 可省略,自动生成
+      enabled: true        # this process acts as an executor-side agent
+      instance-id: node-a  # optional, auto-generated when omitted
 ```
 
-流水线工厂按 **Spring Bean 名** 注册到默认 `JobLauncher`,`JobSpec.pipelineFactory` 必须与之相等:
+Pipeline factories register into the default `JobLauncher` **by Spring bean name**; `JobSpec.pipelineFactory` must equal it:
 
 ```java
 @Bean
@@ -544,46 +554,46 @@ public JobPipelineFactory pvAgg() {
 }
 ```
 
-随后用注入的 `JobControlPlane` 提交/升级/停止(作业在 agent 下一轮对账时生效):
+Then submit/upgrade/stop through the injected `JobControlPlane` (jobs take effect at the agent's next reconciliation round):
 
 ```java
 plane.submit(JobSpec.builder()
         .jobName("pv-agg")
-        .pipelineFactory("pvAgg")          // = Bean 名
+        .pipelineFactory("pvAgg")          // = bean name
         .config(Map.of("topic", "pv"))
         .parallelism(2)
         .build(), "alice");
 
-plane.upgrade("pv-agg", s -> { s.setParallelism(4); return s; }, "alice"); // 仅并行度变化走 scale 快路径
-plane.stop("pv-agg", "alice");   // agent 取消本地实例并确认 DESIRED_STOPPED
-plane.resume("pv-agg", "alice"); // 重新部署
+plane.upgrade("pv-agg", s -> { s.setParallelism(4); return s; }, "alice"); // parallelism-only change takes the scale fast path
+plane.stop("pv-agg", "alice");   // the agent cancels the local instance and confirms DESIRED_STOPPED
+plane.resume("pv-agg", "alice"); // redeploy
 ```
 
-要点:
+Key points:
 
-- 控制面只写期望状态,从不直接触碰运行中的作业;agent 负责 claim(`SET NX EX`)→launch→上报,失败报 FAILED 并在下一轮重试。
-- 多个应用实例都开 `agent.enabled` 时,同一作业由认领键仲裁,只在一个实例部署;实例宕机后其认领随 TTL 过期,其余实例需显式 `resume` 才会接管(无自动故障转移)。
-- 应用关闭时 `JobAgent.close()`(`destroyMethod`)取消本实例全部本地作业;不希望随应用退出而取消时,自行创建 agent 并只调 `start()`。
-- `ControlPlaneAuthorizer`/`JobLauncher` 用户 Bean 优先(`@ConditionalOnMissingBean`);自定义 `JobLauncher` 时工厂注册由自己负责。
-- 空应用上下文里工厂 Bean 为空是合法的(纯控制面用法):submit/upgrade/rollback 照常,agent 侧另起进程执行。
+- The control plane only writes desired state and never touches running jobs directly; the agent handles claim (`SET NX EX`) → launch → status report, reporting FAILED on failure and retrying next round.
+- When multiple application instances enable `agent.enabled`, one claim key arbitrates so the same job deploys on exactly one instance; when an instance dies its claim expires with the TTL and other instances need an explicit `resume` to take over (no automatic failover).
+- On application shutdown `JobAgent.close()` (`destroyMethod`) cancels all local jobs of this instance; to keep jobs running after the app exits, create the agent yourself and only call `start()`.
+- User-provided `ControlPlaneAuthorizer`/`JobLauncher` beans win (`@ConditionalOnMissingBean`); with a custom `JobLauncher`, factory registration is your responsibility.
+- An application context with zero factory beans is valid (pure control-plane usage): submit/upgrade/rollback work as usual and a separate process runs the agent side.
 
-## 注意事项
+## Notes
 
-1. 启动前 Redis 必须可达;生产负载按需调大连接池。
-2. 自动探测的 IP 在部分网络环境下会取错,必要时显式设置 `instance.host`。
-3. 关闭时应用会注销服务并关闭连接。
-4. 心跳间隔建议保持 30 秒及以上。
+1. Redis must be reachable before startup; size the connection pool for production loads.
+2. The auto-detected IP can be wrong on some networks; set `instance.host` explicitly when needed.
+3. On shutdown the application deregisters services and closes connections.
+4. Keep the heartbeat interval at 30 seconds or longer.
 
-## 常见问题
+## FAQ
 
-**Q: 如何禁用自动注册?**
+**Q: How do I disable auto-registration?**
 ```yaml
 redis-streaming:
   registry:
     auto-register: false
 ```
 
-**Q: 如何使用自己的 RedissonClient?**
+**Q: How do I use my own RedissonClient?**
 ```java
 @Bean
 @Primary
@@ -591,27 +601,24 @@ public RedissonClient customRedissonClient() {
     // return your custom RedissonClient
 }
 ```
-starter 的兜底客户端会让位(`@ConditionalOnMissingBean`);若用 redisson-spring-boot-starter 提供客户端,其配置前缀以其版本为准,与 `redis-streaming.redis.*` 无关。
+The starter's fallback client stands down (`@ConditionalOnMissingBean`). If redisson-spring-boot-starter provides the client, its own configuration prefix applies — `redis-streaming.redis.*` is unrelated to it.
 
-**Q: 为什么 `redis-streaming` 配置不生效?**
-starter 只读 `redis-streaming.*`;历史文档中的 `streaming.*` 前缀均已废弃,`spring.data.redis` 属于 Spring Data,非本 starter。
+**Q: Why is my `redis-streaming` config not picked up?**
+The starter only reads `redis-streaming.*`. The historical `streaming.*` prefix is deprecated, and `spring.data.redis` belongs to Spring Data, not this starter.
 
-**Q: 必须引入 actuator 吗?**
-不需要。`MqHealthIndicator` 由类级 `@ConditionalOnClass(HealthIndicator)` 守卫,不引 actuator 时该嵌套配置不会被加载,`HealthIndicator` 缺失也不会导致启动失败。所有 Micrometer collector/binder Bean 同理。
+**Q: Do I have to add actuator?**
+No. `MqHealthIndicator` is guarded by a class-level `@ConditionalOnClass(HealthIndicator)`, so without actuator the nested configuration is never loaded and the absence of `HealthIndicator` classes cannot break startup. All Micrometer collector/binder beans carry the same kind of guard.
 
-**Q: 为什么限流不生效?**
-`ratelimit.enabled` 默认 `false`,需显式开启;`leaky-bucket` 仅有内存后端。
+**Q: Why is rate limiting not working?**
+`ratelimit.enabled` defaults to `false`; enable it explicitly. `leaky-bucket` has an in-memory backend only.
 
-**Q: 为什么自动注册不生效?**
-`AutoServiceRegistration` 不在自动装配 imports 内,需要组件扫描覆盖它所在的包或手动注册(见「注解与组件」)。
+**Q: Why is auto-registration not working?**
+`AutoServiceRegistration` is not in the auto-configuration imports; your component scan must cover its package or you must register it as a bean (see "Annotations & Components").
 
-**Q: 为什么 jdbc broker 没生效?**
-`mq.broker.type=jdbc` 但没有 `DataSource` Bean 时会回退 `redis` 并打印告警。
+**Q: Why is the JDBC broker not taking effect?**
+With `mq.broker.type=jdbc` but no `DataSource` bean, the starter falls back to `redis` and logs a warning.
 
-**Q: agent 提交了作业,但状态一直 PENDING_DEPLOY?**
-先确认 `JobSpec.pipelineFactory` 与容器内某个 `JobPipelineFactory` Bean 的名字相等(默认 launcher 按 Bean 名注册);名字不匹配时部署会因找不到工厂而报 FAILED。其次确认 `claim-prefix` 没有把认领键指到别的 agent 上(默认取 `<control-plane prefix>claim:`);多 agent 同 key 时未持有认领的一方会跳过部署。最后确认对应应用真的开了 `runtime.agent.enabled`——控制面只写期望状态,必须有执行侧 agent 才会部署。
-
-**Q: 多环境配置?**
+**Q: Multi-environment configuration?**
 ```yaml
 # application-dev.yml
 redis-streaming:
@@ -624,6 +631,14 @@ redis-streaming:
     address: redis://prod-redis:6379
 ```
 
-## 相关文档
+---
 
-[runtime.md](runtime.md) · [MQ.md](MQ.md) · [Registry.md](Registry.md) · [config.md](config.md) · [Metrics.md](Metrics.md)
+**Version**: 0.2.4
+**Last Updated**: 2026-10-05
+
+Related documentation:
+- [Runtime](../runtime.md)
+- [MQ](../MQ.md)
+- [Registry](../Registry.md)
+- [Config](../config.md)
+- [Metrics](../Metrics.md)

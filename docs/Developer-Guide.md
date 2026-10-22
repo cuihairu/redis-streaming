@@ -1,9 +1,14 @@
-# 开发者指南
+# Developer Guide
 
-- 工程结构：多模块 Gradle（模块清单见 `settings.gradle`，共 20 个模块；见 [Architecture](/Architecture) 的模块表）
-- 全量构建：`./gradlew build`（含单测与集成测试，`check` 依赖 `integrationTest`，需要 Redis）
-- 只跑单测：`./gradlew test`；集成测试：`./gradlew integrationTest`
-- 覆盖率门禁：根项目 `jacocoRootCoverageVerification`（单测口径确定性门禁：INSTRUCTION ≥ 0.95 且 CLASS ≥ 0.99），报告 `./gradlew jacocoRootReport`（单测+集成并集，上传 Codecov）
-- 代码规范：Java 17（`options.release = 17`）/ UTF-8 / 4 空格缩进；日志用 SLF4J；主代码开 `-Xlint:deprecation -Xlint:unchecked -Werror`（测试豁免 `-Werror` 与 unchecked）
-- 版本管理：版本号由 axion-release 从 `v*` git 标签推导（根 `build.gradle` 的 `scmVersion`）
-- 推荐阅读：[Architecture](/Architecture) / [Design](/Design) / [Spring-Boot-Starter](/Spring-Boot-Starter) / [CEP](/CEP)
+- **Project Structure**: Multi-module Gradle (module list in `settings.gradle`, 20 modules; see [Architecture](../Architecture.md) module table)
+- **Full Build**: `./gradlew build` (includes unit + integration tests; `check` depends on `integrationTest`, requires Redis)
+- **Unit Tests Only**: `./gradlew test`; Integration Tests: `./gradlew integrationTest`
+- **Coverage Gate**: Root project `jacocoRootCoverageVerification` (unit-test deterministic gate: INSTRUCTION ≥ 0.95 AND CLASS ≥ 0.99), report `./gradlew jacocoRootReport` (unit+integration union, uploaded to Codecov)
+- **Code Style**: Java 17 (`options.release = 17`) / UTF-8 / 4-space indent; logging via SLF4J; main code uses `-Xlint:deprecation -Xlint:unchecked -Werror` (tests exempt from `-Werror` and unchecked)
+- **Version Management**: Version derived by axion-release from `v*` git tags (root `build.gradle` `scmVersion`)
+- **Recommended Reading**: [Architecture](../Architecture.md) / [Spring-Boot-Starter](../Spring-Boot-Starter.md) / [CEP](../CEP.md)
+
+---
+
+**Version**: 0.2.4
+**Last Updated**: 2026-10-05

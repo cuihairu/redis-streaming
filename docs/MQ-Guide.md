@@ -1,11 +1,11 @@
-# 消息队列使用指南
+# MQ Usage Guide
 
-本文是 `mq/` 模块的使用指南，所有类名与方法签名均可在 `mq/src/main/java/io/github/cuihairu/redis/streaming/mq` 与 `mq/src/test` 中核对。设计原理见 [MQ-Design.md](./MQ-Design.md)，配置项全表见 [MQ.md](./MQ.md)。
+This is the usage guide for the `mq/` module; every class and method signature can be checked against `mq/src/main/java/io/github/cuihairu/redis/streaming/mq` and `mq/src/test`. For design principles see [MQ-Design.md](MQ-Design.md); for the full configuration table see the Chinese [MQ.md](../MQ.md).
 
-## 1) 组装（MessageQueueFactory）
+## 1) Assembly (MessageQueueFactory)
 
 ```java
-RedissonClient client = Redisson.create(config);    // Redisson 客户端
+RedissonClient client = Redisson.create(config);    // Redisson client
 
 MessageQueueFactory factory = new MessageQueueFactory(client,
         MqOptions.builder()
@@ -18,86 +18,86 @@ MessageConsumer consumer = factory.createConsumer("consumer-1");
 MessageQueueAdmin admin   = factory.createAdmin();
 ```
 
-不传 `MqOptions` 时使用全默认值（分区数 1）。第三个构造参数可注入 `BrokerFactory` 换持久化后端：默认 `RedisBrokerFactory`（Redis Streams），另有 `JdbcBrokerFactory`（JDBC 表 `rs_messages`）。
+Without `MqOptions` all defaults apply (partition count 1). A third constructor argument injects a `BrokerFactory` to swap the persistence backend: the default `RedisBrokerFactory` (Redis Streams), plus `JdbcBrokerFactory` (JDBC table `rs_messages`).
 
-## 2) 生产者
+## 2) Producer
 
 ```java
-// 方式一：Message 对象（可带 key/headers/重试参数）
+// Option 1: a Message object (carries key/headers/retry parameters)
 Message m = new Message("order_events", "order-1", Map.of("orderId", 123L)); // (topic, key, payload)
 m.setHeaders(Map.of("trace", "t-1"));
-producer.send(m).get(10, TimeUnit.SECONDS);          // 返回 Redis stream entry id
+producer.send(m).get(10, TimeUnit.SECONDS);          // returns the Redis stream entry id
 
-// 方式二：便捷重载
+// Option 2: convenience overloads
 producer.send("order_events", "order-1", payload);   // topic + key + payload
-producer.send("order_events", payload);              // topic + payload（key 为 null 时随机分区）
+producer.send("order_events", payload);              // topic + payload (null key -> random partition)
 ```
 
-- 分区路由：默认 `HashPartitioner`，`partition = key.hashCode() % P`（key 为 null 时随机）。
-- 强制分区：header `MqHeaders.FORCE_PARTITION_ID`（`x-force-partition-id`，整数字符串），生产与路由阶段都会尊重该 header（DLQ 回放即靠它回到原分区）。
-- 超过 64KB 的 payload 自动转存 Redis 键（`x-payload-hash-ref`），流内只留引用；ACK 时删除。
+- Partition routing: `HashPartitioner` by default, `partition = key.hashCode() % P` (random when the key is null).
+- Forced partition: header `MqHeaders.FORCE_PARTITION_ID` (`x-force-partition-id`, integer string) is respected in both the produce and route phases — DLQ replay relies on it to return to the original partition.
+- Payloads over 64KB are automatically offloaded to a Redis key (`x-payload-hash-ref`) and only the reference stays in the stream; it is deleted on ACK.
 
-## 3) 消费者（消费组）
+## 3) Consumer (consumer groups)
 
 ```java
 consumer.subscribe("order_events", "payment_group", msg -> {
     try {
         handle(msg);
-        return MessageHandleResult.SUCCESS;          // 处理成功，ACK
+        return MessageHandleResult.SUCCESS;          // handled, ACK
     } catch (Exception retryable) {
-        return MessageHandleResult.RETRY;            // 重试（耗尽后进 DLQ）
+        return MessageHandleResult.RETRY;            // retry (DLQ once exhausted)
     }
 });
 consumer.start();
 ```
 
-- `MessageHandler` 返回 `MessageHandleResult`：`SUCCESS` / `RETRY` / `FAIL` / `DEAD_LETTER`。
-- `subscribe(topic, handler)` 使用默认组 `default-group`；一个消费者实例可订阅多个 topic，同组内一个分区只被一个实例租约独占。
-- 生命周期：`start()` 启动（同步做一次再均衡）、`stop()` 停止 Worker、`close()` 释放线程池（内部会先 `stop()`）。
-- `RedisMessageConsumer` 另实现 `PausableMessageConsumer`：`pause()` / `resume()` / `isPaused()` / `inFlight()`；及 `ReassignableMessageConsumer`：`updatePartitionAssignment(topic, modulo, remainder)` 运行期改分区指派（移出的分区即时释放租约，新纳入的由再均衡取回）。
+- `MessageHandler` returns a `MessageHandleResult`: `SUCCESS` / `RETRY` / `FAIL` / `DEAD_LETTER`.
+- `subscribe(topic, handler)` uses the default group `default-group`; one consumer instance can subscribe to several topics, and within a group one partition is leased by a single instance at a time.
+- Lifecycle: `start()` starts (synchronously rebalances once), `stop()` stops the workers, `close()` releases the thread pool (calls `stop()` first).
+- `RedisMessageConsumer` also implements `PausableMessageConsumer`: `pause()` / `resume()` / `isPaused()` / `inFlight()`.
 
-按订阅覆盖读取参数或锁定分区子集：
+To override read parameters per subscription or pin a subset of partitions:
 
 ```java
 consumer.subscribe("order_events", "payment_group", handler,
         SubscriptionOptions.builder()
-                .batchCount(20)          // 覆盖 consumerBatchCount
-                .pollTimeoutMs(500)      // 覆盖 consumerPollTimeoutMs
-                .partitionModulo(2)      // 与 remainder 组合：只接管 i % 2 == 0 的分区
+                .batchCount(20)          // overrides consumerBatchCount
+                .pollTimeoutMs(500)      // overrides consumerPollTimeoutMs
+                .partitionModulo(2)      // combined with remainder: takes only partitions with i % 2 == 0
                 .partitionRemainder(0)
                 .build());
 ```
 
-## 4) 处理结果语义
+## 4) Handle-result semantics
 
-| 返回值 | 行为 |
+| Return value | Behavior |
 |---|---|
-| `SUCCESS` | ACK；header `x-defer-ack=true` 时推迟 ACK（供 checkpoint 协调的运行时） |
-| `RETRY` | 先重新入队（≤50ms 退避直接重投；否则进 ZSET 延迟桶由 Lua 按到期时间搬回），后 ACK 原消息；重试上限 = `min(message.maxRetries, retryMaxAttempts)`，耗尽进 DLQ |
-| `FAIL` / `DEAD_LETTER` | 写 DLQ，成功后 ACK；DLQ 写失败则保持 pending |
-| 抛异常 | 等价于 `RETRY` 路径（`requeueOrDeadLetter`） |
+| `SUCCESS` | ACK; with header `x-defer-ack=true` the ACK is deferred (for checkpoint-coordinated runtimes) |
+| `RETRY` | Re-enqueues first (≤50ms backoff redelivers directly; otherwise the message enters a ZSET delay bucket that Lua moves back when due), then ACKs the original; the retry cap is `min(message.maxRetries, retryMaxAttempts)`, exhausted messages go to the DLQ |
+| `FAIL` / `DEAD_LETTER` | Writes the DLQ and ACKs on success; if the DLQ write fails the message stays pending |
+| Thrown exception | Same path as `RETRY` (`requeueOrDeadLetter`) |
 
-重试后的消息是新的 stream id；原始 id 在 header `x-original-message-id` 中。消息默认 `maxRetries=3`（`Message` 构造器设定），可用 `m.setMaxRetries(1)` 覆盖。
+A retried message carries a new stream id; the original id is in header `x-original-message-id`. The default `maxRetries=3` is set by the `Message` constructor and can be overridden with `m.setMaxRetries(1)`.
 
-## 5) 消费 DLQ
+## 5) Consuming the DLQ
 
 ```java
-// 适配为 MessageConsumer 的 DLQ 消费者（名称自动加 -dlq 后缀）
+// DLQ consumer adapted to MessageConsumer (name gets the -dlq suffix automatically)
 MessageConsumer dlqConsumer = factory.createDeadLetterConsumer("dlq-c1");
 dlqConsumer.subscribe("order_events", "dlq_group", m -> {
-    log(m);                                          // DeadLetterEntry 字段映射进 Message（含 partitionId）
-    return MessageHandleResult.SUCCESS;              // SUCCESS=确认；RETRY=回放原分区成功后确认；FAIL=确认并放弃
+    log(m);                                          // DeadLetterEntry fields mapped into Message (incl. partitionId)
+    return MessageHandleResult.SUCCESS;              // SUCCESS=confirm; RETRY=replay to the original partition, confirm on success; FAIL=confirm and drop
 });
 dlqConsumer.start();
 ```
 
-`factory.createDeadLetterConsumerForTopic(topic, group, consumerName, handler)` 是一步到位的便捷方法：创建、`subscribe` 并 `start`（有启动副作用，返回值即已运行的消费者）。
+`factory.createDeadLetterConsumerForTopic(topic, group, consumerName, handler)` is the one-step convenience method: it creates, `subscribe`s and `start`s (start has side effects; the returned consumer is already running).
 
-DLQ 消费者对 `RETRY` 的处理是「回放到原分区流，成功才 ACK」。回放不会删除 DLQ 流中的条目，清理靠 `delete`/`clear`/保留策略。
+On `RETRY` the DLQ consumer replays to the original partition stream and ACKs only when that succeeds. Replay does not remove entries from the DLQ stream; cleanup goes through `delete`/`clear`/retention policies.
 
-## 6) DLQ 管理与回放
+## 6) DLQ management and replay
 
-轻量工具（模块根 `DeadLetterQueueManager`）：
+Lightweight utility (`DeadLetterQueueManager` at the module root):
 
 ```java
 DeadLetterQueueManager dlq = new DeadLetterQueueManager(client);
@@ -105,24 +105,24 @@ DeadLetterQueueManager dlq = new DeadLetterQueueManager(client);
 long size = dlq.getDeadLetterQueueSize("order_events");
 Map<StreamMessageId, Map<String, Object>> msgs = dlq.getDeadLetterMessages("order_events", 10);
 StreamMessageId firstId = msgs.keySet().iterator().next();
-dlq.replayMessage("order_events", firstId);          // 回放到记录的 partitionId 对应分区
+dlq.replayMessage("order_events", firstId);          // replays to the partition recorded in partitionId
 dlq.deleteMessage("order_events", firstId);
 dlq.clearDeadLetterQueue("order_events");
 ```
 
-完整管理接口（`dlq.DeadLetterAdmin`，可列全部 DLQ Topic）：
+Full management API (`dlq.DeadLetterAdmin`, can list every DLQ topic):
 
 ```java
 DeadLetterAdmin dlqAdmin = new RedisDeadLetterAdmin(client, new RedisDeadLetterService(client));
-dlqAdmin.listTopics();                               // 按 {prefix}:{topic}:dlq 模式扫描
+dlqAdmin.listTopics();                               // scans the {prefix}:{topic}:dlq pattern
 dlqAdmin.list("order_events", 20);                   // List<DeadLetterEntry>
 dlqAdmin.replay("order_events", id);
-dlqAdmin.replayAll("order_events", 100);             // 最多回放 100 条，返回成功数
+dlqAdmin.replayAll("order_events", 100);             // replays at most 100 entries, returns the success count
 dlqAdmin.delete("order_events", id);
 dlqAdmin.clear("order_events");
 ```
 
-`RedisDeadLetterService` 也可单独用于写入死信（`DeadLetterRecord` 为公有字段 POJO）：
+`RedisDeadLetterService` can also be used on its own to write dead letters (`DeadLetterRecord` is a public-field POJO):
 
 ```java
 DeadLetterRecord rec = new DeadLetterRecord();
@@ -133,33 +133,33 @@ rec.headers = Map.of("trace", "t-1");
 new RedisDeadLetterService(client).send(rec);
 ```
 
-## 7) 运维（MessageQueueAdmin）
+## 7) Operations (MessageQueueAdmin)
 
 ```java
 admin.listAllTopics();
-admin.getQueueInfo("order_events");                         // 跨分区 length/组数/first/last 聚合
+admin.getQueueInfo("order_events");                         // cross-partition length/groups/first/last aggregate
 admin.getConsumerGroups("order_events");
 admin.getConsumerGroupStats("order_events", "payment_group"); // pending/consumers/lag
 admin.getPendingMessages("order_events", "payment_group", 20,
-        PendingSort.IDLE, true, 60_000);                     // 按 idle 降序，过滤 <60s
-admin.resetConsumerGroupOffset("order_events", "payment_group", "0");  // "0"=开头 / "$"=最新
-admin.trimQueue("order_events", 1000);                       // 保留最新 1000 条（均摊到分区）
+        PendingSort.IDLE, true, 60_000);                     // by idle descending, filtered to <60s
+admin.resetConsumerGroupOffset("order_events", "payment_group", "0");  // "0"=beginning / "$"=latest
+admin.trimQueue("order_events", 1000);                       // keep the newest 1000 (amortized over partitions)
 admin.trimQueueByAge("order_events", Duration.ofHours(1));
-admin.updatePartitionCount("order_events", 8);               // 只允许增大
+admin.updatePartitionCount("order_events", 8);               // grow-only
 admin.deleteConsumerGroup("order_events", "payment_group");
-admin.deleteTopic("order_events");                           // 分区流+DLQ+meta+payload hash 一起删
-admin.listRecent("order_events", 10);                        // 原始条目查看（每分区 ≤200）
+admin.deleteTopic("order_events");                           // removes partition streams + DLQ + meta + payload hashes
+admin.listRecent("order_events", 10);                        // raw entry view (≤200 per partition)
 admin.range("order_events", 0, "-", "+", 10, true);
 ```
 
-## 8) 配置与集成
+## 8) Configuration and integration
 
-- `MqOptions` 全部字段与默认值见 [MQ.md](./MQ.md)。
-- Spring Boot：`spring-boot-starter` 自动装配 `MessageQueueFactory` / `MessageQueueAdmin` / DLQ 服务等 Bean，配置前缀 `redis-streaming.mq.*`，并提供 Micrometer 指标与保留清理（`StreamRetentionHousekeeper`），见 [Spring-Boot-Starter.md](./Spring-Boot-Starter.md)。
-- 与 runtime 集成（`RedisStreamExecutionEnvironment`）见 [runtime.md](./runtime.md)。
+- Every `MqOptions` field and default is listed in the Chinese [MQ.md](../MQ.md).
+- Spring Boot: `spring-boot-starter` auto-configures `MessageQueueFactory` / `MessageQueueAdmin` / the DLQ beans under the `redis-streaming.mq.*` prefix, with Micrometer metrics and retention housekeeping (`StreamRetentionHousekeeper`) — see [Spring-Boot-Starter.md](Spring-Boot-Starter.md).
+- Runtime integration (`RedisStreamExecutionEnvironment`): see the Chinese [runtime.md](../runtime.md).
 
-## 参考
+## References
 
-- 设计：[MQ-Design.md](./MQ-Design.md)
-- Redis 命令交互：[MQ-Broker-Interaction.md](./MQ-Broker-Interaction.md)
-- 模块总览：[MQ.md](./MQ.md)
+- Design: [MQ-Design.md](MQ-Design.md)
+- Redis command interaction: [MQ-Broker-Interaction.md](MQ-Broker-Interaction.md)
+- Module overview: the Chinese [MQ.md](../MQ.md)

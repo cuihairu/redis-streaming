@@ -1,62 +1,109 @@
-# 架构总览
+# Streaming Framework Architecture
 
-该文档概述系统整体架构，并突出 MQ（Redis Streams）子系统的角色与交互。详细设计见 `MQ-Design.md`。
+## Architecture Overview
 
-## 模块
+This document outlines the overall architecture of the streaming framework and highlights the role and interactions of the MQ (Redis Streams) subsystem. Detailed design is in [MQ-Design.md](./MQ-Design.md).
 
-Gradle 多模块工程，模块清单与 `settings.gradle` 一致（20 个）：
+## Overall Architecture (5-Tier Design)
 
-| 层 | 模块 |
+The project is a Gradle multi-module build (20 modules, matching `settings.gradle`):
+
+| Tier | Modules |
 |---|---|
-| Tier 1 核心抽象 | `core`（API 抽象）、`runtime`（流处理运行时引擎） |
-| Tier 2 基础设施 | `mq`、`registry`、`config`、`state`、`checkpoint`、`watermark` |
-| Tier 3 特性 | `window`、`aggregation`、`table`、`join`、`cdc`、`sink`、`source` |
-| Tier 4 高级特性 | `reliability`、`cep` |
-| Tier 5 集成 | `spring-boot-starter`、`examples`、`benchmark` |
+| Tier 1: Core Abstractions | `core` (API abstractions), `runtime` (stream processing runtime engine) |
+| Tier 2: Infrastructure | `mq`, `registry`, `config`, `state`, `checkpoint`, `watermark` |
+| Tier 3: Functional Modules | `window`, `aggregation`, `table`, `join`, `cdc`, `sink`, `source` |
+| Tier 4: Advanced Features | `reliability`, `cep` |
+| Tier 5: Integration | `metrics`, `spring-boot-starter`, `examples` |
 
-## 逻辑架构
-```mermaid
-flowchart TB
-  subgraph Application
-    PD[Producer]
-    CS[Consumer]
-  end
-  subgraph Redis
-    PART[Partition Streams]
-    DLQ[DLQ Streams]
-    META[Topic Meta]
-    REG[Topic Registry]
-    LEASE[Lease Keys]
-    RETRY[Retry ZSET]
-  end
-  PD-->PART
-  CS-->PART
-  CS-->DLQ
-  PD---META
-  CS---META
-  META---REG
-  CS---LEASE
-  CS---RETRY
-```
+## Design Principles
 
-## 运行时线程模型
-- 每个被分配的分区一个串行 Worker；独立调度池负责租约续约、pending 扫描与接管（`XPENDING`+`XCLAIM`）、指标与延迟重试搬运（调度线程数由 `MqOptions.schedulerThreads` 控制，默认 2）。
+- **Redis-Centric**: All state and coordination use Redis data structures (Streams, Hash, ZSet, Pub/Sub, keys).
+- **No External Coordinator**: Consumer groups, rebalancing, and lease management are built on Redis primitives (no Kafka broker, no ZooKeeper/etcd).
+- **At-Least-Once by Default**: Exactly-once is available via the checkpoint + 2PC runtime for pipelines that need it.
+- **Horizontal Scalability**: Partitioned streams + consumer groups allow linear throughput scaling.
+- **Observable**: Built-in Micrometer bridges for MQ, runtime, retention, DLQ, and rate-limiting metrics.
 
-## 故障处理
-- 实例宕机：租约过期，其他实例竞争获取；对孤儿 pending 执行 `XPENDING`+`XCLAIM` 接管。
-- 处理失败：按策略重试或入 DLQ；DLQ 可回放。
+## Core Modules
 
-## 取舍
-- 无协调器、低运维，但再均衡是最终一致；通过短 TTL 与幂等性降低风险。
+### Tier 1: Core (Core Abstractions)
+- `core`: Pure API interfaces — `DataStream`, `State`, `Checkpoint`, `Window`, `Join`, `Source`, `Sink`, etc. No Redis dependencies.
+- `runtime`: Minimal in-memory runtime (single-threaded) for tests and examples. `RedisStreamExecutionEnvironment` is the production entry point that adds Redis-backed checkpointing, state, and exactly-once sinks.
 
-## 核心命令与 Kafka 映射（速览）
-- 生产写入：`XADD stream:topic:{t}:p:{i}` ≈ Kafka Producer 发送到分区（键格式见 `mq/.../partition/StreamKeys.java`，前缀可通过 `StreamKeys.configure` 调整）
-- 组创建：`XGROUP CREATE` ≈ Kafka 创建消费组
-- 组读取：`XREADGROUP GROUP <g> <c>` ≈ Kafka 拉取（含批量与阻塞）
-- 提交位点：`XACK` ≈ Kafka commit
-- 待处理查询：`XPENDING` ≈ in-flight（Kafka 无直接命令）
-- 孤儿接管：`XPENDING`+`XCLAIM` ≈ 再均衡后接管未确认记录
-- 分区独占：`SET NX EX` + `EXPIRE`（租约）≈ 组协调器分配分区
-- 延迟重试：`ZADD/ZRANGEBYSCORE/ZREM` + `EVAL`（Lua搬运）≈ 重试主题/延迟回放
-- 保留/裁剪：`XTRIM MAXLEN/MINID` ≈ retention.bytes/retention.ms
-- 死信：`XADD stream:topic:{t}:dlq` ≈ DLQ 主题；回放 `XRANGE + XADD`
+### Tier 2: Infrastructure
+- `mq`: Redis Streams message queue — partitioned topics, consumer groups, leases, retry/DLQ, commit frontier, retention.
+- `registry`: Service registration & discovery — heartbeats, metadata/metrics filtering, change notifications, client-side load balancing.
+- `config`: Configuration center — versioned configs, change listeners, Redis-backed storage.
+- `state`: Keyed state abstractions + Redis-backed implementations (`RedisStateBackend`).
+- `checkpoint`: Checkpoint coordination and storage (stop-the-world per process; the optional job-global control gate serializes checkpoints/scaling across same-job instances).
+- `watermark`: Watermark generators (ascending timestamps, bounded out-of-orderness).
+
+### Tier 3: Functional Modules
+- `window`: Window assigners (tumbling, sliding, session), triggers, evictors.
+- `aggregation`: Window aggregations (TopK, quantiles, PV/UV, etc.).
+- `table`: KTable (in-memory & Redis-backed).
+- `join`: Stream-stream joins.
+- `cdc`: CDC connectors (MySQL binlog, PostgreSQL logical replication, polling).
+- `source`: Input connectors (Kafka, HTTP, Redis, etc.).
+- `sink`: Output connectors (Kafka, Redis, etc.).
+
+### Tier 4: Advanced Features
+- `reliability`: Deduplication, DLQ helpers, exactly-once building blocks.
+- `cep`: Complex Event Processing (pattern detection on streams).
+
+### Tier 5: Integration
+- `spring-boot-starter`: Auto-configuration for all modules, Redisson integration, health indicators.
+- `examples`: Runnable demos (not published as a library artifact).
+- `benchmark`: Throughput and checkpoint-duration benchmarks against a live Redis (not published).
+- `examples`: Runnable usage patterns.
+
+## Technology Stack
+
+- **Language**: Java 17 (`options.release = 17`)
+- **Build**: Gradle 8.5
+- **Redis Client**: Redisson 4.7.0
+- **Serialization**: Jackson 2.17, Lombok 1.18
+- **Testing**: JUnit Jupiter 5.9, Mockito 4.6
+- **Observability**: Micrometer, Prometheus, SLF4J/Logback
+
+## Redis Data Structure Mapping
+
+| Subsystem | Redis Structures |
+|---|---|
+| MQ | Streams (partitioned topics), ZSet (retry buckets), Hash (retry items, commit frontier), String (leases, payload offload), Set (topic registry) |
+| Registry | Set (service index), Hash (instance details), ZSet (heartbeats), Pub/Sub (change notifications) |
+| Config | Hash (config versions), Pub/Sub (change notifications) |
+| State/Checkpoint | Hash (keyed state), String (checkpoint handles) |
+| Retention | Stream `XTRIM`, ZSet (payload TTL index) |
+
+## Extension Points
+
+- `Partitioner` — custom partitioning logic for producers.
+- `HealthChecker` — protocol-specific health probes (HTTP/HTTPS, TCP, WebSocket, custom; other protocol names fall back to TCP connectivity probing).
+- `RetryPolicy` — custom backoff strategies.
+- `BrokerFactory` / `BrokerRouter` / `BrokerPersistence` — swap the MQ backend (Redis vs JDBC).
+- `RateLimiter` algorithms (sliding window, token bucket, leaky bucket).
+
+## Redis Commands vs Kafka (Quick Map)
+
+- Produce: `XADD stream:topic:{t}:p:{i}` ≈ Kafka Producer → partition (key format in `StreamKeys.java`, prefix configurable via `StreamKeys.configure`)
+- Create group: `XGROUP CREATE` ≈ Kafka create consumer group
+- Consume: `XREADGROUP GROUP <g> <c>` ≈ Kafka fetch (batch + block)
+- Commit offset: `XACK` ≈ Kafka commit
+- Pending query: `XPENDING` ≈ in-flight (Kafka has no direct equivalent)
+- Orphan reclaim: `XPENDING`+`XCLAIM` (Redisson `listPending` + `claim`) ≈ rebalance reclaim of unacked records
+- Partition lease: `SET NX EX` + `EXPIRE` (lease) ≈ group coordinator assigns partitions
+- Delayed retry: `ZADD/ZRANGEBYSCORE/ZREM` + `EVAL` (Lua mover) ≈ retry topic / delayed replay
+- Retention/trim: `XTRIM MAXLEN/MINID` ≈ retention.bytes/retention.ms
+- DLQ: `XADD stream:topic:{t}:dlq` ≈ DLQ topic; replay via `XRANGE + XADD`
+
+---
+
+**Version**: 0.2.4
+**Last Updated**: 2026-10-05
+
+Related documentation:
+- [MQ Design](MQ-Design.md)
+- [MQ Broker Interaction](MQ-Broker-Interaction.md)
+- [Registry Design](Registry-Design.md)
+- [Spring Boot Starter](Spring-Boot-Starter.md)

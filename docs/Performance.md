@@ -1,32 +1,42 @@
-# 性能与调优（Performance）
+# Performance Notes
 
-配置默认值取自源码（`RedisRuntimeConfig`、`MqOptions`）。
+Defaults are taken from source code (`RedisRuntimeConfig`, `MqOptions`).
 
-## 分区与吞吐
-- P 个分区可近似线性提升吞吐（取决于 CPU/实例与 Redis 容量）；单分区内串行保证顺序
-- Redis Cluster 下，不同分区键分散到不同 slot，有利于水平扩展
-- 热点隔离：热点 key 只堵在其分区，不影响其他分区
+## Partitioning & Throughput
 
-## 建议设置
-- Producer：必要时批量 `XADD`/pipeline；谨慎控制消息大小
-- Consumer：`COUNT > 1`，`BLOCK 100~500ms`；限制单 worker in-flight 条数（如 100~1000，可用 `MqOptions.maxInFlight`，默认 `0` = 不限制）
-- 重试：指数退避（基数 `retryBaseBackoffMs` 默认 1000ms，封顶 `retryMaxBackoffMs` 默认 60000ms，饱和计算不溢出）；延迟重试用 ZSET + Lua 搬运（已默认）。抖动（jitter）非内置，需调用方在策略外自行叠加
-- 保留：`XTRIM MAXLEN ~ N` 控制内存（`retentionMaxLenPerPartition` 默认 100000，`trimIntervalSec` 默认 60s）；结合时间边界（`retentionMs`，默认 0 = 不启用）清理
+- P partitions approximately scale throughput linearly (subject to CPU/instance and Redis capacity); per-partition serial processing guarantees ordering.
+- Under Redis Cluster, different partition keys spread across slots, aiding horizontal scaling.
+- Hotspot isolation: hot keys only block their partition, others unaffected.
 
-## Runtime 调优要点（Redis runtime）
-- 并行度：`RedisRuntimeConfig.pipelineParallelism(n)`（默认 1；单进程内按 `partitionId % parallelism` 固定分配子任务）+ 多实例（同 consumer group）水平扩展
-- 背压：`MqOptions.maxInFlight(n)`（全局并发上限，默认 0 = 不限制）+ `workerThreads`（执行线程数，默认 8）
-- 线程资源：`timerThreads`（processing-time timers，默认 1）/`checkpointThreads`（checkpoint 调度/执行，默认 1，单 job 内仍串行）
-- 队列容量：`eventTimeTimerMaxSize`（event-time timer 队列上限，默认 100000，0 = 不限制，防止无界增长）
-- Window：`windowMaxFiresPerRecord`（每条消息最多 fire N 个窗口，默认 256，避免单条消息拖垮延迟）；`windowAllowedLateness`（默认 `Duration.ZERO`，best-effort 迟到容忍）
-- Watermark：`watermarkOutOfOrderness`（乱序容忍，默认 `Duration.ZERO`；watermark = 已见最大事件时间 − 该值，影响窗口触发延迟与迟到判定）
+## Recommended Settings
 
-## 压测建议
-- 使用接近真实的 payload；分别测 P、batchSize、并行度的影响
-- 关注指标：生产/消费速率、p99 处理延迟、DLQ 速率、Redis CPU/内存/网络（指标清单见 [Metrics](/Metrics)）
+- **Producer**: batch `XADD`/pipeline when needed; control message size carefully.
+- **Consumer**: `COUNT > 1`, `BLOCK 100~500ms`; limit per-worker in-flight (e.g. 100~1000, via `MqOptions.maxInFlight`, default `0` = unlimited).
+- **Retry**: exponential backoff (base `retryBaseBackoffMs` default 1000ms, ceiling `retryMaxBackoffMs` default 60000ms, saturated shift avoids overflow); delayed retry uses ZSET + Lua mover (enabled by default). Jitter is not built-in; caller must layer it externally if desired.
+- **Retention**: `XTRIM MAXLEN ~ N` bounds memory (`retentionMaxLenPerPartition` default 100000, `trimIntervalSec` default 60s); combine with time boundary (`retentionMs`, default 0 = disabled) for cleanup.
 
-## 取舍
-- 分区越多并行越强，但总 PEL/worker 也增加；结合硬件与负载选择合适 P
-- 批越大吞吐越高，但单次延迟与内存占用也会提高
+## Redis Runtime Tuning
 
-更多原理与实现细节见 `MQ-Design.md` 与 `MQ-Broker-Interaction.md`。
+- **Parallelism**: `RedisRuntimeConfig.pipelineParallelism(n)` (default 1; within a process, subtasks pinned by `partitionId % parallelism`) + horizontal scaling via multiple instances (same consumer group).
+- **Backpressure**: `MqOptions.maxInFlight(n)` (global concurrency cap, default 0 = unlimited) + `workerThreads` (execution threads, default 8).
+- **Thread Resources**: `timerThreads` (processing-time timers, default 1) / `checkpointThreads` (checkpoint scheduling/execution, default 1, still serial within a job).
+- **Queue Capacity**: `eventTimeTimerMaxSize` (event-time timer queue cap, default 100000, 0 = unlimited, prevents unbounded growth).
+- **Window**: `windowMaxFiresPerRecord` (max windows a single record can fire, default 256, avoids single record stalling latency); `windowAllowedLateness` (default `Duration.ZERO`, best-effort late tolerance).
+- **Watermark**: `watermarkOutOfOrderness` (out-of-orderness tolerance, default `Duration.ZERO`; watermark = max seen event time − value, affects window trigger latency and late determination).
+
+## Benchmarking Suggestions
+
+- Use realistic payloads; vary P, batchSize, parallelism independently.
+- Watch metrics: produce/consume rate, p99 handle latency, DLQ rate, Redis CPU/memory/network (metric inventory in [Metrics](../Metrics.md)).
+
+## Trade-offs
+
+- More partitions = more parallelism, but total PEL/workers also grow; choose P based on hardware and load.
+- Larger batches = higher throughput, but per-batch latency and memory usage also increase.
+
+---
+
+**Version**: 0.2.4
+**Last Updated**: 2026-10-05
+
+Related: [MQ-Design.md](../MQ-Design.md) / [MQ-Broker-Interaction.md](../MQ-Broker-Interaction.md)
