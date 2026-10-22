@@ -185,7 +185,7 @@ export default withMermaid(
               items: [
                 { text: '部署指南', link: '/zh/Deployment' },
                 { text: '性能调优', link: '/zh/Performance' },
-                { text: '故障排查', link: '/zh/troubleshooting' },
+                { text: '故障排查', link: '/zh/Troubleshooting' },
               ]
             },
           ],
@@ -271,7 +271,7 @@ export default withMermaid(
                 items: [
                   { text: '部署指南', link: '/zh/Deployment' },
                   { text: '性能调优', link: '/zh/Performance' },
-                  { text: '故障排查', link: '/zh/troubleshooting' },
+                  { text: '故障排查', link: '/zh/Troubleshooting' },
                   { text: 'CI/CD', link: '/zh/GitHub-Actions' },
                 ]
               },

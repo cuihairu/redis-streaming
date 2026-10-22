@@ -2,7 +2,7 @@
 
 Publish to Maven Central (Central Portal):
 
-- Project guide: [PUBLISHING.md](../PUBLISHING.md)
+- Project guide: [PUBLISHING.md](/Publishing)
 - Release notes: maven-publish.md
 - Migration record: archive/MIGRATION_TO_CENTRAL_PORTAL.md
 

@@ -82,4 +82,4 @@ if (typeof window !== 'undefined') {{
 - [Metrics](/zh/Metrics) · [Spring Boot Starter](/Spring-Boot-Starter) · [Examples](/Examples)
 
 **设计与运维**
-- [架构总览](/Architecture) · [Exactly-Once 语义](/zh/exactly-once) · [故障排查](/zh/troubleshooting) · [测试指南](/Testing)
+- [架构总览](/Architecture) · [Exactly-Once 语义](/zh/exactly-once) · [故障排查](/zh/Troubleshooting) · [测试指南](/Testing)

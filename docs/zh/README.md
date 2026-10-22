@@ -57,7 +57,7 @@
 ### 运维指南
 - [部署指南](Deployment.md) - 部署和运维（配置项默认值）
 - [性能调优](Performance.md) - 性能优化
-- [故障排查](troubleshooting.md) - 常见问题
+- [故障排查](Troubleshooting.md) - 常见问题
 - [GitHub Actions](GitHub-Actions.md) - CI/CD
 
 ### 开发指南
