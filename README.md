@@ -6,12 +6,7 @@
 
 [English](README.md) | [中文](README.zh.md)
 
-[![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://www.oracle.com/java/)
-[![Redis](https://img.shields.io/badge/Redis-6.0+-red.svg)](https://redis.io/)
-[![Version](https://img.shields.io/badge/Version-0.2.4-blue.svg)](https://github.com/cuihairu/redis-streaming)
-[![codecov](https://codecov.io/gh/cuihairu/redis-streaming/branch/main/graph/badge.svg)](https://codecov.io/gh/cuihairu/redis-streaming)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-
+[![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://www.oracle.com/java/) [![Redis](https://img.shields.io/badge/Redis-6.0+-red.svg)](https://redis.io/) [![Version](https://img.shields.io/badge/Version-0.2.4-blue.svg)](https://github.com/cuihairu/redis-streaming) [![codecov](https://codecov.io/gh/cuihairu/redis-streaming/branch/main/graph/badge.svg)](https://codecov.io/gh/cuihairu/redis-streaming) [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 </div>
 
 A **lightweight stream processing runtime** built on Redis and Redisson (Apache License 2.0): Redis Streams serves as both the message pipeline and the foundation for state and checkpoints — from consumption, event time, and windowed aggregation to checkpoint / failure recovery / HA takeover, all managed by a single runtime. Redis infrastructure capabilities such as MQ, Registry, and Config are provided as companion modules.

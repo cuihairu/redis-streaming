@@ -6,12 +6,7 @@
 
 [English](README.md) | [中文](README.zh.md)
 
-[![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://www.oracle.com/java/)
-[![Redis](https://img.shields.io/badge/Redis-6.0+-red.svg)](https://redis.io/)
-[![Version](https://img.shields.io/badge/Version-0.2.4-blue.svg)](https://github.com/cuihairu/redis-streaming)
-[![codecov](https://codecov.io/gh/cuihairu/redis-streaming/branch/main/graph/badge.svg)](https://codecov.io/gh/cuihairu/redis-streaming)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-
+[![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://www.oracle.com/java/) [![Redis](https://img.shields.io/badge/Redis-6.0+-red.svg)](https://redis.io/) [![Version](https://img.shields.io/badge/Version-0.2.4-blue.svg)](https://github.com/cuihairu/redis-streaming) [![codecov](https://codecov.io/gh/cuihairu/redis-streaming/branch/main/graph/badge.svg)](https://codecov.io/gh/cuihairu/redis-streaming) [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 </div>
 
 基于 Redis 与 Redisson 构建的**轻量级流处理运行时**（Apache License 2.0）：Redis Streams 既是消息管道，也是状态与检查点的底座——从消费、事件时间、窗口聚合到 checkpoint/故障恢复/HA 接管，由一套运行时托管完成。MQ、Registry、Config 等 Redis 基础设施能力作为配套模块一并提供。
