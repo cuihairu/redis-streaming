@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1250" viewBox="0 0 1280 1250" role="img" aria-labelledby="title desc" xml:lang="zh-CN">
+<title id="title">Redis Streaming · 五层模块架构</title>
+<desc id="desc">20 个 Gradle 模块分五层。顶部为运行数据面（外部源 → Redis Streams MQ → DataStream 处理管线 → Sink）。下方为模块目录：Tier 1 核心抽象（core、runtime），Tier 2 基础设施（mq、registry、config、state、checkpoint、watermark），Tier 3 特性（window、aggregation、table、join、cdc、sink、source），Tier 4 高级特性（reliability、cep），Tier 5 集成（spring-boot-starter、examples、benchmark）。所有状态与协调基于 Redis（Streams、Hash、ZSet、String、Pub/Sub）。虚线为支撑关系，实线为数据流。</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="context-stroke"/></marker></defs>
+<style>text{font-family:Arial,'Noto Sans CJK SC','Microsoft YaHei',sans-serif;fill:#172b4d}.title{font-size:30px;font-weight:700}.sub{font-size:17px;fill:#435570}.band{font-size:16px;font-weight:700}.name{font-size:22px;font-weight:700}.chip{font-size:16px;font-weight:700}.chipbody{font-size:13px;fill:#435570}.tier{font-size:18px;font-weight:700}.tierbody{font-size:13px;fill:#435570}.small{font-size:13px;fill:#52647b}.label{font-size:13px;fill:#435570;paint-order:stroke;stroke:#f8fafc;stroke-width:5px;stroke-linejoin:round}.edge{fill:none;stroke-linejoin:round}.control{stroke-dasharray:7 5}</style>
+<rect width="1280" height="1250" rx="20" fill="#f8fafc"/>
+<text x="40" y="46" class="title" text-anchor="start">Redis Streaming · 分层架构</text>
+<text x="40" y="78" class="sub" text-anchor="start">20 个 Gradle 模块 · 五层结构 · 基于 Redis 的流处理框架 · 以代码与文档事实为准</text>
+
+<!-- 运行数据面 -->
+<g id="data-plane">
+<rect x="40" y="104" width="1200" height="96" rx="14" fill="#fff" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="60" y="128" class="band" text-anchor="start">运行数据面 · DataStream 管线</text>
+<g id="dp-source"><rect x="60" y="138" width="250" height="46" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+<text x="72" y="159" class="chip" text-anchor="start">外部数据源</text>
+<text x="72" y="177" class="chipbody" text-anchor="start">Kafka · MySQL CDC · HTTP · Redis</text></g>
+<path id="dp-e1" d="M314 161 H332" class="edge" style="stroke:#475569;stroke-width:2" marker-end="url(#arrow)"/>
+<g id="dp-mq"><rect x="334" y="138" width="250" height="46" rx="10" fill="#fff" stroke="#93b9e3" stroke-width="1.5"/>
+<text x="346" y="159" class="chip" text-anchor="start">Redis Streams MQ</text>
+<text x="346" y="177" class="chipbody" text-anchor="start">分区主题 · 消费组 · 租约 · 重试/DLQ</text></g>
+<path id="dp-e2" d="M588 161 H606" class="edge" style="stroke:#2563eb;stroke-width:2" marker-end="url(#arrow)"/>
+<g id="dp-pipe"><rect x="608" y="138" width="250" height="46" rx="10" fill="#eef8f5" stroke="#86c9b3" stroke-width="1.5"/>
+<text x="620" y="159" class="chip" text-anchor="start">处理管线</text>
+<text x="620" y="177" class="chipbody" text-anchor="start">状态 · 窗口 · 聚合 · Join · CEP</text></g>
+<path id="dp-e3" d="M862 161 H880" class="edge" style="stroke:#475569;stroke-width:2" marker-end="url(#arrow)"/>
+<g id="dp-sink"><rect x="882" y="138" width="250" height="46" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+<text x="894" y="159" class="chip" text-anchor="start">Sink 输出</text>
+<text x="894" y="177" class="chipbody" text-anchor="start">Kafka · Redis · 自定义</text></g>
+</g>
+
+<!-- 支撑箭头: Redis 向上支撑 Tier1/2 -->
+<path id="redis-support" d="M1230 920 V660" class="edge control" style="stroke:#64748b;stroke-width:2" marker-end="url(#arrow)"/>
+<text transform="translate(1246 790) rotate(-90)" class="small" style="fill:#64748b">Redis 支撑 · MQ / State / Checkpoint / Registry / Config</text>
+
+<!-- Tier 5 集成 -->
+<g id="tier5">
+<text x="40" y="255" class="tier" text-anchor="start">Tier 5 · 集成</text>
+<text x="40" y="280" class="tierbody" text-anchor="start">Spring Boot 自动配置</text>
+<text x="40" y="300" class="tierbody" text-anchor="start">可观测 · 示例 · 基准</text>
+<rect x="200" y="222" width="1010" height="110" rx="14" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1.5"/>
+<g id="m-spring"><rect x="220" y="248" width="230" height="60" rx="10" fill="#fff" stroke="#c4b5fd"/><text x="335" y="274" class="chip" text-anchor="middle">spring-boot-starter</text><text x="335" y="296" class="chipbody" text-anchor="middle">Redisson · 健康检查</text></g>
+<g id="m-metrics"><rect x="466" y="248" width="230" height="60" rx="10" fill="#fff" stroke="#c4b5fd"/><text x="581" y="274" class="chip" text-anchor="middle">metrics</text><text x="581" y="296" class="chipbody" text-anchor="middle">Micrometer · Prometheus</text></g>
+<g id="m-examples"><rect x="712" y="248" width="230" height="60" rx="10" fill="#fff" stroke="#c4b5fd"/><text x="827" y="274" class="chip" text-anchor="middle">examples</text><text x="827" y="296" class="chipbody" text-anchor="middle">可运行示例 · 不发布</text></g>
+<g id="m-benchmark"><rect x="958" y="248" width="230" height="60" rx="10" fill="#fff" stroke="#c4b5fd"/><text x="1073" y="274" class="chip" text-anchor="middle">benchmark</text><text x="1073" y="296" class="chipbody" text-anchor="middle">吞吐/检查点基准</text></g>
+</g>
+
+<!-- Tier 4 高级特性 -->
+<g id="tier4">
+<text x="40" y="395" class="tier" text-anchor="start">Tier 4 · 高级特性</text>
+<text x="40" y="420" class="tierbody" text-anchor="start">可靠性保障</text>
+<text x="40" y="440" class="tierbody" text-anchor="start">复杂事件处理</text>
+<rect x="200" y="362" width="1010" height="110" rx="14" fill="#fdf4ff" stroke="#f0abfc" stroke-width="1.5"/>
+<g id="m-reliability"><rect x="220" y="388" width="477" height="60" rx="10" fill="#fff" stroke="#f0abfc"/><text x="458" y="414" class="chip" text-anchor="middle">reliability</text><text x="458" y="436" class="chipbody" text-anchor="middle">去重 · DLQ 辅助 · 恰好一次构件</text></g>
+<g id="m-cep"><rect x="713" y="388" width="477" height="60" rx="10" fill="#fff" stroke="#f0abfc"/><text x="951" y="414" class="chip" text-anchor="middle">cep</text><text x="951" y="436" class="chipbody" text-anchor="middle">流上模式检测 · 复杂事件处理</text></g>
+</g>
+
+<!-- Tier 3 特性 -->
+<g id="tier3">
+<text x="40" y="535" class="tier" text-anchor="start">Tier 3 · 特性</text>
+<text x="40" y="560" class="tierbody" text-anchor="start">窗口 · 聚合 · 表</text>
+<text x="40" y="580" class="tierbody" text-anchor="start">连接 · CDC · 连接器</text>
+<rect x="200" y="502" width="1010" height="110" rx="14" fill="#eef8f5" stroke="#86c9b3" stroke-width="1.5"/>
+<g id="m-source"><rect x="220" y="528" width="128" height="60" rx="10" fill="#fff" stroke="#86c9b3"/><text x="284" y="554" class="chip" text-anchor="middle">source</text><text x="284" y="576" class="chipbody" text-anchor="middle">输入连接器</text></g>
+<g id="m-cdc"><rect x="360" y="528" width="128" height="60" rx="10" fill="#fff" stroke="#86c9b3"/><text x="424" y="554" class="chip" text-anchor="middle">cdc</text><text x="424" y="576" class="chipbody" text-anchor="middle">变更捕获</text></g>
+<g id="m-window"><rect x="500" y="528" width="128" height="60" rx="10" fill="#fff" stroke="#86c9b3"/><text x="564" y="554" class="chip" text-anchor="middle">window</text><text x="564" y="576" class="chipbody" text-anchor="middle">窗口分配</text></g>
+<g id="m-aggregation"><rect x="640" y="528" width="128" height="60" rx="10" fill="#fff" stroke="#86c9b3"/><text x="704" y="554" class="chip" text-anchor="middle">aggregation</text><text x="704" y="576" class="chipbody" text-anchor="middle">聚合函数</text></g>
+<g id="m-table"><rect x="780" y="528" width="128" height="60" rx="10" fill="#fff" stroke="#86c9b3"/><text x="844" y="554" class="chip" text-anchor="middle">table</text><text x="844" y="576" class="chipbody" text-anchor="middle">流表二象</text></g>
+<g id="m-join"><rect x="920" y="528" width="128" height="60" rx="10" fill="#fff" stroke="#86c9b3"/><text x="984" y="554" class="chip" text-anchor="middle">join</text><text x="984" y="576" class="chipbody" text-anchor="middle">流-流连接</text></g>
+<g id="m-sink"><rect x="1060" y="528" width="128" height="60" rx="10" fill="#fff" stroke="#86c9b3"/><text x="1124" y="554" class="chip" text-anchor="middle">sink</text><text x="1124" y="576" class="chipbody" text-anchor="middle">输出连接器</text></g>
+</g>
+
+<!-- Tier 2 基础设施 -->
+<g id="tier2">
+<text x="40" y="675" class="tier" text-anchor="start">Tier 2 · 基础设施</text>
+<text x="40" y="700" class="tierbody" text-anchor="start">消息 · 注册 · 配置</text>
+<text x="40" y="720" class="tierbody" text-anchor="start">状态 · 检查点 · 水位</text>
+<rect x="200" y="642" width="1010" height="110" rx="14" fill="#edf5ff" stroke="#93b9e3" stroke-width="1.5"/>
+<g id="m-mq"><rect x="220" y="668" width="150" height="60" rx="10" fill="#fff" stroke="#93b9e3"/><text x="295" y="694" class="chip" text-anchor="middle">mq</text><text x="295" y="716" class="chipbody" text-anchor="middle">Redis Streams 队列</text></g>
+<g id="m-registry"><rect x="384" y="668" width="150" height="60" rx="10" fill="#fff" stroke="#93b9e3"/><text x="459" y="694" class="chip" text-anchor="middle">registry</text><text x="459" y="716" class="chipbody" text-anchor="middle">服务注册/发现</text></g>
+<g id="m-config"><rect x="548" y="668" width="150" height="60" rx="10" fill="#fff" stroke="#93b9e3"/><text x="623" y="694" class="chip" text-anchor="middle">config</text><text x="623" y="716" class="chipbody" text-anchor="middle">版本化配置中心</text></g>
+<g id="m-state"><rect x="712" y="668" width="150" height="60" rx="10" fill="#fff" stroke="#93b9e3"/><text x="787" y="694" class="chip" text-anchor="middle">state</text><text x="787" y="716" class="chipbody" text-anchor="middle">键控状态后端</text></g>
+<g id="m-checkpoint"><rect x="876" y="668" width="150" height="60" rx="10" fill="#fff" stroke="#93b9e3"/><text x="951" y="694" class="chip" text-anchor="middle">checkpoint</text><text x="951" y="716" class="chipbody" text-anchor="middle">检查点协调/存储</text></g>
+<g id="m-watermark"><rect x="1040" y="668" width="150" height="60" rx="10" fill="#fff" stroke="#93b9e3"/><text x="1115" y="694" class="chip" text-anchor="middle">watermark</text><text x="1115" y="716" class="chipbody" text-anchor="middle">水位生成器</text></g>
+</g>
+
+<!-- Tier 1 核心抽象 -->
+<g id="tier1">
+<text x="40" y="815" class="tier" text-anchor="start">Tier 1 · 核心抽象</text>
+<text x="40" y="840" class="tierbody" text-anchor="start">纯 API 接口</text>
+<text x="40" y="860" class="tierbody" text-anchor="start">流处理运行时</text>
+<rect x="200" y="782" width="1010" height="110" rx="14" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.5"/>
+<g id="m-core"><rect x="220" y="808" width="477" height="60" rx="10" fill="#fff" stroke="#a5b4fc"/><text x="458" y="834" class="chip" text-anchor="middle">core</text><text x="458" y="856" class="chipbody" text-anchor="middle">DataStream · State · Window · Join · Source · Sink 接口 · 无 Redis 依赖</text></g>
+<g id="m-runtime"><rect x="713" y="808" width="477" height="60" rx="10" fill="#fff" stroke="#a5b4fc"/><text x="951" y="834" class="chip" text-anchor="middle">runtime</text><text x="951" y="856" class="chipbody" text-anchor="middle">RedisStreamExecutionEnvironment · 检查点/状态/恰好一次 Sink</text></g>
+</g>
+
+<!-- Redis 基础设施 -->
+<g id="redis">
+<rect x="40" y="922" width="1200" height="160" rx="16" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="60" y="950" class="band" text-anchor="start" style="fill:#334155">Redis 基础设施 · 一切协调与状态基于 Redis（无外部协调者）</text>
+<g id="r-streams"><rect x="60" y="962" width="216" height="58" rx="10" fill="#fff" stroke="#94a3b8"/><text x="168" y="988" class="chip" text-anchor="middle">Streams</text><text x="168" y="1010" class="chipbody" text-anchor="middle">分区主题 · 消费组 · DLQ</text></g>
+<g id="r-hash"><rect x="292" y="962" width="216" height="58" rx="10" fill="#fff" stroke="#94a3b8"/><text x="400" y="988" class="chip" text-anchor="middle">Hash</text><text x="400" y="1010" class="chipbody" text-anchor="middle">配置版本 · 状态 · 提交前沿</text></g>
+<g id="r-zset"><rect x="524" y="962" width="216" height="58" rx="10" fill="#fff" stroke="#94a3b8"/><text x="632" y="988" class="chip" text-anchor="middle">ZSet</text><text x="632" y="1010" class="chipbody" text-anchor="middle">重试桶 · 心跳 · TTL 索引</text></g>
+<g id="r-string"><rect x="756" y="962" width="216" height="58" rx="10" fill="#fff" stroke="#94a3b8"/><text x="864" y="988" class="chip" text-anchor="middle">String</text><text x="864" y="1010" class="chipbody" text-anchor="middle">租约 · 检查点句柄</text></g>
+<g id="r-pubsub"><rect x="988" y="962" width="216" height="58" rx="10" fill="#fff" stroke="#94a3b8"/><text x="1096" y="988" class="chip" text-anchor="middle">Pub/Sub</text><text x="1096" y="1010" class="chipbody" text-anchor="middle">注册/配置变更通知</text></g>
+<text x="60" y="1056" class="small" text-anchor="start">消费组重平衡与分区租约在 Redis 原语上实现（无 Kafka/ZooKeeper/etcd）· At-Least-Once 默认，Checkpoint + 2PC 提供 Exactly-Once</text>
+<text x="60" y="1078" class="small" text-anchor="start">扩展点：Partitioner · HealthChecker · RetryPolicy · BrokerFactory/BrokerRouter/BrokerPersistence · RateLimiter</text>
+</g>
+
+<!-- 图例 -->
+<text x="40" y="1130" class="small" text-anchor="start">虚线：支撑 / 协调关系 · 实线：数据流 · 层内箭头：数据面顺序</text>
+<text x="40" y="1152" class="small" text-anchor="start">分层为模块目录（与 settings.gradle 一致，20 模块）；顶部数据面为运行期数据流向示意</text>
+<text x="40" y="1174" class="small" text-anchor="start">Tier 3 中 source/cdc 与 sink 为连接器；处理逻辑集中于 window / aggregation / table / join / cep</text>
+</svg>

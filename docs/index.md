@@ -34,6 +34,8 @@ features:
     details: Auto-configuration and annotations for Spring Boot
 ---
 
+![Redis Streaming architecture diagram](/images/architecture-en.svg)
+
 ## English Documentation
 
 The English section covers the pages listed below. The complete module reference (all 20 Gradle modules) is maintained in Chinese — use the language switcher in the top right to move between the two versions.

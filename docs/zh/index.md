@@ -34,6 +34,8 @@ features:
     details: Spring Boot Starter 自动配置与注解
 ---
 
+![Redis Streaming 架构图](/images/architecture-zh.svg)
+
 <script setup lang="ts">
 // 首次访问按浏览器语言选择文档语言（vitepress 无此能力，GitHub Pages 不支持 _redirects）
 // 优先级：localStorage 手动选择 > navigator.language > 保持当前 locale

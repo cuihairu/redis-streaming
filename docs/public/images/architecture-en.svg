@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1250" viewBox="0 0 1280 1250" role="img" aria-labelledby="title desc" xml:lang="en">
+<title id="title">Redis Streaming · Five-Tier Module Architecture</title>
+<desc id="desc">20 Gradle modules in five tiers. Top is the runtime data plane (external sources → Redis Streams MQ → DataStream processing pipeline → Sink). Below is the module catalog: Tier 1 core abstractions (core, runtime), Tier 2 infrastructure (mq, registry, config, state, checkpoint, watermark), Tier 3 features (window, aggregation, table, join, cdc, sink, source), Tier 4 advanced (reliability, cep), Tier 5 integration (spring-boot-starter, examples, benchmark). All state and coordination are Redis-based (Streams, Hash, ZSet, String, Pub/Sub). Dashed edges are support/coordination, solid edges are data flow.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="context-stroke"/></marker></defs>
+<style>text{font-family:Arial,'Noto Sans CJK SC','Microsoft YaHei',sans-serif;fill:#172b4d}.title{font-size:30px;font-weight:700}.sub{font-size:17px;fill:#435570}.band{font-size:16px;font-weight:700}.chip{font-size:16px;font-weight:700}.chipbody{font-size:13px;fill:#435570}.tier{font-size:18px;font-weight:700}.tierbody{font-size:13px;fill:#435570}.small{font-size:13px;fill:#52647b}.edge{fill:none;stroke-linejoin:round}.control{stroke-dasharray:7 5}</style>
+<rect width="1280" height="1250" rx="20" fill="#f8fafc"/>
+<text x="40" y="46" class="title" text-anchor="start">Redis Streaming · Layered Architecture</text>
+<text x="40" y="78" class="sub" text-anchor="start">20 Gradle modules · five tiers · Redis-based streaming framework · grounded in code and docs</text>
+
+<g id="data-plane">
+<rect x="40" y="104" width="1200" height="96" rx="14" fill="#fff" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="60" y="128" class="band" text-anchor="start">Runtime Data Plane · DataStream Pipeline</text>
+<g id="dp-source"><rect x="60" y="138" width="250" height="46" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+<text x="72" y="159" class="chip" text-anchor="start">External Sources</text>
+<text x="72" y="177" class="chipbody" text-anchor="start">Kafka · MySQL CDC · HTTP · Redis</text></g>
+<path id="dp-e1" d="M314 161 H332" class="edge" style="stroke:#475569;stroke-width:2" marker-end="url(#arrow)"/>
+<g id="dp-mq"><rect x="334" y="138" width="250" height="46" rx="10" fill="#fff" stroke="#93b9e3" stroke-width="1.5"/>
+<text x="346" y="159" class="chip" text-anchor="start">Redis Streams MQ</text>
+<text x="346" y="177" class="chipbody" text-anchor="start">Partitioned topics · consumer groups · leases · retry/DLQ</text></g>
+<path id="dp-e2" d="M588 161 H606" class="edge" style="stroke:#2563eb;stroke-width:2" marker-end="url(#arrow)"/>
+<g id="dp-pipe"><rect x="608" y="138" width="250" height="46" rx="10" fill="#eef8f5" stroke="#86c9b3" stroke-width="1.5"/>
+<text x="620" y="159" class="chip" text-anchor="start">Processing Pipeline</text>
+<text x="620" y="177" class="chipbody" text-anchor="start">State · windows · aggregation · join · CEP</text></g>
+<path id="dp-e3" d="M862 161 H880" class="edge" style="stroke:#475569;stroke-width:2" marker-end="url(#arrow)"/>
+<g id="dp-sink"><rect x="882" y="138" width="250" height="46" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+<text x="894" y="159" class="chip" text-anchor="start">Sink Output</text>
+<text x="894" y="177" class="chipbody" text-anchor="start">Kafka · Redis · custom</text></g>
+</g>
+
+<path id="redis-support" d="M1230 920 V660" class="edge control" style="stroke:#64748b;stroke-width:2" marker-end="url(#arrow)"/>
+<text transform="translate(1246 790) rotate(-90)" class="small" style="fill:#64748b">Redis-backed · MQ / State / Checkpoint / Registry / Config</text>
+
+<g id="tier5">
+<text x="40" y="255" class="tier" text-anchor="start">Tier 5 · Integration</text>
+<text x="40" y="280" class="tierbody" text-anchor="start">Spring Boot auto-config</text>
+<text x="40" y="300" class="tierbody" text-anchor="start">observability · samples · bench</text>
+<rect x="200" y="222" width="1010" height="110" rx="14" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1.5"/>
+<g id="m-spring"><rect x="220" y="248" width="230" height="60" rx="10" fill="#fff" stroke="#c4b5fd"/><text x="335" y="274" class="chip" text-anchor="middle">spring-boot-starter</text><text x="335" y="296" class="chipbody" text-anchor="middle">Redisson · health checks</text></g>
+<g id="m-metrics"><rect x="466" y="248" width="230" height="60" rx="10" fill="#fff" stroke="#c4b5fd"/><text x="581" y="274" class="chip" text-anchor="middle">metrics</text><text x="581" y="296" class="chipbody" text-anchor="middle">Micrometer · Prometheus</text></g>
+<g id="m-examples"><rect x="712" y="248" width="230" height="60" rx="10" fill="#fff" stroke="#c4b5fd"/><text x="827" y="274" class="chip" text-anchor="middle">examples</text><text x="827" y="296" class="chipbody" text-anchor="middle">runnable demos · unpublished</text></g>
+<g id="m-benchmark"><rect x="958" y="248" width="230" height="60" rx="10" fill="#fff" stroke="#c4b5fd"/><text x="1073" y="274" class="chip" text-anchor="middle">benchmark</text><text x="1073" y="296" class="chipbody" text-anchor="middle">throughput / checkpoint bench</text></g>
+</g>
+
+<g id="tier4">
+<text x="40" y="395" class="tier" text-anchor="start">Tier 4 · Advanced</text>
+<text x="40" y="420" class="tierbody" text-anchor="start">reliability guarantees</text>
+<text x="40" y="440" class="tierbody" text-anchor="start">complex event processing</text>
+<rect x="200" y="362" width="1010" height="110" rx="14" fill="#fdf4ff" stroke="#f0abfc" stroke-width="1.5"/>
+<g id="m-reliability"><rect x="220" y="388" width="477" height="60" rx="10" fill="#fff" stroke="#f0abfc"/><text x="458" y="414" class="chip" text-anchor="middle">reliability</text><text x="458" y="436" class="chipbody" text-anchor="middle">dedup · DLQ helpers · exactly-once building blocks</text></g>
+<g id="m-cep"><rect x="713" y="388" width="477" height="60" rx="10" fill="#fff" stroke="#f0abfc"/><text x="951" y="414" class="chip" text-anchor="middle">cep</text><text x="951" y="436" class="chipbody" text-anchor="middle">pattern detection on streams</text></g>
+</g>
+
+<g id="tier3">
+<text x="40" y="535" class="tier" text-anchor="start">Tier 3 · Features</text>
+<text x="40" y="560" class="tierbody" text-anchor="start">windows · aggregation · tables</text>
+<text x="40" y="580" class="tierbody" text-anchor="start">joins · CDC · connectors</text>
+<rect x="200" y="502" width="1010" height="110" rx="14" fill="#eef8f5" stroke="#86c9b3" stroke-width="1.5"/>
+<g id="m-source"><rect x="220" y="528" width="128" height="60" rx="10" fill="#fff" stroke="#86c9b3"/><text x="284" y="554" class="chip" text-anchor="middle">source</text><text x="284" y="576" class="chipbody" text-anchor="middle">input connectors</text></g>
+<g id="m-cdc"><rect x="360" y="528" width="128" height="60" rx="10" fill="#fff" stroke="#86c9b3"/><text x="424" y="554" class="chip" text-anchor="middle">cdc</text><text x="424" y="576" class="chipbody" text-anchor="middle">change capture</text></g>
+<g id="m-window"><rect x="500" y="528" width="128" height="60" rx="10" fill="#fff" stroke="#86c9b3"/><text x="564" y="554" class="chip" text-anchor="middle">window</text><text x="564" y="576" class="chipbody" text-anchor="middle">window assigners</text></g>
+<g id="m-aggregation"><rect x="640" y="528" width="128" height="60" rx="10" fill="#fff" stroke="#86c9b3"/><text x="704" y="554" class="chip" text-anchor="middle">aggregation</text><text x="704" y="576" class="chipbody" text-anchor="middle">aggregate functions</text></g>
+<g id="m-table"><rect x="780" y="528" width="128" height="60" rx="10" fill="#fff" stroke="#86c9b3"/><text x="844" y="554" class="chip" text-anchor="middle">table</text><text x="844" y="576" class="chipbody" text-anchor="middle">stream-table duality</text></g>
+<g id="m-join"><rect x="920" y="528" width="128" height="60" rx="10" fill="#fff" stroke="#86c9b3"/><text x="984" y="554" class="chip" text-anchor="middle">join</text><text x="984" y="576" class="chipbody" text-anchor="middle">stream-stream joins</text></g>
+<g id="m-sink"><rect x="1060" y="528" width="128" height="60" rx="10" fill="#fff" stroke="#86c9b3"/><text x="1124" y="554" class="chip" text-anchor="middle">sink</text><text x="1124" y="576" class="chipbody" text-anchor="middle">output connectors</text></g>
+</g>
+
+<g id="tier2">
+<text x="40" y="675" class="tier" text-anchor="start">Tier 2 · Infrastructure</text>
+<text x="40" y="700" class="tierbody" text-anchor="start">messaging · registry · config</text>
+<text x="40" y="720" class="tierbody" text-anchor="start">state · checkpoint · watermark</text>
+<rect x="200" y="642" width="1010" height="110" rx="14" fill="#edf5ff" stroke="#93b9e3" stroke-width="1.5"/>
+<g id="m-mq"><rect x="220" y="668" width="150" height="60" rx="10" fill="#fff" stroke="#93b9e3"/><text x="295" y="694" class="chip" text-anchor="middle">mq</text><text x="295" y="716" class="chipbody" text-anchor="middle">Redis Streams queue</text></g>
+<g id="m-registry"><rect x="384" y="668" width="150" height="60" rx="10" fill="#fff" stroke="#93b9e3"/><text x="459" y="694" class="chip" text-anchor="middle">registry</text><text x="459" y="716" class="chipbody" text-anchor="middle">service discovery</text></g>
+<g id="m-config"><rect x="548" y="668" width="150" height="60" rx="10" fill="#fff" stroke="#93b9e3"/><text x="623" y="694" class="chip" text-anchor="middle">config</text><text x="623" y="716" class="chipbody" text-anchor="middle">versioned config center</text></g>
+<g id="m-state"><rect x="712" y="668" width="150" height="60" rx="10" fill="#fff" stroke="#93b9e3"/><text x="787" y="694" class="chip" text-anchor="middle">state</text><text x="787" y="716" class="chipbody" text-anchor="middle">keyed state backend</text></g>
+<g id="m-checkpoint"><rect x="876" y="668" width="150" height="60" rx="10" fill="#fff" stroke="#93b9e3"/><text x="951" y="694" class="chip" text-anchor="middle">checkpoint</text><text x="951" y="716" class="chipbody" text-anchor="middle">coordination &amp; storage</text></g>
+<g id="m-watermark"><rect x="1040" y="668" width="150" height="60" rx="10" fill="#fff" stroke="#93b9e3"/><text x="1115" y="694" class="chip" text-anchor="middle">watermark</text><text x="1115" y="716" class="chipbody" text-anchor="middle">watermark generators</text></g>
+</g>
+
+<g id="tier1">
+<text x="40" y="815" class="tier" text-anchor="start">Tier 1 · Core Abstractions</text>
+<text x="40" y="840" class="tierbody" text-anchor="start">pure API interfaces</text>
+<text x="40" y="860" class="tierbody" text-anchor="start">stream runtime engine</text>
+<rect x="200" y="782" width="1010" height="110" rx="14" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.5"/>
+<g id="m-core"><rect x="220" y="808" width="477" height="60" rx="10" fill="#fff" stroke="#a5b4fc"/><text x="458" y="834" class="chip" text-anchor="middle">core</text><text x="458" y="856" class="chipbody" text-anchor="middle">DataStream · State · Window · Join · Source · Sink · no Redis dep</text></g>
+<g id="m-runtime"><rect x="713" y="808" width="477" height="60" rx="10" fill="#fff" stroke="#a5b4fc"/><text x="951" y="834" class="chip" text-anchor="middle">runtime</text><text x="951" y="856" class="chipbody" text-anchor="middle">RedisStreamExecutionEnvironment · checkpoint / exactly-once sinks</text></g>
+</g>
+
+<g id="redis">
+<rect x="40" y="922" width="1200" height="160" rx="16" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="60" y="950" class="band" text-anchor="start" style="fill:#334155">Redis Infrastructure · all state &amp; coordination on Redis (no external coordinator)</text>
+<g id="r-streams"><rect x="60" y="962" width="216" height="58" rx="10" fill="#fff" stroke="#94a3b8"/><text x="168" y="988" class="chip" text-anchor="middle">Streams</text><text x="168" y="1010" class="chipbody" text-anchor="middle">partitioned topics · groups · DLQ</text></g>
+<g id="r-hash"><rect x="292" y="962" width="216" height="58" rx="10" fill="#fff" stroke="#94a3b8"/><text x="400" y="988" class="chip" text-anchor="middle">Hash</text><text x="400" y="1010" class="chipbody" text-anchor="middle">config versions · state · commit frontier</text></g>
+<g id="r-zset"><rect x="524" y="962" width="216" height="58" rx="10" fill="#fff" stroke="#94a3b8"/><text x="632" y="988" class="chip" text-anchor="middle">ZSet</text><text x="632" y="1010" class="chipbody" text-anchor="middle">retry buckets · heartbeats · TTL index</text></g>
+<g id="r-string"><rect x="756" y="962" width="216" height="58" rx="10" fill="#fff" stroke="#94a3b8"/><text x="864" y="988" class="chip" text-anchor="middle">String</text><text x="864" y="1010" class="chipbody" text-anchor="middle">leases · checkpoint handles</text></g>
+<g id="r-pubsub"><rect x="988" y="962" width="216" height="58" rx="10" fill="#fff" stroke="#94a3b8"/><text x="1096" y="988" class="chip" text-anchor="middle">Pub/Sub</text><text x="1096" y="1010" class="chipbody" text-anchor="middle">registry/config change notifications</text></g>
+<text x="60" y="1056" class="small" text-anchor="start">Rebalancing and partition leases built on Redis primitives (no Kafka/ZooKeeper/etcd) · At-Least-Once by default, Exactly-Once via Checkpoint + 2PC</text>
+<text x="60" y="1078" class="small" text-anchor="start">Extension points: Partitioner · HealthChecker · RetryPolicy · BrokerFactory/BrokerRouter/BrokerPersistence · RateLimiter</text>
+</g>
+
+<text x="40" y="1130" class="small" text-anchor="start">Dashed: support / coordination · Solid: data flow · In-band arrows: data-plane order</text>
+<text x="40" y="1152" class="small" text-anchor="start">Tiers are the module catalog (matches settings.gradle, 20 modules); the top band is the runtime data flow</text>
+<text x="40" y="1174" class="small" text-anchor="start">In Tier 3, source/cdc and sink are connectors; processing logic lives in window / aggregation / table / join / cep</text>
+</svg>
