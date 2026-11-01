@@ -1,13 +1,4 @@
-<div align="center">
-
-<img src="docs/public/logo.svg" width="64" alt="Redis-Streaming logo" />
-
-# Redis-Streaming - A Lightweight Streaming Framework Built on Redis
-
-[English](README.md) | [中文](README.zh.md)
-
-[![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://www.oracle.com/java/) [![Redis](https://img.shields.io/badge/Redis-6.0+-red.svg)](https://redis.io/) [![Version](https://img.shields.io/badge/Version-0.2.4-blue.svg)](https://github.com/cuihairu/redis-streaming) [![codecov](https://codecov.io/gh/cuihairu/redis-streaming/branch/main/graph/badge.svg)](https://codecov.io/gh/cuihairu/redis-streaming) [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-</div>
+<div align="center"><img src="docs/public/logo.svg" width="64" alt="Redis-Streaming logo" /> <a href="https://cuihairu.github.io/redis-streaming/"><img src="https://img.shields.io/badge/docs-docs-blue" alt="docs"></a></div>
 
 A **lightweight stream processing runtime** built on Redis and Redisson (Apache License 2.0): Redis Streams serves as both the message pipeline and the foundation for state and checkpoints — from consumption, event time, and windowed aggregation to checkpoint / failure recovery / HA takeover, all managed by a single runtime. Redis infrastructure capabilities such as MQ, Registry, and Config are provided as companion modules.
 
