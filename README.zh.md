@@ -1,4 +1,4 @@
-<div align="center"><img src="docs/public/logo.svg" width="64" alt="Redis-Streaming logo" /> <a href="https://cuihairu.github.io/redis-streaming/zh/"><img src="https://img.shields.io/badge/docs-文档-blue" alt="docs"></a></div>
+<div align="center"><a href="https://cuihairu.github.io/redis-streaming/zh/"><img src="https://img.shields.io/badge/docs-文档-blue" alt="docs"></a></div>
 
 基于 Redis 与 Redisson 构建的**轻量级流处理运行时**（Apache License 2.0）：Redis Streams 既是消息管道，也是状态与检查点的底座——从消费、事件时间、窗口聚合到 checkpoint/故障恢复/HA 接管，由一套运行时托管完成。MQ、Registry、Config 等 Redis 基础设施能力作为配套模块一并提供。
 
