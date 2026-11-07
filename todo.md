@@ -84,3 +84,26 @@
 - [x] 两引擎接入 processing-time 窗口定时器，Trigger.onProcessingTime 已接线（commit 258b694，19 测试）
 - [x] 检查点协议 v2：逐记录屏障，消除单记录多次状态写被快照劈开（commit 431572b，1 测试）
 - [x] 安全 v2 收尾：日志脱敏护栏 LogRedaction 落地，审计与 specHash 脱敏已落地（commit d639ad4，8 测试）
+
+## 源码分层分析 2026-11-07
+
+### a) 抽象层清单
+
+- 契约与运行时：定义引擎无关流 API 并承载内存/Redis 两套执行生命周期（`runtime/src/main/java/io/github/cuihairu/redis/streaming/runtime/redis/RedisStreamExecutionEnvironment.java:69`）。
+- 基础通道：以 Redis Streams、注册发现和配置中心为共享数据/协调通道（`mq/src/main/java/io/github/cuihairu/redis/streaming/mq/config/MqOptions.java:12`）。
+- 语义算子：管理状态、快照恢复、时间、窗口、聚合、表和连接等处理语义（`window/src/main/java/io/github/cuihairu/redis/streaming/window/assigners/TumblingWindow.java:15`）。
+- 边界适配：封装数据库/Kafka/HTTP/Redis 协议及可靠性、CEP 横切语义（`cdc/src/main/java/io/github/cuihairu/redis/streaming/cdc/CDCManager.java:18`）。
+- 控制、装配与交付：作业控制面、Spring 装配、指标适配和示例/基准交付（`spring-boot-starter/src/main/java/io/github/cuihairu/redis/streaming/starter/properties/RedisStreamingProperties.java:11`）。
+
+### b) 超大文件候选
+
+- [ ] LAY-001 [P1] 拆分 runtime/src/main/java/io/github/cuihairu/redis/streaming/runtime/redis/RedisStreamExecutionEnvironment.java（2050 行）——入口 API、控制门、领导者协调、checkpoint 调度、缩扩容和恢复补偿混在单类（runtime/src/main/java/io/github/cuihairu/redis/streaming/runtime/redis/RedisStreamExecutionEnvironment.java:448）。
+- [ ] LAY-002 [P1] 拆分 runtime/src/main/java/io/github/cuihairu/redis/streaming/runtime/redis/internal/RedisStreamBuilder.java（1485 行）——源接入、transform/window/reduce/sum 编译和键控状态编码在同一个 builder 及内部类（runtime/src/main/java/io/github/cuihairu/redis/streaming/runtime/redis/internal/RedisStreamBuilder.java:17）。
+- [ ] LAY-003 [P1] 拆分 mq/src/main/java/io/github/cuihairu/redis/streaming/mq/impl/RedisMessageConsumer.java（1245 行）——消费循环、租约/rebalance、pending 接管、重试与指标交织在一个实现类（mq/src/main/java/io/github/cuihairu/redis/streaming/mq/impl/RedisMessageConsumer.java:29）。
+- [ ] LAY-004 [P1] 拆分 runtime/src/main/java/io/github/cuihairu/redis/streaming/runtime/redis/internal/RedisRuntimeCheckpointManager.java（1099 行）——快照建模、恢复、周期触发、drain/ack 和两阶段事务句柄集中一处（runtime/src/main/java/io/github/cuihairu/redis/streaming/runtime/redis/internal/RedisRuntimeCheckpointManager.java:17）。
+
+### c) 目录/分类不合理处
+
+- [ ] LAY-005 [P2] metrics 分类残留不一致：`settings.gradle:39` 已无 metrics 模块，README 仍保留基于 Micrometer 适配器的指标叙述；限流实现实际位于 reliability（`reliability/src/main/java/io/github/cuihairu/redis/streaming/reliability/ratelimit/RateLimitingSink.java:14`）。
+- [ ] LAY-006 [P3] 控制面实现放在 runtime 模块 control 包而不是独立 control 模块；它与 JobSpec/Agent/审计组成期望状态生命周期，同层代码和用户数据管道入口混在一个 Gradle artifact（`runtime/src/main/java/io/github/cuihairu/redis/streaming/runtime/redis/control/RedisJobControlPlane.java:54`）。
+- [ ] LAY-007 [P3] reliability 混合去重、限流、租约、outbox、幂等与租户迁移多种交付语义；迁移 CLI 属于运维工具，不适合与流处理原语共享单一库边界（`reliability/src/main/java/io/github/cuihairu/redis/streaming/reliability/migration/TenantKeyMigrationCli.java:24`）。

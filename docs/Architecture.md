@@ -24,6 +24,16 @@ The project is a Gradle multi-module build (20 modules, matching `settings.gradl
 - **Horizontal Scalability**: Partitioned streams + consumer groups allow linear throughput scaling.
 - **Observable**: Built-in Micrometer bridges for MQ, runtime, retention, DLQ, and rate-limiting metrics.
 
+## Source Layers in the Current Code
+
+This section complements the tier table with responsibilities inferred from imports, call channels, storage, configuration, and lifecycle. The evidence table and split rationale are in [Source-Layer-Analysis.md](./Source-Layer-Analysis.md); terms are in [Glossary.md](./Glossary.md).
+
+- **Contracts and runtime.** The contract layer is `core`; execution is split into the in-memory and Redis engines in `runtime`. Implementations start at `core/src/main/java/io/github/cuihairu/redis/streaming/api/stream/DataStream.java` and `runtime/src/main/java/io/github/cuihairu/redis/streaming/runtime/redis/RedisStreamExecutionEnvironment.java`; execution-specific schema is `RedisRuntimeConfig.java`; no standalone wire-protocol file exists. Copy lives in [Core.md](./Core.md) and [runtime.md](./runtime.md).
+- **Infrastructure channels.** MQ, registry, and config own shared Redis transport/coordination formats. Implementations live under each module's `src/main/java`; schemas are `MqOptions`, `NamingServiceConfig`, and config `BaseRedisConfig`; Redis Streams records and Lua are embedded in service classes. Copy lives in [MQ-Design.md](./MQ-Design.md), [Registry-Design.md](./Registry-Design.md), and [config.md](./config.md).
+- **Semantic operators.** State, checkpoint, watermark, window, aggregation, table, and join define data/time semantics and delegate execution to a runtime. Implementations follow module APIs; schemas are state descriptors and runtime config; protocol semantics are Java records/interfaces. Copy lives in the per-topic documents listed in [Source-Layer-Analysis.md](./Source-Layer-Analysis.md).
+- **Boundary adapters.** CDC, source, sink, reliability, and CEP translate external protocols or provide cross-cutting semantics. Configuration is connector builders/classes rather than a centralized schema; CDC and sink records are Java/JSON. Copy lives in [CDC.md](./CDC.md), [source-sink.md](./source-sink.md), [reliability.md](./reliability.md), and [CEP.md](./CEP.md).
+- **Control, wiring, and delivery.** The job control plane and agent live in `runtime/.../control`; Spring Starter and metrics bind/wire features; examples/benchmark remain unpublished compositions. Schemas are `RedisStreamingProperties`, control/agent properties, and the sample `application.yml`. Copy lives in [Control-Plane-Design.md](./Control-Plane-Design.md), [Spring-Boot-Starter.md](./Spring-Boot-Starter.md), and [Examples.md](./Examples.md).
+
 ## Core Modules
 
 ### Tier 1: Core (Core Abstractions)

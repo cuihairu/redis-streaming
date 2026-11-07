@@ -96,6 +96,8 @@ export default withMermaid(
                 items: [
                   { text: 'Architecture', link: '/Architecture' },
                   { text: 'API Overview', link: '/API' },
+                  { text: 'Glossary', link: '/Glossary' },
+                  { text: 'Source Layer Analysis', link: '/Source-Layer-Analysis' },
                 ]
               },
               {
@@ -207,6 +209,8 @@ export default withMermaid(
                   { text: '架构概述', link: '/zh/Architecture' },
                   { text: '核心 API', link: '/zh/Core' },
                   { text: '运行时环境', link: '/zh/runtime' },
+                  { text: '术语表', link: '/zh/Glossary' },
+                  { text: '源码分层分析', link: '/zh/Source-Layer-Analysis' },
                 ]
               },
               {
