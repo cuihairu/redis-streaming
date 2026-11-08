@@ -108,7 +108,7 @@ class JdbcBrokerPersistenceJsonEscapingTest {
         m.setTopic("t");
         m.setTimestamp(Instant.now());
         Map<String, String> headers = new HashMap<>();
-        headers.put("error", "boom\nsecond\tline\r\n");
+        headers.put("error", "boom\nsecond\tline\r\nbs\bff\f");
         headers.put("ctrl", "a\u0001b");
         m.setHeaders(headers);
 
@@ -124,7 +124,7 @@ class JdbcBrokerPersistenceJsonEscapingTest {
         // And the written JSON must parse back to the original values.
         java.util.Map<String, String> parsed = new com.fasterxml.jackson.databind.ObjectMapper()
                 .readValue(json, new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, String>>() {});
-        assertEquals("boom\nsecond\tline\r\n", parsed.get("error"));
+        assertEquals("boom\nsecond\tline\r\nbs\bff\f", parsed.get("error"));
         assertEquals("a\u0001b", parsed.get("ctrl"));
     }
 }

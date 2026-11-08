@@ -231,4 +231,39 @@ class PatternSequenceProcessFunctionTest {
         assertTrue(cepState == null || !cepState.containsKey("k1"),
                 "no in-progress partials left: the key's document must be cleared");
     }
+
+    @Test
+    void predicateFailureWrapsIntoDescriptiveRuntimeException() {
+        // A pattern predicate that throws (e.g. malformed input) must surface as a
+        // descriptive RuntimeException naming the CEP operator, not a bare predicate error.
+        PatternSequence<E> throwing = PatternSequence.<E>begin("first",
+                Pattern.of(e -> {
+                    throw new IllegalStateException("boom");
+                })).next("second", type("b"));
+        PatternSequenceProcessFunction<String, E> fn =
+                new PatternSequenceProcessFunction<>(throwing, E::ts);
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> feed(fn,
+                new StatefulContext(), events(new Object[]{"k1", new E("a", 0)})));
+        assertTrue(ex.getMessage().contains("CEP pattern sequence processing failed"),
+                "wrapper message names the operator, got: " + ex.getMessage());
+        assertTrue(ex.getCause() instanceof IllegalStateException,
+                "original predicate error is preserved as the cause");
+    }
+
+    @Test
+    void corruptPersistedStateFailsWithDescriptiveError() {
+        // A checkpointed partial document that cannot be parsed (corrupt/foreign JSON) must
+        // surface as a descriptive RuntimeException instead of a silent Jackson error.
+        StatefulContext ctx = new StatefulContext();
+        ctx.store.computeIfAbsent("__operator:cep:partials", k -> new HashMap<>())
+                .put("k1", "{not-valid-json");
+        PatternSequenceProcessFunction<String, E> fn =
+                new PatternSequenceProcessFunction<>(abSequence(), E::ts);
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> feed(fn, ctx,
+                events(new Object[]{"k1", new E("a", 1)})));
+        assertTrue(ex.getMessage().contains("Failed to restore CEP pattern state"),
+                "wrapper message names the state restore, got: " + ex.getMessage());
+    }
 }
