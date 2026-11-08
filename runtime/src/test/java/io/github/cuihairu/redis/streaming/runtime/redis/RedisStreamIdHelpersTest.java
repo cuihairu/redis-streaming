@@ -37,6 +37,23 @@ class RedisStreamIdHelpersTest {
     }
 
     @Test
+    void compareStreamIdCoversNullsAndMalformedFallback() throws Exception {
+        Method compare = Class.forName(ENV).getDeclaredMethod("compareStreamId", String.class, String.class);
+        compare.setAccessible(true);
+        assertEquals(0, compare.invoke(null, null, null));
+        assertEquals(-1, compare.invoke(null, null, "5-1"));
+        assertEquals(1, compare.invoke(null, "5-1", null));
+        assertEquals(-1, compare.invoke(null, "4-9", "5-0"));
+        assertEquals(1, compare.invoke(null, "5-1", "5-0"));
+        assertEquals(0, compare.invoke(null, "5-1", "5-1"));
+        // "5-1-extra" has three segments -> parse falls back to lexical compare
+        assertTrue(((Integer) compare.invoke(null, "5-1", "5-1-extra")) < 0);
+        // malformed ids fall back to lexical compare
+        assertEquals(-1, compare.invoke(null, "a", "b"));
+        assertEquals(1, compare.invoke(null, "b", "a"));
+    }
+
+    @Test
     void truncateCoversAllBranches() throws Exception {
         Method truncate = Class.forName(ENV).getDeclaredMethod("truncate", String.class, int.class);
         truncate.setAccessible(true);

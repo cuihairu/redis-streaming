@@ -91,6 +91,16 @@ class RedisHashSinkTest {
     }
 
     @Test
+    void typedDeleteFallsBackToRawStringWhenStoredValueIsNotTheDeclaredType() {
+        // a stored value written by another writer (or a raw scalar) is not the declared
+        // Integer JSON; the typed delete must return the raw string instead of failing
+        RedissonClient redisson = redissonWithMap();
+        when(map.remove("k")).thenReturn("not-json");
+        RedisHashSink<String, Integer> sink = new RedisHashSink<>(redisson, "h", Integer.class);
+        assertEquals("not-json", sink.delete("k"));
+    }
+
+    @Test
     void validatesArguments() {
         assertThrows(NullPointerException.class, () -> new RedisHashSink<>(null, "h"));
         assertThrows(NullPointerException.class, () -> new RedisHashSink<>(mock(RedissonClient.class), null));

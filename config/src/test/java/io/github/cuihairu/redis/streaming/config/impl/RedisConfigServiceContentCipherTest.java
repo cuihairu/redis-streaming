@@ -202,4 +202,25 @@ class RedisConfigServiceContentCipherTest {
         assertEquals("s3cr3t", service.getConfigHistory("secure.db-password", "g", 1).get(0).getContent());
     }
 
+    @Test
+    void unchangedCipherResultFallsBackToPlaintextWithWarning() {
+        ContentCipher identity = new ContentCipher() {
+            @Override
+            public String encrypt(String plain) {
+                return plain; // no-op cipher: must not store marker-wrapped plaintext
+            }
+
+            @Override
+            public String decrypt(String encrypted) {
+                return encrypted;
+            }
+        };
+        ConfigService service = service(identity);
+        start(service);
+
+        assertTrue(service.publishConfig("secure.db-password", "g", "s3cr3t", null));
+        assertFalse(entryJson.get().contains("enc:v1:"), entryJson.get());
+        assertTrue(entryJson.get().contains("s3cr3t"), entryJson.get());
+    }
+
 }

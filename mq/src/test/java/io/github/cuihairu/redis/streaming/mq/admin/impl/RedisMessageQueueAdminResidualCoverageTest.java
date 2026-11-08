@@ -190,4 +190,39 @@ class RedisMessageQueueAdminResidualCoverageTest {
         assertEquals(1, entries.size());
         assertEquals("2-0", entries.get(0).getId());
     }
+
+    @Test
+    void trimQueuePagesAndTerminatesWhenPageDoesNotAdvance() {
+        System.setProperty("mq.admin.test.trimAgePageSize", "1");
+        try {
+            // the page size is read in the field initializer, so build a fresh admin after the property
+            RedisMessageQueueAdmin fresh = new RedisMessageQueueAdmin(client, topicRegistry, partitionRegistry,
+                    payloadLifecycleManager);
+            when(partitionRegistry.getPartitionCount("t")).thenReturn(1);
+            RStream<String, Object> s = stream(true);
+            when(client.getStream(eq(StreamKeys.partitionStream("t", 0)), any(Codec.class))).thenReturn((RStream) s);
+            when(s.size()).thenReturn(3L);
+            // page size 1 and per=1: the first page fills the page, the second re-delivers the
+            // same id (no cursor progress) -> the pager must terminate instead of looping forever
+            java.util.Map<org.redisson.api.stream.StreamMessageId, java.util.Map<String, Object>> one =
+                    new java.util.LinkedHashMap<>();
+            one.put(new org.redisson.api.stream.StreamMessageId(1, 0), java.util.Map.of("p", "x"));
+            when(s.range(anyInt(), any(), any())).thenReturn(one);
+            // per = maxLen / pc = 2, size = 3 -> 1 message to trim; the first page removes it
+            // and the second re-delivery (no cursor advance) terminates the pager
+            assertEquals(1L, fresh.trimQueue("t", 2));
+        } finally {
+            System.clearProperty("mq.admin.test.trimAgePageSize");
+        }
+    }
+
+    @Test
+    void trimQueueSwallowsRangeFailures() {
+        when(partitionRegistry.getPartitionCount("t")).thenReturn(1);
+        RStream<String, Object> s = stream(true);
+        when(client.getStream(eq(StreamKeys.partitionStream("t", 0)), any(Codec.class))).thenReturn((RStream) s);
+        when(s.size()).thenReturn(5L);
+        when(s.range(anyInt(), any(), any())).thenThrow(new IllegalStateException("range down"));
+        assertEquals(0L, admin.trimQueue("t", 10));
+    }
 }

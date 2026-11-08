@@ -9,6 +9,7 @@ import org.redisson.api.RKeys;
 import org.redisson.api.RMap;
 import org.redisson.api.RScript;
 import org.redisson.api.RSet;
+import org.redisson.api.RList;
 import org.redisson.api.RedissonClient;
 import org.redisson.client.codec.Codec;
 import org.redisson.api.options.KeysScanOptions;
@@ -32,6 +33,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.eq;
 
 /**
  * RT-M4: state restore is now stage-then-rename. The staging and swap phases fail-stop
@@ -188,5 +190,51 @@ class RedisRuntimeCheckpointManagerRestoreSwapTest {
         when(rkeys.getKeys(any(KeysScanOptions.class))).thenReturn(List.of());
 
         assertNull(assertDoesNotThrow(() -> manager.restoreFromLatestCheckpointOrNull(List.of())));
+    }
+
+    @Test
+    void snapshotSupportsListSetAndSkipsUnsupportedType() throws Exception {
+        RedisRuntimeCheckpointManager manager = manager(Duration.ZERO);
+        RList<String> list = mock(RList.class);
+        RSet<String> set = mock(RSet.class);
+        RSet<String> indexSet = mock(RSet.class);
+        when(redisson.<String>getSet(eq(PREFIX + ":" + JOB + ":stateKeys"), any(Codec.class))).thenReturn(indexSet);
+        when(redisson.<String>getList(anyString(), any(Codec.class))).thenReturn(list);
+        when(redisson.<String>getSet(eq(PREFIX + ":st:set"), any(Codec.class))).thenReturn(set);
+        when(list.readAll()).thenReturn(List.of("a"));
+        when(set.readAll()).thenReturn(new java.util.HashSet<>(List.of("b")));
+        when(indexSet.readAll()).thenReturn(new java.util.HashSet<>(List.of(
+                PREFIX + ":st:list", PREFIX + ":st:set", PREFIX + ":st:unsupported")));
+        when(rkeys.getType(PREFIX + ":st:list")).thenReturn(org.redisson.api.RType.LIST);
+        when(rkeys.getType(PREFIX + ":st:set")).thenReturn(org.redisson.api.RType.SET);
+        when(rkeys.getType(PREFIX + ":st:unsupported")).thenReturn(org.redisson.api.RType.STREAM);
+        when(rkeys.countExists(anyString())).thenReturn(1L);
+
+        try {
+            java.lang.reflect.Method snapshotState = RedisRuntimeCheckpointManager.class
+                    .getDeclaredMethod("snapshotState");
+            snapshotState.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            Map<String, RedisRuntimeCheckpointManager.RedisStateValue> snap =
+                    (Map<String, RedisRuntimeCheckpointManager.RedisStateValue>) snapshotState.invoke(manager);
+            assertTrue(snap.containsKey(PREFIX + ":st:list"));
+            assertTrue(snap.containsKey(PREFIX + ":st:set"));
+            assertFalse(snap.containsKey(PREFIX + ":st:unsupported"));
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            throw (AssertionError) new AssertionError("snapshotState threw").initCause(e.getCause());
+        }
+    }
+
+    @Test
+    void preStageDeleteFailuresAreSwallowedDuringRestore() {
+        RedisRuntimeCheckpointManager manager = manager(Duration.ZERO);
+        String k1 = PREFIX + ":st:k1";
+        when(index.readAll()).thenReturn(new java.util.HashSet<>(List.of(k1)));
+        Map<String, Object> state = new HashMap<>();
+        state.put(k1, RedisRuntimeCheckpointManager.RedisStateValue.ofMap(Map.of("f", "v")));
+        DefaultCheckpoint cp = checkpoint(37L, state);
+        doThrow(new IllegalStateException("delete down")).when(rkeys).delete(k1 + ":rst:37");
+
+        assertTrue(manager.restoreFromCheckpoint(cp, List.of()));
     }
 }
