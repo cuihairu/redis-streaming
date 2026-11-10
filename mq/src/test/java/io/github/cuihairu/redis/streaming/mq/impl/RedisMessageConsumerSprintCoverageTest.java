@@ -161,7 +161,7 @@ class RedisMessageConsumerSprintCoverageTest {
     }
 
     private static Object invoke(Object target, String name, Class<?>[] types, Object... args) throws Exception {
-        Method m = RedisMessageConsumer.class.getDeclaredMethod(name, types);
+        Method m = target.getClass().getDeclaredMethod(name, types);
         m.setAccessible(true);
         try {
             return m.invoke(target, args);
@@ -174,11 +174,7 @@ class RedisMessageConsumerSprintCoverageTest {
     }
 
     private static Class<?> workerClass() {
-        try {
-            return Class.forName(RedisMessageConsumer.class.getName() + "$PartitionWorker");
-        } catch (ClassNotFoundException e) {
-            throw new IllegalStateException(e);
-        }
+        return PartitionWorker.class;
     }
 
     private static Object newPartitionWorker(String topic, String group, int pid, MessageHandler handler) throws Exception {
@@ -188,14 +184,14 @@ class RedisMessageConsumerSprintCoverageTest {
     }
 
     private static Object newPartitionKey(String topic, String group, int pid) throws Exception {
-        Class<?> cls = Class.forName(RedisMessageConsumer.class.getName() + "$PartitionKey");
+        Class<?> cls = PartitionKey.class;
         Constructor<?> c = cls.getDeclaredConstructor(String.class, String.class, int.class);
         c.setAccessible(true);
         return c.newInstance(topic, group, pid);
     }
 
     private static Object newSubscription(String topic, String group, MessageHandler handler) throws Exception {
-        Class<?> cls = Class.forName(RedisMessageConsumer.class.getName() + "$Subscription");
+        Class<?> cls = Subscription.class;
         Constructor<?> c = cls.getDeclaredConstructor(String.class, String.class, MessageHandler.class);
         c.setAccessible(true);
         return c.newInstance(topic, group, handler);
@@ -384,7 +380,7 @@ class RedisMessageConsumerSprintCoverageTest {
     void dispatchSuccessWithNullHeadersStillAcks() throws Exception {
         Message m = message("p", 0, 3);
         m.setHeaders(null);
-        invoke(consumer, "dispatchResult", DISPATCH, "t", "g", "5-0", 0, m, MessageHandleResult.SUCCESS,
+        invoke(consumer.dispatch, "dispatchResult", DISPATCH, "t", "g", "5-0", 0, m, MessageHandleResult.SUCCESS,
                 new HashMap<String, Object>(), dataStream);
         verify(broker).ack("t", "g", 0, "5-0");
     }
@@ -399,7 +395,7 @@ class RedisMessageConsumerSprintCoverageTest {
                 throw new IllegalStateException("map boom");
             }
         };
-        assertDoesNotThrow(() -> invoke(consumer, "handleMissingPayload", HANDLE_MISSING_5,
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "handleMissingPayload", HANDLE_MISSING_5,
                 "t", "g", 0, "5-0", hostile));
         verify(deadLetterService, never()).send(any());
     }
@@ -415,7 +411,7 @@ class RedisMessageConsumerSprintCoverageTest {
         data.put("retryCount", "1");
         data.put("maxRetries", "2");
 
-        invoke(consumer, "handleMissingPayload", HANDLE_MISSING_5, "t", "g", 0, "5-0", data);
+        invoke(consumer.dispatch, "handleMissingPayload", HANDLE_MISSING_5, "t", "g", 0, "5-0", data);
 
         var captor = org.mockito.ArgumentCaptor.forClass(DeadLetterRecord.class);
         verify(deadLetterService).send(captor.capture());
@@ -432,7 +428,7 @@ class RedisMessageConsumerSprintCoverageTest {
     void requeueExhaustedDlqFailureLeavesOriginalUnacked() throws Exception {
         when(deadLetterService.send(any())).thenThrow(new IllegalStateException("dlq down"));
         Message m = message("p", 3, 3);
-        invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
+        invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
         verify(deadLetterService).send(any());
         verify(broker, never()).ack(anyString(), anyString(), anyInt(), anyString());
         verify(dataStream, never()).add(any());
@@ -442,7 +438,7 @@ class RedisMessageConsumerSprintCoverageTest {
     void requeueExhaustedDlqSuccessAcksOriginal() throws Exception {
         when(deadLetterService.send(any())).thenReturn(new StreamMessageId(1, 0));
         Message m = message("p", 3, 3);
-        invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
+        invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
         verify(deadLetterService).send(any());
         verify(broker).ack("t", "g", 0, "5-0");
     }
@@ -453,7 +449,7 @@ class RedisMessageConsumerSprintCoverageTest {
     void requeueTreatsBlankOriginalIdAsMissing() throws Exception {
         Message m = message("p", 0, 3);
         m.getHeaders().put(io.github.cuihairu.redis.streaming.mq.MqHeaders.ORIGINAL_MESSAGE_ID, "   ");
-        invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
+        invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
         assertEquals("5-0", m.getHeaders().get(io.github.cuihairu.redis.streaming.mq.MqHeaders.ORIGINAL_MESSAGE_ID));
     }
 
@@ -484,7 +480,7 @@ class RedisMessageConsumerSprintCoverageTest {
     void requeueDeadLettersWhenReportedMaxIsExceededAndAcks() throws Exception {
         when(deadLetterService.send(any())).thenReturn(new StreamMessageId(1, 0));
         Message m = new ShrinkingMaxMessage(0, 10, 0);
-        invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
+        invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
         verify(deadLetterService).send(any());
         verify(broker).ack("t", "g", 0, "5-0");
         verify(dataStream, never()).add(any());
@@ -494,7 +490,7 @@ class RedisMessageConsumerSprintCoverageTest {
     void requeueDeadLettersWhenReportedMaxIsExceededButKeepsUnackedOnDlqFailure() throws Exception {
         when(deadLetterService.send(any())).thenThrow(new IllegalStateException("dlq down"));
         Message m = new ShrinkingMaxMessage(0, 10, 0);
-        invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
+        invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
         verify(deadLetterService).send(any());
         verify(broker, never()).ack(anyString(), anyString(), anyInt(), anyString());
     }
@@ -504,7 +500,7 @@ class RedisMessageConsumerSprintCoverageTest {
     @Test
     void requeueTinyBackoffWithNullPayloadOmitsPayloadField() throws Exception {
         Message m = message(null, 0, 3);
-        invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
+        invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
         var captor = org.mockito.ArgumentCaptor.forClass(org.redisson.api.stream.StreamAddArgs.class);
         verify(dataStream).add(captor.capture());
         Map<String, Object> entry = extractEntries(captor.getValue());
@@ -516,7 +512,7 @@ class RedisMessageConsumerSprintCoverageTest {
     void requeueTinyBackoffWithObjectPayloadJsonEncodes() throws Exception {
         Message m = message(null, 0, 3);
         m.setPayload(Map.of("k", "v"));
-        invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
+        invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
         var captor = org.mockito.ArgumentCaptor.forClass(org.redisson.api.stream.StreamAddArgs.class);
         verify(dataStream).add(captor.capture());
         Map<String, Object> entry = extractEntries(captor.getValue());
@@ -530,13 +526,13 @@ class RedisMessageConsumerSprintCoverageTest {
         setField(consumer, "retryPolicy", new io.github.cuihairu.redis.streaming.mq.retry.ExponentialBackoffRetryPolicy(3, 5000, 10000));
 
         Message nullPayload = message(null, 0, 3);
-        invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-1", 0, nullPayload, new HashMap<String, Object>());
+        invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-1", 0, nullPayload, new HashMap<String, Object>());
         verify(retryItem, never()).put(eq("payload"), anyString());
 
         Message objectPayload = message(null, 0, 3);
         objectPayload.setId("6-0");
         objectPayload.setPayload(Map.of("k", "v"));
-        invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "6-0", 0, objectPayload, new HashMap<String, Object>());
+        invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "6-0", 0, objectPayload, new HashMap<String, Object>());
         verify(retryItem).put(eq("payload"), eq("{\"k\":\"v\"}"));
     }
 
@@ -579,7 +575,7 @@ class RedisMessageConsumerSprintCoverageTest {
     @Test
     void requeueTinyBackoffWithNullHeadersSkipsHeadersField() throws Exception {
         Message m = new NullHeadersMessage("5-0");
-        invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
+        invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
         var captor = org.mockito.ArgumentCaptor.forClass(org.redisson.api.stream.StreamAddArgs.class);
         verify(dataStream).add(captor.capture());
         Map<String, Object> entry = extractEntries(captor.getValue());
@@ -589,7 +585,7 @@ class RedisMessageConsumerSprintCoverageTest {
     @Test
     void requeueTinyBackoffWithFreshEmptyHeadersSkipsHeadersField() throws Exception {
         Message m = new FreshEmptyHeadersMessage("5-0");
-        invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
+        invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
         var captor = org.mockito.ArgumentCaptor.forClass(org.redisson.api.stream.StreamAddArgs.class);
         verify(dataStream).add(captor.capture());
         Map<String, Object> entry = extractEntries(captor.getValue());
@@ -600,7 +596,7 @@ class RedisMessageConsumerSprintCoverageTest {
     void requeueBucketWithNullHeadersUsesEmptyJsonAndNoOriginalId() throws Exception {
         setField(consumer, "retryPolicy", new io.github.cuihairu.redis.streaming.mq.retry.ExponentialBackoffRetryPolicy(3, 5000, 10000));
         Message m = new NullHeadersMessage(null);
-        invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
+        invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
         verify(retryItem).put(eq("headers"), eq("{}"));
         verify(retryItem).put(eq("originalMessageId"), eq(""));
     }
@@ -609,7 +605,7 @@ class RedisMessageConsumerSprintCoverageTest {
     void requeueBucketWithFreshEmptyHeadersKeepsMessageIdAsOriginal() throws Exception {
         setField(consumer, "retryPolicy", new io.github.cuihairu.redis.streaming.mq.retry.ExponentialBackoffRetryPolicy(3, 5000, 10000));
         Message m = new FreshEmptyHeadersMessage("7-7");
-        invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
+        invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<String, Object>());
         verify(retryItem).put(eq("headers"), eq("{}"));
         verify(retryItem).put(eq("originalMessageId"), eq("7-7"));
     }
@@ -620,7 +616,7 @@ class RedisMessageConsumerSprintCoverageTest {
     void requeueSwallowsRetryPolicyFailureWithoutAck() throws Exception {
         setField(consumer, "retryPolicy", throwingBackoffPolicy());
         Message m = message("p", 0, 3);
-        assertDoesNotThrow(() -> invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m,
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m,
                 new HashMap<String, Object>()));
         verify(broker, never()).ack(anyString(), anyString(), anyInt(), anyString());
         verify(dataStream, never()).add(any());
@@ -662,7 +658,7 @@ class RedisMessageConsumerSprintCoverageTest {
         }).when(broker).ack(anyString(), anyString(), anyInt(), anyString());
         Exception thrown = null;
         try {
-            invoke(consumer, "ackViaBackend", ACK6, "t", "g", 0, dataStream, "5-0", new HashMap<String, Object>());
+            invoke(consumer.dispatch, "ackViaBackend", ACK6, "t", "g", 0, dataStream, "5-0", new HashMap<String, Object>());
         } catch (Exception e) {
             thrown = e;
         }
@@ -722,7 +718,7 @@ class RedisMessageConsumerSprintCoverageTest {
     void acquirePermitRecordsBackpressureWaitWhenBlocked() throws Exception {
         runningField().set(true);
         setField(consumer, "inFlightLimiter", new SlowSemaphore());
-        invoke(consumer, "acquireInFlightPermit", new Class<?>[]{});
+        invoke(consumer.dispatch, "acquireInFlightPermit", new Class<?>[]{});
         assertTrue(metrics.backpressureWaits.size() >= 1, "backpressure wait must be recorded");
         assertTrue(metrics.backpressureWaits.get(0) > 0);
     }
@@ -738,7 +734,7 @@ class RedisMessageConsumerSprintCoverageTest {
             }
         });
         setField(consumer, "inFlightLimiter", sem);
-        invoke(consumer, "acquireInFlightPermit", new Class<?>[]{});
+        invoke(consumer.dispatch, "acquireInFlightPermit", new Class<?>[]{});
         assertTrue(Thread.currentThread().isInterrupted(), "interrupt flag must be restored");
     }
 
@@ -748,7 +744,7 @@ class RedisMessageConsumerSprintCoverageTest {
         closedField().set(true);
         Semaphore sem = new Semaphore(1);
         setField(consumer, "inFlightLimiter", sem);
-        invoke(consumer, "acquireInFlightPermit", new Class<?>[]{});
+        invoke(consumer.dispatch, "acquireInFlightPermit", new Class<?>[]{});
         assertEquals(1, sem.availablePermits(), "no permit may be taken once closed");
         assertFalse(Thread.currentThread().isInterrupted(), "no interrupt was pending, so none must be restored");
     }
@@ -756,7 +752,7 @@ class RedisMessageConsumerSprintCoverageTest {
     @Test
     void releasePermitSwallowsReleaseFailure() throws Exception {
         setField(consumer, "inFlightLimiter", new RejectingReleaseSemaphore());
-        assertDoesNotThrow(() -> invoke(consumer, "releaseInFlightPermit", new Class<?>[]{}));
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "releaseInFlightPermit", new Class<?>[]{}));
     }
 
     // ===== moveDueRetries guards =====
@@ -803,10 +799,10 @@ class RedisMessageConsumerSprintCoverageTest {
     @Test
     void renewLeasesEarlyReturns() throws Exception {
         runningField().set(false);
-        invoke(consumer, "renewLeases", new Class<?>[]{});
+        invoke(consumer.assignment, "renewLeases", new Class<?>[]{});
         runningField().set(true);
         closedField().set(true);
-        invoke(consumer, "renewLeases", new Class<?>[]{});
+        invoke(consumer.assignment, "renewLeases", new Class<?>[]{});
         verify(lease, never()).renewIfOwner(anyString(), anyString(), anyLong());
     }
 
@@ -815,9 +811,9 @@ class RedisMessageConsumerSprintCoverageTest {
     @Test
     void computeEligiblePartitionsHandlesMissingSubscriptionAndPartialPinning() throws Exception {
         Class<?>[] sig = {String.class, String.class};
-        assertEquals(0, invoke(consumer, "computeEligiblePartitions", sig, "nope", "g"));
+        assertEquals(0, invoke(consumer.assignment, "computeEligiblePartitions", sig, "nope", "g"));
         consumer.subscribe("t", "g", okHandler());
-        assertEquals(0, invoke(consumer, "computeEligiblePartitions", sig, "t", "other-group"));
+        assertEquals(0, invoke(consumer.assignment, "computeEligiblePartitions", sig, "t", "other-group"));
 
         Map<String, Object> subs = (Map<String, Object>) field(consumer, "subscriptions").get(consumer);
         Object sub = subs.get("t");
@@ -830,10 +826,10 @@ class RedisMessageConsumerSprintCoverageTest {
         modField.set(sub, 2);
         remField.set(sub, null);
         when(partitionRegistry.getPartitionCount("t")).thenReturn(3);
-        assertEquals(3, invoke(consumer, "computeEligiblePartitions", sig, "t", "g"));
+        assertEquals(3, invoke(consumer.assignment, "computeEligiblePartitions", sig, "t", "g"));
 
         remField.set(sub, 1);
-        assertEquals(1, invoke(consumer, "computeEligiblePartitions", sig, "t", "g"));
+        assertEquals(1, invoke(consumer.assignment, "computeEligiblePartitions", sig, "t", "g"));
     }
 
     // ===== publishPartitionMetrics worker accounting =====
@@ -843,7 +839,7 @@ class RedisMessageConsumerSprintCoverageTest {
         workersMap().put(newPartitionKey("t", "g", 0), newPartitionWorker("t", "g", 0, okHandler()));
         workersMap().put(newPartitionKey("t", "g2", 1), newPartitionWorker("t", "g2", 1, okHandler()));
         workersMap().put(newPartitionKey("t2", "g", 2), newPartitionWorker("t2", "g", 2, okHandler()));
-        invoke(consumer, "publishPartitionMetrics", PUBLISH, "t", "g", 2);
+        invoke(consumer.assignment, "publishPartitionMetrics", PUBLISH, "t", "g", 2);
         assertEquals(1, metrics.leasedCounts.size());
         assertEquals(1, metrics.leasedCounts.get(0));
         assertEquals(2, metrics.eligibleCounts.get(0));
@@ -859,7 +855,7 @@ class RedisMessageConsumerSprintCoverageTest {
         when(lease.isOwner(anyString(), eq("sprint"))).thenReturn(true);
         when(lease.renewIfOwner(anyString(), eq("sprint"), anyLong())).thenReturn(true);
 
-        invoke(consumer, "rebalanceAssignments", new Class<?>[]{});
+        invoke(consumer.assignment, "rebalanceAssignments", new Class<?>[]{});
         assertEquals(1, workersMap().size());
     }
 
@@ -871,7 +867,7 @@ class RedisMessageConsumerSprintCoverageTest {
         when(lease.isOwner(anyString(), eq("sprint"))).thenReturn(true);
         when(lease.renewIfOwner(anyString(), eq("sprint"), anyLong())).thenThrow(new IllegalStateException("renew boom"));
 
-        invoke(consumer, "rebalanceAssignments", new Class<?>[]{});
+        invoke(consumer.assignment, "rebalanceAssignments", new Class<?>[]{});
         assertEquals(1, workersMap().size());
     }
 

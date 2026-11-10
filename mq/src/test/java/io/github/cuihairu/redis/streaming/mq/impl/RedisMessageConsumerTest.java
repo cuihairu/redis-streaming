@@ -384,10 +384,10 @@ class RedisMessageConsumerTest {
     void testParseStreamIdWithValidId() throws Exception {
         // Use reflection to test private method
         RedisMessageConsumer consumer = createConsumer(null);
-        java.lang.reflect.Method method = RedisMessageConsumer.class.getDeclaredMethod("parseStreamId", String.class);
+        java.lang.reflect.Method method = RedisMessageDispatchProcessor.class.getDeclaredMethod("parseStreamId", String.class);
         method.setAccessible(true);
 
-        org.redisson.api.stream.StreamMessageId result = (org.redisson.api.stream.StreamMessageId) method.invoke(consumer, "1234567890-0");
+        org.redisson.api.stream.StreamMessageId result = (org.redisson.api.stream.StreamMessageId) method.invoke(consumer.dispatch, "1234567890-0");
 
         assertNotNull(result);
     }
@@ -395,10 +395,10 @@ class RedisMessageConsumerTest {
     @Test
     void testParseStreamIdWithNull() throws Exception {
         RedisMessageConsumer consumer = createConsumer(null);
-        java.lang.reflect.Method method = RedisMessageConsumer.class.getDeclaredMethod("parseStreamId", String.class);
+        java.lang.reflect.Method method = RedisMessageDispatchProcessor.class.getDeclaredMethod("parseStreamId", String.class);
         method.setAccessible(true);
 
-        org.redisson.api.stream.StreamMessageId result = (org.redisson.api.stream.StreamMessageId) method.invoke(consumer, (String) null);
+        org.redisson.api.stream.StreamMessageId result = (org.redisson.api.stream.StreamMessageId) method.invoke(consumer.dispatch, (String) null);
 
         assertEquals(org.redisson.api.stream.StreamMessageId.MIN, result);
     }
@@ -406,10 +406,10 @@ class RedisMessageConsumerTest {
     @Test
     void testObjectToJson() throws Exception {
         RedisMessageConsumer consumer = createConsumer(null);
-        java.lang.reflect.Method method = RedisMessageConsumer.class.getDeclaredMethod("objectToJson", Object.class);
+        java.lang.reflect.Method method = RedisMessageDispatchProcessor.class.getDeclaredMethod("objectToJson", Object.class);
         method.setAccessible(true);
 
-        String result = (String) method.invoke(consumer, "test-payload");
+        String result = (String) method.invoke(consumer.dispatch, "test-payload");
 
         assertEquals("\"test-payload\"", result);
     }
@@ -417,19 +417,19 @@ class RedisMessageConsumerTest {
     @Test
     void testJsonToObject() throws Exception {
         RedisMessageConsumer consumer = createConsumer(null);
-        java.lang.reflect.Method method = RedisMessageConsumer.class.getDeclaredMethod("jsonToObject", String.class, Class.class);
+        java.lang.reflect.Method method = RedisMessageDispatchProcessor.class.getDeclaredMethod("jsonToObject", String.class, Class.class);
         method.setAccessible(true);
 
-        String result = (String) method.invoke(consumer, "\"test-value\"", String.class);
+        String result = (String) method.invoke(consumer.dispatch, "\"test-value\"", String.class);
 
         assertEquals("test-value", result);
     }
 
     @Test
     void testPartitionKeyEqualsAndHashCode() throws Exception {
-        // Test inner class PartitionKey
+        // Test partition key value semantics
         RedisMessageConsumer consumer = createConsumer(null);
-        Class<?> partitionKeyClass = Class.forName("io.github.cuihairu.redis.streaming.mq.impl.RedisMessageConsumer$PartitionKey");
+        Class<?> partitionKeyClass = PartitionKey.class;
         java.lang.reflect.Constructor<?> constructor = partitionKeyClass.getDeclaredConstructor(String.class, String.class, int.class);
         constructor.setAccessible(true);
 
@@ -444,8 +444,8 @@ class RedisMessageConsumerTest {
 
     @Test
     void testPartitionWorkerStop() throws Exception {
-        // Test inner class PartitionWorker
-        Class<?> partitionWorkerClass = Class.forName("io.github.cuihairu.redis.streaming.mq.impl.RedisMessageConsumer$PartitionWorker");
+        // Test partition worker cooperative stop
+        Class<?> partitionWorkerClass = PartitionWorker.class;
         java.lang.reflect.Constructor<?> constructor = partitionWorkerClass.getDeclaredConstructor(String.class, String.class, int.class, MessageHandler.class);
         constructor.setAccessible(true);
 

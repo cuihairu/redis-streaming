@@ -69,7 +69,7 @@ class RedisMessageConsumerInFlightBackpressureTest {
     }
 
     private static Object invoke(Object target, String name, Class<?>[] types, Object... args) throws Exception {
-        Method m = RedisMessageConsumer.class.getDeclaredMethod(name, types);
+        Method m = target.getClass().getDeclaredMethod(name, types);
         m.setAccessible(true);
         return m.invoke(target, args);
     }
@@ -123,7 +123,7 @@ class RedisMessageConsumerInFlightBackpressureTest {
         AtomicReference<Throwable> firstError = new AtomicReference<>();
         Thread first = new Thread(() -> {
             try {
-                invoke(consumer, "processIncomingRecord", PROCESS_INCOMING,
+                invoke(consumer.dispatch, "processIncomingRecord", PROCESS_INCOMING,
                         "t", "g", 0, "5-0", data(), dataStream, blocking, false);
             } catch (Throwable e) {
                 firstError.set(e);
@@ -138,7 +138,7 @@ class RedisMessageConsumerInFlightBackpressureTest {
         MessageHandler fast = msg -> MessageHandleResult.SUCCESS;
         Thread second = new Thread(() -> {
             try {
-                acquired.set(invoke(consumer, "processIncomingRecord", PROCESS_INCOMING,
+                acquired.set(invoke(consumer.dispatch, "processIncomingRecord", PROCESS_INCOMING,
                         "t", "g", 0, "5-1", data(), dataStream, fast, false));
             } catch (Throwable e) {
                 secondError.set(e);
@@ -176,13 +176,13 @@ class RedisMessageConsumerInFlightBackpressureTest {
         running().set(true);
 
         // take the only permit on this thread, park a second acquire, then stop it
-        assertEquals(Boolean.TRUE, invoke("acquireInFlightPermit", NONE),
+        assertEquals(Boolean.TRUE, invoke(consumer.dispatch, "acquireInFlightPermit", NONE),
                 "sanity: the first acquire takes the single permit");
 
         AtomicReference<Object> acquired = new AtomicReference<>();
         Thread second = new Thread(() -> {
             try {
-                acquired.set(invoke("acquireInFlightPermit", NONE));
+                acquired.set(invoke(consumer.dispatch, "acquireInFlightPermit", NONE));
             } catch (Throwable ignore) {
             }
         });

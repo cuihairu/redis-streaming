@@ -160,7 +160,7 @@ class RedisMessageConsumerTenantMetricsTest {
         data.put("headers", new HashMap<String, Object>());
         data.put("partitionId", 0);
 
-        invoke(consumer, "processIncomingRecord", PROCESS, "t", "g", 0, "5-0", data,
+        invoke(consumer.dispatch, "processIncomingRecord", PROCESS, "t", "g", 0, "5-0", data,
                 dataStream, (MessageHandler) m -> MessageHandleResult.SUCCESS, false);
 
         assertEquals(List.of("acme"), metrics.consumed, "incConsumed must carry the tenant");
@@ -170,7 +170,7 @@ class RedisMessageConsumerTenantMetricsTest {
 
     @Test
     void deadLetterCounterCarriesTheConfiguredTenant() throws Exception {
-        invoke(consumer, "dispatchResult", DISPATCH, "t", "g", "5-0", 0,
+        invoke(consumer.dispatch, "dispatchResult", DISPATCH, "t", "g", "5-0", 0,
                 message("p", 3, 3), MessageHandleResult.FAIL, new HashMap<>(), dataStream);
 
         assertEquals(List.of("acme"), metrics.deadLettered, "incDeadLetter must carry the tenant");
@@ -178,7 +178,7 @@ class RedisMessageConsumerTenantMetricsTest {
 
     @Test
     void retriedCounterCarriesTheConfiguredTenant() throws Exception {
-        invoke(consumer, "dispatchResult", DISPATCH, "t", "g", "5-0", 0,
+        invoke(consumer.dispatch, "dispatchResult", DISPATCH, "t", "g", "5-0", 0,
                 message("p", 0, 3), MessageHandleResult.RETRY, new HashMap<>(), dataStream);
 
         assertEquals(List.of("acme"), metrics.retried, "incRetried must carry the tenant");
@@ -209,7 +209,7 @@ class RedisMessageConsumerTenantMetricsTest {
     }
 
     private static Object invoke(Object target, String name, Class<?>[] types, Object... args) throws Exception {
-        Method m = RedisMessageConsumer.class.getDeclaredMethod(name, types);
+        Method m = target.getClass().getDeclaredMethod(name, types);
         m.setAccessible(true);
         try {
             return m.invoke(target, args);

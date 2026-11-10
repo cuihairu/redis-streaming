@@ -72,9 +72,9 @@ class RedisMessageConsumerCommitFrontierScriptTest {
     }
 
     private void ack(String messageId) throws Exception {
-        Method m = RedisMessageConsumer.class.getDeclaredMethod("ackViaBackend", ACK);
+        Method m = RedisMessageDispatchProcessor.class.getDeclaredMethod("ackViaBackend", ACK);
         m.setAccessible(true);
-        m.invoke(consumer, "t", "g", 0, null, messageId, null);
+        m.invoke(consumer.dispatch, "t", "g", 0, null, messageId, null);
     }
 
     @Test

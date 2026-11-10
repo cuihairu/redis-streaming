@@ -77,7 +77,7 @@ class RedisMessageConsumerDispatchCoverageTest {
     }
 
     private static Object invoke(Object target, String name, Class<?>[] types, Object... args) throws Exception {
-        Method m = RedisMessageConsumer.class.getDeclaredMethod(name, types);
+        Method m = target.getClass().getDeclaredMethod(name, types);
         m.setAccessible(true);
         return m.invoke(target, args);
     }
@@ -114,7 +114,7 @@ class RedisMessageConsumerDispatchCoverageTest {
         data.put("retryCount", "1");
         data.put("maxRetries", "2");
 
-        invoke(consumer, "handleMissingPayload", HANDLE_MISSING_4, "t", "g", 0, "5-0", data);
+        invoke(consumer.dispatch, "handleMissingPayload", HANDLE_MISSING_4, "t", "g", 0, "5-0", data);
 
         verify(dlqStream).add(any());
         verify(dataStream).ack(eq("g"), eq(new StreamMessageId(5, 0)));
@@ -137,7 +137,7 @@ class RedisMessageConsumerDispatchCoverageTest {
         data.put("retryCount", 2);
         data.put("maxRetries", 3);
 
-        invoke(consumer, "handleMissingPayload", HANDLE_MISSING_4, "t", "g", 0, "5-1", data);
+        invoke(consumer.dispatch, "handleMissingPayload", HANDLE_MISSING_4, "t", "g", 0, "5-1", data);
 
         verify(dlqStream).add(any());
         verify(dataStream).ack(eq("g"), eq(new StreamMessageId(5, 1)));
@@ -149,7 +149,7 @@ class RedisMessageConsumerDispatchCoverageTest {
         data.put("headers", new HashMap<String, String>());
         RStream<String, Object> provided = mock(RStream.class);
 
-        invoke(consumer, "handleMissingPayload", HANDLE_MISSING_6, "t", "g", 0, "6-0", data, provided);
+        invoke(consumer.dispatch, "handleMissingPayload", HANDLE_MISSING_6, "t", "g", 0, "6-0", data, provided);
 
         verify(provided).ack(eq("g"), eq(new StreamMessageId(6, 0)));
     }
@@ -160,7 +160,7 @@ class RedisMessageConsumerDispatchCoverageTest {
     void sendToDeadLetterQueuePublishesRecord() throws Exception {
         Message m = message("p", 1, 3);
         m.setKey("kk");
-        invoke(consumer, "sendToDeadLetterQueue", SEND_DLQ, m, 0);
+        invoke(consumer.dispatch, "sendToDeadLetterQueue", SEND_DLQ, m, 0);
         verify(dlqStream).add(any());
         verify(dlqStream, never()).add(argThat(a -> false));
     }
@@ -171,7 +171,7 @@ class RedisMessageConsumerDispatchCoverageTest {
     void requeueWhenRetriesExhaustedGoesToDlq() throws Exception {
         Message m = message("p", 3, 3);
         Map<String, Object> data = new HashMap<>();
-        invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, data);
+        invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, data);
         verify(dlqStream).add(any());
         verify(dataStream).ack(eq("g"), any());
     }
@@ -180,7 +180,7 @@ class RedisMessageConsumerDispatchCoverageTest {
     void requeueWithTinyBackoffReEnqueuesDirectly() throws Exception {
         Message m = message("p", 0, 3);
         Map<String, Object> data = new HashMap<>();
-        invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, data);
+        invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, data);
         verify(dataStream).ack(eq("g"), any());
         verify(dataStream).add(any());
         verify(dlqStream, never()).add(any());
@@ -195,7 +195,7 @@ class RedisMessageConsumerDispatchCoverageTest {
             Message m = message("p", 0, 3);
             m.setKey("k");
             Map<String, Object> data = new HashMap<>();
-            invoke(slow, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "7-0", 0, m, data);
+            invoke(slow.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "7-0", 0, m, data);
 
             verify(dataStream).ack(eq("g"), any());
             verify(client, atLeastOnce()).getMap(anyString(), eq(StringCodec.INSTANCE));
@@ -212,7 +212,7 @@ class RedisMessageConsumerDispatchCoverageTest {
         Message m = message("p", 0, 3);
         m.getHeaders().put(MqHeaders.ORIGINAL_MESSAGE_ID, "orig-1");
         Map<String, Object> data = new HashMap<>();
-        invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, data);
+        invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, data);
         assertEquals("orig-1", m.getHeaders().get(MqHeaders.ORIGINAL_MESSAGE_ID));
     }
 
@@ -221,7 +221,7 @@ class RedisMessageConsumerDispatchCoverageTest {
         Message m = message("p", 0, 3);
         m.setHeaders(Map.of("a", "b")); // immutable map triggers the copy branch
         Map<String, Object> data = new HashMap<>();
-        assertDoesNotThrow(() -> invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, data));
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, data));
         assertEquals("5-0", m.getHeaders().get(MqHeaders.ORIGINAL_MESSAGE_ID));
     }
 
@@ -231,7 +231,7 @@ class RedisMessageConsumerDispatchCoverageTest {
     void dispatchSuccessAcks() throws Exception {
         Message m = message("p", 0, 3);
         Map<String, Object> data = new HashMap<>();
-        invoke(consumer, "dispatchResult", DISPATCH, "t", "g", "5-0", 0, m, MessageHandleResult.SUCCESS, data, dataStream);
+        invoke(consumer.dispatch, "dispatchResult", DISPATCH, "t", "g", "5-0", 0, m, MessageHandleResult.SUCCESS, data, dataStream);
         verify(dataStream).ack(eq("g"), any());
         verify(dlqStream, never()).add(any());
     }
@@ -241,7 +241,7 @@ class RedisMessageConsumerDispatchCoverageTest {
         Message m = message("p", 0, 3);
         m.getHeaders().put(MqHeaders.DEFER_ACK, "true");
         Map<String, Object> data = new HashMap<>();
-        invoke(consumer, "dispatchResult", DISPATCH, "t", "g", "5-0", 0, m, MessageHandleResult.SUCCESS, data, dataStream);
+        invoke(consumer.dispatch, "dispatchResult", DISPATCH, "t", "g", "5-0", 0, m, MessageHandleResult.SUCCESS, data, dataStream);
         verify(dataStream, never()).ack(any(), any());
     }
 
@@ -249,7 +249,7 @@ class RedisMessageConsumerDispatchCoverageTest {
     void dispatchRetryRequeues() throws Exception {
         Message m = message("p", 0, 3);
         Map<String, Object> data = new HashMap<>();
-        invoke(consumer, "dispatchResult", DISPATCH, "t", "g", "5-0", 0, m, MessageHandleResult.RETRY, data, dataStream);
+        invoke(consumer.dispatch, "dispatchResult", DISPATCH, "t", "g", "5-0", 0, m, MessageHandleResult.RETRY, data, dataStream);
         verify(dataStream).ack(eq("g"), any());
     }
 
@@ -258,8 +258,8 @@ class RedisMessageConsumerDispatchCoverageTest {
         Message m1 = message("p", 0, 3);
         Message m2 = message("p", 0, 3);
         Map<String, Object> data = new HashMap<>();
-        invoke(consumer, "dispatchResult", DISPATCH, "t", "g", "5-0", 0, m1, MessageHandleResult.FAIL, data, dataStream);
-        invoke(consumer, "dispatchResult", DISPATCH, "t", "g", "5-1", 0, m2, MessageHandleResult.DEAD_LETTER, data, dataStream);
+        invoke(consumer.dispatch, "dispatchResult", DISPATCH, "t", "g", "5-0", 0, m1, MessageHandleResult.FAIL, data, dataStream);
+        invoke(consumer.dispatch, "dispatchResult", DISPATCH, "t", "g", "5-1", 0, m2, MessageHandleResult.DEAD_LETTER, data, dataStream);
         verify(dlqStream, times(2)).add(any());
         verify(dataStream, times(2)).ack(eq("g"), any());
     }
@@ -269,7 +269,7 @@ class RedisMessageConsumerDispatchCoverageTest {
     @Test
     void ackViaBackendFallbackFetchesStreamWhenNull() throws Exception {
         Map<String, Object> data = new HashMap<>();
-        invoke(consumer, "ackViaBackend", ACK, "t", "g", 0, null, "3-0", data);
+        invoke(consumer.dispatch, "ackViaBackend", ACK, "t", "g", 0, null, "3-0", data);
         verify(dataStream).ack(eq("g"), eq(new StreamMessageId(3, 0)));
     }
 
@@ -280,7 +280,7 @@ class RedisMessageConsumerDispatchCoverageTest {
         RedisMessageConsumer withBroker = new RedisMessageConsumer(client, "unit-broker",
                 mock(TopicPartitionRegistry.class), MqOptions.builder().build(), broker);
         try {
-            invoke(withBroker, "ackViaBackend", ACK, "t", "g", 0, null, "3-1", null);
+            invoke(withBroker.dispatch, "ackViaBackend", ACK, "t", "g", 0, null, "3-1", null);
             verify(broker).ack("t", "g", 0, "3-1");
         } finally {
             invoke(withBroker, "close", new Class<?>[]{});
@@ -293,7 +293,7 @@ class RedisMessageConsumerDispatchCoverageTest {
         Map<String, String> headers = new HashMap<>();
         headers.put(PayloadHeaders.PAYLOAD_HASH_REF, "payload:ref:9");
         data.put("headers", headers);
-        invoke(consumer, "ackViaBackend", ACK, "t", "g", 0, dataStream, "3-2", data);
+        invoke(consumer.dispatch, "ackViaBackend", ACK, "t", "g", 0, dataStream, "3-2", data);
         verify(bucket).delete();
     }
 
@@ -301,7 +301,7 @@ class RedisMessageConsumerDispatchCoverageTest {
     void ackViaBackendRethrowsAckFailure() throws Exception {
         doThrow(new IllegalStateException("ack boom")).when(dataStream).ack(any(), any());
         Exception e = assertThrows(Exception.class,
-                () -> invoke(consumer, "ackViaBackend", ACK, "t", "g", 0, dataStream, "3-3", null));
+                () -> invoke(consumer.dispatch, "ackViaBackend", ACK, "t", "g", 0, dataStream, "3-3", null));
         assertTrue(e.getCause() instanceof IllegalStateException);
     }
 
@@ -310,14 +310,14 @@ class RedisMessageConsumerDispatchCoverageTest {
         Map<String, Object> data = new HashMap<>();
         // MQ-11: the Java side no longer reads/decides — the newer-id comparison happens
         // atomically inside Redis, so every ack hands its id to the script unchanged
-        invoke(consumer, "ackViaBackend", ACK, "t", "g", 0, dataStream, "5-0", data);
+        invoke(consumer.dispatch, "ackViaBackend", ACK, "t", "g", 0, dataStream, "5-0", data);
         verify(frontierScript).eval(eq(RScript.Mode.READ_WRITE), anyString(),
                 eq(RScript.ReturnType.LONG), anyList(), eq("g"), eq("5-0"));
 
         // an older id is still handed over — the script decides, and the real-Redis
         // regression pins that the frontier never regresses
         reset(frontierScript);
-        invoke(consumer, "ackViaBackend", ACK, "t", "g", 0, dataStream, "4-9", data);
+        invoke(consumer.dispatch, "ackViaBackend", ACK, "t", "g", 0, dataStream, "4-9", data);
         verify(frontierScript).eval(eq(RScript.Mode.READ_WRITE), anyString(),
                 eq(RScript.ReturnType.LONG), anyList(), eq("g"), eq("4-9"));
     }

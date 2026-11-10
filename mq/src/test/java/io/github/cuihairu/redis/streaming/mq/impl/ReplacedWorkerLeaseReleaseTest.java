@@ -164,10 +164,10 @@ class ReplacedWorkerLeaseReleaseTest {
     }
 
     private void invoke(String method) throws Exception {
-        Method m = RedisMessageConsumer.class.getDeclaredMethod(method, NO_ARGS);
+        Method m = RedisPartitionAssignmentCoordinator.class.getDeclaredMethod(method, NO_ARGS);
         m.setAccessible(true);
         try {
-            m.invoke(consumer);
+            m.invoke(consumer.assignment);
         } catch (InvocationTargetException e) {
             if (e.getCause() instanceof Exception ex) throw ex;
             throw e;
@@ -176,7 +176,7 @@ class ReplacedWorkerLeaseReleaseTest {
 
     private static void installSubscription(RedisMessageConsumer target, String topic, String group,
                                             io.github.cuihairu.redis.streaming.mq.MessageHandler handler) throws Exception {
-        Class<?> cls = Class.forName(RedisMessageConsumer.class.getName() + "$Subscription");
+        Class<?> cls = Subscription.class;
         Constructor<?> c = cls.getDeclaredConstructor(String.class, String.class,
                 io.github.cuihairu.redis.streaming.mq.MessageHandler.class);
         c.setAccessible(true);
@@ -190,14 +190,14 @@ class ReplacedWorkerLeaseReleaseTest {
     }
 
     private static boolean workerRunning(Object worker) throws Exception {
-        Field f = Class.forName(RedisMessageConsumer.class.getName() + "$PartitionWorker")
+        Field f = PartitionWorker.class
                 .getDeclaredField("running");
         f.setAccessible(true);
         return ((AtomicBoolean) f.get(worker)).get();
     }
 
     private static Object newPartitionKey(String topic, String group, int pid) throws Exception {
-        Class<?> cls = Class.forName(RedisMessageConsumer.class.getName() + "$PartitionKey");
+        Class<?> cls = PartitionKey.class;
         Constructor<?> c = cls.getDeclaredConstructor(String.class, String.class, int.class);
         c.setAccessible(true);
         return c.newInstance(topic, group, pid);

@@ -199,28 +199,28 @@ class RedisMessageConsumerResidualCoverageTest {
     }
 
     private static Object newPartitionWorker(String topic, String group, int pid, MessageHandler handler) throws Exception {
-        Class<?> cls = Class.forName(RedisMessageConsumer.class.getName() + "$PartitionWorker");
+        Class<?> cls = PartitionWorker.class;
         Constructor<?> c = cls.getDeclaredConstructor(String.class, String.class, int.class, MessageHandler.class);
         c.setAccessible(true);
         return c.newInstance(topic, group, pid, handler);
     }
 
     private static Object newPartitionKey(String topic, String group, int pid) throws Exception {
-        Class<?> cls = Class.forName(RedisMessageConsumer.class.getName() + "$PartitionKey");
+        Class<?> cls = PartitionKey.class;
         Constructor<?> c = cls.getDeclaredConstructor(String.class, String.class, int.class);
         c.setAccessible(true);
         return c.newInstance(topic, group, pid);
     }
 
     private static Object newSubscription(String topic, String group, MessageHandler handler) throws Exception {
-        Class<?> cls = Class.forName(RedisMessageConsumer.class.getName() + "$Subscription");
+        Class<?> cls = Subscription.class;
         Constructor<?> c = cls.getDeclaredConstructor(String.class, String.class, MessageHandler.class);
         c.setAccessible(true);
         return c.newInstance(topic, group, handler);
     }
 
     private static Class<?> partitionWorkerClass() throws Exception {
-        return Class.forName(RedisMessageConsumer.class.getName() + "$PartitionWorker");
+        return PartitionWorker.class;
     }
 
     private static final Class<?>[] HANDLE_MISSING_4 = {String.class, String.class, int.class, String.class, Map.class};
@@ -433,14 +433,14 @@ class RedisMessageConsumerResidualCoverageTest {
 
         when(bucket.isExists()).thenReturn(false);
         MessageHandler handler = mock(MessageHandler.class);
-        assertDoesNotThrow(() -> invoke(consumer, "processIncomingRecord", PROCESS_INCOMING,
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "processIncomingRecord", PROCESS_INCOMING,
                 "t", "g", 0, "5-0", data, null, handler, true));
         verify(deadLetterService).send(any());
         verify(dataStream).ack(eq("g"), eq(new StreamMessageId(5, 0)));
 
         when(bucket.isExists()).thenReturn(true);
         when(bucket.get()).thenReturn(null);
-        assertDoesNotThrow(() -> invoke(consumer, "processIncomingRecord", PROCESS_INCOMING,
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "processIncomingRecord", PROCESS_INCOMING,
                 "t", "g", 0, "5-1", data, null, handler, true));
     }
 
@@ -453,7 +453,7 @@ class RedisMessageConsumerResidualCoverageTest {
         when(bucket.isExists()).thenThrow(new IllegalStateException("bucket boom"));
         MessageHandler handler = mock(MessageHandler.class);
         when(handler.handle(any())).thenReturn(MessageHandleResult.SUCCESS);
-        assertDoesNotThrow(() -> invoke(consumer, "processIncomingRecord", PROCESS_INCOMING,
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "processIncomingRecord", PROCESS_INCOMING,
                 "t", "g", 0, "5-0", data, dataStream, handler, true));
     }
 
@@ -462,7 +462,7 @@ class RedisMessageConsumerResidualCoverageTest {
         MessageHandler handler = mock(MessageHandler.class);
         when(handler.handle(any())).thenReturn(MessageHandleResult.SUCCESS);
         // the precheck swallows the hostile map failure, parse error is now handled by DLQ (MQ-06)
-        assertDoesNotThrow(() -> invoke(consumer, "processIncomingRecord", PROCESS_INCOMING,
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "processIncomingRecord", PROCESS_INCOMING,
                 "t", "g", 0, "5-0", headersThrowingData(), dataStream, handler, true));
     }
 
@@ -470,7 +470,7 @@ class RedisMessageConsumerResidualCoverageTest {
     void nonPayloadParseErrorsAreHandledByDlq() {
         MessageHandler handler = mock(MessageHandler.class);
         // non-payload parse error is now handled by sending to DLQ (MQ-06)
-        assertDoesNotThrow(() -> invoke(consumer, "processIncomingRecord", PROCESS_INCOMING,
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "processIncomingRecord", PROCESS_INCOMING,
                 "t", "g", 0, "5-0", throwingData(), dataStream, handler, false));
     }
 
@@ -482,13 +482,13 @@ class RedisMessageConsumerResidualCoverageTest {
         Map<String, Object> numeric = new HashMap<>();
         numeric.put("payload", "p");
         numeric.put("partitionId", 7);
-        assertDoesNotThrow(() -> invoke(consumer, "processIncomingRecord", PROCESS_INCOMING,
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "processIncomingRecord", PROCESS_INCOMING,
                 "t", "g", 0, "5-0", numeric, dataStream, handler, false));
 
         Map<String, Object> broken = new HashMap<>();
         broken.put("payload", "p");
         broken.put("partitionId", "not-a-number");
-        assertDoesNotThrow(() -> invoke(consumer, "processIncomingRecord", PROCESS_INCOMING,
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "processIncomingRecord", PROCESS_INCOMING,
                 "t", "g", 0, "5-1", broken, dataStream, handler, false));
     }
 
@@ -501,7 +501,7 @@ class RedisMessageConsumerResidualCoverageTest {
         data.put("retryCount", "not-a-number");
         data.put("maxRetries", "also-bad");
         data.put("headers", "{\"a\":\"b\"}");
-        assertDoesNotThrow(() -> invoke(consumer, "handleMissingPayload", HANDLE_MISSING_4, "t", "g", 0, "5-0", data));
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "handleMissingPayload", HANDLE_MISSING_4, "t", "g", 0, "5-0", data));
         // DLQ is now handled via DeadLetterService.send() instead of direct stream.add()
         verify(deadLetterService).send(any());
     }
@@ -520,7 +520,7 @@ class RedisMessageConsumerResidualCoverageTest {
             }
         });
         Map<String, Object> data = new HashMap<>();
-        assertDoesNotThrow(() -> invoke(consumer, "handleMissingPayload", HANDLE_MISSING_4, "t", "g", 0, "5-0", data));
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "handleMissingPayload", HANDLE_MISSING_4, "t", "g", 0, "5-0", data));
     }
 
     @Test
@@ -540,7 +540,7 @@ class RedisMessageConsumerResidualCoverageTest {
         when(handler.handle(any())).thenReturn(MessageHandleResult.SUCCESS);
         Map<String, Object> data = new HashMap<>();
         data.put("payload", "p");
-        assertDoesNotThrow(() -> invoke(consumer, "processIncomingRecord", PROCESS_INCOMING,
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "processIncomingRecord", PROCESS_INCOMING,
                 "t", "g", 0, "5-0", data, dataStream, handler, false));
     }
 
@@ -548,7 +548,7 @@ class RedisMessageConsumerResidualCoverageTest {
     void handleMissingPayloadStringHeadersParseFailureIsSwallowed() throws Exception {
         Map<String, Object> data = new HashMap<>();
         data.put("headers", "{not-valid-json");
-        assertDoesNotThrow(() -> invoke(consumer, "handleMissingPayload", HANDLE_MISSING_4, "t", "g", 0, "5-0", data));
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "handleMissingPayload", HANDLE_MISSING_4, "t", "g", 0, "5-0", data));
         verify(deadLetterService).send(any());
     }
 
@@ -556,7 +556,7 @@ class RedisMessageConsumerResidualCoverageTest {
     void sendToDeadLetterQueueUsesNowWhenTimestampMissing() throws Exception {
         Message m = message("p", 0, 3);
         m.setTimestamp(null);
-        assertDoesNotThrow(() -> invoke(consumer, "sendToDeadLetterQueue", new Class<?>[]{Message.class, int.class}, m, 0));
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "sendToDeadLetterQueue", new Class<?>[]{Message.class, int.class}, m, 0));
     }
 
     // ===== requeueOrDeadLetter residual =====
@@ -568,7 +568,7 @@ class RedisMessageConsumerResidualCoverageTest {
         try {
             Message m = message("p", 0, 3);
             m.setHeaders(throwingHeaders());
-            assertDoesNotThrow(() -> invoke(slow, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<>()));
+            assertDoesNotThrow(() -> invoke(slow.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<>()));
         } finally {
             invoke(slow, "close", new Class<?>[]{});
         }
@@ -578,7 +578,7 @@ class RedisMessageConsumerResidualCoverageTest {
     void requeueDirectReenqueueFailureIsSwallowed() throws Exception {
         doThrow(new IllegalStateException("xadd boom")).when(dataStream).add(any());
         Message m = message("p", 0, 3);
-        assertDoesNotThrow(() -> invoke(consumer, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<>()));
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<>()));
     }
 
     @Test
@@ -588,7 +588,7 @@ class RedisMessageConsumerResidualCoverageTest {
         try {
             Message m = message("p", 0, 3);
             m.setHeaders(null);
-            assertDoesNotThrow(() -> invoke(slow, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<>()));
+            assertDoesNotThrow(() -> invoke(slow.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<>()));
             verify(retryItem).put(eq("headers"), anyString());
         } finally {
             invoke(slow, "close", new Class<?>[]{});
@@ -604,7 +604,7 @@ class RedisMessageConsumerResidualCoverageTest {
             // per-message maxRetries=3 must not override the tighter configured cap of 1:
             // with retryCount already 1 the message is exhausted and must dead-letter
             Message m = message("p", 1, 3);
-            assertDoesNotThrow(() -> invoke(capped, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<>()));
+            assertDoesNotThrow(() -> invoke(capped.dispatch, "requeueOrDeadLetter", REQUEUE, dataStream, "g", "5-0", 0, m, new HashMap<>()));
 
             verify(deadLetterService).send(any());
             verify(dataStream, never()).add(any());
@@ -618,7 +618,7 @@ class RedisMessageConsumerResidualCoverageTest {
 
     @Test
     void ackPayloadCleanupFailureIsSwallowed() throws Exception {
-        assertDoesNotThrow(() -> invoke(consumer, "ackViaBackend", ACK, "t", "g", 0, dataStream, "5-0", throwingData()));
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "ackViaBackend", ACK, "t", "g", 0, dataStream, "5-0", throwingData()));
     }
 
     // ===== moveDueRetries residual =====
@@ -654,8 +654,8 @@ class RedisMessageConsumerResidualCoverageTest {
         installSubscription("t");
         running().set(true);
         when(lease.tryAcquire(anyString(), anyString(), anyLong())).thenReturn(true);
-        invoke(consumer, "rebalanceAssignments", new Class<?>[]{});
-        invoke(consumer, "rebalanceAssignments", new Class<?>[]{});
+        invoke(consumer.assignment, "rebalanceAssignments", new Class<?>[]{});
+        invoke(consumer.assignment, "rebalanceAssignments", new Class<?>[]{});
         running().set(false);
     }
 
@@ -666,7 +666,7 @@ class RedisMessageConsumerResidualCoverageTest {
         when(lease.tryAcquire(anyString(), anyString(), anyLong())).thenReturn(false);
         when(lease.isOwner(anyString(), anyString())).thenReturn(true);
         doThrow(new IllegalStateException("renew boom")).when(lease).renewIfOwner(anyString(), anyString(), anyLong());
-        invoke(consumer, "rebalanceAssignments", new Class<?>[]{});
+        invoke(consumer.assignment, "rebalanceAssignments", new Class<?>[]{});
         running().set(false);
     }
 
@@ -678,8 +678,8 @@ class RedisMessageConsumerResidualCoverageTest {
         when(lease.tryAcquire(anyString(), anyString(), anyLong())).thenReturn(false);
         assertDoesNotThrow(() -> {
             try {
-                invoke(consumer, "rebalanceAssignments", new Class<?>[]{});
-                invoke(consumer, "renewLeases", new Class<?>[]{});
+                invoke(consumer.assignment, "rebalanceAssignments", new Class<?>[]{});
+                invoke(consumer.assignment, "renewLeases", new Class<?>[]{});
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -693,7 +693,7 @@ class RedisMessageConsumerResidualCoverageTest {
     void dispatchResultToleratesBrokenDeferAckHeaders() throws Exception {
         Message m = message("p", 0, 3);
         m.setHeaders(throwingHeaders());
-        assertDoesNotThrow(() -> invoke(consumer, "dispatchResult", DISPATCH,
+        assertDoesNotThrow(() -> invoke(consumer.dispatch, "dispatchResult", DISPATCH,
                 "t", "g", "5-0", 0, m, MessageHandleResult.SUCCESS, new HashMap<>(), dataStream));
         verify(dataStream).ack(eq("g"), eq(new StreamMessageId(5, 0)));
     }

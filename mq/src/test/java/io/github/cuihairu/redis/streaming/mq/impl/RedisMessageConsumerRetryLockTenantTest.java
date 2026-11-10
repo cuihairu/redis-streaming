@@ -120,7 +120,7 @@ class RedisMessageConsumerRetryLockTenantTest {
     }
 
     private static Object subscription(String topic, String group, MessageHandler handler) throws Exception {
-        Class<?> cls = Class.forName(RedisMessageConsumer.class.getName() + "$Subscription");
+        Class<?> cls = Subscription.class;
         Constructor<?> ctor = cls.getDeclaredConstructor(String.class, String.class, MessageHandler.class);
         ctor.setAccessible(true);
         return ctor.newInstance(topic, group, handler);

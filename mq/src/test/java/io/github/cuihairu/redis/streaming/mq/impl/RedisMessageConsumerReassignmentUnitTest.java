@@ -178,7 +178,7 @@ class RedisMessageConsumerReassignmentUnitTest {
     private static Object newSubscription(String topic, String group,
                                           io.github.cuihairu.redis.streaming.mq.MessageHandler handler)
             throws Exception {
-        Class<?> cls = Class.forName(RedisMessageConsumer.class.getName() + "$Subscription");
+        Class<?> cls = Subscription.class;
         Constructor<?> c = cls.getDeclaredConstructor(String.class, String.class,
                 io.github.cuihairu.redis.streaming.mq.MessageHandler.class);
         c.setAccessible(true);
@@ -188,7 +188,7 @@ class RedisMessageConsumerReassignmentUnitTest {
     private static Object newPartitionWorker(String topic, String group, int pid,
                                              io.github.cuihairu.redis.streaming.mq.MessageHandler handler)
             throws Exception {
-        Class<?> cls = Class.forName(RedisMessageConsumer.class.getName() + "$PartitionWorker");
+        Class<?> cls = PartitionWorker.class;
         Constructor<?> c = cls.getDeclaredConstructor(String.class, String.class, int.class,
                 io.github.cuihairu.redis.streaming.mq.MessageHandler.class);
         c.setAccessible(true);
@@ -196,7 +196,7 @@ class RedisMessageConsumerReassignmentUnitTest {
     }
 
     private static Object newPartitionKey(String topic, String group, int pid) throws Exception {
-        Class<?> cls = Class.forName(RedisMessageConsumer.class.getName() + "$PartitionKey");
+        Class<?> cls = PartitionKey.class;
         Constructor<?> c = cls.getDeclaredConstructor(String.class, String.class, int.class);
         c.setAccessible(true);
         return c.newInstance(topic, group, pid);

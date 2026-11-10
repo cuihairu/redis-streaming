@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
 
 /**
- * Covers pure helper methods of {@link RedisMessageConsumer} (parseStreamId,
+ * Covers pure helper methods of {@link RedisMessageConsumer} and its dispatch processor (parseStreamId,
  * isPayloadMissing, PartitionKey value semantics, in-flight permits) via reflection without Redis.
  */
 class RedisMessageConsumerPrivateMethodCoverageTest {
@@ -46,13 +46,13 @@ class RedisMessageConsumerPrivateMethodCoverageTest {
     }
 
     private static Object invokePrivate(Object target, String name, Class<?>[] types, Object... args) throws Exception {
-        Method m = RedisMessageConsumer.class.getDeclaredMethod(name, types);
+        Method m = target.getClass().getDeclaredMethod(name, types);
         m.setAccessible(true);
         return m.invoke(target, args);
     }
 
     private static Object newPartitionKey(String topic, String group, int pid) throws Exception {
-        Class<?> clazz = Class.forName(RedisMessageConsumer.class.getName() + "$PartitionKey");
+        Class<?> clazz = PartitionKey.class;
         Constructor<?> ctor = clazz.getDeclaredConstructor(String.class, String.class, int.class);
         ctor.setAccessible(true);
         return ctor.newInstance(topic, group, pid);
@@ -63,12 +63,12 @@ class RedisMessageConsumerPrivateMethodCoverageTest {
     @Test
     void parseStreamIdHandlesAllForms() throws Exception {
         Class<?>[] sig = {String.class};
-        assertEquals(new StreamMessageId(123, 5), invokePrivate(consumer, "parseStreamId", sig, "123-5"));
-        assertEquals(new StreamMessageId(42), invokePrivate(consumer, "parseStreamId", sig, "42"));
-        assertEquals(StreamMessageId.MIN, invokePrivate(consumer, "parseStreamId", sig, (Object) null));
-        assertEquals(StreamMessageId.MIN, invokePrivate(consumer, "parseStreamId", sig, "not-a-number"));
-        assertEquals(StreamMessageId.MIN, invokePrivate(consumer, "parseStreamId", sig, "1-2-3"));
-        assertEquals(StreamMessageId.MIN, invokePrivate(consumer, "parseStreamId", sig, ""));
+        assertEquals(new StreamMessageId(123, 5), invokePrivate(consumer.dispatch, "parseStreamId", sig, "123-5"));
+        assertEquals(new StreamMessageId(42), invokePrivate(consumer.dispatch, "parseStreamId", sig, "42"));
+        assertEquals(StreamMessageId.MIN, invokePrivate(consumer.dispatch, "parseStreamId", sig, (Object) null));
+        assertEquals(StreamMessageId.MIN, invokePrivate(consumer.dispatch, "parseStreamId", sig, "not-a-number"));
+        assertEquals(StreamMessageId.MIN, invokePrivate(consumer.dispatch, "parseStreamId", sig, "1-2-3"));
+        assertEquals(StreamMessageId.MIN, invokePrivate(consumer.dispatch, "parseStreamId", sig, ""));
     }
 
     // ===== isPayloadMissing =====
@@ -76,19 +76,19 @@ class RedisMessageConsumerPrivateMethodCoverageTest {
     @Test
     void isPayloadMissingMatchesMessagesCausesAndNull() throws Exception {
         Class<?>[] sig = {Throwable.class};
-        assertFalse((Boolean) invokePrivate(consumer, "isPayloadMissing", sig, (Object) null));
-        assertFalse((Boolean) invokePrivate(consumer, "isPayloadMissing", sig, new RuntimeException("boom")));
-        assertTrue((Boolean) invokePrivate(consumer, "isPayloadMissing", sig, new RuntimeException("Payload not found: x")));
-        assertTrue((Boolean) invokePrivate(consumer, "isPayloadMissing", sig, new RuntimeException("Failed to load payload: x")));
-        assertTrue((Boolean) invokePrivate(consumer, "isPayloadMissing", sig, new RuntimeException("Payload not found in hash: x")));
-        assertTrue((Boolean) invokePrivate(consumer, "isPayloadMissing", sig, new RuntimeException("Failed to load payload from hash: x")));
+        assertFalse((Boolean) invokePrivate(consumer.dispatch, "isPayloadMissing", sig, (Object) null));
+        assertFalse((Boolean) invokePrivate(consumer.dispatch, "isPayloadMissing", sig, new RuntimeException("boom")));
+        assertTrue((Boolean) invokePrivate(consumer.dispatch, "isPayloadMissing", sig, new RuntimeException("Payload not found: x")));
+        assertTrue((Boolean) invokePrivate(consumer.dispatch, "isPayloadMissing", sig, new RuntimeException("Failed to load payload: x")));
+        assertTrue((Boolean) invokePrivate(consumer.dispatch, "isPayloadMissing", sig, new RuntimeException("Payload not found in hash: x")));
+        assertTrue((Boolean) invokePrivate(consumer.dispatch, "isPayloadMissing", sig, new RuntimeException("Failed to load payload from hash: x")));
         // null message but payload-missing cause (nested)
         RuntimeException nested = new RuntimeException("Payload not found: y");
         RuntimeException wrapper = new RuntimeException(null, new IllegalStateException(null, nested));
-        assertTrue((Boolean) invokePrivate(consumer, "isPayloadMissing", sig, wrapper));
+        assertTrue((Boolean) invokePrivate(consumer.dispatch, "isPayloadMissing", sig, wrapper));
         // null message with unrelated cause
         RuntimeException other = new RuntimeException(null, new IllegalStateException("other"));
-        assertFalse((Boolean) invokePrivate(consumer, "isPayloadMissing", sig, other));
+        assertFalse((Boolean) invokePrivate(consumer.dispatch, "isPayloadMissing", sig, other));
     }
 
     // ===== PartitionKey value semantics =====
@@ -128,15 +128,15 @@ class RedisMessageConsumerPrivateMethodCoverageTest {
 
         Class<?>[] none = {};
         // take the only two permits so the next acquire blocks
-        invokePrivate(consumer, "acquireInFlightPermit", none);
-        invokePrivate(consumer, "acquireInFlightPermit", none);
+        invokePrivate(consumer.dispatch, "acquireInFlightPermit", none);
+        invokePrivate(consumer.dispatch, "acquireInFlightPermit", none);
 
         CountDownLatch entered = new CountDownLatch(1);
         AtomicReference<Throwable> err = new AtomicReference<>();
         Thread t = new Thread(() -> {
             try {
                 entered.countDown();
-                invokePrivate(consumer, "acquireInFlightPermit", none);
+                invokePrivate(consumer.dispatch, "acquireInFlightPermit", none);
             } catch (Throwable e) {
                 err.set(e);
             }
@@ -144,13 +144,13 @@ class RedisMessageConsumerPrivateMethodCoverageTest {
         t.start();
         assertTrue(entered.await(2, TimeUnit.SECONDS));
         Thread.sleep(80); // let the third acquire block so wait time is non-zero
-        invokePrivate(consumer, "releaseInFlightPermit", none);
+        invokePrivate(consumer.dispatch, "releaseInFlightPermit", none);
         t.join(3000);
         assertFalse(t.isAlive(), "blocked acquire should complete after release");
         assertNull(err.get());
 
-        invokePrivate(consumer, "releaseInFlightPermit", none);
-        invokePrivate(consumer, "releaseInFlightPermit", none);
+        invokePrivate(consumer.dispatch, "releaseInFlightPermit", none);
+        invokePrivate(consumer.dispatch, "releaseInFlightPermit", none);
     }
 
     @Test
@@ -161,8 +161,8 @@ class RedisMessageConsumerPrivateMethodCoverageTest {
 
         Class<?>[] none = {};
         // occupy both permits so the next acquire blocks
-        invokePrivate(consumer, "acquireInFlightPermit", none);
-        invokePrivate(consumer, "acquireInFlightPermit", none);
+        invokePrivate(consumer.dispatch, "acquireInFlightPermit", none);
+        invokePrivate(consumer.dispatch, "acquireInFlightPermit", none);
 
         CountDownLatch entered = new CountDownLatch(1);
         AtomicReference<Throwable> err = new AtomicReference<>();
@@ -170,7 +170,7 @@ class RedisMessageConsumerPrivateMethodCoverageTest {
         Thread t = new Thread(() -> {
             try {
                 entered.countDown();
-                invokePrivate(consumer, "acquireInFlightPermit", none);
+                invokePrivate(consumer.dispatch, "acquireInFlightPermit", none);
                 interruptedAfter.set(Thread.currentThread().isInterrupted());
             } catch (Throwable e) {
                 err.set(e);
@@ -185,8 +185,8 @@ class RedisMessageConsumerPrivateMethodCoverageTest {
         assertFalse(t.isAlive(), "interrupted acquire should return");
         assertNull(err.get());
         assertTrue(interruptedAfter.get(), "interrupt flag should be restored");
-        invokePrivate(consumer, "releaseInFlightPermit", none);
-        invokePrivate(consumer, "releaseInFlightPermit", none);
+        invokePrivate(consumer.dispatch, "releaseInFlightPermit", none);
+        invokePrivate(consumer.dispatch, "releaseInFlightPermit", none);
     }
 
     @Test
@@ -204,8 +204,8 @@ class RedisMessageConsumerPrivateMethodCoverageTest {
         RedisMessageConsumer plain = new RedisMessageConsumer(mock(org.redisson.api.RedissonClient.class), "unit-c2",
                 mock(TopicPartitionRegistry.class), MqOptions.builder().maxInFlight(0).build());
         Class<?>[] none = {};
-        assertDoesNotThrow(() -> invokePrivate(plain, "acquireInFlightPermit", none));
-        assertDoesNotThrow(() -> invokePrivate(plain, "releaseInFlightPermit", none));
+        assertDoesNotThrow(() -> invokePrivate(plain.dispatch, "acquireInFlightPermit", none));
+        assertDoesNotThrow(() -> invokePrivate(plain.dispatch, "releaseInFlightPermit", none));
         closeQuietly(plain);
     }
 }
