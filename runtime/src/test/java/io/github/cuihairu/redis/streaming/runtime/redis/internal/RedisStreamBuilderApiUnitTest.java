@@ -136,7 +136,7 @@ class RedisStreamBuilderApiUnitTest {
 
     @Test
     void encodeNumberAndDecodeNumberCoverAllBranches() throws Exception {
-        Method encode = RedisStreamBuilder.class.getDeclaredMethod("encodeNumber", Number.class);
+        Method encode = RedisKeyedStreamBuilder.class.getDeclaredMethod("encodeNumber", Number.class);
         encode.setAccessible(true);
         assertEquals("l:0", encode.invoke(null, new Object[]{null}));
         assertEquals("d:1.5", encode.invoke(null, 1.5d));
@@ -144,7 +144,7 @@ class RedisStreamBuilderApiUnitTest {
         assertEquals("l:5", encode.invoke(null, 5L));
         assertEquals("l:7", encode.invoke(null, 7));
 
-        Method decode = RedisStreamBuilder.class.getDeclaredMethod("decodeNumber", String.class);
+        Method decode = RedisKeyedStreamBuilder.class.getDeclaredMethod("decodeNumber", String.class);
         decode.setAccessible(true);
         assertEquals(0L, decode.invoke(null, new Object[]{null}));
         assertEquals(0L, decode.invoke(null, ""));

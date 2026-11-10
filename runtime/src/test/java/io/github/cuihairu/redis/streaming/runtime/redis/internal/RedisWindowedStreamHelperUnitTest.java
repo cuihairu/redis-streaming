@@ -26,7 +26,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * Unit coverage for the private helpers of
- * {@code RedisStreamBuilder$RedisKeyedStreamBuilder$RedisWindowedStreamImpl}:
+ * {@code RedisKeyedStreamBuilder$RedisWindowedStreamImpl}:
  * {@code decodeKey}, {@code decodeNumber}, {@code parseWindow}, {@code windowMember},
  * {@code windowCloseTime} and {@code fireDueWindows} (via reflection and a mocked due-set).
  * No Redis required.
