@@ -19,7 +19,7 @@ class RedisRuntimeCheckpointManagerOffsetsTest {
 
     @SuppressWarnings("unchecked")
     private static String offsetFor(Map<Integer, String> perPartition, int pid) throws Exception {
-        Method m = RedisRuntimeCheckpointManager.class
+        Method m = RedisRuntimeOffsetSnapshotter.class
                 .getDeclaredMethod("offsetForPartition", Map.class, int.class);
         m.setAccessible(true);
         return (String) m.invoke(null, perPartition, pid);

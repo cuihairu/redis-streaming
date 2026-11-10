@@ -211,12 +211,12 @@ class RedisRuntimeCheckpointManagerRestoreSwapTest {
         when(rkeys.countExists(anyString())).thenReturn(1L);
 
         try {
-            java.lang.reflect.Method snapshotState = RedisRuntimeCheckpointManager.class
+            java.lang.reflect.Method snapshotState = RedisRuntimeKeyedStateSnapshotter.class
                     .getDeclaredMethod("snapshotState");
             snapshotState.setAccessible(true);
             @SuppressWarnings("unchecked")
             Map<String, RedisRuntimeCheckpointManager.RedisStateValue> snap =
-                    (Map<String, RedisRuntimeCheckpointManager.RedisStateValue>) snapshotState.invoke(manager);
+                    (Map<String, RedisRuntimeCheckpointManager.RedisStateValue>) snapshotState.invoke(manager.stateSnapshots);
             assertTrue(snap.containsKey(PREFIX + ":st:list"));
             assertTrue(snap.containsKey(PREFIX + ":st:set"));
             assertFalse(snap.containsKey(PREFIX + ":st:unsupported"));

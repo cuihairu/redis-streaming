@@ -3,16 +3,10 @@ package io.github.cuihairu.redis.streaming.runtime.redis.internal;
 import io.github.cuihairu.redis.streaming.api.checkpoint.Checkpoint;
 import io.github.cuihairu.redis.streaming.checkpoint.DefaultCheckpoint;
 import io.github.cuihairu.redis.streaming.checkpoint.redis.RedisCheckpointStorage;
-import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
 import io.github.cuihairu.redis.streaming.runtime.redis.RedisRuntimeConfig;
-import org.redisson.api.RKeys;
-import org.redisson.api.RList;
-import org.redisson.api.RMap;
 import org.redisson.api.RBucket;
 import org.redisson.api.RScript;
-import org.redisson.api.RScoredSortedSet;
-import org.redisson.api.RSet;
 import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import org.redisson.api.RedissonClient;
 import org.redisson.api.RType;
@@ -21,7 +15,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.Serializable;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -38,9 +31,9 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class RedisRuntimeCheckpointManager {
     private static final Logger log = LoggerFactory.getLogger(RedisRuntimeCheckpointManager.class);
 
-    private static final String SNAPSHOT_KEY_OFFSETS = "runtime:offsets";
-    private static final String SNAPSHOT_KEY_STATE = "runtime:state";
-    private static final String SNAPSHOT_KEY_STATE_SCHEMA = "runtime:stateSchema";
+    static final String SNAPSHOT_KEY_OFFSETS = "runtime:offsets";
+    static final String SNAPSHOT_KEY_STATE = "runtime:state";
+    static final String SNAPSHOT_KEY_STATE_SCHEMA = "runtime:stateSchema";
     private static final String SNAPSHOT_KEY_META = "runtime:meta";
     /** Two-phase-commit transaction handles ("runnerIndex:sinkIndex" -> encoded handle). */
     public static final String SNAPSHOT_KEY_TXNS = "runtime:txns";
@@ -117,14 +110,16 @@ public final class RedisRuntimeCheckpointManager {
         }
     }
 
-    private final RedissonClient redissonClient;
-    private final RedisRuntimeConfig config;
+    final RedissonClient redissonClient;
+    final RedisRuntimeConfig config;
     private final RedisCheckpointStorage storage;
-    private final TopicPartitionRegistry partitionRegistry;
+    final TopicPartitionRegistry partitionRegistry;
     private final AtomicLong nextCheckpointId;
-    private final StreamKeys keys;
+    final StreamKeys keys;
     /** Optional leader elector; when present, checkpoints carry a fencing token and restore scans reject stale-token checkpoints. */
     private final RedisLeaderElector leaderElector;
+    final RedisRuntimeKeyedStateSnapshotter stateSnapshots = new RedisRuntimeKeyedStateSnapshotter(this);
+    final RedisRuntimeOffsetSnapshotter offsetSnapshots = new RedisRuntimeOffsetSnapshotter(this);
 
     public RedisRuntimeCheckpointManager(RedissonClient redissonClient, RedisRuntimeConfig config) {
         this(redissonClient, config, null);
@@ -257,9 +252,9 @@ public final class RedisRuntimeCheckpointManager {
             }
             cp.getStateSnapshot().putState(SNAPSHOT_KEY_META, meta);
 
-            cp.getStateSnapshot().putState(SNAPSHOT_KEY_OFFSETS, snapshotOffsets(pipelines, offsetsOverride));
-            cp.getStateSnapshot().putState(SNAPSHOT_KEY_STATE, snapshotState());
-            cp.getStateSnapshot().putState(SNAPSHOT_KEY_STATE_SCHEMA, snapshotStateSchema());
+            cp.getStateSnapshot().putState(SNAPSHOT_KEY_OFFSETS, offsetSnapshots.snapshotOffsets(pipelines, offsetsOverride));
+            cp.getStateSnapshot().putState(SNAPSHOT_KEY_STATE, stateSnapshots.snapshotState());
+            cp.getStateSnapshot().putState(SNAPSHOT_KEY_STATE_SCHEMA, stateSnapshots.snapshotStateSchema());
             if (txnHandles != null && !txnHandles.isEmpty()) {
                 cp.getStateSnapshot().putState(SNAPSHOT_KEY_TXNS, txnHandles);
             }
@@ -419,8 +414,8 @@ public final class RedisRuntimeCheckpointManager {
                 }
             }
 
-            restoreOffsets(checkpoint, pipelines);
-            restoreState(checkpoint);
+            offsetSnapshots.restoreOffsets(checkpoint, pipelines);
+            stateSnapshots.restoreState(checkpoint);
             return true;
         } catch (Exception e) {
             log.warn("Failed to restore from checkpoint {}", checkpoint.getCheckpointId(), e);
@@ -588,468 +583,6 @@ public final class RedisRuntimeCheckpointManager {
         return eligible.isEmpty() ? null : eligible.get(0);
     }
 
-    private Map<String, Map<Integer, String>> snapshotOffsets(List<PipelineKey> pipelines,
-                                                             Map<String, Map<Integer, String>> offsetsOverride) {
-        Map<String, Map<Integer, String>> out = new HashMap<>();
-        if (pipelines == null) {
-            return out;
-        }
-        for (PipelineKey p : pipelines) {
-            int pc = Math.max(1, partitionRegistry.getPartitionCount(p.topic()));
-            Map<Integer, String> perPartition = new HashMap<>();
-            Map<Integer, String> override = offsetsOverride == null ? null : offsetsOverride.get(p.key());
-            for (int pid = 0; pid < pc; pid++) {
-                if (override != null) {
-                    String ov = override.get(pid);
-                    if (ov != null && !ov.isBlank()) {
-                        perPartition.put(pid, ov);
-                        continue;
-                    }
-                }
-                String committed = null;
-                try {
-                    // MQ-11: the frontier hash is plain text "ms-seq" written by the mq
-                    // consumer's Lua script (StringCodec), regardless of the client codec
-                    RMap<String, String> frontier = redissonClient.getMap(
-                            keys.commitFrontierKey(p.topic(), pid), StringCodec.INSTANCE);
-                    String v = frontier.get(p.consumerGroup());
-                    committed = v;
-                } catch (Exception ex) {
-                    // RT-M5: a transient Redis error here records no offset, and restore then
-                    // rewinds this partition to 0-0 (full reprocess) — that deserves a warning,
-                    // not a debug line that hides the rewind.
-                    log.warn("Failed to read commit frontier for topic={}, group={}, partition={}; "
-                            + "restore will rewind this partition to 0-0",
-                            p.topic(), p.consumerGroup(), pid, ex);
-                }
-                perPartition.put(pid, committed);
-            }
-            out.put(p.key(), perPartition);
-        }
-        return out;
-    }
-
-    private Map<String, RedisStateValue> snapshotState() {
-        Map<String, RedisStateValue> out = new HashMap<>();
-        String indexKey = config.getStateKeyPrefix() + ":" + config.getJobName() + ":stateKeys";
-        RSet<String> index = redissonClient.getSet(indexKey, StringCodec.INSTANCE);
-        List<String> keys = new ArrayList<>();
-        try {
-            keys.addAll(index.readAll());
-        } catch (Exception ex) {
-            log.warn("Checkpoint state operation failed", ex);
-        }
-
-        RKeys rkeys = redissonClient.getKeys();
-        for (String k : keys) {
-            if (k == null || k.isBlank()) continue;
-            try {
-                if (rkeys.countExists(k) <= 0) {
-                    try {
-                        index.remove(k);
-                    } catch (Exception ex) {
-                        log.debug("Checkpoint state operation failed", ex);
-                    }
-                    continue;
-                }
-                RType type = null;
-                try {
-                    type = rkeys.getType(k);
-                } catch (Exception ex) {
-                    log.debug("Checkpoint state operation failed", ex);
-                }
-                if (type == RType.ZSET) {
-                    RScoredSortedSet<String> set = redissonClient.getScoredSortedSet(k, StringCodec.INSTANCE);
-                    Map<String, Double> data = new HashMap<>();
-                    for (org.redisson.client.protocol.ScoredEntry<String> e : set.entryRange(0, -1)) {
-                        if (e == null || e.getValue() == null) {
-                            continue;
-                        }
-                        data.put(e.getValue(), e.getScore());
-                    }
-                    if (data != null && !data.isEmpty()) {
-                        out.put(k, RedisStateValue.ofZset(data));
-                    } else {
-                        try {
-                            index.remove(k);
-                        } catch (Exception ex) {
-                            log.debug("Checkpoint state operation failed", ex);
-                        }
-                    }
-                } else if (type == RType.MAP || type == null) {
-                    RMap<String, String> map = redissonClient.<String, String>getMap(k, StringCodec.INSTANCE);
-                    Map<String, String> data = map.readAllMap();
-                    if (data != null && !data.isEmpty()) {
-                        out.put(k, RedisStateValue.ofMap(new HashMap<>(data)));
-                    } else {
-                        try {
-                            index.remove(k);
-                        } catch (Exception ex) {
-                            log.debug("Checkpoint state operation failed", ex);
-                        }
-                    }
-                } else if (type == RType.LIST) {
-                    RList<String> list = redissonClient.getList(k, StringCodec.INSTANCE);
-                    List<String> data = list.readAll();
-                    if (data != null && !data.isEmpty()) {
-                        out.put(k, RedisStateValue.ofList(new ArrayList<>(data)));
-                    } else {
-                        try {
-                            index.remove(k);
-                        } catch (Exception ex) {
-                            log.debug("Checkpoint state operation failed", ex);
-                        }
-                    }
-                } else if (type == RType.SET) {
-                    RSet<String> set = redissonClient.<String>getSet(k, StringCodec.INSTANCE);
-                    Set<String> data = set.readAll();
-                    if (data != null && !data.isEmpty()) {
-                        out.put(k, RedisStateValue.ofSet(new java.util.HashSet<>(data)));
-                    } else {
-                        try {
-                            index.remove(k);
-                        } catch (Exception ex) {
-                            log.debug("Checkpoint state operation failed", ex);
-                        }
-                    }
-                } else {
-                    log.debug("Skip snapshot for unsupported state key type {}: {}", String.valueOf(type), k);
-                }
-            } catch (Exception e) {
-                log.debug("Failed to snapshot state key {}", k, e);
-            }
-        }
-        return out;
-    }
-
-    private Map<String, String> snapshotStateSchema() {
-        Map<String, String> out = new HashMap<>();
-        String indexKey = config.getStateKeyPrefix() + ":" + config.getJobName() + ":stateKeys";
-        String schemaKey = config.getStateKeyPrefix() + ":" + config.getJobName() + ":stateSchema";
-        RSet<String> index = redissonClient.getSet(indexKey, StringCodec.INSTANCE);
-        List<String> keys = new ArrayList<>();
-        try {
-            keys.addAll(index.readAll());
-        } catch (Exception ex) {
-            log.warn("Checkpoint state operation failed", ex);
-        }
-
-        RMap<String, String> schema = redissonClient.getMap(schemaKey, StringCodec.INSTANCE);
-        for (String k : keys) {
-            if (k == null || k.isBlank()) continue;
-            try {
-                String v = schema.get(k);
-                if (v != null && !v.isBlank()) {
-                    out.put(k, v);
-                }
-            } catch (Exception ex) {
-                log.debug("Checkpoint state operation failed", ex);
-            }
-        }
-        return out;
-    }
-
-    private void restoreOffsets(Checkpoint checkpoint, List<PipelineKey> pipelines) {
-        @SuppressWarnings("unchecked")
-        Map<String, Map<Integer, String>> offsets = checkpoint.getStateSnapshot().getState(SNAPSHOT_KEY_OFFSETS);
-        if (offsets == null || offsets.isEmpty()) {
-            return;
-        }
-        if (pipelines == null) {
-            return;
-        }
-
-        RScript script = redissonClient.getScript(StringCodec.INSTANCE);
-        final String lua =
-                "redis.pcall('XGROUP','DESTROY', KEYS[1], ARGV[1]) \n" +
-                "local r = redis.pcall('XGROUP','CREATE', KEYS[1], ARGV[1], ARGV[2], 'MKSTREAM') \n" +
-                "if type(r)=='table' and r.err then if string.find(r.err,'BUSYGROUP') then return 'EXISTS' else return r.err end end \n" +
-                "return r";
-
-        for (PipelineKey p : pipelines) {
-            Map<Integer, String> perPartition = offsets.get(p.key());
-            if (perPartition == null) {
-                continue;
-            }
-            int pc = Math.max(1, partitionRegistry.getPartitionCount(p.topic()));
-            for (int pid = 0; pid < pc; pid++) {
-                String id = offsetForPartition(perPartition, pid);
-                String startId = (id == null || id.isBlank()) ? "0-0" : id;
-                String streamKey = keys.partitionStreamKey(p.topic(), pid);
-                try {
-                    script.eval(RScript.Mode.READ_WRITE, lua, RScript.ReturnType.STRING,
-                            java.util.Collections.singletonList(streamKey), p.consumerGroup(), startId);
-                } catch (Exception e) {
-                    log.warn("Failed to restore group offset: topic={}, group={}, partition={}, id={}",
-                            p.topic(), p.consumerGroup(), pid, startId, e);
-                }
-            }
-        }
-    }
-
-    /**
-     * Looks up a partition's committed offset tolerating the JSON round-trip through
-     * {@code RedisCheckpointStorage}: the snapshot is built with {@code Integer} keys, but the
-     * default Jackson codec stringifies them on write, so the deserialized map is keyed by
-     * {@code String}. The plain {@code get(pid)} lookup used to miss every entry, silently
-     * rewinding every restored consumer group to {@code 0-0} (RT-H1).
-     */
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private static String offsetForPartition(Map<Integer, String> perPartition, int pid) {
-        String id = perPartition.get(pid);
-        if (id == null) {
-            Object v = ((Map) perPartition).get(String.valueOf(pid));
-            if (v != null) {
-                id = String.valueOf(v);
-            }
-        }
-        return id;
-    }
-
-    private void restoreState(Checkpoint checkpoint) {
-        Object raw = checkpoint.getStateSnapshot().getState(SNAPSHOT_KEY_STATE);
-        if (!(raw instanceof Map<?, ?> rawMap)) {
-            return;
-        }
-        Map<String, RedisStateValue> state = new HashMap<>();
-        for (Map.Entry<?, ?> e : rawMap.entrySet()) {
-            if (!(e.getKey() instanceof String redisKey)) {
-                continue;
-            }
-            Object v = e.getValue();
-            if (v instanceof RedisStateValue sv) {
-                state.put(redisKey, sv);
-                continue;
-            }
-            if (v instanceof Map<?, ?> m) {
-                Map<String, String> data = new HashMap<>();
-                for (Map.Entry<?, ?> me : m.entrySet()) {
-                    if (me.getKey() == null || me.getValue() == null) {
-                        continue;
-                    }
-                    data.put(String.valueOf(me.getKey()), String.valueOf(me.getValue()));
-                }
-                state.put(redisKey, RedisStateValue.ofMap(data));
-            }
-        }
-        if (state.isEmpty()) {
-            return;
-        }
-        @SuppressWarnings("unchecked")
-        Map<String, String> schemaSnap = checkpoint.getStateSnapshot().getState(SNAPSHOT_KEY_STATE_SCHEMA);
-
-        String indexKey = config.getStateKeyPrefix() + ":" + config.getJobName() + ":stateKeys";
-        String schemaKey = config.getStateKeyPrefix() + ":" + config.getJobName() + ":stateSchema";
-        RSet<String> index = redissonClient.getSet(indexKey, StringCodec.INSTANCE);
-        List<String> existing = new ArrayList<>();
-        try {
-            existing.addAll(index.readAll());
-        } catch (Exception ex) {
-            log.warn("Checkpoint state operation failed", ex);
-        }
-
-        // RT-M4: restore used to be delete-then-rebuild — a failure in the middle left the
-        // live state wiped and the per-key failures were swallowed, so the job continued
-        // with missing (or partially rebuilt) state. Now every snapshot key is first written
-        // under a staging name (nothing live is touched), then flipped into place with an
-        // atomic RENAME per key; any staging or swap failure throws and the caller aborts
-        // the restore instead of degrading into a stateless start.
-        String stage = ":rst:" + checkpoint.getCheckpointId();
-        List<String[]> stagedPairs = new ArrayList<>();   // {stagedName, finalName}
-        List<String> stagedNames = new ArrayList<>();     // every staging key created
-        List<String> clearedKeys = new ArrayList<>();     // snapshot keys that must end up empty
-        java.util.Set<String> snapshotKeys = new java.util.HashSet<>();
-        boolean stagedIndexExists = false;                // the staging index key was actually created
-        boolean stagedSchemaExists = false;               // the staging schema key was actually created
-        try {
-            for (Map.Entry<String, RedisStateValue> e : state.entrySet()) {
-                String redisKey = e.getKey();
-                RedisStateValue value = e.getValue();
-                if (redisKey == null || redisKey.isBlank() || value == null || value.type() == null) {
-                    continue;
-                }
-                snapshotKeys.add(redisKey);
-                if (value.type() == RedisStateType.ZSET) {
-                    Map<String, Double> data = value.zset();
-                    if (data == null || data.isEmpty()) {
-                        clearedKeys.add(redisKey);
-                        continue;
-                    }
-                    String stagedName = redisKey + stage;
-                    RScoredSortedSet<String> set = redissonClient.getScoredSortedSet(stagedName, StringCodec.INSTANCE);
-                    try {
-                        rkeysDeleteQuietly(stagedName); // idempotent re-staging after a failed attempt
-                    } catch (Exception ex) {
-                        log.debug("Checkpoint state operation failed", ex);
-                    }
-                    set.addAll(data);
-                    stagedPairs.add(new String[]{stagedName, redisKey});
-                    stagedNames.add(stagedName);
-                } else if (value.type() == RedisStateType.LIST) {
-                    List<String> data = value.list();
-                    if (data == null || data.isEmpty()) {
-                        clearedKeys.add(redisKey);
-                        continue;
-                    }
-                    String stagedName = redisKey + stage;
-                    RList<String> list = redissonClient.getList(stagedName, StringCodec.INSTANCE);
-                    try {
-                        rkeysDeleteQuietly(stagedName);
-                    } catch (Exception ex) {
-                        log.debug("Checkpoint state operation failed", ex);
-                    }
-                    list.addAll(data);
-                    stagedPairs.add(new String[]{stagedName, redisKey});
-                    stagedNames.add(stagedName);
-                } else if (value.type() == RedisStateType.SET) {
-                    Set<String> data = value.set();
-                    if (data == null || data.isEmpty()) {
-                        clearedKeys.add(redisKey);
-                        continue;
-                    }
-                    String stagedName = redisKey + stage;
-                    RSet<String> set = redissonClient.<String>getSet(stagedName, StringCodec.INSTANCE);
-                    try {
-                        rkeysDeleteQuietly(stagedName);
-                    } catch (Exception ex) {
-                        log.debug("Checkpoint state operation failed", ex);
-                    }
-                    set.addAll(data);
-                    stagedPairs.add(new String[]{stagedName, redisKey});
-                    stagedNames.add(stagedName);
-                } else {
-                    Map<String, String> data = value.map();
-                    if (data == null || data.isEmpty()) {
-                        clearedKeys.add(redisKey);
-                        continue;
-                    }
-                    String stagedName = redisKey + stage;
-                    RMap<String, String> map = redissonClient.<String, String>getMap(stagedName, StringCodec.INSTANCE);
-                    try {
-                        rkeysDeleteQuietly(stagedName);
-                    } catch (Exception ex) {
-                        log.debug("Checkpoint state operation failed", ex);
-                    }
-                    map.putAll(data);
-                    stagedPairs.add(new String[]{stagedName, redisKey});
-                    stagedNames.add(stagedName);
-                }
-            }
-
-            // stage the state-key index and the schema map the same way. An empty staging
-            // write (no state keys / no schema entries) creates no Redis key, so only a
-            // staging key that actually exists is renamed — RENAME of an absent key errors.
-            // A snapshot with no entries means the live counterpart must end up empty:
-            // it is dropped instead.
-            stagedIndexExists = !stagedPairs.isEmpty();
-            if (stagedIndexExists) {
-                RSet<String> stagedIndex = redissonClient.getSet(indexKey + stage, StringCodec.INSTANCE);
-                rkeysDeleteQuietly(indexKey + stage);
-                stagedIndex.addAll(stagedPairs.stream().map(p -> p[1]).toList());
-                stagedNames.add(indexKey + stage);
-            }
-            RMap<String, String> stagedSchema = redissonClient.<String, String>getMap(schemaKey + stage, StringCodec.INSTANCE);
-            rkeysDeleteQuietly(schemaKey + stage);
-            if (schemaSnap != null) {
-                Map<String, String> filtered = new HashMap<>();
-                for (String[] p : stagedPairs) {
-                    String sv = schemaSnap.get(p[1]);
-                    if (sv != null && !sv.isBlank()) {
-                        filtered.put(p[1], sv);
-                    }
-                }
-                if (!filtered.isEmpty()) {
-                    stagedSchema.putAll(filtered);
-                    stagedSchemaExists = true;
-                    stagedNames.add(schemaKey + stage);
-                }
-            }
-        } catch (Exception ex) {
-            cleanupStagedKeys(stagedNames);
-            throw new IllegalStateException("Failed to stage checkpoint state for restore (checkpoint "
-                    + checkpoint.getCheckpointId() + "); live state is untouched", ex);
-        }
-
-        RKeys rkeys = redissonClient.getKeys();
-        try {
-            for (String[] pair : stagedPairs) {
-                rkeys.rename(pair[0], pair[1]);
-            }
-            if (stagedIndexExists) {
-                rkeys.rename(indexKey + stage, indexKey);
-            } else {
-                rkeys.delete(indexKey);
-            }
-            if (stagedSchemaExists) {
-                rkeys.rename(schemaKey + stage, schemaKey);
-            } else {
-                rkeys.delete(schemaKey);
-            }
-            // stale keys: present in the previous index but absent from this snapshot —
-            // dropped only after every staged key landed
-            for (String k : existing) {
-                if (k == null || k.isBlank() || snapshotKeys.contains(k)) {
-                    continue;
-                }
-                try {
-                    rkeys.delete(k);
-                } catch (Exception ex) {
-                    log.warn("Checkpoint state operation failed", ex);
-                }
-            }
-            for (String k : clearedKeys) {
-                try {
-                    rkeys.delete(k);
-                } catch (Exception ex) {
-                    log.warn("Checkpoint state operation failed", ex);
-                }
-            }
-        } catch (Exception ex) {
-            cleanupStagedKeys(stagedNames);
-            throw new IllegalStateException("State restore swap failed (checkpoint "
-                    + checkpoint.getCheckpointId() + "); refusing to continue with partially restored state", ex);
-        }
-
-        // TTL is correctness-adjacent (retention), not correctness itself: a failure here
-        // is logged, not fail-stop — the restored state is already consistent at this point.
-        Duration ttl = config.getStateTtl();
-        if (ttl != null && !ttl.isZero() && !ttl.isNegative()) {
-            for (String[] pair : stagedPairs) {
-                try {
-                    RedisStateType t = state.get(pair[1]).type();
-                    if (t == RedisStateType.ZSET) {
-                        redissonClient.getScoredSortedSet(pair[1], StringCodec.INSTANCE).expire(ttl);
-                    } else if (t == RedisStateType.LIST) {
-                        redissonClient.getList(pair[1], StringCodec.INSTANCE).expire(ttl);
-                    } else if (t == RedisStateType.SET) {
-                        redissonClient.<String>getSet(pair[1], StringCodec.INSTANCE).expire(ttl);
-                    } else {
-                        redissonClient.<String, String>getMap(pair[1], StringCodec.INSTANCE).expire(ttl);
-                    }
-                } catch (Exception ex) {
-                    log.warn("Failed to apply state TTL to restored key {}", pair[1], ex);
-                }
-            }
-        }
-    }
-
-    private void rkeysDeleteQuietly(String key) {
-        try {
-            redissonClient.getKeys().delete(key);
-        } catch (Exception ex) {
-            log.debug("Checkpoint state operation failed", ex);
-        }
-    }
-
-    private void cleanupStagedKeys(List<String> stagedNames) {
-        for (String staged : stagedNames) {
-            try {
-                redissonClient.getKeys().delete(staged);
-            } catch (Exception ex) {
-                log.debug("Failed to clean up staging key {}", staged, ex);
-            }
-        }
-    }
 
     /**
      * RT-H2: evicts checkpoints beyond {@code checkpointsToKeep} (incomplete ones first, then
