@@ -24,6 +24,7 @@ import org.redisson.api.RScript;
 import org.redisson.api.RedissonClient;
 import org.redisson.client.codec.Codec;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -268,14 +269,22 @@ class RedisStreamExecutionEnvironmentGapClosureTest {
         RedisStreamExecutionEnvironment env = environment(cfg);
         env.fromMqTopic("t", "g").addSink(v -> {
         });
-        Message m = message("1-1", null);
-        Method annotate = RedisStreamExecutionEnvironment.class
-                .getDeclaredMethod("annotateRuntimeError", Message.class, String.class, Throwable.class);
-        annotate.setAccessible(true);
-        annotate.invoke(env, m, "g", null);
-        assertEquals(cfg.getJobName(), m.getHeaders().get(RedisRuntimeHeaders.JOB_NAME));
-        assertEquals("g", m.getHeaders().get(RedisRuntimeHeaders.CONSUMER_GROUP));
-        assertNull(m.getHeaders().get(RedisRuntimeHeaders.ERROR_TYPE), "null error carries no error headers");
+        RedisJobClient job = env.executeAsync();
+        try {
+            Message m = message("1-1", null);
+            Field launcherField = job.getClass().getDeclaredField("subtaskLauncher");
+            launcherField.setAccessible(true);
+            Object launcher = launcherField.get(job);
+            Method annotate = RedisSubtaskLauncher.class
+                    .getDeclaredMethod("annotateRuntimeError", Message.class, String.class, Throwable.class);
+            annotate.setAccessible(true);
+            annotate.invoke(launcher, m, "g", null);
+            assertEquals(cfg.getJobName(), m.getHeaders().get(RedisRuntimeHeaders.JOB_NAME));
+            assertEquals("g", m.getHeaders().get(RedisRuntimeHeaders.CONSUMER_GROUP));
+            assertNull(m.getHeaders().get(RedisRuntimeHeaders.ERROR_TYPE), "null error carries no error headers");
+        } finally {
+            job.cancel();
+        }
     }
 
     @Test

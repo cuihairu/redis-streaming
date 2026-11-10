@@ -3,20 +3,14 @@ package io.github.cuihairu.redis.streaming.runtime.redis;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.cuihairu.redis.streaming.api.stream.DataStream;
 import io.github.cuihairu.redis.streaming.api.stream.KeyedStream;
-import io.github.cuihairu.redis.streaming.api.stream.StreamSink;
 import io.github.cuihairu.redis.streaming.join.JoinConfig;
 import io.github.cuihairu.redis.streaming.join.JoinFunction;
 import io.github.cuihairu.redis.streaming.join.operator.Envelope;
 import io.github.cuihairu.redis.streaming.join.operator.StreamJoinOperator;
 import io.github.cuihairu.redis.streaming.mq.Message;
 import io.github.cuihairu.redis.streaming.mq.MessageConsumer;
-import io.github.cuihairu.redis.streaming.mq.MessageHandleResult;
-import io.github.cuihairu.redis.streaming.mq.MessageHandler;
-import io.github.cuihairu.redis.streaming.mq.MessageProducer;
 import io.github.cuihairu.redis.streaming.mq.MessageQueueFactory;
-import io.github.cuihairu.redis.streaming.mq.MqHeaders;
 import io.github.cuihairu.redis.streaming.mq.SubscriptionOptions;
-import io.github.cuihairu.redis.streaming.mq.control.PausableMessageConsumer;
 import io.github.cuihairu.redis.streaming.mq.partition.StreamKeys;
 import io.github.cuihairu.redis.streaming.mq.partition.TopicPartitionRegistry;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.CheckpointGate;
@@ -29,34 +23,24 @@ import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisPipelineRu
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisStreamBuilder;
 import io.github.cuihairu.redis.streaming.runtime.redis.internal.RedisRuntimeCheckpointManager;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
-import org.slf4j.MDC;
 import io.github.cuihairu.redis.streaming.api.checkpoint.Checkpoint;
 import org.redisson.api.RMap;
 import org.redisson.api.RScript;
 import org.redisson.api.RedissonClient;
-import org.redisson.api.RStream;
-import org.redisson.api.stream.StreamMessageId;
-import org.redisson.client.codec.StringCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
-import java.util.regex.Pattern;
 
 /**
  * Redis-backed execution environment.
@@ -69,40 +53,6 @@ import java.util.regex.Pattern;
 public final class RedisStreamExecutionEnvironment {
 
     private static final Logger log = LoggerFactory.getLogger(RedisStreamExecutionEnvironment.class);
-    private static final Pattern ID_PATTERN = Pattern.compile("[A-Za-z0-9_.-]+");
-
-    /**
-     * MQ-11: atomic frontier compare-and-set — HSET only when the acked stream id is
-     * newer than the stored one. Values are plain text "ms-seq"; quotes are stripped
-     * before matching so values written by a quoting codec stay comparable. A new id
-     * that is not a stream id is never written; a stored value that is not a stream id
-     * is overwritten (self-healing, e.g. hashes left behind by a previous binary codec).
-     * Returns 1 when the frontier advanced.
-     */
-    private static final String COMMIT_FRONTIER_CAS_LUA = String.join("\n",
-            "local prev = redis.call('HGET', KEYS[1], ARGV[1])",
-            "local nv = string.gsub(ARGV[2], '\"', '')",
-            "local nm, ns = string.match(nv, '^(%d+)-(%d+)$')",
-            "if nm == nil then return 0 end",
-            "if prev == false then",
-            "  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])",
-            "  return 1",
-            "end",
-            "local pv = string.gsub(prev, '\"', '')",
-            "local pm, ps = string.match(pv, '^(%d+)-(%d+)$')",
-            "if pm == nil then",
-            "  -- fallback to lexicographic compare for unparsable values",
-            "  if nv > prev then",
-            "    redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])",
-            "    return 1",
-            "  end",
-            "  return 0",
-            "end",
-            "if tonumber(nm) > tonumber(pm) or (tonumber(nm) == tonumber(pm) and tonumber(ns) > tonumber(ps)) then",
-            "  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])",
-            "  return 1",
-            "end",
-            "return 0");
 
     private final RedissonClient redissonClient;
     private final RedisRuntimeConfig config;
@@ -116,12 +66,6 @@ public final class RedisStreamExecutionEnvironment {
 
     private final List<RedisPipelineDefinition> pipelineDefinitions = new ArrayList<>();
     private final AtomicBoolean executed = new AtomicBoolean(false);
-    /**
-     * Cross-instance control gate, set by {@link #executeAsync()}; null when the gate is
-     * disabled, in which case control operations behave exactly as the single-instance
-     * in-process {@link CheckpointGate} always did.
-     */
-    private JobControlGate jobControlGate;
     private final AtomicInteger streamSeq = new AtomicInteger(0);
     private final java.util.Set<String> usedStreamIds = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** RT-M7: (topic, group) pairs already registered, so forked pipelines fail fast instead of splitting. */
@@ -214,7 +158,7 @@ public final class RedisStreamExecutionEnvironment {
     public DataStream<Message> fromMqTopicWithId(String sourceId, String topic, String consumerGroup, SubscriptionOptions subscriptionOptions) {
         Objects.requireNonNull(topic, "topic");
         Objects.requireNonNull(consumerGroup, "consumerGroup");
-        String sid = requireValidId(sourceId);
+        String sid = StreamIds.requireValidId(sourceId);
         registerStreamId(sid);
         return RedisStreamBuilder.forMqSource(this, config, redissonClient, objectMapper, sid, topic, consumerGroup, subscriptionOptions);
     }
@@ -279,7 +223,7 @@ public final class RedisStreamExecutionEnvironment {
         Objects.requireNonNull(consumerGroup1, "consumerGroup1");
         Objects.requireNonNull(topic2, "topic2");
         Objects.requireNonNull(consumerGroup2, "consumerGroup2");
-        String sid = requireValidId(sourceId);
+        String sid = StreamIds.requireValidId(sourceId);
         registerStreamId(sid);
         return RedisStreamBuilder.forMqSources(this, config, redissonClient, objectMapper, sid,
                 List.of(topic1, topic2), List.of(consumerGroup1, consumerGroup2),
@@ -338,12 +282,12 @@ public final class RedisStreamExecutionEnvironment {
         DataStream<Envelope<K, L, R>> leftTagged = left.map(l -> Envelope.<K, L, R>forLeft(
                 config.getLeftKeySelector().apply(l),
                 extractTimestamp(l, config.getLeftTimestampExtractor()), l));
-        leftTagged.addSink(new EnvelopeTopicSink<>(joinTopic));
+        leftTagged.addSink(new EnvelopeTopicSink<>(joinTopic, mqFactory));
 
         DataStream<Envelope<K, L, R>> rightTagged = right.map(r -> Envelope.<K, L, R>forRight(
                 config.getRightKeySelector().apply(r),
                 extractTimestamp(r, config.getRightTimestampExtractor()), r));
-        rightTagged.addSink(new EnvelopeTopicSink<>(joinTopic));
+        rightTagged.addSink(new EnvelopeTopicSink<>(joinTopic, mqFactory));
 
         DataStream<Envelope<K, L, R>> envelopes = fromMqTopicWithId(
                         "join-" + joinTopic, joinTopic, joinTopic + "-join")
@@ -356,49 +300,6 @@ public final class RedisStreamExecutionEnvironment {
      * (same convention as {@code StreamJoiner} and the join module's sugar). */
     private static <T> long extractTimestamp(T element, Function<T, Long> extractor) {
         return extractor != null ? extractor.apply(element) : System.currentTimeMillis();
-    }
-
-    /**
-     * Producer-side sink for the join topic: encodes envelopes through
-     * {@link RedisJoinEnvelopeCodec} and sends them through the normal MQ producer path, so
-     * the join topic gets standard topic registration, partitioning and retention governance.
-     * The join key doubles as the MQ key — same-key envelopes land on the same partition,
-     * preserving per-key arrival order into the join operator. Send failures fail the record
-     * (retry/DLQ by the runner's failure policy); a blocking send is the at-least-once backpressure.
-     */
-    private final class EnvelopeTopicSink<K, L, R> implements StreamSink<Envelope<K, L, R>> {
-
-        private final String joinTopic;
-        private MessageProducer producer;
-
-        EnvelopeTopicSink(String joinTopic) {
-            this.joinTopic = Objects.requireNonNull(joinTopic, "joinTopic");
-        }
-
-        @Override
-        public void open() {
-            this.producer = mqFactory.createProducer();
-        }
-
-        @Override
-        public void invoke(Envelope<K, L, R> envelope) {
-            // toJson rejects a null join key with a message naming the offending side —
-            // propagate that IllegalArgumentException unwrapped
-            String json = RedisJoinEnvelopeCodec.toJson(envelope);
-            try {
-                producer.send(joinTopic, String.valueOf(envelope.getJoinKey()), json)
-                        .get(30, TimeUnit.SECONDS);
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to write join envelope to topic '" + joinTopic + "'", e);
-            }
-        }
-
-        @Override
-        public void close() {
-            if (producer != null) {
-                producer.close();
-            }
-        }
     }
 
     /**
@@ -497,9 +398,14 @@ public final class RedisStreamExecutionEnvironment {
         CheckpointGate gate = new CheckpointGate();
         // cross-instance counterpart of the gate above: clients of the same job serialize their
         // control operations through Redis leases, and null leaves single-instance behavior intact
-        this.jobControlGate = newJobControlGate();
+        JobControlGate jobControlGate = newJobControlGate();
         DeferredAcks deferredAcks = new DeferredAcks();
         TwoPhaseEpochTracker twoPhaseEpochs = new TwoPhaseEpochTracker();
+        // split collaborators: checkpoint flow/scheduling and subtask wiring live outside
+        // the environment facade so the job lifecycle is not one monolith
+        RedisCheckpointFlow checkpointFlow = new RedisCheckpointFlow(config, redissonClient, jobControlGate);
+        RedisCheckpointScheduler checkpointScheduler = new RedisCheckpointScheduler(config, checkpointFlow);
+        RedisSubtaskLauncher subtaskLauncher = new RedisSubtaskLauncher(config);
         // set when at least one runner replayed a stored transaction during restore
         final java.util.concurrent.atomic.AtomicBoolean twoPhaseRecoveryReplayed =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -508,7 +414,7 @@ public final class RedisStreamExecutionEnvironment {
         // after the restore, and the compensation needs the stored txn handles)
         java.util.concurrent.atomic.AtomicReference<Checkpoint> restoredCheckpointRef =
                 new java.util.concurrent.atomic.AtomicReference<>(null);
-        warnDeferAckConfiguration();
+        subtaskLauncher.warnDeferAckConfiguration();
 
         try {
             for (RedisPipelineDefinition def : pipelineDefinitions) {
@@ -551,7 +457,7 @@ public final class RedisStreamExecutionEnvironment {
                         runner.onCheckpointRestore(restoredCheckpointId);
                         Checkpoint restoredCp = restoredCheckpointRef.get();
                         if (restoredCp != null
-                                && recoverTwoPhaseTransactions(runner, runners.size() - 1,
+                                && checkpointFlow.recoverTwoPhaseTransactions(runner, runners.size() - 1,
                                         checkpointManager, restoredCp)) {
                             twoPhaseRecoveryReplayed.set(true);
                         }
@@ -570,7 +476,7 @@ public final class RedisStreamExecutionEnvironment {
                         }
                     }
 
-                    startSubtaskConsumer(consumer, consumerName, p, subtask, parallelism, runner, deferredAcks);
+                    subtaskLauncher.startSubtaskConsumer(consumer, consumerName, p, subtask, parallelism, runner, deferredAcks);
                     subtasks.add(new Subtask(pipelineIndex, runner, consumer));
                 }
                 pipelineIndex++;
@@ -580,23 +486,23 @@ public final class RedisStreamExecutionEnvironment {
             // genuinely sink-committed, so mark it once (not per runner) to keep a later
             // restore from replaying the same handles again
             if (twoPhaseRecoveryReplayed.get()) {
-                markRecoveredCheckpointCommitted(checkpointManager, restoredCheckpointRef.get());
+                checkpointFlow.markRecoveredCheckpointCommitted(checkpointManager, restoredCheckpointRef.get());
             }
 
             if (config.isLeaderElectionEnabled()) {
-                leaderRenewExecutor = startLeaderCoordination(checkpointExecutorRef, consumers, runners,
+                leaderRenewExecutor = checkpointScheduler.startLeaderCoordination(checkpointExecutorRef, consumers, runners,
                         checkpointManager, pipelineKeys, deferredAcks, twoPhaseEpochs, gate,
                         isLeader, leaderElector);
             } else {
-                startCheckpointExecutor(checkpointExecutorRef, consumers, runners, checkpointManager,
+                checkpointScheduler.startCheckpointExecutor(checkpointExecutorRef, consumers, runners, checkpointManager,
                         pipelineKeys, deferredAcks, twoPhaseEpochs, gate);
             }
         } catch (Exception e) {
-            stopConsumersQuietly(consumers);
-            closeRunnersQuietly(runners);
-            shutdownExecutorQuietly(sharedTimerExecutor);
-            shutdownExecutorQuietly(checkpointExecutorRef.get());
-            shutdownExecutorQuietly(leaderRenewExecutor);
+            QuietClose.stopConsumersQuietly(consumers);
+            QuietClose.closeRunnersQuietly(runners);
+            QuietClose.shutdownExecutorQuietly(sharedTimerExecutor);
+            QuietClose.shutdownExecutorQuietly(checkpointExecutorRef.get());
+            QuietClose.shutdownExecutorQuietly(leaderRenewExecutor);
             if (jobControlGate != null) {
                 // release-then-close: a held lease must not block the restarted job's first
                 // control operation for a full TTL; the CAS release cannot free another
@@ -614,1282 +520,24 @@ public final class RedisStreamExecutionEnvironment {
             throw (e instanceof RuntimeException re) ? re : new RuntimeException("Failed to start Redis runtime job", e);
         }
 
-        return new LaunchedJobClient(checkpointExecutorRef, leaderRenewExecutor, leaderElector, isLeader,
+        return RedisLaunchedJobClient.create(checkpointExecutorRef, leaderRenewExecutor, leaderElector, isLeader,
                 sharedTimerExecutor, consumers, runners, subtasks, consumerSeq,
                 checkpointManager, pipelineKeys, deferredAcks, twoPhaseEpochs, gate, jobControlGate,
-                restoredCheckpointIdRef);
+                restoredCheckpointIdRef, config, pipelineDefinitions, mqFactory, executed,
+                checkpointFlow, subtaskLauncher);
     }
 
     /**
      * Start the periodic checkpoint scheduler. With leader election disabled this runs on
      * every instance (previous behavior); with election enabled it runs only on the leader.
      */
-    private void startCheckpointExecutor(AtomicReference<ScheduledExecutorService> checkpointExecutorRef,
-                                         List<MessageConsumer> consumers,
-                                         List<RedisPipelineRunner<?>> runners,
-                                         RedisRuntimeCheckpointManager checkpointManager,
-                                         List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
-                                         DeferredAcks deferredAcks,
-                                         TwoPhaseEpochTracker twoPhaseEpochs,
-                                         CheckpointGate gate) {
-        Duration interval = config.getCheckpointInterval();
-        if (interval == null || interval.isZero() || interval.isNegative()) {
-            return;
-        }
-        int threads = Math.max(1, config.getCheckpointThreads());
-        ScheduledThreadPoolExecutor ex = new ScheduledThreadPoolExecutor(threads);
-        ex.setRemoveOnCancelPolicy(true);
-        checkpointExecutorRef.set(ex);
-        long ms = Math.max(50L, interval.toMillis());
-        ex.scheduleWithFixedDelay(() -> {
-            if (!gate.tryBeginAlignedCheckpoint()) {
-                return;
-            }
-            try {
-                triggerCheckpointInternal(consumers, runners, checkpointManager, pipelineKeys,
-                        deferredAcks, twoPhaseEpochs);
-            } catch (Exception e) {
-                log.debug("Periodic checkpoint failed (jobName={})", config.getJobName(), e);
-            } finally {
-                gate.endAlignedCheckpoint();
-            }
-        }, ms, ms, TimeUnit.MILLISECONDS);
-    }
-
-    private void stopCheckpointExecutor(AtomicReference<ScheduledExecutorService> checkpointExecutorRef) {
-        shutdownExecutorQuietly(checkpointExecutorRef.getAndSet(null));
-    }
-
-    /**
-     * Leader coordination loop: renew the lease while leading, take over when the leader
-     * is lost, and start/stop the periodic checkpoint scheduler accordingly. Only the
-     * leader checkpoints periodically — two leaders running independent checkpoint
-     * schedules would allocate colliding checkpoint ids (split-brain double-write).
-     */
-    private ScheduledExecutorService startLeaderCoordination(AtomicReference<ScheduledExecutorService> checkpointExecutorRef,
-                                         List<MessageConsumer> consumers,
-                                         List<RedisPipelineRunner<?>> runners,
-                                         RedisRuntimeCheckpointManager checkpointManager,
-                                         List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
-                                         DeferredAcks deferredAcks,
-                                         TwoPhaseEpochTracker twoPhaseEpochs,
-                                         CheckpointGate gate,
-                                         AtomicBoolean isLeader,
-                                         RedisLeaderElector elector) {
-        long renewMs = Math.max(1000L, config.getLeaderRenewInterval().toMillis());
-        ScheduledThreadPoolExecutor renewEx = new ScheduledThreadPoolExecutor(1);
-        renewEx.setRemoveOnCancelPolicy(true);
-        renewEx.scheduleWithFixedDelay(() -> {
-            try {
-                if (isLeader.get()) {
-                    if (!elector.renewLeadership()) {
-                        isLeader.set(false);
-                        log.warn("Lost leadership for job {} (instance {}); periodic checkpointing stopped",
-                                config.getJobName(), config.getJobInstanceId());
-                        stopCheckpointExecutor(checkpointExecutorRef);
-                    }
-                } else if (elector.tryAcquireLeadership()) {
-                    isLeader.set(true);
-                    long token = elector.nextFencingToken();
-                    // HA: the dead leader may have written checkpoints after this instance's
-                    // startup snapshot — re-align before allocating any id as the new leader
-                    checkpointManager.refreshCheckpointIdFromStorage();
-                    log.info("Acquired leadership for job {} (instance {}, fencingToken={})",
-                            config.getJobName(), config.getJobInstanceId(), token);
-                    startCheckpointExecutor(checkpointExecutorRef, consumers, runners, checkpointManager,
-                            pipelineKeys, deferredAcks, twoPhaseEpochs, gate);
-                }
-            } catch (Exception e) {
-                log.debug("Leader coordination tick failed (jobName={})", config.getJobName(), e);
-            }
-        }, renewMs, renewMs, TimeUnit.MILLISECONDS);
-        // already leader at startup: begin checkpointing immediately (the first renew
-        // tick is one interval away)
-        if (isLeader.get()) {
-            startCheckpointExecutor(checkpointExecutorRef, consumers, runners, checkpointManager,
-                    pipelineKeys, deferredAcks, twoPhaseEpochs, gate);
-        }
-        return renewEx;
-    }
-
 
     /**
      * Handle for a job started by {@link #executeAsync()}: cancellation, manual checkpoint
      * triggering, pause/resume and diagnostics.
      */
-    private final class LaunchedJobClient implements RedisJobClient {
-
-        private final AtomicReference<ScheduledExecutorService> checkpointExecutorRef;
-        private final ScheduledExecutorService leaderRenewExecutor;
-        private final RedisLeaderElector leaderElector;
-        private final AtomicBoolean isLeader;
-        private final ScheduledExecutorService sharedTimerExecutor;
-        private final List<MessageConsumer> consumers;
-        private final List<RedisPipelineRunner<?>> runners;
-        private final List<Subtask> subtasks;
-        private final AtomicLong consumerSeq;
-        private final RedisRuntimeCheckpointManager checkpointManager;
-        private final List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys;
-        private final DeferredAcks deferredAcks;
-        private final TwoPhaseEpochTracker twoPhaseEpochs;
-        private final CheckpointGate gate;
-        private final JobControlGate jobControlGate;
-        private final java.util.concurrent.atomic.AtomicReference<Long> restoredCheckpointId;
-
-        private LaunchedJobClient(AtomicReference<ScheduledExecutorService> checkpointExecutorRef,
-                                  ScheduledExecutorService leaderRenewExecutor,
-                                  RedisLeaderElector leaderElector,
-                                  AtomicBoolean isLeader,
-                                  ScheduledExecutorService sharedTimerExecutor,
-                                  List<MessageConsumer> consumers,
-                                  List<RedisPipelineRunner<?>> runners,
-                                  List<Subtask> subtasks,
-                                  AtomicLong consumerSeq,
-                                  RedisRuntimeCheckpointManager checkpointManager,
-                                  List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
-                                  DeferredAcks deferredAcks,
-                                  TwoPhaseEpochTracker twoPhaseEpochs,
-                                  CheckpointGate gate,
-                                  JobControlGate jobControlGate,
-                                  java.util.concurrent.atomic.AtomicReference<Long> restoredCheckpointId) {
-            this.checkpointExecutorRef = checkpointExecutorRef;
-            this.leaderRenewExecutor = leaderRenewExecutor;
-            this.leaderElector = leaderElector;
-            this.isLeader = isLeader;
-            this.sharedTimerExecutor = sharedTimerExecutor;
-            this.consumers = consumers;
-            this.runners = runners;
-            this.subtasks = subtasks;
-            this.consumerSeq = consumerSeq;
-            this.checkpointManager = checkpointManager;
-            this.pipelineKeys = pipelineKeys;
-            this.deferredAcks = deferredAcks;
-            this.twoPhaseEpochs = twoPhaseEpochs;
-            this.gate = gate;
-            this.jobControlGate = jobControlGate;
-            this.restoredCheckpointId = restoredCheckpointId;
-        }
-
-        private final CountDownLatch stopped = new CountDownLatch(1);
-        private final AtomicBoolean canceled = new AtomicBoolean(false);
-
-        @Override
-        public void cancel() {
-            if (!canceled.compareAndSet(false, true)) {
-                return;
-            }
-            try {
-                try {
-                    RedisRuntimeMetrics.get().incJobCanceled(config.getJobName());
-                } catch (Exception ignore) {
-                }
-                shutdownExecutorQuietly(checkpointExecutorRef.get());
-                shutdownExecutorQuietly(leaderRenewExecutor);
-                if (jobControlGate != null) {
-                    // release-then-close: a held lease must not block the restarted job's first
-                    // control operation for a full TTL; the CAS release cannot free another
-                    // instance's lease
-                    jobControlGate.endControlOp();
-                    jobControlGate.close();
-                }
-                if (leaderElector != null) {
-                    try {
-                        leaderElector.releaseLeadership();
-                    } catch (Exception ignore) {
-                    }
-                }
-                stopConsumersQuietly(consumers);
-                closeRunnersQuietly(runners);
-                shutdownExecutorQuietly(sharedTimerExecutor);
-            } finally {
-                executed.set(false);
-                stopped.countDown();
-            }
-        }
-
-                @Override
-        public Checkpoint triggerCheckpointNow() {
-            if (canceled.get()) {
-                return null;
-            }
-            if (!gate.tryBeginAlignedCheckpoint()) {
-                return null;
-            }
-            try {
-                return triggerCheckpointInternal(consumers, runners, checkpointManager, pipelineKeys,
-                        deferredAcks, twoPhaseEpochs);
-            } finally {
-                gate.endAlignedCheckpoint();
-            }
-        }
-
-                @Override
-                public Checkpoint getLatestCheckpoint() {
-                    return checkpointManager.getLatestCheckpoint();
-                }
-
-                @Override
-                public void pause() {
-                    for (MessageConsumer c : consumers) {
-                        if (c instanceof PausableMessageConsumer pc) {
-                            try {
-                                pc.pause();
-                            } catch (Exception ignore) {
-                            }
-                        }
-                    }
-                }
-
-                @Override
-                public void resume() {
-                    for (MessageConsumer c : consumers) {
-                        if (c instanceof PausableMessageConsumer pc) {
-                            try {
-                                pc.resume();
-                            } catch (Exception ignore) {
-                            }
-                        }
-                    }
-                }
-
-                @Override
-                public long inFlight() {
-                    long total = 0;
-                    boolean any = false;
-                    for (MessageConsumer c : consumers) {
-                        if (c instanceof PausableMessageConsumer pc) {
-                            any = true;
-                            try {
-                                total += Math.max(0, pc.inFlight());
-                            } catch (Exception ignore) {
-                            }
-                        }
-                    }
-                    return any ? total : -1L;
-                }
-
-                @Override
-                public boolean scaleParallelism(int newParallelism) {
-                    if (newParallelism < 1) {
-                        throw new IllegalArgumentException("newParallelism must be >= 1");
-                    }
-                    if (canceled.get()) {
-                        return false;
-                    }
-                    // exclusive with checkpoint flows (they pause the consumers and iterate
-                    // the same subtask lists): wait out an in-flight checkpoint instead of
-                    // racing it on the list mutations
-                    long deadline = System.currentTimeMillis() + 30_000;
-                    while (!gate.tryBeginScale()) {
-                        if (canceled.get() || System.currentTimeMillis() > deadline) {
-                            return false;
-                        }
-                        try {
-                            Thread.sleep(50);
-                        } catch (InterruptedException ie) {
-                            Thread.currentThread().interrupt();
-                            return false;
-                        }
-                    }
-                    try {
-                        // cross-instance counterpart: no two clients may re-balance the same
-                        // subtask lists, so the lease is won before any list is touched. A
-                        // null gate is "not configured", not a refusal.
-                        if (jobControlGate != null && !tryBeginJobControlGate()) {
-                            return false;
-                        }
-                        try {
-                            return scaleSubtasks(newParallelism);
-                        } finally {
-                            if (jobControlGate != null) {
-                                jobControlGate.endControlOp();
-                            }
-                        }
-                    } finally {
-                        gate.endScale();
-                    }
-                }
-
-                private boolean scaleSubtasks(int newParallelism) {
-                    // one subtask unit per pipeline, not per checkpoint key: a dual-source
-                    // pipeline contributes two (topic, group) keys but is still one chain
-                    int pipelines = Math.max(1, pipelineDefinitions.size());
-                    List<List<Subtask>> byPipeline = new ArrayList<>(pipelines);
-                    for (int i = 0; i < pipelines; i++) {
-                        byPipeline.add(new ArrayList<>());
-                    }
-                    for (Subtask st : subtasks) {
-                        if (st.pipelineIndex < byPipeline.size()) {
-                            byPipeline.get(st.pipelineIndex).add(st);
-                        }
-                    }
-                    int current = byPipeline.get(0).size();
-                    if (newParallelism == current) {
-                        return true;
-                    }
-                    try {
-                        if (newParallelism < current) {
-                            // repin the survivors first: partitions moving between survivors
-                            // hand over promptly; partitions still held by the removed
-                            // subtasks follow when those stop below
-                            for (List<Subtask> pl : byPipeline) {
-                                for (int i = 0; i < newParallelism && i < pl.size(); i++) {
-                                    repin(pl.get(i), newParallelism, i);
-                                }
-                            }
-                            for (List<Subtask> pl : byPipeline) {
-                                for (int i = newParallelism; i < pl.size(); i++) {
-                                    removeSubtask(pl.get(i));
-                                }
-                            }
-                        } else {
-                            for (List<Subtask> pl : byPipeline) {
-                                for (int i = 0; i < pl.size(); i++) {
-                                    repin(pl.get(i), newParallelism, i);
-                                }
-                            }
-                            for (int pi = 0; pi < pipelines && pi < pipelineDefinitions.size(); pi++) {
-                                RedisPipeline<?> p = pipelineDefinitions.get(pi).freeze();
-                                for (int i = current; i < newParallelism; i++) {
-                                    if (canceled.get()) {
-                                        return false;
-                                    }
-                                    addSubtaskForScale(p, pi, i, newParallelism);
-                                }
-                            }
-                        }
-                        log.info("Scaled job {} parallelism {} -> {} (instance {})",
-                                config.getJobName(), current, newParallelism, config.getJobInstanceId());
-                        return true;
-                    } catch (Exception e) {
-                        log.error("scaleParallelism({}) failed (jobName={}, from={})",
-                                newParallelism, config.getJobName(), current, e);
-                        return false;
-                    }
-                }
-
-                private void repin(Subtask st, int parallelism, int subtask) {
-                    if (st.consumer instanceof io.github.cuihairu.redis.streaming.mq.control.ReassignableMessageConsumer rmc) {
-                        // every source of the pipeline keeps the same modulo/remainder, so a
-                        // dual-source subtask stays pinned consistently on both topics
-                        RedisPipelineDefinition def = pipelineDefinitions.get(st.pipelineIndex);
-                        for (int s = 0; s < def.sourceCount(); s++) {
-                            rmc.updatePartitionAssignment(def.topicAt(s), parallelism, subtask);
-                        }
-                    }
-                }
-
-                private void removeSubtask(Subtask st) {
-                    subtasks.remove(st);
-                    runners.remove(st.runner);
-                    consumers.remove(st.consumer);
-                    // stop first so the workers release their leases (prompt handover). The
-                    // runner is intentionally NOT closed: sinks are shared across a
-                    // pipeline's runners and stay owned by the survivors; cancel() closes
-                    // them at job end. A removed runner is passive (no threads) — at most a
-                    // bounded tail of already-scheduled timers still fires into shared,
-                    // partition-keyed state.
-                    try {
-                        st.consumer.stop();
-                    } catch (Exception ignore) {
-                    }
-                    try {
-                        st.consumer.close();
-                    } catch (Exception ignore) {
-                    }
-                }
-
-                private void addSubtaskForScale(RedisPipeline<?> p, int pipelineIndex, int subtask, int parallelism) {
-                    RedisPipelineRunner<?> runner = p.buildRunner(sharedTimerExecutor);
-                    runners.add(runner);
-                    String consumerName = config.getJobName() + "-" + config.getJobInstanceId() + "-"
-                            + consumerSeq.incrementAndGet();
-                    MessageConsumer consumer = mqFactory.createConsumer(consumerName);
-                    consumers.add(consumer);
-                    startSubtaskConsumer(consumer, consumerName, p, subtask, parallelism, runner, deferredAcks);
-                    subtasks.add(new Subtask(pipelineIndex, runner, consumer));
-                }
-
-            @Override
-                    public Map<String, Object> diagnostics() {
-                        Map<String, Object> out = new HashMap<>();
-                out.put("jobName", config.getJobName());
-                out.put("jobInstanceId", config.getJobInstanceId());
-                out.put("pipelineParallelism", config.getPipelineParallelism());
-                out.put("timerThreads", config.getTimerThreads());
-                out.put("checkpointThreads", config.getCheckpointThreads());
-                out.put("deferAckUntilCheckpoint", config.isDeferAckUntilCheckpoint());
-                out.put("ackDeferredMessagesOnCheckpoint", config.isAckDeferredMessagesOnCheckpoint());
-                out.put("checkpointIntervalMs", config.getCheckpointInterval() == null ? 0L : Math.max(0L, config.getCheckpointInterval().toMillis()));
-                out.put("restoreFromLatestCheckpoint", config.isRestoreFromLatestCheckpoint());
-                out.put("sinkDeduplicationEnabled", config.isSinkDeduplicationEnabled());
-                out.put("sinkDeduplicationTtlMs", config.getSinkDeduplicationTtl() == null ? 0L : Math.max(0L, config.getSinkDeduplicationTtl().toMillis()));
-                out.put("watermarkOutOfOrdernessMs", config.getWatermarkOutOfOrderness() == null ? 0L : Math.max(0L, config.getWatermarkOutOfOrderness().toMillis()));
-                out.put("windowAllowedLatenessMs", config.getWindowAllowedLateness() == null ? 0L : Math.max(0L, config.getWindowAllowedLateness().toMillis()));
-                out.put("eventTimeTimerMaxSize", config.getEventTimeTimerMaxSize());
-                out.put("consumerCount", consumers.size());
-                // parallelism is live after scaleParallelism; the config value is the start-time setting
-                // (pipeline definitions, not checkpoint keys — a dual-source pipeline contributes
-                // two keys but is still one subtask unit)
-                out.put("liveParallelism", subtasks.isEmpty() || pipelineDefinitions.isEmpty()
-                        ? config.getPipelineParallelism()
-                        : Math.max(1, subtasks.size() / pipelineDefinitions.size()));
-                        out.put("runnerCount", runners.size());
-                        out.put("inFlight", inFlight());
-                        out.put("checkpointing", gate.isExclusive());
-                        out.put("fullSilence", gate.isFullSilence());
-                        out.put("restoredCheckpointId", restoredCheckpointId.get());
-                out.put("leaderElectionEnabled", config.isLeaderElectionEnabled());
-                if (leaderElector != null) {
-                    out.put("isLeader", isLeader.get());
-                    out.put("leaderInstanceId", leaderElector.currentLeader());
-                    out.put("fencingToken", leaderElector.currentFencingToken());
-                }
-                        try {
-                            Checkpoint latest = checkpointManager.getLatestCheckpoint();
-                            out.put("latestCheckpointId", latest == null ? null : latest.getCheckpointId());
-                        } catch (Exception ignore) {
-                }
-                try {
-                    Checkpoint latestCommitted = checkpointManager.getLatestSinkCommittedCheckpoint();
-                    out.put("latestSinkCommittedCheckpointId", latestCommitted == null ? null : latestCommitted.getCheckpointId());
-                } catch (Exception ignore) {
-                }
-                List<Map<String, Object>> pipelines = new ArrayList<>();
-                for (RedisRuntimeCheckpointManager.PipelineKey pk : pipelineKeys) {
-                    Map<String, Object> p = new HashMap<>();
-                    p.put("topic", pk.topic());
-                    p.put("consumerGroup", pk.consumerGroup());
-                    pipelines.add(p);
-                }
-                out.put("pipelines", pipelines);
-                return out;
-            }
-
-                @Override
-                public boolean awaitTermination(Duration timeout) throws InterruptedException {
-                    Duration t = timeout == null ? Duration.ZERO : timeout;
-                    return stopped.await(Math.max(0, t.toMillis()), TimeUnit.MILLISECONDS);
-                }
-    }
 
     /** One running subtask: a runner executing the pipeline plus its partition-pinned consumer. */
-    private static final class Subtask {
-        final int pipelineIndex;
-        final RedisPipelineRunner<?> runner;
-        final MessageConsumer consumer;
-
-        Subtask(int pipelineIndex, RedisPipelineRunner<?> runner, MessageConsumer consumer) {
-            this.pipelineIndex = pipelineIndex;
-            this.runner = runner;
-            this.consumer = consumer;
-        }
-    }
-
-    private static void stopConsumersQuietly(List<MessageConsumer> consumers) {
-        for (MessageConsumer c : consumers) {
-            try {
-                c.stop();
-            } catch (Exception ignore) {
-            }
-            try {
-                c.close();
-            } catch (Exception ignore) {
-            }
-        }
-    }
-
-    private static void closeRunnersQuietly(List<RedisPipelineRunner<?>> runners) {
-        for (RedisPipelineRunner<?> r : runners) {
-            try {
-                r.close();
-            } catch (Exception ignore) {
-            }
-        }
-    }
-
-    private static void shutdownExecutorQuietly(java.util.concurrent.ExecutorService executor) {
-        if (executor == null) {
-            return;
-        }
-        try {
-            executor.shutdownNow();
-        } catch (Exception ignore) {
-        }
-    }
-    private MessageHandler createMessageHandler(RedisPipelineRunner<?> runner, RedisPipeline<?> p,
-                                                 String consumerName, DeferredAcks deferredAcks) {
-        return (Message m) -> {
-            long startNs = System.nanoTime();
-            // the arriving record's source: a Message carries its topic (RedisMessageConsumer
-            // fills it), and the source decides the watermark contribution and dedup scope
-            int sourceIndex = p.sourceCount() > 1 ? p.sourceIndex(m == null ? null : m.getTopic()) : 0;
-            if (sourceIndex < 0) {
-                // unknown topic: never subscribed by us, but resolve defensively to source 0
-                sourceIndex = 0;
-            }
-            String topic = p.topicAt(sourceIndex);
-            String group = p.consumerGroupAt(sourceIndex);
-            boolean installMdc = config.isMdcEnabled() && shouldInstallMdc(m);
-            if (installMdc) {
-                try {
-                    MDC.put("rs.job", config.getJobName());
-                    MDC.put("rs.topic", topic);
-                    MDC.put("rs.group", group);
-                    MDC.put("rs.consumer", consumerName);
-                    if (m != null) {
-                        try { MDC.put("rs.id", m.getId()); } catch (Exception ignore) {}
-                        try { MDC.put("rs.key", m.getKey()); } catch (Exception ignore) {}
-                        try {
-                            String pid = m.getHeaders() == null ? null : m.getHeaders().get(io.github.cuihairu.redis.streaming.mq.MqHeaders.PARTITION_ID);
-                            if (pid != null) {
-                                MDC.put("rs.partition", pid);
-                            }
-                        } catch (Exception ignore) {
-                        }
-                    }
-                } catch (Exception ignore) {
-                }
-            }
-            try {
-                boolean ok = runner.handle(m, sourceIndex);
-                try {
-                    RedisRuntimeMetrics.get().recordHandleLatency(config.getJobName(), topic, group,
-                            (System.nanoTime() - startNs) / 1_000_000);
-                    if (ok) {
-                        RedisRuntimeMetrics.get().incHandleSuccess(config.getJobName(), topic, group);
-                    } else {
-                        // this arm returns MessageHandleResult.RETRY below — pin the dimension to it
-                        RedisRuntimeMetrics.get().incHandleError(config.getJobName(), topic, group, "retry");
-                    }
-                } catch (Exception ignore) {
-                }
-                if (!ok) {
-                    return MessageHandleResult.RETRY;
-                }
-                if (config.isDeferAckUntilCheckpoint()) {
-                    markDeferAck(m, deferredAcks, topic, group);
-                }
-                return MessageHandleResult.SUCCESS;
-            } catch (Exception e) {
-                annotateRuntimeError(m, group, e);
-                try {
-                    RedisRuntimeMetrics.get().recordHandleLatency(config.getJobName(), topic, group,
-                            (System.nanoTime() - startNs) / 1_000_000);
-                    RedisRuntimeMetrics.get().incHandleError(config.getJobName(), topic, group,
-                            config.getProcessingErrorResult().name().toLowerCase(java.util.Locale.ROOT));
-                } catch (Exception ignore) {
-                }
-                try {
-                    String id = m == null ? null : m.getId();
-                    String key = m == null ? null : m.getKey();
-                    log.error("Redis runtime pipeline failed (jobName={}, topic={}, group={}, consumer={}, id={}, key={})",
-                            config.getJobName(), topic, group, consumerName, id, key, e);
-                } catch (Exception ignore) {
-                    // best-effort logging only
-                }
-                return config.getProcessingErrorResult();
-            } finally {
-                if (installMdc) {
-                    try {
-                        MDC.remove("rs.id");
-                        MDC.remove("rs.key");
-                        MDC.remove("rs.partition");
-                        MDC.remove("rs.consumer");
-                        MDC.remove("rs.group");
-                        MDC.remove("rs.topic");
-                        MDC.remove("rs.job");
-                    } catch (Exception ignore) {
-                    }
-                }
-            }
-        };
-    }
-
-    /**
-     * Subscribe and start one subtask's consumer (handler wiring, metrics, failure
-     * surfacing). Shared by the initial start loop and {@code scaleParallelism} scale-up.
-     * A dual-source pipeline subscribes one consumer instance to both topics: the handler
-     * resolves the source from the Message's topic, so each source keeps its own offsets,
-     * defer-ack scope and partition pinning ({@code RedisMessageConsumer} keys its workers
-     * by (topic, group, partition)).
-     */
-    private void startSubtaskConsumer(MessageConsumer consumer, String consumerName, RedisPipeline<?> p,
-                                      int subtask, int parallelism, RedisPipelineRunner<?> runner,
-                                      DeferredAcks deferredAcks) {
-        MessageHandler handler = createMessageHandler(runner, p, consumerName, deferredAcks);
-        try {
-            // both (all) sources before start(): the consumer's initial rebalance then covers
-            // every subscription in one pass
-            for (int s = 0; s < p.sourceCount(); s++) {
-                io.github.cuihairu.redis.streaming.mq.SubscriptionOptions opts =
-                        optionsForSubtask(p.subscriptionOptionsAt(s), parallelism, subtask);
-                consumer.subscribe(p.topicAt(s), p.consumerGroupAt(s), handler, opts);
-            }
-            consumer.start();
-            for (int s = 0; s < p.sourceCount(); s++) {
-                try {
-                    RedisRuntimeMetrics.get().incPipelineStarted(config.getJobName(), p.topicAt(s), p.consumerGroupAt(s));
-                } catch (Exception ignore) {
-                }
-            }
-        } catch (Exception e) {
-            for (int s = 0; s < p.sourceCount(); s++) {
-                try {
-                    RedisRuntimeMetrics.get().incPipelineStartFailed(config.getJobName(), p.topicAt(s), p.consumerGroupAt(s));
-                } catch (Exception ignore) {
-                }
-            }
-            throw e;
-        }
-    }
-
-    private static io.github.cuihairu.redis.streaming.mq.SubscriptionOptions optionsForSubtask(
-            io.github.cuihairu.redis.streaming.mq.SubscriptionOptions opts, int parallelism, int subtask) {
-        if (parallelism <= 1) {
-            return opts;
-        }
-        io.github.cuihairu.redis.streaming.mq.SubscriptionOptions.Builder b =
-                io.github.cuihairu.redis.streaming.mq.SubscriptionOptions.builder();
-        if (opts != null) {
-            try {
-                Integer bc = opts.getBatchCount();
-                if (bc != null) b.batchCount(bc);
-            } catch (Exception ignore) {
-            }
-            try {
-                Long to = opts.getPollTimeoutMs();
-                if (to != null) b.pollTimeoutMs(to);
-            } catch (Exception ignore) {
-            }
-        }
-        b.partitionModulo(parallelism).partitionRemainder(subtask);
-        return b.build();
-    }
-
-    private void warnDeferAckConfiguration() {
-        if (!config.isDeferAckUntilCheckpoint()) {
-            return;
-        }
-        Duration interval = config.getCheckpointInterval();
-        boolean periodicCheckpoint = interval != null && !interval.isZero() && !interval.isNegative();
-        if (!periodicCheckpoint) {
-            log.warn("deferAckUntilCheckpoint is enabled but periodic checkpointing is disabled; messages will remain pending until triggerCheckpointNow() is called (jobName={})",
-                    config.getJobName());
-        }
-
-        long claimIdleMs = 0L;
-        try {
-            if (config.getMqOptions() != null) {
-                claimIdleMs = Math.max(0L, config.getMqOptions().getClaimIdleMs());
-            }
-        } catch (Exception ignore) {
-        }
-        if (claimIdleMs <= 0) {
-            return;
-        }
-
-        Duration drainTimeout = config.getCheckpointDrainTimeout();
-        long drainMs = drainTimeout == null ? 0L : Math.max(0L, drainTimeout.toMillis());
-        long intervalMs = periodicCheckpoint ? Math.max(0L, interval.toMillis()) : 0L;
-
-        if (drainMs > 0 && drainMs >= claimIdleMs) {
-            log.warn("deferAckUntilCheckpoint may be unsafe: checkpointDrainTimeout >= mq.claimIdleMs (jobName={}, checkpointDrainTimeoutMs={}, claimIdleMs={})",
-                    config.getJobName(), drainMs, claimIdleMs);
-        } else if (intervalMs > 0 && intervalMs + drainMs >= claimIdleMs) {
-            log.warn("deferAckUntilCheckpoint may be unsafe: mq.claimIdleMs is smaller than checkpoint interval + drain timeout (jobName={}, checkpointIntervalMs={}, checkpointDrainTimeoutMs={}, claimIdleMs={})",
-                    config.getJobName(), intervalMs, drainMs, claimIdleMs);
-        }
-    }
-
-    private Checkpoint triggerCheckpointInternal(List<MessageConsumer> consumers,
-                                                 List<RedisPipelineRunner<?>> runners,
-                                                 RedisRuntimeCheckpointManager checkpointManager,
-                                                 List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
-                                                 DeferredAcks deferredAcks,
-                                                 TwoPhaseEpochTracker twoPhaseEpochs) {
-        // A null gate is "not configured" — it must not read as a refusal. Refusal and
-        // "not configured" are deliberately separate checks at every gate call site.
-        if (jobControlGate != null && !tryBeginJobControlGate()) {
-            return null;
-        }
-        try {
-            Checkpoint cp = triggerCheckpointWhilePaused(consumers, runners, checkpointManager, pipelineKeys,
-                    deferredAcks, twoPhaseEpochs);
-            if (cp != null) {
-                // RT-H2: the retention sweep lists and fully deserializes every retained
-                // checkpoint. It used to run inside the paused window below, stretching the
-                // stop-the-world pause on every tick by the size of the whole checkpoint
-                // history — run it now that the finally block has resumed the consumers.
-                checkpointManager.cleanupOld();
-            }
-            return cp;
-        } finally {
-            if (jobControlGate != null) {
-                jobControlGate.endControlOp();
-            }
-        }
-    }
-
-    /**
-     * Try to win the cross-instance control lease, bounded by the configured wait. Tolerates a
-     * null (disabled) gate by returning {@code false} too — which is why every call site must
-     * branch on {@code jobControlGate != null} first: a {@code false} after that check is a
-     * refusal, and it must never be mixed up with the null-gate "not configured" case.
-     */
-    private boolean tryBeginJobControlGate() {
-        return jobControlGate != null
-                && jobControlGate.tryBeginControlOp(Math.max(0L, config.getControlGateWait().toMillis()));
-    }
-
-    /**
-     * Best-effort abort of every open two-phase-commit epoch; failures are logged, not
-     * propagated. When an earlier checkpoint already stored this epoch's handles, that
-     * checkpoint is marked aborted so a later restore skips it — its offsets must not be
-     * adopted, because the data they refer to was just discarded.
-     */
-    private void abortTwoPhaseQuietly(List<RedisPipelineRunner<?>> runners,
-                                      RedisRuntimeCheckpointManager checkpointManager,
-                                      TwoPhaseEpochTracker twoPhaseEpochs) {
-        for (RedisPipelineRunner<?> r : runners) {
-            try {
-                r.abortTwoPhaseCommits();
-            } catch (Exception e) {
-                log.warn("Two-phase abort failed (jobName={})", config.getJobName(), e);
-            }
-        }
-        Long durable = twoPhaseEpochs.takeDurable();
-        if (durable != null && checkpointManager.markTxnEpochAborted(durable)) {
-            log.info("Marked checkpoint {} as holding a discarded two-phase epoch (jobName={})",
-                    durable, config.getJobName());
-        }
-    }
-
-    /**
-     * Two-phase-commit recovery compensation after a restore. When the restored checkpoint
-     * was never marked sink-committed (crash between the checkpoint store and the sink
-     * commit phase), every stored transaction handle of this runner is replayed through
-     * {@code recoverAndCommit} — the sink contract makes that idempotent, so sinks that did
-     * commit before dying tolerate the replay. Handles of an already sink-committed
-     * checkpoint are stale and skipped: their data is visible, fresh epochs begin new
-     * transactions. Returns whether this runner replayed anything, so the caller can mark
-     * the checkpoint committed only after every runner finished.
-     */
-    private boolean recoverTwoPhaseTransactions(RedisPipelineRunner<?> runner,
-                                             int runnerIndex,
-                                             RedisRuntimeCheckpointManager checkpointManager,
-                                             Checkpoint restored) {
-        try {
-            Map<String, String> handles = checkpointManager.getTxnHandles(restored);
-            if (handles.isEmpty()) {
-                return false;
-            }
-            boolean sinkCommitted = checkpointManager.isSinkCommittedMarkerPresent(restored.getCheckpointId());
-            if (sinkCommitted) {
-                return false;
-            }
-            String prefix = runnerIndex + ":";
-            boolean replayedAny = false;
-            for (Map.Entry<String, String> e : handles.entrySet()) {
-                if (!e.getKey().startsWith(prefix)) {
-                    continue;
-                }
-                int sinkIndex = Integer.parseInt(e.getKey().substring(prefix.length()));
-                runner.recoverTwoPhaseCommit(sinkIndex, e.getValue());
-                replayedAny = true;
-                log.info("Recovered two-phase-commit transaction for runner {} sink {} from checkpoint {} (jobName={})",
-                        runnerIndex, sinkIndex, restored.getCheckpointId(), config.getJobName());
-            }
-            return replayedAny;
-        } catch (Exception e) {
-            // matches the restore path's tolerance: a broken compensation is surfaced in the
-            // logs but does not prevent the job from starting
-            log.error("Two-phase-commit recovery failed (jobName={}, checkpointId={})",
-                    config.getJobName(), restored.getCheckpointId(), e);
-        }
-        return false;
-    }
-
-    /**
-     * Once every runner of the restored checkpoint has replayed its transaction handles, the
-     * staged data is visible again, so the checkpoint is genuinely sink-committed: marking
-     * it keeps a later restore from replaying the same handles a second time and lets the
-     * normal restore path pick it up. Only the last runner that actually replayed something
-     * triggers this, and only if no runner failed.
-     */
-    private void markRecoveredCheckpointCommitted(RedisRuntimeCheckpointManager checkpointManager,
-                                                  Checkpoint restored) {
-        if (checkpointManager.markSinkCommitted(restored)) {
-            log.info("Marked recovered checkpoint {} sink-committed after replaying its transactions (jobName={})",
-                    restored.getCheckpointId(), config.getJobName());
-        } else {
-            log.warn("Could not mark recovered checkpoint {} sink-committed; its transactions will be "
-                    + "replayed again on the next restore (jobName={})", restored.getCheckpointId(), config.getJobName());
-        }
-    }
-
-    private Checkpoint triggerCheckpointWhilePaused(List<MessageConsumer> consumers,
-                                                    List<RedisPipelineRunner<?>> runners,
-                                                    RedisRuntimeCheckpointManager checkpointManager,
-                                                    List<RedisRuntimeCheckpointManager.PipelineKey> pipelineKeys,
-                                                    DeferredAcks deferredAcks,
-                                                    TwoPhaseEpochTracker twoPhaseEpochs) {
-        if (consumers == null || consumers.isEmpty()) {
-            return null;
-        }
-        boolean pausable = true;
-        for (MessageConsumer c : consumers) {
-                if (!(c instanceof PausableMessageConsumer)) {
-                    pausable = false;
-                    break;
-                }
-            }
-            if (!pausable) {
-                log.warn("Skip checkpoint: consumer is not pausable (jobName={})", config.getJobName());
-                return null;
-            }
-
-        for (MessageConsumer c : consumers) {
-            ((PausableMessageConsumer) c).pause();
-        }
-
-        long checkpointId = checkpointManager.allocateCheckpointId();
-        long overallStartNs = System.nanoTime();
-        try {
-            RedisRuntimeMetrics.get().incCheckpointTriggered(config.getJobName());
-        } catch (Exception ignore) {
-        }
-        try {
-            Duration drainTimeout = config.getCheckpointDrainTimeout();
-            long deadline = System.currentTimeMillis() + Math.max(0, drainTimeout == null ? 0 : drainTimeout.toMillis());
-            long drainStartNs = System.nanoTime();
-            while (true) {
-                long total = 0;
-                    for (MessageConsumer c : consumers) {
-                        // barrier view: handlers plus reads whose fetched messages have not
-                        // reached handler accounting yet — draining the handler count alone
-                        // let a fetched batch be invoked inside the paused window
-                        total += ((PausableMessageConsumer) c).inFlightBarrier();
-                    }
-                    if (total <= 0) {
-                        break;
-                    }
-                    if (System.currentTimeMillis() > deadline) {
-                        log.warn("Checkpoint drain timeout (jobName={}, inFlight={})", config.getJobName(), total);
-                        break;
-                    }
-                    try {
-                        Thread.sleep(20);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-            try {
-                RedisRuntimeMetrics.get().recordCheckpointDrainDuration(config.getJobName(), (System.nanoTime() - drainStartNs) / 1_000_000);
-            } catch (Exception ignore) {
-            }
-
-            for (RedisPipelineRunner<?> r : runners) {
-                try {
-                    r.onCheckpointStart(checkpointId);
-                } catch (Exception e) {
-                    for (RedisPipelineRunner<?> rr : runners) {
-                        rr.onCheckpointAbort(checkpointId, e);
-                    }
-                    return null;
-                }
-            }
-
-            Map<String, Map<Integer, String>> offsetsOverride = null;
-            Map<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, java.util.List<String>>> deferredAckSnapshot = null;
-            if (config.isDeferAckUntilCheckpoint()) {
-                offsetsOverride = deferredAcks.snapshotOffsets();
-                // Freeze the ack set now: ids recorded after this point (a read that raced
-                // the paused window) belong to the NEXT epoch, so this checkpoint must not
-                // ack them on success — its commit only covers the prepared snapshot.
-                deferredAckSnapshot = deferredAcks.drainForAck();
-            }
-
-            // Two-phase-commit phase 1: pre-commit every 2PC sink and collect the encoded
-            // transaction handles ("runnerIndex:sinkIndex" -> handle). They go into the
-            // checkpoint BEFORE anything commits so recovery can compensate a crash in
-            // between. Keys are stable because runners are built in a deterministic
-            // (definition, subtask) order.
-            Map<String, String> txnHandles = new java.util.LinkedHashMap<>();
-            for (int ri = 0; ri < runners.size(); ri++) {
-                RedisPipelineRunner<?> r = runners.get(ri);
-                try {
-                    for (Map.Entry<Integer, String> e : r.prepareTwoPhaseCommits().entrySet()) {
-                        txnHandles.put(ri + ":" + e.getKey(), e.getValue());
-                    }
-                } catch (Exception e) {
-                    log.error("Two-phase preCommit failed (jobName={}, checkpointId={})", config.getJobName(), checkpointId, e);
-                    abortTwoPhaseQuietly(runners, checkpointManager, twoPhaseEpochs);
-                    // The aborted epoch's side effects were discarded, so the records it
-                    // consumed must come back through pending-entry reclaim. Drop the
-                    // deferred tracking without acking: keeping the ids would let the NEXT
-                    // successful checkpoint claim them via its offsets override and ackAll
-                    // even though no committed epoch holds their data — silent loss. Leaving
-                    // them pending keeps the frontier honest until they are reprocessed.
-                    if (config.isDeferAckUntilCheckpoint()) {
-                        deferredAcks.clear();
-                    }
-                    for (RedisPipelineRunner<?> rr : runners) {
-                        rr.onCheckpointAbort(checkpointId, e);
-                    }
-                    try {
-                        RedisRuntimeMetrics.get().incCheckpointFailed(config.getJobName());
-                    } catch (Exception ignore) {
-                    }
-                    return null;
-                }
-            }
-
-            long storeStartNs = System.nanoTime();
-            // RT-H2: the retention sweep is deferred to after the consumers are resumed
-            Checkpoint cp = checkpointManager.triggerCheckpoint(checkpointId, pipelineKeys, offsetsOverride, false,
-                    txnHandles.isEmpty() ? null : txnHandles);
-            try {
-                RedisRuntimeMetrics.get().recordCheckpointStoreDuration(config.getJobName(), (System.nanoTime() - storeStartNs) / 1_000_000);
-            } catch (Exception ignore) {
-            }
-            if (cp != null) {
-                // the epoch's handles are now durable in this checkpoint: it becomes the
-                // in-doubt restore point until the sink commit below succeeds
-                twoPhaseEpochs.markDurable(checkpointId);
-            }
-            if (cp == null) {
-                // nothing was stored: the pre-committed transactions must never become visible
-                abortTwoPhaseQuietly(runners, checkpointManager, twoPhaseEpochs);
-                // same rationale as the preCommit-failure path above: the aborted epoch's
-                // records must come back via redelivery, so stop tracking them as deferred —
-                // otherwise the next successful checkpoint acks and advances the frontier
-                // over records whose side effects this abort just discarded
-                if (config.isDeferAckUntilCheckpoint()) {
-                    deferredAcks.clear();
-                }
-                for (RedisPipelineRunner<?> r : runners) {
-                    r.onCheckpointAbort(checkpointId, null);
-                }
-                try {
-                    RedisRuntimeMetrics.get().incCheckpointFailed(config.getJobName());
-                } catch (Exception ignore) {
-                }
-                return null;
-            }
-
-            try {
-                long sinkCommitStartNs = System.nanoTime();
-                for (RedisPipelineRunner<?> r : runners) {
-                    r.onCheckpointComplete(checkpointId);
-                }
-                // Two-phase-commit phase 2: the handles are durably stored, so the sinks may
-                // finalize now. If a commit throws, the checkpoint stays NOT sink-committed
-                // and recovery replays recoverAndCommit from the stored handles.
-                for (RedisPipelineRunner<?> r : runners) {
-                    r.commitTwoPhaseCommits();
-                }
-                checkpointManager.markSinkCommitted(cp);
-                // the epoch is finalized and its handles consumed: nothing stays in doubt
-                twoPhaseEpochs.clearDurable();
-                try {
-                    RedisRuntimeMetrics.get().recordCheckpointSinkCommitDuration(config.getJobName(), (System.nanoTime() - sinkCommitStartNs) / 1_000_000);
-                } catch (Exception ignore) {
-                }
-            } catch (Exception e) {
-                log.error("Sink commit on checkpoint failed (jobName={}, checkpointId={})", config.getJobName(), checkpointId, e);
-                // the 2PC epochs are deliberately NOT aborted here: their handles are already
-                // in the durable checkpoint, so discarding them would drop data that the
-                // recovery path is obliged to commit. The checkpoint stays unmarked and the
-                // deferred acks below are skipped, so the records come back and recovery
-                // replays recoverAndCommit from the stored handles (idempotent by contract).
-                // The checkpoint stays flagged as the in-doubt epoch (markDurable above), so
-                // a later failure that DOES abort the epoch invalidates exactly this
-                // checkpoint instead of leaving an adoptable-but-dead restore point.
-                for (RedisPipelineRunner<?> r : runners) {
-                    r.onCheckpointAbort(checkpointId, e);
-                }
-                try {
-                    RedisRuntimeMetrics.get().incCheckpointFailed(config.getJobName());
-                } catch (Exception ignore) {
-                }
-                return cp;
-            }
-
-            if (config.isDeferAckUntilCheckpoint()) {
-                if (config.isAckDeferredMessagesOnCheckpoint()) {
-                    deferredAcks.ackAll(redissonClient, deferredAckSnapshot, keys());
-                } else {
-                    deferredAcks.clear();
-                }
-            }
-            try {
-                RedisRuntimeMetrics.get().incCheckpointCompleted(config.getJobName());
-            } catch (Exception ignore) {
-            }
-            return cp;
-        } finally {
-            try {
-                RedisRuntimeMetrics.get().recordCheckpointDuration(config.getJobName(), (System.nanoTime() - overallStartNs) / 1_000_000);
-            } catch (Exception ignore) {
-            }
-            for (MessageConsumer c : consumers) {
-                if (c instanceof PausableMessageConsumer pc) {
-                    try {
-                        pc.resume();
-                    } catch (Exception e) {
-                        log.warn("Failed to resume consumer after checkpoint (jobName={})", config.getJobName(), e);
-                    }
-                }
-            }
-        }
-    }
-
-    private void markDeferAck(Message message, DeferredAcks deferredAcks, String topic, String consumerGroup) {
-        if (message == null) {
-            return;
-        }
-        try {
-            String id = message.getId();
-            if (id == null || id.isBlank()) {
-                return;
-            }
-            int pid = -1;
-            try {
-                if (message.getHeaders() != null) {
-                    String s = message.getHeaders().get(MqHeaders.PARTITION_ID);
-                    if (s != null && !s.isBlank()) {
-                        pid = Integer.parseInt(s);
-                    }
-                }
-            } catch (Exception ignore) {
-            }
-            if (pid < 0) {
-                return;
-            }
-            java.util.Map<String, String> headers = message.getHeaders();
-            if (headers == null) {
-                headers = new java.util.HashMap<>();
-                message.setHeaders(headers);
-            } else if (!(headers instanceof java.util.HashMap)) {
-                headers = new java.util.HashMap<>(headers);
-                message.setHeaders(headers);
-            }
-            headers.put(MqHeaders.DEFER_ACK, "true");
-            deferredAcks.record(topic, consumerGroup, pid, id);
-        } catch (Exception ignore) {
-        }
-    }
-
-    /**
-     * Remembers which checkpoint currently holds the durable transaction handles of the
-     * open two-phase-commit epoch. A checkpoint written but never sink-committed is adopted
-     * as the restore point so recovery can finalize it — but once the epoch is discarded
-     * (a later checkpoint fails before it is stored), that checkpoint must be marked as
-     * aborted, otherwise recovery would adopt offsets for data that no longer exists.
-     */
-    private static final class TwoPhaseEpochTracker {
-        private final java.util.concurrent.atomic.AtomicLong durableCheckpointId =
-                new java.util.concurrent.atomic.AtomicLong(-1L);
-
-        /** The epoch's handles are now durable in this checkpoint. */
-        void markDurable(long checkpointId) {
-            durableCheckpointId.set(checkpointId);
-        }
-
-        /** The epoch was committed and sink-committed; its handles are consumed. */
-        void clearDurable() {
-            durableCheckpointId.set(-1L);
-        }
-
-        /** Returns the checkpoint holding the discarded epoch's handles, if any. */
-        Long takeDurable() {
-            long id = durableCheckpointId.getAndSet(-1L);
-            return id < 0 ? null : id;
-        }
-    }
-
-    /**
-     * Tracks messages whose Redis ack is deferred until the covering checkpoint commits
-     * (two-phase commit over consumer offsets).
-     *
-     * <p>Pipelines are keyed by the structured {@link RedisRuntimeCheckpointManager.PipelineKey}
-     * instead of the old {@code topic + "|" + group} string (RT-L2): a topic containing
-     * {@code |} used to split back wrong at ack time, acking the wrong stream. The offsets
-     * snapshot still carries the {@link RedisRuntimeCheckpointManager.PipelineKey#key()}
-     * string form so the checkpoint-side {@code offsetsOverride.get(p.key())} lookups stay
-     * byte-compatible.</p>
-     */
-    static final class DeferredAcks {
-        private final java.util.concurrent.ConcurrentHashMap<RedisRuntimeCheckpointManager.PipelineKey, java.util.concurrent.ConcurrentHashMap<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>>> byPipeline =
-                new java.util.concurrent.ConcurrentHashMap<>();
-
-        void record(String topic, String consumerGroup, int partitionId, String messageId) {
-            byPipeline.computeIfAbsent(new RedisRuntimeCheckpointManager.PipelineKey(topic, consumerGroup),
-                            k -> new java.util.concurrent.ConcurrentHashMap<>())
-                    .computeIfAbsent(partitionId, k -> new java.util.concurrent.ConcurrentLinkedQueue<>())
-                    .add(messageId);
-        }
-
-        Map<String, Map<Integer, String>> snapshotOffsets() {
-            Map<String, Map<Integer, String>> out = new HashMap<>();
-            for (Map.Entry<RedisRuntimeCheckpointManager.PipelineKey, java.util.concurrent.ConcurrentHashMap<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>>> e : byPipeline.entrySet()) {
-                Map<Integer, String> per = new HashMap<>();
-                for (Map.Entry<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>> pe : e.getValue().entrySet()) {
-                    // RT-L2: the frontier must be the furthest id, not merely the one
-                    // appended last — the queue order is the poll order, which is not
-                    // guaranteed to be ascending under concurrent readers
-                    String maxId = null;
-                    for (String id : pe.getValue()) {
-                        if (compareStreamId(id, maxId) > 0) {
-                            maxId = id;
-                        }
-                    }
-                    if (maxId != null && !maxId.isBlank()) {
-                        per.put(pe.getKey(), maxId);
-                    }
-                }
-                if (!per.isEmpty()) {
-                    out.put(e.getKey().key(), per);
-                }
-            }
-            return out;
-        }
-
-        void clear() {
-            for (java.util.concurrent.ConcurrentHashMap<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>> per : byPipeline.values()) {
-                for (java.util.concurrent.ConcurrentLinkedQueue<String> q : per.values()) {
-                    try {
-                        q.clear();
-                    } catch (Exception ignore) {
-                    }
-                }
-            }
-            byPipeline.clear();
-        }
-
-        /**
-         * Removes and returns every id recorded so far, keyed pipeline -> partition ->
-         * ids. The checkpoint calls this once its two-phase epoch is prepared: anything
-         * recorded afterwards belongs to the NEXT epoch (its side effects are not committed
-         * by this checkpoint), so it must stay tracked for the next round instead of being
-         * acked by this one — acking it would orphan the record if the process died before
-         * its own epoch committed.
-         */
-        Map<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, java.util.List<String>>> drainForAck() {
-            Map<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, java.util.List<String>>> out = new HashMap<>();
-            for (Map.Entry<RedisRuntimeCheckpointManager.PipelineKey, java.util.concurrent.ConcurrentHashMap<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>>> e : byPipeline.entrySet()) {
-                Map<Integer, java.util.List<String>> per = new HashMap<>();
-                for (Map.Entry<Integer, java.util.concurrent.ConcurrentLinkedQueue<String>> pe : e.getValue().entrySet()) {
-                    java.util.List<String> ids = new java.util.ArrayList<>();
-                    String id;
-                    while ((id = pe.getValue().poll()) != null) {
-                        ids.add(id);
-                    }
-                    if (!ids.isEmpty()) {
-                        per.put(pe.getKey(), ids);
-                    }
-                }
-                if (!per.isEmpty()) {
-                    out.put(e.getKey(), per);
-                }
-            }
-            return out;
-        }
-
-        /**
-         * Acks exactly the frozen snapshot the owning checkpoint prepared via
-         * {@link #drainForAck()} — and nothing else. There is deliberately no
-         * "ack everything currently tracked" convenience: acking ids outside the frozen
-         * set would advance the commit frontier over records whose epoch has not
-         * committed yet (the ack must stay synchronized with the checkpoint's success,
-         * not with the caller's whim).
-         */
-        void ackAll(RedissonClient redissonClient,
-                    Map<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, java.util.List<String>>> snapshot,
-                    StreamKeys keys) {
-            if (redissonClient == null || snapshot == null) {
-                return;
-            }
-            for (Map.Entry<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, java.util.List<String>>> e : snapshot.entrySet()) {
-                String topic = e.getKey().topic();
-                String group = e.getKey().consumerGroup();
-                for (Map.Entry<Integer, java.util.List<String>> pe : e.getValue().entrySet()) {
-                    int pid = pe.getKey();
-                    java.util.List<StreamMessageId> ids = new java.util.ArrayList<>();
-                    String maxId = null;
-                    for (String id : pe.getValue()) {
-                        ids.add(parseStreamId(id));
-                        // RT-L2: take the furthest id for the frontier, not the last in
-                        // the (poll-ordered) list
-                        if (compareStreamId(id, maxId) > 0) {
-                            maxId = id;
-                        }
-                    }
-                    if (ids.isEmpty()) {
-                        continue;
-                    }
-                    try {
-                        RStream<String, Object> stream = redissonClient.getStream(keys.partitionStreamKey(topic, pid), StringCodec.INSTANCE);
-                        stream.ack(group, ids.toArray(new StreamMessageId[0]));
-                    } catch (Exception ex) {
-                        log.warn("Failed to ack deferred messages (topic={}, group={}, partition={}, count={})", topic, group, pid, ids.size(), ex);
-                    }
-                    if (maxId != null) {
-                        try {
-                            // MQ-11: the frontier is a max() reduced across concurrent ack
-                            // workers, so the compare-and-set runs inside Redis as one
-                            // atomic Lua script over plain text "ms-seq" values — the old
-                            // Java read-then-put could read a stale prev and land a
-                            // smaller id last, regressing the frontier
-                            RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
-                            script.eval(RScript.Mode.READ_WRITE, COMMIT_FRONTIER_CAS_LUA,
-                                    RScript.ReturnType.LONG,
-                                    java.util.Collections.singletonList(keys.commitFrontierKey(topic, pid)),
-                                    group, maxId);
-                        } catch (Exception ignore) {
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private static StreamMessageId parseStreamId(String id) {
-        try {
-            if (id == null) return StreamMessageId.MIN;
-            String[] parts = id.split("-", 2);
-            if (parts.length == 2) {
-                long ms = Long.parseLong(parts[0]);
-                long seq = Long.parseLong(parts[1]);
-                return new StreamMessageId(ms, seq);
-            }
-            long ms = Long.parseLong(id);
-            return new StreamMessageId(ms);
-        } catch (Exception e) {
-            return StreamMessageId.MIN;
-        }
-    }
-
-    private static int compareStreamId(String a, String b) {
-        if (a == null && b == null) return 0;
-        if (a == null) return -1;
-        if (b == null) return 1;
-        try {
-            String[] ap = a.split("-", 2);
-            String[] bp = b.split("-", 2);
-            long ams = Long.parseLong(ap[0]);
-            long bms = Long.parseLong(bp[0]);
-            int c = Long.compare(ams, bms);
-            if (c != 0) return c;
-            long ase = ap.length > 1 ? Long.parseLong(ap[1]) : 0L;
-            long bse = bp.length > 1 ? Long.parseLong(bp[1]) : 0L;
-            return Long.compare(ase, bse);
-        } catch (Exception ignore) {
-            return a.compareTo(b);
-        }
-    }
 
     /**
      * Phase 3 dual-source precondition: every source of a multi-source pipeline must carry the
@@ -1964,87 +612,10 @@ public final class RedisStreamExecutionEnvironment {
         }
     }
 
-    private void annotateRuntimeError(Message message, String consumerGroup, Throwable error) {
-        if (message == null) {
-            return;
-        }
-        try {
-            java.util.Map<String, String> headers = message.getHeaders();
-            if (headers == null) {
-                headers = new java.util.HashMap<>();
-                message.setHeaders(headers);
-            } else if (!(headers instanceof java.util.HashMap)) {
-                headers = new java.util.HashMap<>(headers);
-                message.setHeaders(headers);
-            }
-            headers.put(RedisRuntimeHeaders.JOB_NAME, config.getJobName());
-            headers.put(RedisRuntimeHeaders.CONSUMER_GROUP, consumerGroup);
-            if (error != null) {
-                headers.put(RedisRuntimeHeaders.ERROR_TYPE, error.getClass().getName());
-                String msg = error.getMessage();
-                if (msg != null) {
-                    headers.put(RedisRuntimeHeaders.ERROR_MESSAGE, truncate(msg, 512));
-                }
-            }
-        } catch (Exception ignore) {
-        }
-    }
-
-    private static String truncate(String s, int maxLen) {
-        if (s == null) return null;
-        if (maxLen <= 0) return "";
-        return s.length() <= maxLen ? s : s.substring(0, maxLen);
-    }
-
     private void registerStreamId(String streamId) {
         if (!usedStreamIds.add(streamId)) {
             throw new IllegalStateException("Duplicate sourceId/streamId: " + streamId);
         }
     }
 
-    private boolean shouldInstallMdc(Message m) {
-        double r;
-        try {
-            r = config.getMdcSampleRate();
-        } catch (Exception ignore) {
-            r = 1.0d;
-        }
-        if (r >= 1.0d) {
-            return true;
-        }
-        if (r <= 0.0d) {
-            return false;
-        }
-        String id = null;
-        try {
-            if (m != null && m.getHeaders() != null) {
-                id = m.getHeaders().get(MqHeaders.ORIGINAL_MESSAGE_ID);
-            }
-        } catch (Exception ignore) {
-        }
-        try {
-            if ((id == null || id.isBlank()) && m != null) {
-                id = m.getId();
-            }
-        } catch (Exception ignore) {
-        }
-        int h = id == null ? System.identityHashCode(m) : id.hashCode();
-        int bucket = Math.floorMod(h, 10_000);
-        int threshold = (int) Math.floor(r * 10_000.0d);
-        return bucket < threshold;
-    }
-
-    private static String requireValidId(String id) {
-        if (id == null) {
-            throw new NullPointerException("sourceId");
-        }
-        String v = id.trim();
-        if (v.isEmpty()) {
-            throw new IllegalArgumentException("sourceId must not be blank");
-        }
-        if (!ID_PATTERN.matcher(v).matches()) {
-            throw new IllegalArgumentException("sourceId must match " + ID_PATTERN.pattern() + ", but got: " + id);
-        }
-        return v;
-    }
 }

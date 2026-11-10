@@ -130,7 +130,7 @@ class RedisResidualBranchCoverageTest {
     @Test
     void twoPhaseEpochTrackerMarksClearsAndTakesDurable() throws Exception {
         Class<?> tracker = Class.forName(
-                "io.github.cuihairu.redis.streaming.runtime.redis.RedisStreamExecutionEnvironment$TwoPhaseEpochTracker");
+                "io.github.cuihairu.redis.streaming.runtime.redis.TwoPhaseEpochTracker");
         java.lang.reflect.Constructor<?> ctor = tracker.getDeclaredConstructor();
         ctor.setAccessible(true);
         Object t = ctor.newInstance();

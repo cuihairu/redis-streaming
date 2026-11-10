@@ -564,12 +564,12 @@ class RedisStreamExecutionEnvironmentResidualBranchTest {
         // RT-L2: pipelines are keyed by the structured PipelineKey record now — the old
         // "separatorless string key" injection is moot; what survives is that broken queue
         // implementations must not escape drain/clear
-        RedisStreamExecutionEnvironment.DeferredAcks deferred = new RedisStreamExecutionEnvironment.DeferredAcks();
+        DeferredAcks deferred = new DeferredAcks();
         deferred.record("no-separator", "g", 0, "7-1");
         deferred.ackAll(redisson, deferred.drainForAck(), StreamKeys.shared());
 
         deferred.record("t", "g", 0, "8-1");
-        Field byPipelineField = RedisStreamExecutionEnvironment.DeferredAcks.class.getDeclaredField("byPipeline");
+        Field byPipelineField = DeferredAcks.class.getDeclaredField("byPipeline");
         byPipelineField.setAccessible(true);
         Map<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, Queue<String>>> byPipeline =
                 (Map<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, Queue<String>>>) byPipelineField.get(deferred);

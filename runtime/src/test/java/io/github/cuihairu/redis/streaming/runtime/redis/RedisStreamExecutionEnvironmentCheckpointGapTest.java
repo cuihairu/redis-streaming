@@ -98,14 +98,14 @@ class RedisStreamExecutionEnvironmentCheckpointGapTest {
     void triggerCheckpointReturnsNullForNullConsumerList() throws Exception {
         RedisJobClient job = launch(baseConfig().build());
         try {
-            Field outer = job.getClass().getDeclaredField("this$0");
-            outer.setAccessible(true);
-            Object env = outer.get(job);
+            Field flowField = job.getClass().getDeclaredField("checkpointFlow");
+            flowField.setAccessible(true);
+            Object flow = flowField.get(job);
             Method trigger = findTriggerMethod();
             Class<?> trackerType = trigger.getParameterTypes()[5];
             Constructor<?> trackerCtor = trackerType.getDeclaredConstructor();
             trackerCtor.setAccessible(true);
-            Object result = trigger.invoke(env, null, List.of(), null, List.of(), null, trackerCtor.newInstance());
+            Object result = trigger.invoke(flow, null, List.of(), null, List.of(), null, trackerCtor.newInstance());
             assertNull(result, "a missing consumer list must skip the checkpoint");
         } finally {
             job.cancel();
@@ -113,7 +113,7 @@ class RedisStreamExecutionEnvironmentCheckpointGapTest {
     }
 
     private static Method findTriggerMethod() {
-        for (Method m : RedisStreamExecutionEnvironment.class.getDeclaredMethods()) {
+        for (Method m : RedisCheckpointFlow.class.getDeclaredMethods()) {
             // 6 params: consumers, runners, checkpointManager, pipelineKeys, deferredAcks,
             // twoPhaseEpochs — the first five are passed as null/empty by the test, the
             // tracker is a private nested type so it is instantiated reflectively.

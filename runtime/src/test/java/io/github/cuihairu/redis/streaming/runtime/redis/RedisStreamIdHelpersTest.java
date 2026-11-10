@@ -27,6 +27,7 @@ import static org.mockito.Mockito.*;
 class RedisStreamIdHelpersTest {
 
     private static final String ENV = "io.github.cuihairu.redis.streaming.runtime.redis.RedisStreamExecutionEnvironment";
+    private static final String STREAM_IDS = "io.github.cuihairu.redis.streaming.runtime.redis.StreamIds";
 
     @Test
     void parseStreamIdCoversAllInputShapes() throws Exception {
@@ -38,7 +39,7 @@ class RedisStreamIdHelpersTest {
 
     @Test
     void compareStreamIdCoversNullsAndMalformedFallback() throws Exception {
-        Method compare = Class.forName(ENV).getDeclaredMethod("compareStreamId", String.class, String.class);
+        Method compare = Class.forName(STREAM_IDS).getDeclaredMethod("compareStreamId", String.class, String.class);
         compare.setAccessible(true);
         assertEquals(0, compare.invoke(null, null, null));
         assertEquals(-1, compare.invoke(null, null, "5-1"));
@@ -55,7 +56,7 @@ class RedisStreamIdHelpersTest {
 
     @Test
     void truncateCoversAllBranches() throws Exception {
-        Method truncate = Class.forName(ENV).getDeclaredMethod("truncate", String.class, int.class);
+        Method truncate = Class.forName(STREAM_IDS).getDeclaredMethod("truncate", String.class, int.class);
         truncate.setAccessible(true);
         assertNull(truncate.invoke(null, null, 5));
         assertEquals("", truncate.invoke(null, "abc", 0));
@@ -158,13 +159,13 @@ class RedisStreamIdHelpersTest {
     }
 
     private static StreamMessageId parseStreamId(String id) throws Exception {
-        Method m = Class.forName(ENV).getDeclaredMethod("parseStreamId", String.class);
+        Method m = Class.forName(STREAM_IDS).getDeclaredMethod("parseStreamId", String.class);
         m.setAccessible(true);
         return (StreamMessageId) m.invoke(null, id);
     }
 
     private static Object newDeferredAcks() throws Exception {
-        Class<?> clazz = Class.forName(ENV + "$DeferredAcks");
+        Class<?> clazz = DeferredAcks.class;
         Constructor<?> ctor = clazz.getDeclaredConstructor();
         ctor.setAccessible(true);
         return ctor.newInstance();
