@@ -130,6 +130,8 @@ Verification: `TenantKeyMigratorTest` 16 unit tests (mock `RKeys`: prefix valida
 
 With this, the design has **no remaining items**: the migration engine, the family table, and the run entry have all landed (the CLI entry, originally "to be scoped when real ops scenarios appear", was un-shelved and landed by the 2026-10-16 second-round proxy decision: its unblocking condition is not external — it was a scheduling item and thus proxy-decidable).
 
+Module placement (decided 2026-11-10, proxy decision): the migration engine, family table, and CLI stay in `reliability` — reaffirming the hosting-home proxy decision of 2026-10-16 against a later layering note that flagged the placement. That note overstates the mix: retry/DLQ, dedup, and rate limiting are delivery-reliability primitives and squarely this module's charter (outbox/idempotency live in the runtime exactly-once surfaces, not here); the only outlier is migration, which is self-contained (depends only on `core`'s `Tenant`) with the CLI as its sole entry and zero other in-repo callers. Moving it now would remove `TenantKeyMigrator`/`TenantKeyMigrationCli` from the published `reliability` artifact weeks after this document recorded them as landed. Revisit when a second ops CLI appears (a non-published tools module, mirroring `benchmark`, becomes worthwhile then) or migration needs dependencies `reliability` should not carry.
+
 ## Non-Goals
 
 - No tenant authentication/authorization system (the control plane's pluggable authorizer remains; authentication belongs to the security design).

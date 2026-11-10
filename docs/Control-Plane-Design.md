@@ -105,3 +105,11 @@ Instances each reconcile their own (claiming and ownership are isolated); deploy
 - v1.0: `JobSpec` + Redis storage + the `JobControlPlane` API (submit/upgrade/rollback/stop/resume/list/audit) + the authorization hook; unit tests (mock Redisson) + integration tests (real Redis).
 - v1.1: `JobAgent` reconciliation (claim/deploy/upgrade/rollback execution/failure reporting) + integration tests (upgrades preserve state, rollback, parallelism-only changes take the fast path).
 - v1.2: starter auto-configuration + docs (Spring-Boot-Starter.md / Deployment.md additions).
+
+## Module Placement (decided 2026-11-10, proxy decision)
+
+The control plane stays in the `runtime` module under `io.github.cuihairu.redis.streaming.runtime.redis.control` rather than moving to a separate Gradle module: the desired-state lifecycle (`JobSpec`/`JobAgent`/audit) remains in the same artifact as the pipeline entry it launches.
+
+- The separation this design needs already exists without an artifact split: the `control` package depends one-way on the runtime's public entries (`RedisJobClient`, `RedisRuntimeConfig`, `RedisStreamExecutionEnvironment`) and the pipeline never imports control; starter wiring is gated by the two-level switch (v1.2), so non-users never load these classes.
+- Extraction would add a 21st Gradle module and a new published artifact (only `examples` and `benchmark` are unpublished), reshaping the published artifact set for a placement preference. The project's recent direction is consolidation (the metrics module was removed 2026-10-12; registry and config were slimmed).
+- Revisit when: a second consumer of the control plane appears outside `runtime` + `spring-boot-starter`; or the control plane needs dependencies the pipeline should not carry; or it grows its own admin surface.

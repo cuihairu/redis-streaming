@@ -105,3 +105,11 @@
 - v1.0：`JobSpec` + Redis 存储 + `JobControlPlane` API（submit/upgrade/rollback/stop/resume/list/audit）+ 授权钩子；单测（mock Redisson）+ 集成测试（真实 Redis）。
 - v1.1：`JobAgent` 对账（认领/部署/升级/回滚执行/失败报告）+ 集成测试（升级保留 state、回滚、仅并行度变化走快路径）。
 - v1.2：starter 自动装配 + 文档（Spring-Boot-Starter.md / Deployment.md 增补）。
+
+## 模块归属（2026-11-10，已代决）
+
+控制面保留在 `runtime` 模块的 `io.github.cuihairu.redis.streaming.runtime.redis.control` 包，不拆独立 Gradle 模块：期望态生命周期（`JobSpec`/`JobAgent`/审计）与其启动的数据管道入口同构件。
+
+- 设计所需的分离不经构件拆分即已存在：control 包单向依赖 runtime 公共入口（`RedisJobClient`、`RedisRuntimeConfig`、`RedisStreamExecutionEnvironment`），管道从不回引 control；starter 装配由两级开关把守（v1.2），非用户不加载这些类。
+- 拆出会新增第 21 个 Gradle 模块与新的发布构件（当前仅 `examples`/`benchmark` 不发布），为归属偏好重塑发布构件面。项目近期方向是收敛（metrics 模块 2026-10-12 删除，registry/config 相继瘦身）。
+- 重启条件：`runtime` + `spring-boot-starter` 之外出现控制面的第二方使用方；或控制面需要管道不该携带的依赖；或长出独立管理面。
