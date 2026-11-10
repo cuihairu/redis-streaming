@@ -14,7 +14,7 @@ The project is a Gradle multi-module build (20 modules, matching `settings.gradl
 | Tier 2: Infrastructure | `mq`, `registry`, `config`, `state`, `checkpoint`, `watermark` |
 | Tier 3: Functional Modules | `window`, `aggregation`, `table`, `join`, `cdc`, `sink`, `source` |
 | Tier 4: Advanced Features | `reliability`, `cep` |
-| Tier 5: Integration | `metrics`, `spring-boot-starter`, `examples` |
+| Tier 5: Integration | `spring-boot-starter`, `examples`, `benchmark` |
 
 ## Design Principles
 
