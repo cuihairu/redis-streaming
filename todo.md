@@ -97,7 +97,7 @@
 
 ### b) 超大文件候选
 
-- [ ] LAY-001 [P1] 拆分 runtime/src/main/java/io/github/cuihairu/redis/streaming/runtime/redis/RedisStreamExecutionEnvironment.java（2050 行）——入口 API、控制门、领导者协调、checkpoint 调度、缩扩容和恢复补偿混在单类（runtime/src/main/java/io/github/cuihairu/redis/streaming/runtime/redis/RedisStreamExecutionEnvironment.java:448）。
+- [x] LAY-001 [P1] 拆分 runtime/src/main/java/io/github/cuihairu/redis/streaming/runtime/redis/RedisStreamExecutionEnvironment.java（2050 行）——入口 API、控制门、领导者协调、checkpoint 调度、缩扩容和恢复补偿混在单类（runtime/src/main/java/io/github/cuihairu/redis/streaming/runtime/redis/RedisStreamExecutionEnvironment.java:448）。\n  - 证据：2ac1eba；:runtime:test 929/929 绿；./gradlew test 全绿（提取 10 个同包协作类，行为不变，仅编译/测试改接）。
 - [ ] LAY-002 [P1] 拆分 runtime/src/main/java/io/github/cuihairu/redis/streaming/runtime/redis/internal/RedisStreamBuilder.java（1485 行）——源接入、transform/window/reduce/sum 编译和键控状态编码在同一个 builder 及内部类（runtime/src/main/java/io/github/cuihairu/redis/streaming/runtime/redis/internal/RedisStreamBuilder.java:17）。
 - [ ] LAY-003 [P1] 拆分 mq/src/main/java/io/github/cuihairu/redis/streaming/mq/impl/RedisMessageConsumer.java（1245 行）——消费循环、租约/rebalance、pending 接管、重试与指标交织在一个实现类（mq/src/main/java/io/github/cuihairu/redis/streaming/mq/impl/RedisMessageConsumer.java:29）。
 - [ ] LAY-004 [P1] 拆分 runtime/src/main/java/io/github/cuihairu/redis/streaming/runtime/redis/internal/RedisRuntimeCheckpointManager.java（1099 行）——快照建模、恢复、周期触发、drain/ack 和两阶段事务句柄集中一处（runtime/src/main/java/io/github/cuihairu/redis/streaming/runtime/redis/internal/RedisRuntimeCheckpointManager.java:17）。
