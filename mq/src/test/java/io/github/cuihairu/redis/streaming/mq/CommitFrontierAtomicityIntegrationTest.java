@@ -14,6 +14,7 @@ import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Map;
 import java.util.ArrayList;
@@ -78,9 +79,14 @@ class CommitFrontierAtomicityIntegrationTest {
     private void ack(String messageId) throws Exception {
         Class<?>[] types = {String.class, String.class, int.class,
                 RStream.class, String.class, Map.class};
-        Method m = RedisMessageConsumer.class.getDeclaredMethod("ackViaBackend", types);
+        // ackViaBackend moved to the dispatch processor collaborator; the field is
+        // package-private, so reach it reflectively from this package
+        Field dispatchField = RedisMessageConsumer.class.getDeclaredField("dispatch");
+        dispatchField.setAccessible(true);
+        Object dispatch = dispatchField.get(consumer);
+        Method m = dispatch.getClass().getDeclaredMethod("ackViaBackend", types);
         m.setAccessible(true);
-        m.invoke(consumer, topic, group, 0, stream, messageId, null);
+        m.invoke(dispatch, topic, group, 0, stream, messageId, null);
     }
 
     @Test
