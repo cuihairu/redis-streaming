@@ -271,9 +271,22 @@ import java.util.function.Function;
                     String kind,
                     WindowGuard<V> guard,
                     WindowAccumulator<V> accumulator,
-                    WindowEmitter emitter) {
+                    WindowEmitter emitter,
+                    WindowEmitter rawEmitter) {
                 String stateName = "__internal:window:" + kind + ":" + operatorId + ":" + upstreamOperators.size();
                 List<RedisOperatorNode> ops = new ArrayList<>(upstreamOperators);
+                // Audit P0-1: merging assigners (SessionWindow) must coalesce intersecting
+                // window members into the union window, or every element seeds its own
+                // [ts, ts+gap) member and fires alone — session semantics silently lost.
+                // Mirroring the in-memory engine, merging assigners accumulate raw element
+                // lists per member (the incremental state shape cannot be merged for
+                // non-associative aggregations) and the kind's raw emitter computes the
+                // fire result from that list. rawEmitter is unused for non-merging assigners.
+                boolean merging = assigner.supportsWindowMerging();
+                if (merging && rawEmitter == null) {
+                    throw new IllegalStateException("window kind '" + kind + "' lacks a raw emitter for merging assigners");
+                }
+                WindowEmitter fireEmitter = merging ? rawEmitter : emitter;
                 // Window triggers (todo B3): one trigger instance per (partition, key, window)
                 // bucket, obtained fresh from WindowAssigner#getDefaultTrigger on first sight
                 // (per its contract). The registry lives per registered operator for as long
@@ -306,7 +319,7 @@ import java.util.function.Function;
                         long watermark = ctx.currentWatermark();
                         WindowFireHandler fireHandler = (member, windowStart, windowEnd, purgeState) -> {
                             RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
-                            emitter.emit(ref, stateName, member, windowStart, windowEnd, partitionId, emit, purgeState);
+                            fireEmitter.emit(ref, stateName, member, windowStart, windowEnd, partitionId, emit, purgeState);
                         };
 
                         for (WindowAssigner.Window w : assigner.assignWindows(v, eventTimeMs)) {
@@ -319,10 +332,21 @@ import java.util.function.Function;
                                 }
                                 continue;
                             }
-                            String member = windowMember(keyField, w.getStart(), w.getEnd());
-                            RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
-                            accumulator.accumulate(ref, stateName, member, v, due, closeTime);
-                            stateStore.touch(ref.redisKey(), stateName, ref.map());
+                            String member;
+                            WindowAssigner.Window effective = w;
+                            if (merging) {
+                                // Audit P0-1: coalesce every open member of this key that
+                                // intersects the seed into the union window, keeping raw
+                                // elements; the element rides along in the union member.
+                                member = mergeIntoRawSession(stateName, keyField, due, w, v, bucketTriggers, partitionId);
+                                ParsedWindow union = parseWindow(member);
+                                effective = new io.github.cuihairu.redis.streaming.window.TimeWindow(union.start, union.end);
+                            } else {
+                                member = windowMember(keyField, w.getStart(), w.getEnd());
+                                RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
+                                accumulator.accumulate(ref, stateName, member, v, due, closeTime);
+                                stateStore.touch(ref.redisKey(), stateName, ref.map());
+                            }
 
                             // Window trigger wiring (todo B3): consult the bucket's trigger on
                             // every element. The stock EventTimeTrigger answers CONTINUE here,
@@ -330,12 +354,12 @@ import java.util.function.Function;
                             String triggerKey = partitionId + D + member;
                             WindowAssigner.Trigger<V> trigger = bucketTriggers.computeIfAbsent(
                                     triggerKey, k -> assigner.getDefaultTrigger());
-                            WindowAssigner.TriggerResult tr = trigger.onElement(v, eventTimeMs, w);
+                            WindowAssigner.TriggerResult tr = trigger.onElement(v, eventTimeMs, effective);
                             if (tr == WindowAssigner.TriggerResult.FIRE) {
                                 // partial fire: emit, keep accumulating, stay due
-                                fireHandler.fire(member, w.getStart(), w.getEnd(), false);
+                                fireHandler.fire(member, effective.getStart(), effective.getEnd(), false);
                             } else if (tr == WindowAssigner.TriggerResult.FIRE_AND_PURGE) {
-                                fireHandler.fire(member, w.getStart(), w.getEnd(), true);
+                                fireHandler.fire(member, effective.getStart(), effective.getEnd(), true);
                                 due.remove(member);
                                 bucketTriggers.remove(triggerKey);
                             } else if (tr == WindowAssigner.TriggerResult.PURGE) {
@@ -485,6 +509,55 @@ import java.util.function.Function;
                                 state.remove(member);
                                 stateStore.touch(ref.redisKey(), stateName, state);
                             }
+                        },
+                        // Raw emitter for merging assigners (audit P0-1): fold the reducer
+                        // over the merged element list instead of decoding an incremental state
+                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit, purgeState) -> {
+                            RMap<String, String> state = ref.map();
+                            String json = state.get(member);
+                            if (json == null || json.isBlank()) {
+                                return;
+                            }
+                            Class<?> type = valueClassRef.get();
+                            if (type == null) {
+                                return;
+                            }
+                            List<String> items;
+                            try {
+                                items = readRawElements(json);
+                            } catch (Exception e) {
+                                throw new RuntimeException("Failed to deserialize window elements", e);
+                            }
+                            V acc = null;
+                            for (String item : items) {
+                                if (item == null) continue;
+                                V x;
+                                try {
+                                    x = decodeRawElement(item, type);
+                                } catch (Exception e) {
+                                    throw new RuntimeException("Failed to deserialize window element", e);
+                                }
+                                try {
+                                    acc = acc == null ? x : reducer.reduce(acc, x);
+                                } catch (Exception e) {
+                                    throw new RuntimeException("Window reduce function failed", e);
+                                }
+                            }
+                            try {
+                                RedisRuntimeMetrics.get().incWindowFired(config.getJobName(), topic, consumerGroup, operatorId, stateName, partitionId);
+                            } catch (Exception ignore) {
+                            }
+                            try {
+                                emit.emit(acc);
+                            } catch (Exception e) {
+                                // RT-H3: keep the raw list on a failed emit so the retry fires
+                                // the complete merged window
+                                throw new RuntimeException("Failed to emit window reduce result", e);
+                            }
+                            if (purgeState) {
+                                state.remove(member);
+                                stateStore.touch(ref.redisKey(), stateName, state);
+                            }
                         });
             }
 
@@ -544,13 +617,66 @@ import java.util.function.Function;
                                 state.remove(member);
                                 stateStore.touch(ref.redisKey(), stateName, state);
                             }
+                        },
+                        // Raw emitter for merging assigners (audit P0-1): replay the merged
+                        // element list through a fresh accumulator
+                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit, purgeState) -> {
+                            RMap<String, String> state = ref.map();
+                            String json = state.get(member);
+                            if (json == null || json.isBlank()) {
+                                return;
+                            }
+                            List<String> items;
+                            try {
+                                items = readRawElements(json);
+                            } catch (Exception e) {
+                                throw new RuntimeException("Failed to deserialize window elements", e);
+                            }
+                            AggregateFunction.Accumulator<V> acc = aggregateFunction.createAccumulator();
+                            for (String item : items) {
+                                if (item == null) continue;
+                                V x;
+                                try {
+                                    x = decodeRawElement(item, valueClassRef.get());
+                                } catch (Exception e) {
+                                    throw new RuntimeException("Failed to deserialize window element", e);
+                                }
+                                try {
+                                    acc = aggregateFunction.add(x, acc);
+                                } catch (Exception e) {
+                                    throw new RuntimeException("Window aggregate add failed", e);
+                                }
+                            }
+                            R out;
+                            try {
+                                out = aggregateFunction.getResult(acc);
+                            } catch (Exception e) {
+                                throw new RuntimeException("Window aggregate getResult failed", e);
+                            }
+                            try {
+                                RedisRuntimeMetrics.get().incWindowFired(config.getJobName(), topic, consumerGroup, operatorId, stateName, partitionId);
+                            } catch (Exception ignore) {
+                            }
+                            try {
+                                emit.emit(out);
+                            } catch (Exception e) {
+                                // RT-H3: keep the raw list on a failed emit so the retry fires
+                                // the complete merged window
+                                throw new RuntimeException("Failed to emit window aggregate result", e);
+                            }
+                            if (purgeState) {
+                                state.remove(member);
+                                stateStore.touch(ref.redisKey(), stateName, state);
+                            }
                         });
             }
 
             @Override
             public <R> DataStream<R> apply(WindowFunction<K, V, R> windowFunction) {
                 Objects.requireNonNull(windowFunction, "windowFunction");
-                return registerWindowedOperator("apply", null,
+                // apply's state is already the raw element list (audit P0-1): the same
+                // accumulate/emitter pair serves merging assigners — pass it as both
+                WindowAccumulator<V> appendElement =
                         (ref, stateName, member, v, due, closeTime) -> {
                             RMap<String, String> state = ref.map();
                             List<String> items = new ArrayList<>();
@@ -573,7 +699,8 @@ import java.util.function.Function;
                                 throw new RuntimeException("Failed to serialize window elements", e);
                             }
                             due.add(closeTime, member);
-                        },
+                        };
+                WindowEmitter emitElement =
                         (ref, stateName, member, windowStart, windowEnd, partitionId, emit, purgeState) -> {
                             RMap<String, String> state = ref.map();
                             String json = state.get(member);
@@ -633,7 +760,8 @@ import java.util.function.Function;
                                 state.remove(member);
                                 stateStore.touch(ref.redisKey(), stateName, state);
                             }
-                        });
+                        };
+                return registerWindowedOperator("apply", null, appendElement, emitElement, emitElement);
             }
 
             @Override
@@ -702,6 +830,56 @@ import java.util.function.Function;
                                 state.remove(member);
                                 stateStore.touch(ref.redisKey(), stateName, state);
                             }
+                        },
+                        // Raw emitter for merging assigners (audit P0-1): fold the merged
+                        // element list into the sum instead of decoding an incremental state
+                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit, purgeState) -> {
+                            RMap<String, String> state = ref.map();
+                            String json = state.get(member);
+                            if (json == null || json.isBlank()) {
+                                return;
+                            }
+                            Class<?> valueClass = valueClassRef.get();
+                            if (valueClass == null) {
+                                return;
+                            }
+                            List<String> items;
+                            try {
+                                items = readRawElements(json);
+                            } catch (Exception e) {
+                                throw new RuntimeException("Failed to deserialize window elements", e);
+                            }
+                            Number sum = null;
+                            String sampleName = null;
+                            for (String item : items) {
+                                if (item == null) continue;
+                                Number x;
+                                try {
+                                    x = (Number) decodeRawElement(item, valueClass);
+                                } catch (Exception e) {
+                                    throw new RuntimeException("Failed to deserialize window element", e);
+                                }
+                                sum = io.github.cuihairu.redis.streaming.runtime.internal.NumberAggregationUtils.add(sum, x);
+                                sampleName = x.getClass().getName();
+                            }
+                            Number outNumber = io.github.cuihairu.redis.streaming.runtime.internal.NumberAggregationUtils.castToSameType(sum, sampleName);
+                            @SuppressWarnings("unchecked")
+                            V out = (V) outNumber;
+                            try {
+                                RedisRuntimeMetrics.get().incWindowFired(config.getJobName(), topic, consumerGroup, operatorId, stateName, partitionId);
+                            } catch (Exception ignore) {
+                            }
+                            try {
+                                emit.emit(out);
+                            } catch (Exception e) {
+                                // RT-H3: keep the raw list on a failed emit so the retry fires
+                                // the complete merged window
+                                throw new RuntimeException("Failed to emit window sum result", e);
+                            }
+                            if (purgeState) {
+                                state.remove(member);
+                                stateStore.touch(ref.redisKey(), stateName, state);
+                            }
                         });
             }
 
@@ -744,7 +922,51 @@ import java.util.function.Function;
                                 state.remove(member);
                                 stateStore.touch(ref.redisKey(), stateName, state);
                             }
+                        },
+                        // Raw emitter for merging assigners (audit P0-1): the merged element
+                        // list's size is the count
+                        (ref, stateName, member, windowStart, windowEnd, partitionId, emit, purgeState) -> {
+                            RMap<String, String> state = ref.map();
+                            String json = state.get(member);
+                            if (json == null || json.isBlank()) {
+                                return;
+                            }
+                            List<String> items;
+                            try {
+                                items = readRawElements(json);
+                            } catch (Exception e) {
+                                throw new RuntimeException("Failed to deserialize window elements", e);
+                            }
+                            try {
+                                RedisRuntimeMetrics.get().incWindowFired(config.getJobName(), topic, consumerGroup, operatorId, stateName, partitionId);
+                            } catch (Exception ignore) {
+                            }
+                            try {
+                                emit.emit((long) items.size());
+                            } catch (Exception e) {
+                                // RT-H3: keep the raw list on a failed emit so the retry fires
+                                // the complete merged window
+                                throw new RuntimeException("Failed to emit window count result", e);
+                            }
+                            if (purgeState) {
+                                state.remove(member);
+                                stateStore.touch(ref.redisKey(), stateName, state);
+                            }
                         });
+            }
+
+            /** Decodes a window member's raw element list (the merged-state shape). */
+            private List<String> readRawElements(String json) throws Exception {
+                @SuppressWarnings("unchecked")
+                List<String> items = objectMapper.readValue(json, List.class);
+                return items == null ? List.of() : items;
+            }
+
+            /** Decodes one raw element of a window member. */
+            private V decodeRawElement(String item, Class<?> type) throws Exception {
+                @SuppressWarnings("unchecked")
+                V v = (V) objectMapper.readValue(item, type);
+                return v;
             }
 
             private String windowMember(String keyField, long start, long end) {
@@ -900,6 +1122,94 @@ import java.util.function.Function;
                     }
                     bucketTriggers.remove(triggerKey);
                 }
+            }
+
+            /**
+             * Audit P0-1: coalesces every open window member of {@code keyField} whose
+             * [start, end) intersects {@code seed} into the union window, concatenates
+             * their raw element lists, appends {@code value}, and stores the list under
+             * the union member; absorbed members lose their state, due entry and bucket
+             * trigger. Returns the union member string.
+             *
+             * <p>Mirrors the in-memory engine's merge: windows are half-open, so a member
+             * ending exactly where the seed begins (an inactivity gap of exactly the
+             * session gap) does not merge; open members of a key stay pairwise
+             * non-intersecting (the invariant this method upholds), which is why a member
+             * skipped as non-intersecting can never intersect the final union. The kept
+             * trigger is the first absorbed member's instance — the trigger API has no
+             * merge callback, so the absorbed triggers' state is dropped (same contract
+             * as the in-memory engine).
+             *
+             * <p>Enumerating the due set per element is O(open members of the partition);
+             * merging assigners are the session-shaped minority, and correctness is the
+             * point — the incremental state shapes cannot be merged for non-associative
+             * aggregations, which is why the raw element list is the merged state.
+             */
+            private String mergeIntoRawSession(String stateName,
+                                               String keyField,
+                                               RScoredSortedSet<String> due,
+                                               WindowAssigner.Window seed,
+                                               V value,
+                                               Map<String, WindowAssigner.Trigger<V>> bucketTriggers,
+                                               int partitionId) throws Exception {
+                long start = seed.getStart();
+                long end = seed.getEnd();
+                List<String> absorbed = new ArrayList<>();
+                WindowAssigner.Trigger<V> keptTrigger = null;
+                for (String m : due) {
+                    ParsedWindow pw = parseWindow(m);
+                    if (!pw.keyField.equals(keyField)) {
+                        continue;
+                    }
+                    if (!(pw.start < end && start < pw.end)) {
+                        continue; // half-open: touching bounds do not intersect
+                    }
+                    absorbed.add(m);
+                    if (keptTrigger == null) {
+                        // capture before the removal loop erases the bucket entry
+                        keptTrigger = bucketTriggers.get(partitionId + D + m);
+                    }
+                    start = Math.min(start, pw.start);
+                    end = Math.max(end, pw.end);
+                }
+                String member = windowMember(keyField, start, end);
+                List<String> items = new ArrayList<>();
+                for (String m : absorbed) {
+                    RedisKeyedStateStore.StateMapRef oldRef = stateStore.stateMapRef(stateName, m);
+                    String json = oldRef.map().get(m);
+                    if (json != null && !json.isBlank()) {
+                        try {
+                            items.addAll(readRawElements(json));
+                        } catch (Exception e) {
+                            throw new RuntimeException("Failed to deserialize merged window elements", e);
+                        }
+                    }
+                    oldRef.map().remove(m);
+                    stateStore.touch(oldRef.redisKey(), stateName, oldRef.map());
+                    due.remove(m);
+                    bucketTriggers.remove(partitionId + D + m);
+                }
+                try {
+                    items.add(objectMapper.writeValueAsString(value));
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to serialize window element", e);
+                }
+                RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
+                RMap<String, String> state = ref.map();
+                try {
+                    state.put(member, objectMapper.writeValueAsString(items));
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to serialize window elements", e);
+                }
+                stateStore.touch(ref.redisKey(), stateName, state);
+                due.add(windowCloseTime(end), member);
+                // keep the first absorbed bucket's trigger under the union member so a
+                // stateful trigger's early-fire state survives the merge; the record path's
+                // computeIfAbsent reuses this instance instead of minting a fresh trigger
+                if (keptTrigger != null) {
+                    bucketTriggers.putIfAbsent(partitionId + D + member, keptTrigger);
+                }
+                return member;
             }
 
             /** Clears one window member's accumulated state without emitting. */

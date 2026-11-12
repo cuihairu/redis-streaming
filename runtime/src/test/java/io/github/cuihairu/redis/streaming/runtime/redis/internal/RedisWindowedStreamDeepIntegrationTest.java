@@ -420,7 +420,7 @@ class RedisWindowedStreamDeepIntegrationTest {
 
             ref.map().put(member, "not-json");
             RuntimeException e1 = assertThrows(RuntimeException.class,
-                    () -> invoke(w, "lambda$aggregate$6", new SumAggregate(), SumAggregate.Sum.class,
+                    () -> invoke(w, "lambda$aggregate$7", new SumAggregate(), SumAggregate.Sum.class,
                             ref, stateName, member, 1, due, 2000L));
             assertTrue(e1.getMessage().contains("Failed to deserialize window accumulator"), "" + e1);
 
@@ -447,7 +447,7 @@ class RedisWindowedStreamDeepIntegrationTest {
             };
             ref.map().delete();
             RuntimeException e2 = assertThrows(RuntimeException.class,
-                    () -> invoke(w, "lambda$aggregate$6", addFails, SumAggregate.Sum.class,
+                    () -> invoke(w, "lambda$aggregate$7", addFails, SumAggregate.Sum.class,
                             ref, stateName, member, 1, due, 2000L));
             assertTrue(e2.getMessage().contains("Window aggregate add failed"), "" + e2);
 
@@ -473,18 +473,18 @@ class RedisWindowedStreamDeepIntegrationTest {
                 }
             };
             RuntimeException e3 = assertThrows(RuntimeException.class,
-                    () -> invoke(w, "lambda$aggregate$6", serFails, EvilAcc.class,
+                    () -> invoke(w, "lambda$aggregate$7", serFails, EvilAcc.class,
                             ref, stateName, member, 1, due, 2000L));
             assertTrue(e3.getMessage().contains("Failed to serialize window accumulator"), "" + e3);
 
             ref.map().put(member, "not-json");
             RuntimeException e4 = assertThrows(RuntimeException.class,
-                    () -> invoke(w, "lambda$aggregate$7", SumAggregate.Sum.class, new SumAggregate(),
+                    () -> invoke(w, "lambda$aggregate$8", SumAggregate.Sum.class, new SumAggregate(),
                             ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT));
             assertTrue(e4.getMessage().contains("Failed to emit window aggregate result"), "" + e4);
 
             ref.map().delete();
-            invoke(w, "lambda$aggregate$7", SumAggregate.Sum.class, new SumAggregate(),
+            invoke(w, "lambda$aggregate$8", SumAggregate.Sum.class, new SumAggregate(),
                     ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
         } finally {
             redis.getKeys().deleteByPattern("it-rti-win:" + uid + "*");
@@ -505,32 +505,32 @@ class RedisWindowedStreamDeepIntegrationTest {
 
             ref.map().put(member, "not-json");
             RuntimeException e1 = assertThrows(RuntimeException.class,
-                    () -> invoke(w, "lambda$apply$8", ref, stateName, member, 1, due, 2000L));
+                    () -> invoke(w, "lambda$apply$10", ref, stateName, member, 1, due, 2000L));
             assertTrue(e1.getMessage().contains("Failed to deserialize window elements"), "" + e1);
 
             ref.map().delete();
             RuntimeException e2 = assertThrows(RuntimeException.class,
-                    () -> invoke(w, "lambda$apply$8", ref, stateName, member, new Evil(), due, 2000L));
+                    () -> invoke(w, "lambda$apply$10", ref, stateName, member, new Evil(), due, 2000L));
             assertTrue(e2.getMessage().contains("Failed to serialize window elements"), "" + e2);
 
             seedValueClass(w, String.class);
 
             ref.map().put(member, " ");
-            invoke(w, "lambda$apply$9", NOOP_WF, ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
+            invoke(w, "lambda$apply$11", NOOP_WF, ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
 
             ref.map().put(member, "not-json");
             RuntimeException e3 = assertThrows(RuntimeException.class,
-                    () -> invoke(w, "lambda$apply$9", NOOP_WF, ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT));
+                    () -> invoke(w, "lambda$apply$11", NOOP_WF, ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT));
             assertTrue(e3.getMessage().contains("Failed to deserialize window elements"), "" + e3);
 
             ref.map().put(member, "[\"not-json\"]");
             RuntimeException e4 = assertThrows(RuntimeException.class,
-                    () -> invoke(w, "lambda$apply$9", NOOP_WF, ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT));
+                    () -> invoke(w, "lambda$apply$11", NOOP_WF, ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT));
             assertTrue(e4.getMessage().contains("Failed to deserialize window element"), "" + e4);
 
             ref.map().put(member, "[\"\\\"x\\\"\"]");
             RuntimeException e5 = assertThrows(RuntimeException.class,
-                    () -> invoke(w, "lambda$apply$9",
+                    () -> invoke(w, "lambda$apply$11",
                             (WindowFunction<Object, Object, Object>) (key, window, elements, collector) -> {
                                 throw new IllegalStateException("wf-boom");
                             }, ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT));
@@ -539,7 +539,7 @@ class RedisWindowedStreamDeepIntegrationTest {
             // no recorded value class -> silent no-op
             seedValueClass(w, null);
             ref.map().put(member, "[\"\\\"x\\\"\"]");
-            invoke(w, "lambda$apply$9", NOOP_WF, ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
+            invoke(w, "lambda$apply$11", NOOP_WF, ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
         } finally {
             redis.getKeys().deleteByPattern("it-rti-win:" + uid + "*");
             redis.shutdown();
@@ -557,28 +557,28 @@ class RedisWindowedStreamDeepIntegrationTest {
             RedisKeyedStateStore.StateMapRef ref = refOf(redis, uid, stateName);
             RScoredSortedSet<String> due = dueOf(redis, uid);
 
-            assertThrows(UnsupportedOperationException.class, () -> invoke(w, "lambda$sum$10", "str"));
-            invoke(w, "lambda$sum$10", 5);
+            assertThrows(UnsupportedOperationException.class, () -> invoke(w, "lambda$sum$12", "str"));
+            invoke(w, "lambda$sum$12", 5);
 
             Function<Object, Number> fieldSelector = v -> (Number) v;
             ref.map().put(member, "not-json");
             RuntimeException e1 = assertThrows(RuntimeException.class,
-                    () -> invoke(w, "lambda$sum$11", fieldSelector, ref, stateName, member, 5, due, 2000L));
+                    () -> invoke(w, "lambda$sum$13", fieldSelector, ref, stateName, member, 5, due, 2000L));
             assertTrue(e1.getMessage().contains("Failed to deserialize window sum state"), "" + e1);
 
             ref.map().put(member, "not-json");
             RuntimeException e2 = assertThrows(RuntimeException.class,
-                    () -> invoke(w, "lambda$sum$12", ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT));
+                    () -> invoke(w, "lambda$sum$14", ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT));
             assertTrue(e2.getMessage().contains("Failed to emit window sum result"), "" + e2);
 
             ref.map().delete();
             ref.map().put(member, "abc");
-            invoke(w, "lambda$count$13", ref, stateName, member, 1, due, 2000L);
+            invoke(w, "lambda$count$16", ref, stateName, member, 1, due, 2000L);
             assertEquals("1", ref.map().get(member));
 
             ref.map().put(member, "xx");
             RuntimeException e3 = assertThrows(RuntimeException.class,
-                    () -> invoke(w, "lambda$count$14", ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT));
+                    () -> invoke(w, "lambda$count$17", ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT));
             assertTrue(e3.getMessage().contains("Failed to emit window count result"), "" + e3);
         } finally {
             redis.getKeys().deleteByPattern("it-rti-win:" + uid + "*");
@@ -645,7 +645,7 @@ class RedisWindowedStreamDeepIntegrationTest {
         try {
             WindowedStream<Object, Object> w = windowed(redis, cfg(uid, b -> {}));
             UnsupportedOperationException e = assertThrows(UnsupportedOperationException.class,
-                    () -> invoke(w, "lambda$sum$10", (Object) null));
+                    () -> invoke(w, "lambda$sum$12", (Object) null));
             assertTrue(e.getMessage().contains("null"), "" + e);
 
             ObjectMapper failingMapper = org.mockito.Mockito.spy(new ObjectMapper());
@@ -667,7 +667,7 @@ class RedisWindowedStreamDeepIntegrationTest {
             ref.map().delete();
             Function<Object, Number> fieldSelector = v -> (Number) v;
             RuntimeException e2 = assertThrows(RuntimeException.class,
-                    () -> invoke(w2, "lambda$sum$11", fieldSelector, ref, stateName, "member",
+                    () -> invoke(w2, "lambda$sum$13", fieldSelector, ref, stateName, "member",
                             5, due, 2000L));
             assertTrue(e2.getMessage().contains("Failed to serialize window sum state"), "" + e2);
         } finally {
@@ -690,23 +690,23 @@ class RedisWindowedStreamDeepIntegrationTest {
             RedisKeyedStateStore.StateMapRef ref = refOf(redis, uid, stateName);
 
             ref.map().delete();
-            invoke(w, "lambda$sum$12", ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
+            invoke(w, "lambda$sum$14", ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
             ref.map().put(member, " ");
-            invoke(w, "lambda$sum$12", ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
+            invoke(w, "lambda$sum$14", ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
 
             ref.map().put(member, "null");
-            invoke(w, "lambda$sum$12", ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
+            invoke(w, "lambda$sum$14", ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
 
             ref.map().put(member, "{\"sum\":1,\"sample\":\"java.lang.Integer\"}");
             failing.failOn("incWindowFired");
             RedisRuntimeMetrics.setCollector(failing);
-            invoke(w, "lambda$sum$12", ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
+            invoke(w, "lambda$sum$14", ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
 
             RedisKeyedStateStore.StateMapRef countRef = refOf(redis, uid, "count-emit-res");
             countRef.map().delete();
-            invoke(w, "lambda$count$14", countRef, "count-emit-res", member, 1000L, 2000L, 0, IGNORE_OUT);
+            invoke(w, "lambda$count$17", countRef, "count-emit-res", member, 1000L, 2000L, 0, IGNORE_OUT);
             countRef.map().put(member, "3");
-            invoke(w, "lambda$count$14", countRef, "count-emit-res", member, 1000L, 2000L, 0, IGNORE_OUT);
+            invoke(w, "lambda$count$17", countRef, "count-emit-res", member, 1000L, 2000L, 0, IGNORE_OUT);
         } finally {
             RedisRuntimeMetrics.setCollector(previous);
             redis.getKeys().deleteByPattern("it-rti-win:" + uid + "*");
@@ -736,12 +736,12 @@ class RedisWindowedStreamDeepIntegrationTest {
             invoke(w, "lambda$reduce$5", ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
 
             ref.map().put(member, "{\"sum\":3}");
-            invoke(w, "lambda$aggregate$7", SumAggregate.Sum.class, new SumAggregate(),
+            invoke(w, "lambda$aggregate$8", SumAggregate.Sum.class, new SumAggregate(),
                     ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
 
             seedValueClass(w, String.class);
             ref.map().put(member, "[\"\\\"x\\\"\"]");
-            invoke(w, "lambda$apply$9", NOOP_WF, ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
+            invoke(w, "lambda$apply$11", NOOP_WF, ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
         } finally {
             RedisRuntimeMetrics.setCollector(previous);
             redis.getKeys().deleteByPattern("it-rti-win:" + uid + "*");
@@ -761,10 +761,10 @@ class RedisWindowedStreamDeepIntegrationTest {
             seedValueClass(w, String.class);
 
             ref.map().put(member, "null");
-            invoke(w, "lambda$apply$9", NOOP_WF, ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
+            invoke(w, "lambda$apply$11", NOOP_WF, ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
 
             ref.map().put(member, "[null]");
-            invoke(w, "lambda$apply$9", NOOP_WF, ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
+            invoke(w, "lambda$apply$11", NOOP_WF, ref, stateName, member, 1000L, 2000L, 0, IGNORE_OUT);
         } finally {
             redis.getKeys().deleteByPattern("it-rti-win:" + uid + "*");
             redis.shutdown();
