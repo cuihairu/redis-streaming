@@ -167,13 +167,20 @@ final class DeferredAcks {
                 if (ids.isEmpty()) {
                     continue;
                 }
+                boolean acked = false;
                 try {
                     RStream<String, Object> stream = redissonClient.getStream(keys.partitionStreamKey(topic, pid), org.redisson.client.codec.StringCodec.INSTANCE);
                     stream.ack(group, ids.toArray(new StreamMessageId[0]));
+                    acked = true;
                 } catch (Exception ex) {
                     log.warn("Failed to ack deferred messages (topic={}, group={}, partition={}, count={})", topic, group, pid, ids.size(), ex);
                 }
-                if (maxId != null) {
+                // MQ-11 invariant: the commit frontier may only advance over acked records.
+                // Advancing it after a failed XACK would let the retention housekeeper XTRIM
+                // messages that are still unacked in the PEL — silent data loss on the
+                // defer-ack path. Leave the frontier behind; the messages stay in the PEL
+                // and are re-acked by a later checkpoint round.
+                if (acked && maxId != null) {
                     try {
                         // MQ-11: the frontier is a max() reduced across concurrent ack
                         // workers, so the compare-and-set runs inside Redis as one
@@ -185,7 +192,11 @@ final class DeferredAcks {
                                 RScript.ReturnType.LONG,
                                 java.util.Collections.singletonList(keys.commitFrontierKey(topic, pid)),
                                 group, maxId);
-                    } catch (Exception ignore) {
+                    } catch (Exception ex) {
+                        // a failed CAS leaves the frontier behind — the safe direction
+                        // (acked ids simply stay untrimmed until a later advance); make it
+                        // visible instead of silently swallowed
+                        log.warn("Failed to advance commit frontier (topic={}, group={}, partition={}, maxId={})", topic, group, pid, maxId, ex);
                     }
                 }
             }

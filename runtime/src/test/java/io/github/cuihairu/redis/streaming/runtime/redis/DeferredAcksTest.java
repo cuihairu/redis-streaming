@@ -168,6 +168,50 @@ class DeferredAcksTest {
     }
 
     @Test
+    void ackAll_neverAdvancesFrontierWhenXAckFailed() {
+        // Audit P0-2 / MQ-11 invariant: the commit frontier may only advance over acked
+        // records. Advancing after a failed XACK lets the retention housekeeper XTRIM
+        // messages still unacked in the PEL — silent data loss on the defer-ack path.
+        RedissonClient redis = mock(RedissonClient.class);
+        @SuppressWarnings("unchecked")
+        RStream<String, Object> stream = mock(RStream.class);
+        RScript script = mock(RScript.class);
+        doReturn(stream).when(redis).getStream(anyString(), any(StringCodec.class));
+        when(redis.getScript(any(StringCodec.class))).thenReturn(script);
+        when(stream.ack(anyString(), any())).thenThrow(new RuntimeException("redis down"));
+
+        DeferredAcks acks = new DeferredAcks();
+        acks.record("t", "g", 0, "9-4");
+        acks.record("t", "g", 0, "9-2");
+
+        assertDoesNotThrow(() -> acks.ackAll(redis, acks.drainForAck(), StreamKeys.shared()));
+        verify(script, never()).eval(any(RScript.Mode.class), anyString(), any(RScript.ReturnType.class),
+                anyList(), anyString(), anyString());
+    }
+
+    @Test
+    void ackAll_advancesFrontierOnlyAfterSuccessfulXAck() {
+        RedissonClient redis = mock(RedissonClient.class);
+        @SuppressWarnings("unchecked")
+        RStream<String, Object> stream = mock(RStream.class);
+        RScript script = mock(RScript.class);
+        doReturn(stream).when(redis).getStream(anyString(), any(StringCodec.class));
+        when(redis.getScript(any(StringCodec.class))).thenReturn(script);
+        when(stream.ack(anyString(), any(StreamMessageId[].class))).thenReturn(2L);
+
+        DeferredAcks acks = new DeferredAcks();
+        acks.record("t", "g", 0, "9-4");
+        acks.record("t", "g", 0, "9-2");
+
+        acks.ackAll(redis, acks.drainForAck(), StreamKeys.shared());
+
+        // the frontier CAS runs exactly once, with the furthest acked id
+        verify(script, times(1)).eval(eq(RScript.Mode.READ_WRITE), anyString(),
+                eq(RScript.ReturnType.LONG),
+                eq(List.of(StreamKeys.commitFrontier("t", 0))), eq("g"), eq("9-4"));
+    }
+
+    @Test
     void clear_emptiesEverything() {
         DeferredAcks acks = new DeferredAcks();
         acks.record("t", "g", 0, "1-0");
