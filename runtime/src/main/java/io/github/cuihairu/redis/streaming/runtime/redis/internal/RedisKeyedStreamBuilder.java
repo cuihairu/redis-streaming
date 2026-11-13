@@ -853,14 +853,17 @@ import java.util.function.Function;
                             String sampleName = null;
                             for (String item : items) {
                                 if (item == null) continue;
-                                Number x;
+                                V decoded;
                                 try {
-                                    x = (Number) decodeRawElement(item, valueClass);
+                                    decoded = decodeRawElement(item, valueClass);
                                 } catch (Exception e) {
                                     throw new RuntimeException("Failed to deserialize window element", e);
                                 }
-                                sum = io.github.cuihairu.redis.streaming.runtime.internal.NumberAggregationUtils.add(sum, x);
-                                sampleName = x.getClass().getName();
+                                // audit fix: apply the field selector per element, same as the
+                                // non-merging path — the raw fold used the bare element, so
+                                // sum(v -> v * 10) over 1, 2 answered 3 instead of 30
+                                sum = io.github.cuihairu.redis.streaming.runtime.internal.NumberAggregationUtils.add(sum, fieldSelector.apply(decoded));
+                                sampleName = decoded.getClass().getName();
                             }
                             Number outNumber = io.github.cuihairu.redis.streaming.runtime.internal.NumberAggregationUtils.castToSameType(sum, sampleName);
                             @SuppressWarnings("unchecked")

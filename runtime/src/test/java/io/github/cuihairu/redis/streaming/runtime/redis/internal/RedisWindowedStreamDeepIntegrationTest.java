@@ -354,6 +354,38 @@ class RedisWindowedStreamDeepIntegrationTest {
         }
     }
 
+    /**
+     * Audit fix: the merged-session sum emitter folds every SELECTED element value — the
+     * raw fold used the bare element, so sum(v -> v * 10) over 3, 4 answered 7, not 70.
+     */
+    @Test
+    void sessionSumAppliesFieldSelectorToMergedElements() throws Exception {
+        RedissonClient redis = client();
+        String uid = UUID.randomUUID().toString().substring(0, 8);
+        try {
+            List<Object> out = new CopyOnWriteArrayList<>();
+            RedisStreamExecutionEnvironment env =
+                    RedisStreamExecutionEnvironment.create(redis, cfg(uid, b -> {}));
+            DataStream<Object> tail = env.fromMqTopic("it-rti-t-" + uid, "g")
+                    .map(m -> m.getPayload())
+                    .keyBy(v -> "k")
+                    .window(SessionWindow.<Object>withGap(Duration.ofMillis(1000)))
+                    .sum(v -> ((Number) v).intValue() * 10);
+            RedisPipelineRunner<Object> runner = definitionOf(tail.addSink(out::add)).freeze().buildRunner();
+            try {
+                runner.handle(msg(1500, 3));
+                runner.handle(msg(1600, 4)); // merges into [1500,2600) with 3
+                runner.handle(msg(5000, 999)); // pushes the watermark; its own session stays open
+            } finally {
+                runner.close();
+            }
+            assertEquals(List.of(70), out, "the merged session must sum selected values 30+40, not 3+4");
+        } finally {
+            redis.getKeys().deleteByPattern("it-rti-win:" + uid + "*");
+            redis.shutdown();
+        }
+    }
+
     /** Element Jackson cannot serialize (direct self-reference) — the merge failure probe. */
     static final class Poison {
         @SuppressWarnings("unused")
