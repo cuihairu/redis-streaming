@@ -31,6 +31,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -85,6 +86,58 @@ class RedisMessageConsumerCommitFrontierScriptTest {
                 eq(RScript.ReturnType.LONG),
                 eq(Collections.singletonList(StreamKeys.commitFrontier("t", 0))),
                 eq("g"), eq("5-0"));
+    }
+
+    /**
+     * Audit fix: an id still pending in the PEL pins the frontier. XACK succeeded for
+     * this message, but an earlier batch's ack failed and left its id pending — advancing
+     * to the newer id would expose the pending message to retention trim.
+     */
+    @Test
+    void frontierHeldBelowThePendingMinimum() throws Exception {
+        @SuppressWarnings("unchecked")
+        org.redisson.api.RStream<String, Object> stream = (org.redisson.api.RStream) mock(org.redisson.api.RStream.class);
+        when(client.getStream(any(String.class), any(org.redisson.client.codec.Codec.class)))
+                .thenReturn((org.redisson.api.RStream) stream);
+        when(stream.getPendingInfo("g")).thenReturn(new org.redisson.api.stream.PendingResult(
+                1L, new org.redisson.api.stream.StreamMessageId(3, 0),
+                new org.redisson.api.stream.StreamMessageId(3, 0), Map.of()));
+
+        ack("5-0");
+
+        verify(frontierScript, never()).eval(any(RScript.Mode.class), anyString(),
+                any(RScript.ReturnType.class), anyList(), any(Object.class));
+    }
+
+    /** The PEL is empty below the acked id: the frontier advances normally. */
+    @Test
+    void frontierAdvancesWhenNothingPending() throws Exception {
+        @SuppressWarnings("unchecked")
+        org.redisson.api.RStream<String, Object> stream = (org.redisson.api.RStream) mock(org.redisson.api.RStream.class);
+        when(client.getStream(any(String.class), any(org.redisson.client.codec.Codec.class)))
+                .thenReturn((org.redisson.api.RStream) stream);
+        when(stream.getPendingInfo("g")).thenReturn(null);
+
+        ack("5-0");
+
+        verify(frontierScript).eval(eq(RScript.Mode.READ_WRITE), anyString(),
+                eq(RScript.ReturnType.LONG),
+                eq(Collections.singletonList(StreamKeys.commitFrontier("t", 0))),
+                eq("g"), eq("5-0"));
+    }
+
+    /** Audit fix: an unreadable PEL leaves the safe boundary unknown — no frontier advance. */
+    @Test
+    void frontierSkippedWhenPendingQueryFails() throws Exception {
+        @SuppressWarnings("unchecked")
+        org.redisson.api.RStream<String, Object> stream = (org.redisson.api.RStream) mock(org.redisson.api.RStream.class);
+        when(client.getStream(any(String.class), any(org.redisson.client.codec.Codec.class)))
+                .thenReturn((org.redisson.api.RStream) stream);
+        when(stream.getPendingInfo("g")).thenThrow(new RuntimeException("redis down"));
+
+        assertDoesNotThrow(() -> ack("5-0"));
+        verify(frontierScript, never()).eval(any(RScript.Mode.class), anyString(),
+                any(RScript.ReturnType.class), anyList(), any(Object.class));
     }
 
     @Test

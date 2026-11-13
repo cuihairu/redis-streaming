@@ -143,12 +143,20 @@ public class StreamRetentionHousekeeper implements AutoCloseable {
                                 java.util.Collections.singletonList(streamKey), minId);
                         try { io.github.cuihairu.redis.streaming.mq.metrics.RetentionMetrics.get().recordTrim(topic, i, deleted != null ? deleted : 0L, "minid"); } catch (Exception ignore) {}
                     }
-                    // Safe frontier trim: compute min committed id across active groups for this partition
+                    // Safe frontier trim: compute min committed id across active groups for
+                    // this partition, clamped (audit fix) to each group's PEL minimum — the
+                    // frontier alone can sit above still-unacked ids when an ack failed,
+                    // and trimming past them deletes messages that can never be delivered.
+                    // An unreadable PEL skips this partition's frontier trim this round:
+                    // the safe boundary is unknown, so nothing is trimmed.
                     String frontierKey = keys.commitFrontierKey(topic, i);
                     org.redisson.api.RMap<String, String> fm = redissonClient.getMap(frontierKey);
                     java.util.Map<String,String> all = fm.readAllMap();
                     if (all != null && !all.isEmpty()) {
                         String minId = null;
+                        boolean pelKnown = true;
+                        org.redisson.api.RStream<String, Object> pstream =
+                                redissonClient.getStream(streamKey, org.redisson.client.codec.StringCodec.INSTANCE);
                         for (java.util.Map.Entry<String,String> e : all.entrySet()) {
                             String group = e.getKey();
                             // consider group active if lease exists for this partition
@@ -157,9 +165,22 @@ public class StreamRetentionHousekeeper implements AutoCloseable {
                             if (!active) continue;
                             String val = e.getValue();
                             if (val == null || val.isEmpty()) continue;
-                            if (minId == null) minId = val; else if (compareStreamId(val, minId) < 0) minId = val;
+                            String candidate = val;
+                            try {
+                                String pendingMin = oldestPendingId(pstream, group);
+                                if (pendingMin != null && compareStreamId(pendingMin, candidate) < 0) {
+                                    candidate = pendingMin;
+                                }
+                            } catch (Exception ex) {
+                                if (!isNoGroupError(ex)) {
+                                    pelKnown = false;
+                                    break;
+                                }
+                                // NOGROUP: the group has no PEL — nothing pending for it
+                            }
+                            if (minId == null || compareStreamId(candidate, minId) < 0) minId = candidate;
                         }
-                        if (minId != null) {
+                        if (pelKnown && minId != null) {
                             String lua3 = "return redis.call('XTRIM', KEYS[1], 'MINID', '~', ARGV[1])";
                             Long deleted = redissonClient.getScript().eval(RScript.Mode.READ_WRITE, lua3, RScript.ReturnType.LONG,
                                     java.util.Collections.singletonList(streamKey), minId);
@@ -211,6 +232,39 @@ public class StreamRetentionHousekeeper implements AutoCloseable {
             if (as != bs) return as < bs ? -1 : 1;
             return 0;
         } catch (Exception e) { return a.compareTo(b); }
+    }
+
+    /**
+     * Minimum id still pending in the group's PEL, or null when nothing is pending.
+     * Redis delivers in ascending id order, so every entry below the pending minimum
+     * has been delivered and is not pending — the trim point may safely sit at, but
+     * never above, it. Throws when Redis cannot be consulted; the caller treats the
+     * query failure as "unknown, do not trim".
+     */
+    private static String oldestPendingId(org.redisson.api.RStream<String, Object> stream, String group) {
+        // the XPENDING summary form carries the lowest pending id in one command
+        org.redisson.api.stream.PendingResult pending = stream.getPendingInfo(group);
+        if (pending == null || pending.getTotal() <= 0) {
+            return null;
+        }
+        org.redisson.api.stream.StreamMessageId lowest = pending.getLowestId();
+        if (lowest == null || lowest.getId0() < 0) {
+            return null;
+        }
+        return lowest.getId0() + "-" + Math.max(lowest.getId1(), 0);
+    }
+
+    /** True when Redis rejected the command with NOGROUP — the group has no PEL. */
+    private static boolean isNoGroupError(Throwable ex) {
+        Throwable t = ex;
+        while (t != null) {
+            String m = t.getMessage();
+            if (m != null && m.contains("NOGROUP")) {
+                return true;
+            }
+            t = t.getCause();
+        }
+        return false;
     }
 
     @Override

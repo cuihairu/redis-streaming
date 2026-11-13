@@ -168,38 +168,111 @@ final class DeferredAcks {
                     continue;
                 }
                 boolean acked = false;
+                RStream<String, Object> stream = null;
                 try {
-                    RStream<String, Object> stream = redissonClient.getStream(keys.partitionStreamKey(topic, pid), org.redisson.client.codec.StringCodec.INSTANCE);
+                    stream = redissonClient.getStream(keys.partitionStreamKey(topic, pid), org.redisson.client.codec.StringCodec.INSTANCE);
                     stream.ack(group, ids.toArray(new StreamMessageId[0]));
                     acked = true;
                 } catch (Exception ex) {
                     log.warn("Failed to ack deferred messages (topic={}, group={}, partition={}, count={})", topic, group, pid, ids.size(), ex);
+                    // Audit fix: drainForAck already removed this batch from tracking, so
+                    // dropping it here would let a later successful batch advance the
+                    // frontier past ids that never left the PEL (9-2 fails, 9-4 succeeds,
+                    // frontier=9-4 with 9-2 still pending). Re-record the batch so the
+                    // next checkpoint round re-drains and retries it.
+                    for (String id : pe.getValue()) {
+                        record(topic, group, pid, id);
+                    }
                 }
-                // MQ-11 invariant: the commit frontier may only advance over acked records.
-                // Advancing it after a failed XACK would let the retention housekeeper XTRIM
-                // messages that are still unacked in the PEL — silent data loss on the
-                // defer-ack path. Leave the frontier behind; the messages stay in the PEL
-                // and are re-acked by a later checkpoint round.
+                // MQ-11 invariant: the commit frontier may only advance over acked records —
+                // and (audit fix) only past records that have actually left the PEL. The
+                // frontier is the retention trim boundary: advancing it over a still-pending
+                // id lets the housekeeper XTRIM that message (silent data loss), which the
+                // old "advance over the max acked id" rule did whenever an earlier batch's
+                // XACK failed. Clamp the CAS to the PEL minimum: advance only when nothing
+                // pending sits at or below maxId; a failed pending query skips the advance —
+                // the frontier staying behind is the safe direction.
                 if (acked && maxId != null) {
+                    String pendingMin = null;
+                    boolean pelKnown = true;
                     try {
-                        // MQ-11: the frontier is a max() reduced across concurrent ack
-                        // workers, so the compare-and-set runs inside Redis as one
-                        // atomic Lua script over plain text "ms-seq" values — the old
-                        // Java read-then-put could read a stale prev and land a
-                        // smaller id last, regressing the frontier
-                        RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
-                        script.eval(RScript.Mode.READ_WRITE, COMMIT_FRONTIER_CAS_LUA,
-                                RScript.ReturnType.LONG,
-                                java.util.Collections.singletonList(keys.commitFrontierKey(topic, pid)),
-                                group, maxId);
+                        pendingMin = oldestPendingId(stream, group);
                     } catch (Exception ex) {
-                        // a failed CAS leaves the frontier behind — the safe direction
-                        // (acked ids simply stay untrimmed until a later advance); make it
-                        // visible instead of silently swallowed
-                        log.warn("Failed to advance commit frontier (topic={}, group={}, partition={}, maxId={})", topic, group, pid, maxId, ex);
+                        if (isNoGroupError(ex)) {
+                            // a group without a PEL has nothing pending — the advance is safe
+                            pendingMin = null;
+                        } else {
+                            pelKnown = false;
+                            log.warn("Failed to read the pending minimum (topic={}, group={}, partition={}) — frontier stays behind", topic, group, pid, ex);
+                        }
+                    }
+                    if (pelKnown) {
+                        if (pendingMin != null && StreamIds.compareStreamId(maxId, pendingMin) >= 0) {
+                            log.warn("Frontier held at the pending minimum (topic={}, group={}, partition={}, maxId={}, pendingMin={})",
+                                    topic, group, pid, maxId, pendingMin);
+                        } else {
+                            try {
+                                // MQ-11: the frontier is a max() reduced across concurrent ack
+                                // workers, so the compare-and-set runs inside Redis as one
+                                // atomic Lua script over plain text "ms-seq" values — the old
+                                // Java read-then-put could read a stale prev and land a
+                                // smaller id last, regressing the frontier
+                                RScript script = redissonClient.getScript(org.redisson.client.codec.StringCodec.INSTANCE);
+                                script.eval(RScript.Mode.READ_WRITE, COMMIT_FRONTIER_CAS_LUA,
+                                        RScript.ReturnType.LONG,
+                                        java.util.Collections.singletonList(keys.commitFrontierKey(topic, pid)),
+                                        group, maxId);
+                            } catch (Exception ex) {
+                                // a failed CAS leaves the frontier behind — the safe direction
+                                // (acked ids simply stay untrimmed until a later advance); make it
+                                // visible instead of silently swallowed
+                                log.warn("Failed to advance commit frontier (topic={}, group={}, partition={}, maxId={})", topic, group, pid, maxId, ex);
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+
+    /**
+     * The minimum id still pending in the group's PEL, or null when the PEL is empty.
+     * This is the retention boundary: Redis delivers in ascending id order, so every
+     * entry below the pending minimum has been delivered and is not pending — the
+     * frontier may safely advance up to, but never past, it. Throws when Redis cannot
+     * be consulted; callers treat the query failure as "unknown, do not advance".
+     */
+    private static String oldestPendingId(RStream<String, Object> stream, String group) {
+        // the XPENDING summary form carries the lowest pending id in one command
+        org.redisson.api.stream.PendingResult pending = stream.getPendingInfo(group);
+        if (pending == null || pending.getTotal() <= 0) {
+            return null;
+        }
+        return formatPendingId(pending.getLowestId());
+    }
+
+    /** True when Redis rejected the command with NOGROUP — the group has no PEL. */
+    private static boolean isNoGroupError(Throwable ex) {
+        Throwable t = ex;
+        while (t != null) {
+            String m = t.getMessage();
+            if (m != null && m.contains("NOGROUP")) {
+                return true;
+            }
+            t = t.getCause();
+        }
+        return false;
+    }
+
+    private static String formatPendingId(StreamMessageId id) {
+        if (id == null) {
+            return null;
+        }
+        long ms = id.getId0();
+        if (ms < 0) {
+            return null;
+        }
+        long seq = Math.max(id.getId1(), 0);
+        return ms + "-" + seq;
     }
 }

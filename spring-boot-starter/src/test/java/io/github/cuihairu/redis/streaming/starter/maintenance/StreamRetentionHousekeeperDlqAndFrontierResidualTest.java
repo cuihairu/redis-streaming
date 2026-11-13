@@ -71,6 +71,14 @@ class StreamRetentionHousekeeperDlqAndFrontierResidualTest {
         return meta;
     }
 
+    /** Stub the partition stream with an empty PEL so the frontier trim path is exercised. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static void stubEmptyPel(RedissonClient redisson) {
+        org.redisson.api.RStream pstream = mock(org.redisson.api.RStream.class);
+        when(redisson.getStream(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(pstream);
+        // getPendingInfo returning null is tolerated as "nothing pending"
+    }
+
     @Test
     void trimDlqIsSkippedWhenNoDlqRetentionConfigured() throws Exception {
         RedissonClient redisson = mock(RedissonClient.class);
@@ -163,6 +171,8 @@ class StreamRetentionHousekeeperDlqAndFrontierResidualTest {
         when(redisson.getBucket(anyString())).thenReturn(lease);
         when(lease.isExists()).thenReturn(true);
 
+        stubEmptyPel(redisson);
+
         RScript script = mock(RScript.class);
         when(redisson.getScript()).thenReturn(script);
         when(script.eval(any(RScript.Mode.class), anyString(), any(RScript.ReturnType.class), anyList(), any()))
@@ -201,6 +211,8 @@ class StreamRetentionHousekeeperDlqAndFrontierResidualTest {
         RBucket<Object> lease = mock(RBucket.class);
         when(redisson.getBucket(anyString())).thenReturn(lease);
         when(lease.isExists()).thenReturn(true);
+
+        stubEmptyPel(redisson);
 
         RScript script = mock(RScript.class);
         when(redisson.getScript()).thenReturn(script);

@@ -15,12 +15,14 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -58,6 +60,11 @@ class StreamRetentionHousekeeperBehaviorTest {
         when(redisson.getBucket(anyString())).thenReturn(bucket);
         when(bucket.isExists()).thenReturn(true);
 
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        org.redisson.api.RStream pstream = mock(org.redisson.api.RStream.class);
+        when(redisson.getStream(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(pstream);
+        // getPendingInfo → null means "no pending entries known" — the frontier trim proceeds
+
         MqOptions opts = MqOptions.builder()
                 .streamKeyPrefix("stream:topic")
                 .defaultPartitionCount(2)
@@ -81,6 +88,128 @@ class StreamRetentionHousekeeperBehaviorTest {
                 eq(List.of(StreamKeys.dlq("topicA"))), any());
         // At least one trim invocation for partitions should happen.
         verify(script, atLeastOnce()).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG),
+                eq(List.of(StreamKeys.partitionStream("topicA", 0))), any());
+    }
+
+    /**
+     * Audit fix: the frontier trim point must be clamped to the PEL minimum — a group's
+     * frontier can sit above still-unacked ids (a failed XACK), and trimming past them
+     * deletes messages that can never be delivered.
+     */
+    @Test
+    void frontierTrimHeldAtPendingMinimum() {
+        RedissonClient redisson = mock(RedissonClient.class);
+        MessageQueueAdmin admin = mock(MessageQueueAdmin.class);
+        when(admin.listAllTopics()).thenReturn(List.of("topicA"));
+
+        RKeys keys = mock(RKeys.class);
+        when(redisson.getKeys()).thenReturn(keys);
+        when(keys.getKeys()).thenReturn(List.of());
+
+        RScript script = mock(RScript.class);
+        when(redisson.getScript()).thenReturn(script);
+        when(script.eval(any(RScript.Mode.class), anyString(), any(RScript.ReturnType.class), anyList(), any()))
+                .thenReturn(1L);
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        RMap meta = mock(RMap.class);
+        when(redisson.getMap(eq(StreamKeys.topicMeta("topicA")), eq(StringCodec.INSTANCE))).thenReturn(meta);
+        when(meta.get("partitionCount")).thenReturn("1");
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        RMap frontier = mock(RMap.class);
+        when(redisson.getMap(eq(StreamKeys.commitFrontier("topicA", 0)))).thenReturn(frontier);
+        when(frontier.readAllMap()).thenReturn(Map.of("g1", "100-0"));
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        RBucket bucket = mock(RBucket.class);
+        when(redisson.getBucket(anyString())).thenReturn(bucket);
+        when(bucket.isExists()).thenReturn(true);
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        org.redisson.api.RStream pstream = mock(org.redisson.api.RStream.class);
+        when(redisson.getStream(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(pstream);
+        // message 50-0 never left the PEL — the trim point must not pass it
+        when(pstream.getPendingInfo("g1")).thenReturn(new org.redisson.api.stream.PendingResult(
+                1L, new org.redisson.api.stream.StreamMessageId(50, 0),
+                new org.redisson.api.stream.StreamMessageId(50, 0), Map.of()));
+
+        // every other retention surface off: the only trim left is the frontier one
+        MqOptions opts = MqOptions.builder()
+                .streamKeyPrefix("stream:topic")
+                .defaultPartitionCount(1)
+                .retentionMaxLenPerPartition(0)
+                .retentionMs(0)
+                .dlqRetentionMaxLen(0)
+                .dlqRetentionMs(0)
+                .build();
+        StreamKeys.configure(opts.getKeyPrefix(), opts.getStreamKeyPrefix());
+
+        StreamRetentionHousekeeper keeper = new StreamRetentionHousekeeper(redisson, admin, opts);
+        try {
+            assertDoesNotThrow(keeper::runOnce);
+        } finally {
+            keeper.close();
+        }
+
+        org.mockito.ArgumentCaptor<String> arg = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(script, atLeastOnce()).eval(eq(RScript.Mode.READ_WRITE), anyString(), eq(RScript.ReturnType.LONG),
+                eq(List.of(StreamKeys.partitionStream("topicA", 0))), arg.capture());
+        assertEquals("50-0", arg.getValue(), "trim point must be the PEL minimum, not the frontier");
+    }
+
+    /** Audit fix: an unreadable PEL means the safe boundary is unknown — nothing is trimmed. */
+    @Test
+    void frontierTrimSkippedWhenPendingUnknown() {
+        RedissonClient redisson = mock(RedissonClient.class);
+        MessageQueueAdmin admin = mock(MessageQueueAdmin.class);
+        when(admin.listAllTopics()).thenReturn(List.of("topicA"));
+
+        RKeys keys = mock(RKeys.class);
+        when(redisson.getKeys()).thenReturn(keys);
+        when(keys.getKeys()).thenReturn(List.of());
+
+        RScript script = mock(RScript.class);
+        when(redisson.getScript()).thenReturn(script);
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        RMap meta = mock(RMap.class);
+        when(redisson.getMap(eq(StreamKeys.topicMeta("topicA")), eq(StringCodec.INSTANCE))).thenReturn(meta);
+        when(meta.get("partitionCount")).thenReturn("1");
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        RMap frontier = mock(RMap.class);
+        when(redisson.getMap(eq(StreamKeys.commitFrontier("topicA", 0)))).thenReturn(frontier);
+        when(frontier.readAllMap()).thenReturn(Map.of("g1", "100-0"));
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        RBucket bucket = mock(RBucket.class);
+        when(redisson.getBucket(anyString())).thenReturn(bucket);
+        when(bucket.isExists()).thenReturn(true);
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        org.redisson.api.RStream pstream = mock(org.redisson.api.RStream.class);
+        when(redisson.getStream(anyString(), any(org.redisson.client.codec.Codec.class))).thenReturn(pstream);
+        when(pstream.getPendingInfo("g1")).thenThrow(new RuntimeException("redis down"));
+
+        MqOptions opts = MqOptions.builder()
+                .streamKeyPrefix("stream:topic")
+                .defaultPartitionCount(1)
+                .retentionMaxLenPerPartition(0)
+                .retentionMs(0)
+                .dlqRetentionMaxLen(0)
+                .dlqRetentionMs(0)
+                .build();
+        StreamKeys.configure(opts.getKeyPrefix(), opts.getStreamKeyPrefix());
+
+        StreamRetentionHousekeeper keeper = new StreamRetentionHousekeeper(redisson, admin, opts);
+        try {
+            assertDoesNotThrow(keeper::runOnce);
+        } finally {
+            keeper.close();
+        }
+
+        verify(script, never()).eval(any(RScript.Mode.class), anyString(), any(RScript.ReturnType.class),
                 eq(List.of(StreamKeys.partitionStream("topicA", 0))), any());
     }
 }

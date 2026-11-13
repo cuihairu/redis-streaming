@@ -440,7 +440,35 @@ final class RedisMessageDispatchProcessor {
         // compare-and-set runs inside Redis as one atomic Lua script — the old Java
         // read-then-put let two workers read the same prev and land the smaller id last,
         // regressing the frontier.
+        // Audit fix (MQ-11): the frontier is also the retention trim boundary — it must
+        // never pass an id still pending in the PEL. An earlier ack failure used to leave
+        // its id pending while this message's successful ack advanced the frontier past
+        // it, letting the retention housekeeper XTRIM the still-unacked message. Clamp
+        // the CAS to the PEL minimum; an unreadable PEL skips the advance — the frontier
+        // staying behind is the safe direction.
         try {
+            org.redisson.api.RStream<String, Object> pelStream = streamOrNull;
+            if (pelStream == null) {
+                pelStream = consumer.redissonClient.getStream(
+                        consumer.keys.partitionStreamKey(topic, partitionId),
+                        org.redisson.client.codec.StringCodec.INSTANCE);
+            }
+            String pendingMin;
+            try {
+                pendingMin = oldestPendingId(pelStream, consumerGroup);
+            } catch (Exception pe) {
+                if (isNoGroupError(pe)) {
+                    // a group without a PEL has nothing pending — the advance is safe
+                    pendingMin = null;
+                } else {
+                    throw pe;
+                }
+            }
+            if (pendingMin != null && compareStreamId(messageId, pendingMin) >= 0) {
+                log.debug("Commit frontier held at the pending minimum (topic={}, group={}, partition={}, id={}, pendingMin={})",
+                        topic, consumerGroup, partitionId, messageId, pendingMin);
+                return;
+            }
             String frontierKey = consumer.keys.commitFrontierKey(topic, partitionId);
             // The frontier hash is plain text ("ms-seq" under the group field, StringCodec):
             // a binary client codec would store ids the Lua comparison can never parse
@@ -452,6 +480,57 @@ final class RedisMessageDispatchProcessor {
         } catch (Exception e) {
             log.debug("Failed to update commit frontier for topic={} group={} partition={}",
                     topic, consumerGroup, partitionId, e);
+        }
+    }
+
+    /**
+     * The minimum id still pending in the group's PEL, or null when the PEL is empty.
+     * Redis delivers in ascending id order, so every entry below the pending minimum
+     * has been delivered and is not pending — the frontier may safely advance up to,
+     * but never past, it. Throws when Redis cannot be consulted; the caller treats the
+     * query failure as "unknown, do not advance".
+     */
+    private static String oldestPendingId(RStream<String, Object> stream, String group) {
+        // the XPENDING summary form carries the lowest pending id in one command
+        org.redisson.api.stream.PendingResult pending = stream.getPendingInfo(group);
+        if (pending == null || pending.getTotal() <= 0) {
+            return null;
+        }
+        org.redisson.api.stream.StreamMessageId lowest = pending.getLowestId();
+        if (lowest == null || lowest.getId0() < 0) {
+            return null;
+        }
+        return lowest.getId0() + "-" + Math.max(lowest.getId1(), 0);
+    }
+
+    /** True when Redis rejected the command with NOGROUP — the group has no PEL. */
+    private static boolean isNoGroupError(Throwable ex) {
+        Throwable t = ex;
+        while (t != null) {
+            String m = t.getMessage();
+            if (m != null && m.contains("NOGROUP")) {
+                return true;
+            }
+            t = t.getCause();
+        }
+        return false;
+    }
+
+    /** Ascending compare of plain text "ms-seq" ids (non-stream-id values fall back to text order). */
+    private static int compareStreamId(String a, String b) {
+        if (a == null && b == null) return 0;
+        if (a == null) return -1;
+        if (b == null) return 1;
+        try {
+            String[] ap = a.split("-", 2);
+            String[] bp = b.split("-", 2);
+            int c = Long.compare(Long.parseLong(ap[0]), Long.parseLong(bp[0]));
+            if (c != 0) return c;
+            long ase = ap.length > 1 ? Long.parseLong(ap[1]) : 0L;
+            long bse = bp.length > 1 ? Long.parseLong(bp[1]) : 0L;
+            return Long.compare(ase, bse);
+        } catch (Exception ignore) {
+            return a.compareTo(b);
         }
     }
 

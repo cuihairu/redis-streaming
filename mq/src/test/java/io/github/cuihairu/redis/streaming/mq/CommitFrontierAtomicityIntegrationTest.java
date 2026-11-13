@@ -126,4 +126,38 @@ class CommitFrontierAtomicityIntegrationTest {
             pool.shutdownNow();
         }
     }
+
+    /**
+     * Audit fix, end-to-end on real Redis: a still-pending id pins the frontier.
+     * 5-1 and 5-2 are delivered into the PEL; acking 5-2 succeeds while 5-1 stays
+     * pending — the frontier must not advance to 5-2 (the old code did, letting the
+     * retention housekeeper XTRIM the pending 5-1). Once 5-1 is acked the frontier
+     * moves to it, and the next ack may then pass both.
+     */
+    @Test
+    void pendingMessagePinsTheFrontier() throws Exception {
+        stream.createGroup(org.redisson.api.stream.StreamCreateGroupArgs.name(group).id(new org.redisson.api.stream.StreamMessageId(0, 0)).makeStream());
+        stream.add(new org.redisson.api.stream.StreamMessageId(5, 1),
+                org.redisson.api.stream.StreamAddArgs.entry("k", "v1"));
+        stream.add(new org.redisson.api.stream.StreamMessageId(5, 2),
+                org.redisson.api.stream.StreamAddArgs.entry("k", "v2"));
+        // deliver both into the PEL without acking
+        stream.readGroup(group, "c1",
+                org.redisson.api.stream.StreamReadGroupArgs.neverDelivered().count(2));
+
+        RMap<String, String> frontier = client.getMap(StreamKeys.commitFrontier(topic, 0),
+                org.redisson.client.codec.StringCodec.INSTANCE);
+
+        ack("5-2"); // succeeds, but 5-1 is still pending below it
+        assertEquals(null, frontier.get(group),
+                "the frontier must stay pinned below the pending 5-1");
+
+        ack("5-1"); // the pinned message leaves the PEL
+        assertEquals("5-1", frontier.get(group),
+                "the frontier may advance to the released pending minimum");
+
+        ack("5-2"); // now nothing pending sits below it
+        assertEquals("5-2", frontier.get(group),
+                "the frontier passes both ids once the PEL is drained");
+    }
 }

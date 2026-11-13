@@ -212,6 +212,121 @@ class DeferredAcksTest {
     }
 
     @Test
+    void ackAll_requeuesFailedBatchForNextRound() {
+        // Audit fix: drainForAck already removed the batch, so a failed XACK must not
+        // drop it — the ids come back via record() and the next round re-drains them.
+        RedissonClient redis = mock(RedissonClient.class);
+        @SuppressWarnings("unchecked")
+        RStream<String, Object> stream = mock(RStream.class);
+        RScript script = mock(RScript.class);
+        doReturn(stream).when(redis).getStream(anyString(), any(StringCodec.class));
+        when(redis.getScript(any(StringCodec.class))).thenReturn(script);
+        when(stream.ack(anyString(), any())).thenThrow(new RuntimeException("redis down"));
+
+        DeferredAcks acks = new DeferredAcks();
+        acks.record("t", "g", 0, "9-2");
+        acks.ackAll(redis, acks.drainForAck(), StreamKeys.shared());
+
+        // the failed batch is tracked again for the next checkpoint round
+        Map<RedisRuntimeCheckpointManager.PipelineKey, Map<Integer, List<String>>> retried = acks.drainForAck();
+        assertEquals(List.of("9-2"),
+                retried.get(new RedisRuntimeCheckpointManager.PipelineKey("t", "g")).get(0));
+        verify(script, never()).eval(any(RScript.Mode.class), anyString(),
+                any(RScript.ReturnType.class), anyList(), anyString(), anyString());
+    }
+
+    @Test
+    void ackAll_failedBatchThenLaterSuccessAdvancesFrontierPastBoth() {
+        // Audit fix regression: 9-2 XACK fails, the next round acks {9-2, 9-4}
+        // successfully — the frontier must land on 9-4 exactly once (the PEL is empty).
+        RedissonClient redis = mock(RedissonClient.class);
+        @SuppressWarnings("unchecked")
+        RStream<String, Object> stream = mock(RStream.class);
+        RScript script = mock(RScript.class);
+        doReturn(stream).when(redis).getStream(anyString(), any(StringCodec.class));
+        when(redis.getScript(any(StringCodec.class))).thenReturn(script);
+        when(stream.ack(anyString(), any(StreamMessageId[].class)))
+                .thenThrow(new RuntimeException("redis down"))
+                .thenReturn(2L);
+
+        DeferredAcks acks = new DeferredAcks();
+        acks.record("t", "g", 0, "9-2");
+        acks.ackAll(redis, acks.drainForAck(), StreamKeys.shared());
+
+        acks.record("t", "g", 0, "9-4");
+        acks.ackAll(redis, acks.drainForAck(), StreamKeys.shared());
+
+        verify(script, times(1)).eval(eq(RScript.Mode.READ_WRITE), anyString(),
+                eq(RScript.ReturnType.LONG),
+                eq(List.of(StreamKeys.commitFrontier("t", 0))), eq("g"), eq("9-4"));
+    }
+
+    @Test
+    void ackAll_holdsFrontierWhenPendingSitsBelowMaxId() {
+        // Audit fix: a still-pending id below the batch's furthest acked id pins the
+        // frontier — advancing to 9-4 over pending 9-2 would expose 9-2 to retention trim.
+        RedissonClient redis = mock(RedissonClient.class);
+        @SuppressWarnings("unchecked")
+        RStream<String, Object> stream = mock(RStream.class);
+        RScript script = mock(RScript.class);
+        doReturn(stream).when(redis).getStream(anyString(), any(StringCodec.class));
+        when(redis.getScript(any(StringCodec.class))).thenReturn(script);
+        when(stream.ack(anyString(), any(StreamMessageId[].class))).thenReturn(1L);
+        when(stream.getPendingInfo("g")).thenReturn(new org.redisson.api.stream.PendingResult(
+                1L, StreamIds.parseStreamId("9-2"), StreamIds.parseStreamId("9-2"), Map.of()));
+
+        DeferredAcks acks = new DeferredAcks();
+        acks.record("t", "g", 0, "9-4");
+        acks.ackAll(redis, acks.drainForAck(), StreamKeys.shared());
+
+        verify(script, never()).eval(any(RScript.Mode.class), anyString(),
+                any(RScript.ReturnType.class), anyList(), anyString(), anyString());
+    }
+
+    @Test
+    void ackAll_advancesFrontierWhenPendingSitsAboveMaxId() {
+        // pending 10-0 is above the batch's furthest id 9-4 — advancing to 9-4 is safe.
+        RedissonClient redis = mock(RedissonClient.class);
+        @SuppressWarnings("unchecked")
+        RStream<String, Object> stream = mock(RStream.class);
+        RScript script = mock(RScript.class);
+        doReturn(stream).when(redis).getStream(anyString(), any(StringCodec.class));
+        when(redis.getScript(any(StringCodec.class))).thenReturn(script);
+        when(stream.ack(anyString(), any(StreamMessageId[].class))).thenReturn(1L);
+        when(stream.getPendingInfo("g")).thenReturn(new org.redisson.api.stream.PendingResult(
+                1L, StreamIds.parseStreamId("10-0"), StreamIds.parseStreamId("10-0"), Map.of()));
+
+        DeferredAcks acks = new DeferredAcks();
+        acks.record("t", "g", 0, "9-4");
+        acks.ackAll(redis, acks.drainForAck(), StreamKeys.shared());
+
+        verify(script, times(1)).eval(eq(RScript.Mode.READ_WRITE), anyString(),
+                eq(RScript.ReturnType.LONG),
+                eq(List.of(StreamKeys.commitFrontier("t", 0))), eq("g"), eq("9-4"));
+    }
+
+    @Test
+    void ackAll_skipsFrontierWhenPendingQueryFails() {
+        // Audit fix: an unreadable PEL means the safe trim boundary is unknown — the
+        // frontier stays behind rather than advancing blind.
+        RedissonClient redis = mock(RedissonClient.class);
+        @SuppressWarnings("unchecked")
+        RStream<String, Object> stream = mock(RStream.class);
+        RScript script = mock(RScript.class);
+        doReturn(stream).when(redis).getStream(anyString(), any(StringCodec.class));
+        when(redis.getScript(any(StringCodec.class))).thenReturn(script);
+        when(stream.ack(anyString(), any(StreamMessageId[].class))).thenReturn(1L);
+        when(stream.getPendingInfo("g")).thenThrow(new RuntimeException("redis down"));
+
+        DeferredAcks acks = new DeferredAcks();
+        acks.record("t", "g", 0, "9-4");
+        acks.ackAll(redis, acks.drainForAck(), StreamKeys.shared());
+
+        verify(script, never()).eval(any(RScript.Mode.class), anyString(),
+                any(RScript.ReturnType.class), anyList(), anyString(), anyString());
+    }
+
+    @Test
     void clear_emptiesEverything() {
         DeferredAcks acks = new DeferredAcks();
         acks.record("t", "g", 0, "1-0");
