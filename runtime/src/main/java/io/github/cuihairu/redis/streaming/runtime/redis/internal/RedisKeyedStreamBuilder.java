@@ -1144,6 +1144,13 @@ import java.util.function.Function;
              * merging assigners are the session-shaped minority, and correctness is the
              * point — the incremental state shapes cannot be merged for non-associative
              * aggregations, which is why the raw element list is the merged state.
+             *
+             * <p>Failure ordering: every read and every serialization completes before the
+             * first mutation, so a poison element (or any serialization failure) leaves the
+             * absorbed buckets' state and due entries intact for the retry. Mutations then
+             * write the union bucket before retiring the absorbed ones — the worst case
+             * after a mid-mutation failure is a duplicate fire of a leftover bucket
+             * (at-least-once), never element loss.
              */
             private String mergeIntoRawSession(String stateName,
                                                String keyField,
@@ -1173,6 +1180,10 @@ import java.util.function.Function;
                     end = Math.max(end, pw.end);
                 }
                 String member = windowMember(keyField, start, end);
+                // Read and serialize everything BEFORE the first mutation: a serialization
+                // failure (a poison element, a broken mapper) must leave the absorbed
+                // buckets' state and due entries untouched, or retrying the record finds
+                // nothing to merge into. The old remove-then-write order destroyed them.
                 List<String> items = new ArrayList<>();
                 for (String m : absorbed) {
                     RedisKeyedStateStore.StateMapRef oldRef = stateStore.stateMapRef(stateName, m);
@@ -1184,25 +1195,39 @@ import java.util.function.Function;
                             throw new RuntimeException("Failed to deserialize merged window elements", e);
                         }
                     }
-                    oldRef.map().remove(m);
-                    stateStore.touch(oldRef.redisKey(), stateName, oldRef.map());
-                    due.remove(m);
-                    bucketTriggers.remove(partitionId + D + m);
                 }
                 try {
                     items.add(objectMapper.writeValueAsString(value));
                 } catch (Exception e) {
                     throw new RuntimeException("Failed to serialize window element", e);
                 }
-                RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
-                RMap<String, String> state = ref.map();
+                String mergedJson;
                 try {
-                    state.put(member, objectMapper.writeValueAsString(items));
+                    mergedJson = objectMapper.writeValueAsString(items);
                 } catch (Exception e) {
                     throw new RuntimeException("Failed to serialize window elements", e);
                 }
+                // Mutations run loss-safe: write the union bucket first, then retire the
+                // absorbed ones. A write failure before this point leaves the old buckets
+                // intact; a failure after the union write can at worst leave an absorbed
+                // bucket behind, which fires a duplicate subset (at-least-once) instead of
+                // losing elements. A member equal to the union (seed fully inside an
+                // absorbed window) carries the merged list itself — never retire it.
+                RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
+                RMap<String, String> state = ref.map();
+                state.put(member, mergedJson);
                 stateStore.touch(ref.redisKey(), stateName, state);
                 due.add(windowCloseTime(end), member);
+                for (String m : absorbed) {
+                    if (m.equals(member)) {
+                        continue;
+                    }
+                    RedisKeyedStateStore.StateMapRef oldRef = stateStore.stateMapRef(stateName, m);
+                    oldRef.map().remove(m);
+                    stateStore.touch(oldRef.redisKey(), stateName, oldRef.map());
+                    due.remove(m);
+                    bucketTriggers.remove(partitionId + D + m);
+                }
                 // keep the first absorbed bucket's trigger under the union member so a
                 // stateful trigger's early-fire state survives the merge; the record path's
                 // computeIfAbsent reuses this instance instead of minting a fresh trigger

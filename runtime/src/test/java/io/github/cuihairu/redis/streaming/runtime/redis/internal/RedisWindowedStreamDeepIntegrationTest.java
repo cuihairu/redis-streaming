@@ -14,6 +14,7 @@ import io.github.cuihairu.redis.streaming.runtime.redis.RedisStreamExecutionEnvi
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.RedisRuntimeMetrics;
 import io.github.cuihairu.redis.streaming.api.metrics.StreamingMetricsCollector;
 import io.github.cuihairu.redis.streaming.runtime.redis.metrics.SelectiveFailingMetricsCollector;
+import io.github.cuihairu.redis.streaming.window.assigners.SessionWindow;
 import io.github.cuihairu.redis.streaming.window.assigners.TumblingWindow;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -232,6 +233,159 @@ class RedisWindowedStreamDeepIntegrationTest {
             redis.getKeys().deleteByPattern("it-rti-win:" + uid2 + "*");
             redis.shutdown();
         }
+    }
+
+    /**
+     * Audit fix: session merge must complete every read and serialization BEFORE the first
+     * mutation. A poison element whose serialization fails mid-merge used to leave the
+     * absorbed buckets already deleted — the pre-poison elements were unrecoverable.
+     */
+    @Test
+    void mergeFailureLeavesAbsorbedStateAndDueIntact() throws Exception {
+        RedissonClient redis = client();
+        String uid = UUID.randomUUID().toString().substring(0, 8);
+        try {
+            List<String> out = new CopyOnWriteArrayList<>();
+            RedisStreamExecutionEnvironment env =
+                    RedisStreamExecutionEnvironment.create(redis, cfg(uid, b -> {}));
+            DataStream<String> tail = env.fromMqTopic("it-rti-t-" + uid, "g")
+                    .map(m -> m.getPayload())
+                    .keyBy(v -> "k")
+                    .window(SessionWindow.<Object>withGap(Duration.ofMillis(1000)))
+                    .apply((WindowFunction<String, Object, String>) (key, window, elements, collector) -> {
+                        int n = 0;
+                        for (Object ignored : elements) {
+                            n++;
+                        }
+                        collector.collect(n + "@" + window.getStart() + "-" + window.getEnd());
+                    })
+                    .addSink(out::add);
+            RedisPipelineRunner<Object> runner = definitionOf(tail).freeze().buildRunner();
+            String memberOld = "e:s:k" + D + "1500" + D + "2500";
+            try {
+                runner.handle(msg(1500, "a"));
+                String stateBefore = readMemberState(redis, uid, memberOld);
+                Double scoreBefore = dueScore(redis, uid, memberOld);
+                assertTrue(stateBefore != null, "the seed session must hold the raw element");
+                assertEquals(2500.0, scoreBefore, "the seed session must be due at its close");
+
+                RuntimeException e = assertThrows(RuntimeException.class,
+                        () -> runner.handle(msg(2200, new Poison())));
+                assertTrue(e.getMessage().contains("Failed to serialize window element"), "" + e);
+
+                assertEquals(stateBefore, readMemberState(redis, uid, memberOld),
+                        "the absorbed bucket's state must survive a failed merge");
+                assertEquals(scoreBefore, dueScore(redis, uid, memberOld),
+                        "the absorbed bucket's due entry must survive a failed merge");
+                assertNull(readMemberState(redis, uid, "e:s:k" + D + "1500" + D + "3200"),
+                        "the failed union window must not be written");
+
+                runner.handle(msg(5000, "driver"));
+            } finally {
+                runner.close();
+            }
+            assertEquals(List.of("1@1500-2500"), out,
+                    "the pre-poison element must still fire in its own window");
+        } finally {
+            redis.getKeys().deleteByPattern("it-rti-win:" + uid + "*");
+            redis.shutdown();
+        }
+    }
+
+    /**
+     * Shard layout: with sharded keyed state the absorbed and union members can live in
+     * different shard hashes — merge must retire the old shard entries and the failure
+     * probe must leave them intact. A seed fully inside an open session extends the union.
+     */
+    @Test
+    void mergeAcrossShardsRetiresOldBucketsAndFailureKeepsThem() throws Exception {
+        RedissonClient redis = client();
+        String uid = UUID.randomUUID().toString().substring(0, 8);
+        try {
+            List<String> out = new CopyOnWriteArrayList<>();
+            RedisStreamExecutionEnvironment env =
+                    RedisStreamExecutionEnvironment.create(redis, cfg(uid, b -> b.keyedStateShardCount(4)));
+            DataStream<String> tail = env.fromMqTopic("it-rti-t-" + uid, "g")
+                    .map(m -> m.getPayload())
+                    .keyBy(v -> "k")
+                    .window(SessionWindow.<Object>withGap(Duration.ofMillis(1000)))
+                    .apply((WindowFunction<String, Object, String>) (key, window, elements, collector) -> {
+                        int n = 0;
+                        for (Object ignored : elements) {
+                            n++;
+                        }
+                        collector.collect(n + "@" + window.getStart() + "-" + window.getEnd());
+                    })
+                    .addSink(out::add);
+            RedisPipelineRunner<Object> runner = definitionOf(tail).freeze().buildRunner();
+            String memberOld = "e:s:k" + D + "1500" + D + "2500";
+            String memberUnion = "e:s:k" + D + "1500" + D + "3200";
+            try {
+                runner.handle(msg(1500, "a"));
+                runner.handle(msg(2200, "b")); // union [1500,3200)
+                String mergedBefore = readMemberState(redis, uid, memberUnion);
+                Double scoreBefore = dueScore(redis, uid, memberUnion);
+                assertTrue(mergedBefore != null && mergedBefore.contains("a") && mergedBefore.contains("b"),
+                        "the merged session must carry both elements across shard hashes");
+                assertEquals(3200.0, scoreBefore, "the merged session must be due at its close");
+                assertNull(readMemberState(redis, uid, memberOld),
+                        "the absorbed bucket must be retired after a successful merge");
+                assertNull(dueScore(redis, uid, memberOld),
+                        "the absorbed bucket's due entry must be removed after a successful merge");
+
+                RuntimeException e = assertThrows(RuntimeException.class,
+                        () -> runner.handle(msg(2600, new Poison())));
+                assertTrue(e.getMessage().contains("Failed to serialize window element"), "" + e);
+
+                assertEquals(mergedBefore, readMemberState(redis, uid, memberUnion),
+                        "the open merged session must survive a failed merge");
+                assertEquals(scoreBefore, dueScore(redis, uid, memberUnion),
+                        "the open merged session's due entry must survive a failed merge");
+
+                runner.handle(msg(6000, "driver"));
+            } finally {
+                runner.close();
+            }
+            assertEquals(List.of("2@1500-3200"), out,
+                    "the merged session must fire with every merged element");
+        } finally {
+            redis.getKeys().deleteByPattern("it-rti-win:" + uid + "*");
+            redis.shutdown();
+        }
+    }
+
+    /** Element Jackson cannot serialize (direct self-reference) — the merge failure probe. */
+    static final class Poison {
+        @SuppressWarnings("unused")
+        final Poison self = this;
+    }
+
+    @SuppressWarnings("deprecation")
+    private static String readMemberState(RedissonClient redis, String uid, String member) {
+        for (String key : redis.getKeys().getKeysByPattern("it-rti-win:" + uid + ":*")) {
+            if (key == null || !key.contains(":state:")) {
+                continue;
+            }
+            String v = redis.<String, String>getMap(key, StringCodec.INSTANCE).get(member);
+            if (v != null) {
+                return v;
+            }
+        }
+        return null;
+    }
+
+    @SuppressWarnings("deprecation")
+    private static Double dueScore(RedissonClient redis, String uid, String member) {
+        for (String key : redis.getKeys().getKeysByPattern("it-rti-win:" + uid + ":*")) {
+            if (key == null || !key.contains(":windowDue:")) {
+                continue;
+            }
+            Double s = redis.getScoredSortedSet(key, StringCodec.INSTANCE).getScore(member);
+            if (s != null) {
+                return s;
+            }
+        }
+        return null;
     }
 
     @Test
