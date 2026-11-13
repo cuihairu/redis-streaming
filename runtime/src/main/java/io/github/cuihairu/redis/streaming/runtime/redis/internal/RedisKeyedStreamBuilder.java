@@ -525,6 +525,8 @@ import java.util.function.Function;
                             List<String> items;
                             try {
                                 items = readRawElements(json);
+                            } catch (IllegalStateException e) {
+                                throw e; // upgrade guidance must not be re-wrapped
                             } catch (Exception e) {
                                 throw new RuntimeException("Failed to deserialize window elements", e);
                             }
@@ -629,6 +631,8 @@ import java.util.function.Function;
                             List<String> items;
                             try {
                                 items = readRawElements(json);
+                            } catch (IllegalStateException e) {
+                                throw e; // upgrade guidance must not be re-wrapped
                             } catch (Exception e) {
                                 throw new RuntimeException("Failed to deserialize window elements", e);
                             }
@@ -688,6 +692,13 @@ import java.util.function.Function;
                                     if (parsed != null) {
                                         items.addAll(parsed);
                                     }
+                                } catch (com.fasterxml.jackson.databind.exc.MismatchedInputException e) {
+                                    // well-formed JSON that is not a list = pre-upgrade state
+                                    throw new IllegalStateException("Internal window state holds pre-upgrade data "
+                                            + "(stored shape is not a raw element list). This version stores "
+                                            + "merged-session windows as element lists and legacy aggregate states "
+                                            + "cannot be migrated — clear the affected window state before "
+                                            + "upgrading, or restore a checkpoint taken with the current version.", e);
                                 } catch (Exception e) {
                                     throw new RuntimeException("Failed to deserialize window elements", e);
                                 }
@@ -713,9 +724,9 @@ import java.util.function.Function;
                             }
                             List<String> items;
                             try {
-                                @SuppressWarnings("unchecked")
-                                List<String> parsed = objectMapper.readValue(json, List.class);
-                                items = parsed == null ? List.of() : parsed;
+                                items = parseRawElementList(json);
+                            } catch (IllegalStateException e) {
+                                throw e; // upgrade guidance must not be re-wrapped
                             } catch (Exception e) {
                                 throw new RuntimeException("Failed to deserialize window elements", e);
                             }
@@ -846,6 +857,8 @@ import java.util.function.Function;
                             List<String> items;
                             try {
                                 items = readRawElements(json);
+                            } catch (IllegalStateException e) {
+                                throw e; // upgrade guidance must not be re-wrapped
                             } catch (Exception e) {
                                 throw new RuntimeException("Failed to deserialize window elements", e);
                             }
@@ -937,6 +950,8 @@ import java.util.function.Function;
                             List<String> items;
                             try {
                                 items = readRawElements(json);
+                            } catch (IllegalStateException e) {
+                                throw e; // upgrade guidance must not be re-wrapped
                             } catch (Exception e) {
                                 throw new RuntimeException("Failed to deserialize window elements", e);
                             }
@@ -960,8 +975,30 @@ import java.util.function.Function;
 
             /** Decodes a window member's raw element list (the merged-state shape). */
             private List<String> readRawElements(String json) throws Exception {
+                return parseRawElementList(json);
+            }
+
+            /**
+             * Parses a window member's raw element JSON list. A member holding pre-upgrade
+             * (per-kind accumulator) data parses as well-formed JSON that is not a list —
+             * audit fix: fail with upgrade guidance instead of a bare Jackson
+             * {@code MismatchedInputException}, since legacy aggregate states cannot be
+             * migrated to the element-list shape. Syntactically invalid JSON is plain
+             * corruption, not legacy state, and keeps the generic deserialize failure.
+             */
+            private List<String> parseRawElementList(String json) throws Exception {
+                List<?> parsed;
+                try {
+                    parsed = objectMapper.readValue(json, List.class);
+                } catch (com.fasterxml.jackson.databind.exc.MismatchedInputException e) {
+                    throw new IllegalStateException("Internal window state holds pre-upgrade data "
+                            + "(stored shape is not a raw element list). This version stores "
+                            + "merged-session windows as element lists and legacy aggregate states "
+                            + "cannot be migrated — clear the affected window state before "
+                            + "upgrading, or restore a checkpoint taken with the current version.", e);
+                }
                 @SuppressWarnings("unchecked")
-                List<String> items = objectMapper.readValue(json, List.class);
+                List<String> items = (List<String>) parsed;
                 return items == null ? List.of() : items;
             }
 
@@ -1194,6 +1231,8 @@ import java.util.function.Function;
                     if (json != null && !json.isBlank()) {
                         try {
                             items.addAll(readRawElements(json));
+                        } catch (IllegalStateException e) {
+                            throw e; // upgrade guidance must not be re-wrapped
                         } catch (Exception e) {
                             throw new RuntimeException("Failed to deserialize merged window elements", e);
                         }

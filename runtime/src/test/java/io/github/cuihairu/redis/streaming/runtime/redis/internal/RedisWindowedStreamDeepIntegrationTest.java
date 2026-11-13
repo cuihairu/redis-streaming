@@ -386,6 +386,145 @@ class RedisWindowedStreamDeepIntegrationTest {
         }
     }
 
+    /**
+     * Audit fix: internal window states carry a schema stamp ("__internal:window|2").
+     * A restored pre-upgrade state (stamp |1) meets the mismatch policy on the first
+     * write — policy FAIL rejects it with upgrade guidance before the state is consumed.
+     */
+    @Test
+    void internalWindowSchemaStampWrittenAndFailPolicyRejectsLegacyState() throws Exception {
+        RedissonClient redis = client();
+        String uid = UUID.randomUUID().toString().substring(0, 8);
+        try {
+            RedisStreamExecutionEnvironment env =
+                    RedisStreamExecutionEnvironment.create(redis, cfg(uid, b -> {}));
+            DataStream<Long> tail = env.fromMqTopic("it-rti-t-" + uid, "g")
+                    .map(m -> m.getPayload())
+                    .keyBy(v -> "k")
+                    .window(SessionWindow.<Object>withGap(Duration.ofMillis(1000)))
+                    .count();
+            RedisPipelineRunner<Object> runner = definitionOf(tail.addSink(new CopyOnWriteArrayList<>()::add)).freeze().buildRunner();
+            String stateKey;
+            try {
+                runner.handle(msg(1500, "a"));
+                stateKey = findStateKey(redis, uid);
+                assertEquals("__internal:window|2", readSchemaStamp(redis, uid, stateKey),
+                        "the first write must stamp the internal window schema version");
+            } finally {
+                runner.close();
+            }
+
+            // simulate a restored pre-upgrade checkpoint: schema says |1
+            writeSchemaStamp(redis, uid, stateKey, "__internal:window|1");
+            RedisStreamExecutionEnvironment env2 =
+                    RedisStreamExecutionEnvironment.create(redis, cfg(uid, b -> {}));
+            DataStream<Long> tail2 = env2.fromMqTopic("it-rti-t-" + uid, "g")
+                    .map(m -> m.getPayload())
+                    .keyBy(v -> "k")
+                    .window(SessionWindow.<Object>withGap(Duration.ofMillis(1000)))
+                    .count();
+            RedisPipelineRunner<Object> runner2 = definitionOf(tail2.addSink(new CopyOnWriteArrayList<>()::add)).freeze().buildRunner();
+            try {
+                RuntimeException e = assertThrows(RuntimeException.class,
+                        () -> runner2.handle(msg(1600, "b")));
+                assertTrue(e.getMessage().contains("Internal window state schema mismatch"),
+                        "FAIL policy must reject the stale state with guidance, got: " + e);
+            } finally {
+                runner2.close();
+            }
+        } finally {
+            redis.getKeys().deleteByPattern("it-rti-win:" + uid + "*");
+            redis.shutdown();
+        }
+    }
+
+    /** Audit fix: policy CLEAR drops the stale internal window state (windows restart fresh). */
+    @Test
+    void internalWindowSchemaClearPolicyDropsStaleState() throws Exception {
+        RedissonClient redis = client();
+        String uid = UUID.randomUUID().toString().substring(0, 8);
+        try {
+            RedisStreamExecutionEnvironment env =
+                    RedisStreamExecutionEnvironment.create(redis, cfg(uid, b -> b
+                            .stateSchemaMismatchPolicy(RedisRuntimeConfig.StateSchemaMismatchPolicy.CLEAR)));
+            DataStream<Long> tail = env.fromMqTopic("it-rti-t-" + uid, "g")
+                    .map(m -> m.getPayload())
+                    .keyBy(v -> "k")
+                    .window(SessionWindow.<Object>withGap(Duration.ofMillis(1000)))
+                    .count();
+            RedisPipelineRunner<Object> runner = definitionOf(tail.addSink(new CopyOnWriteArrayList<>()::add)).freeze().buildRunner();
+            String member = "e:s:k" + D + "1500" + D + "2500";
+            String stateKey;
+            try {
+                runner.handle(msg(1500, "a"));
+                stateKey = findStateKey(redis, uid);
+            } finally {
+                runner.close();
+            }
+
+            writeSchemaStamp(redis, uid, stateKey, "__internal:window|1");
+            RedisStreamExecutionEnvironment env2 =
+                    RedisStreamExecutionEnvironment.create(redis, cfg(uid, b -> b
+                            .stateSchemaMismatchPolicy(RedisRuntimeConfig.StateSchemaMismatchPolicy.CLEAR)));
+            DataStream<Long> tail2 = env2.fromMqTopic("it-rti-t-" + uid, "g")
+                    .map(m -> m.getPayload())
+                    .keyBy(v -> "k")
+                    .window(SessionWindow.<Object>withGap(Duration.ofMillis(1000)))
+                    .count();
+            RedisPipelineRunner<Object> runner2 = definitionOf(tail2.addSink(new CopyOnWriteArrayList<>()::add)).freeze().buildRunner();
+            try {
+                runner2.handle(msg(1600, "b"));
+            } finally {
+                runner2.close();
+            }
+            assertNull(readMemberState(redis, uid, member),
+                    "policy CLEAR must drop the stale window state instead of failing");
+            assertEquals("__internal:window|2", readSchemaStamp(redis, uid, stateKey),
+                    "the cleared state must be re-stamped with the current version");
+        } finally {
+            redis.getKeys().deleteByPattern("it-rti-win:" + uid + "*");
+            redis.shutdown();
+        }
+    }
+
+    /**
+     * Audit fix: legacy per-kind accumulator state ("2" instead of an element list)
+     * fails with clear upgrade guidance, not a bare Jackson MismatchedInputException.
+     */
+    @Test
+    void legacyWindowStateFailsWithClearUpgradeGuidance() throws Exception {
+        RedissonClient redis = client();
+        String uid = UUID.randomUUID().toString().substring(0, 8);
+        try {
+            List<Object> out = new CopyOnWriteArrayList<>();
+            RedisStreamExecutionEnvironment env =
+                    RedisStreamExecutionEnvironment.create(redis, cfg(uid, b -> {}));
+            DataStream<Long> tail = env.fromMqTopic("it-rti-t-" + uid, "g")
+                    .map(m -> m.getPayload())
+                    .keyBy(v -> "k")
+                    .window(SessionWindow.<Object>withGap(Duration.ofMillis(1000)))
+                    .count();
+            RedisPipelineRunner<Object> runner = definitionOf(tail.addSink(out::add)).freeze().buildRunner();
+            String member = "e:s:k" + D + "1500" + D + "2500";
+            try {
+                runner.handle(msg(1500, "a"));
+                // simulate restored pre-upgrade state: a bare accumulator value
+                writeMemberState(redis, uid, member, "2");
+                RuntimeException e = assertThrows(RuntimeException.class,
+                        () -> runner.handle(msg(5000, 999)));
+                assertTrue(e.getMessage() != null
+                                && e.getMessage().contains("clear the affected window state"),
+                        "the failure must carry upgrade guidance, got: " + e);
+            } finally {
+                runner.close();
+            }
+            assertTrue(out.isEmpty(), "no value may fire from unmigratable legacy state");
+        } finally {
+            redis.getKeys().deleteByPattern("it-rti-win:" + uid + "*");
+            redis.shutdown();
+        }
+    }
+
     /** Element Jackson cannot serialize (direct self-reference) — the merge failure probe. */
     static final class Poison {
         @SuppressWarnings("unused")
@@ -418,6 +557,48 @@ class RedisWindowedStreamDeepIntegrationTest {
             }
         }
         return null;
+    }
+
+    @SuppressWarnings("deprecation")
+    private static String findStateKey(RedissonClient redis, String uid) {
+        for (String key : redis.getKeys().getKeysByPattern("it-rti-win:" + uid + ":*")) {
+            if (key != null && key.contains(":state:")) {
+                return key;
+            }
+        }
+        return null;
+    }
+
+    @SuppressWarnings("deprecation")
+    private static String readSchemaStamp(RedissonClient redis, String uid, String stateKey) {
+        for (String key : redis.getKeys().getKeysByPattern("it-rti-win:" + uid + ":*")) {
+            if (key != null && key.endsWith(":stateSchema")) {
+                return redis.<String, String>getMap(key, StringCodec.INSTANCE).get(stateKey);
+            }
+        }
+        return null;
+    }
+
+    @SuppressWarnings("deprecation")
+    private static void writeSchemaStamp(RedissonClient redis, String uid, String stateKey, String value) {
+        for (String key : redis.getKeys().getKeysByPattern("it-rti-win:" + uid + ":*")) {
+            if (key != null && key.endsWith(":stateSchema")) {
+                redis.<String, String>getMap(key, StringCodec.INSTANCE).put(stateKey, value);
+                return;
+            }
+        }
+        throw new IllegalStateException("no stateSchema hash found for uid " + uid);
+    }
+
+    @SuppressWarnings("deprecation")
+    private static void writeMemberState(RedissonClient redis, String uid, String member, String value) {
+        for (String key : redis.getKeys().getKeysByPattern("it-rti-win:" + uid + ":*")) {
+            if (key != null && key.contains(":state:")) {
+                redis.<String, String>getMap(key, StringCodec.INSTANCE).put(member, value);
+                return;
+            }
+        }
+        throw new IllegalStateException("no state hash found for uid " + uid);
     }
 
     @Test

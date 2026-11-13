@@ -359,9 +359,86 @@ public final class RedisKeyedStateStore<K> {
         }
     }
 
+    /**
+     * Current schema version of the runtime-internal window state. v2 (audit fix) stores
+     * merged-session windows as raw element JSON lists; v1 was the per-kind accumulator
+     * shape that cannot be migrated to an element list.
+     */
+    static final String INTERNAL_WINDOW_SCHEMA = "__internal:window|2";
+
+    /**
+     * Stamps and validates the schema of a runtime-internal window state hash. These
+     * states have no {@link StateDescriptor}, so the stamp rides the same stateSchema
+     * hash (and checkpoint snapshots) as user states: the first write after a restore
+     * meets the stored version and the mismatch policy decides — FAIL rejects the
+     * stale state with upgrade guidance, CLEAR drops it (windows start fresh), IGNORE
+     * proceeds (the first read then fails with the same guidance).
+     */
+    void ensureInternalWindowSchema(String redisKey) {
+        if (!stateSchemaEvolutionEnabled) {
+            return;
+        }
+        if (redisKey == null || redisKey.isBlank()) {
+            return;
+        }
+        String cached = schemaCache.get(redisKey);
+        if (INTERNAL_WINDOW_SCHEMA.equals(cached)) {
+            return;
+        }
+        String stored = null;
+        try {
+            stored = stateSchema.get(redisKey);
+        } catch (Exception ex) {
+            log.debug("Keyed state operation failed", ex);
+        }
+        if (INTERNAL_WINDOW_SCHEMA.equals(stored)) {
+            schemaCache.put(redisKey, INTERNAL_WINDOW_SCHEMA);
+            return;
+        }
+        if (stored == null || stored.isBlank()) {
+            try {
+                stateSchema.put(redisKey, INTERNAL_WINDOW_SCHEMA);
+            } catch (Exception ex) {
+                log.debug("Keyed state operation failed", ex);
+            }
+            schemaCache.put(redisKey, INTERNAL_WINDOW_SCHEMA);
+            return;
+        }
+        switch (stateSchemaMismatchPolicy) {
+            case IGNORE: {
+                schemaCache.put(redisKey, INTERNAL_WINDOW_SCHEMA);
+                return;
+            }
+            case CLEAR: {
+                try {
+                    redissonClient.getKeys().delete(redisKey);
+                } catch (Exception ex) {
+                    log.debug("Keyed state operation failed", ex);
+                }
+                try {
+                    stateSchema.put(redisKey, INTERNAL_WINDOW_SCHEMA);
+                } catch (Exception ex) {
+                    log.debug("Keyed state operation failed", ex);
+                }
+                schemaCache.put(redisKey, INTERNAL_WINDOW_SCHEMA);
+                return;
+            }
+            case FAIL:
+            default:
+                throw new IllegalStateException("Internal window state schema mismatch for " + redisKey +
+                        " (expected " + INTERNAL_WINDOW_SCHEMA + ", stored " + stored + "): the runtime "
+                        + "changed the merged-session window state layout. Legacy window states cannot "
+                        + "be migrated — clear the affected window state before upgrading, or restore a "
+                        + "checkpoint taken with the current version (policy=FAIL).");
+        }
+    }
+
     void touch(String redisKey, String stateName, RMap<String, String> map) {
         if (map == null) {
             return;
+        }
+        if (stateName != null && stateName.startsWith("__internal:window:")) {
+            ensureInternalWindowSchema(redisKey);
         }
         Duration ttl = stateTtl;
         if (ttl == null || ttl.isZero() || ttl.isNegative()) {
