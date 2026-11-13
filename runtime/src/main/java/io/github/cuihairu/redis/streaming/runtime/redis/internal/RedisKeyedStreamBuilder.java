@@ -324,24 +324,40 @@ import java.util.function.Function;
 
                         for (WindowAssigner.Window w : assigner.assignWindows(v, eventTimeMs)) {
                             if (w == null) continue;
-                            long closeTime = windowCloseTime(w.getEnd());
-                            if (watermark >= closeTime) {
-                                try {
-                                    RedisRuntimeMetrics.get().incWindowLateDropped(config.getJobName(), topic, consumerGroup, operatorId, stateName, partitionId);
-                                } catch (Exception ignore) {
-                                }
-                                continue;
-                            }
                             String member;
                             WindowAssigner.Window effective = w;
+                            long closeTime;
                             if (merging) {
+                                // Audit fix: judge lateness by the merged window's close
+                                // time. The candidate scan is read-only and runs before
+                                // any mutation — the seed [ts, ts+gap) can already sit
+                                // behind the watermark while an existing open member
+                                // still absorbs the element, and dropping on the seed
+                                // alone silently lost it.
+                                MergedSessionScan scan = scanMergedSession(keyField, due, w, bucketTriggers, partitionId);
+                                closeTime = windowCloseTime(scan.end());
+                                if (watermark >= closeTime) {
+                                    try {
+                                        RedisRuntimeMetrics.get().incWindowLateDropped(config.getJobName(), topic, consumerGroup, operatorId, stateName, partitionId);
+                                    } catch (Exception ignore) {
+                                    }
+                                    continue;
+                                }
                                 // Audit P0-1: coalesce every open member of this key that
                                 // intersects the seed into the union window, keeping raw
                                 // elements; the element rides along in the union member.
-                                member = mergeIntoRawSession(stateName, keyField, due, w, v, bucketTriggers, partitionId);
+                                member = mergeIntoRawSession(stateName, keyField, due, scan, v, bucketTriggers, partitionId);
                                 ParsedWindow union = parseWindow(member);
                                 effective = new io.github.cuihairu.redis.streaming.window.TimeWindow(union.start, union.end);
                             } else {
+                                closeTime = windowCloseTime(w.getEnd());
+                                if (watermark >= closeTime) {
+                                    try {
+                                        RedisRuntimeMetrics.get().incWindowLateDropped(config.getJobName(), topic, consumerGroup, operatorId, stateName, partitionId);
+                                    } catch (Exception ignore) {
+                                    }
+                                    continue;
+                                }
                                 member = windowMember(keyField, w.getStart(), w.getEnd());
                                 RedisKeyedStateStore.StateMapRef ref = stateStore.stateMapRef(stateName, member);
                                 accumulator.accumulate(ref, stateName, member, v, due, closeTime);
@@ -1165,16 +1181,18 @@ import java.util.function.Function;
             }
 
             /**
-             * Audit P0-1: coalesces every open window member of {@code keyField} whose
-             * [start, end) intersects {@code seed} into the union window, concatenates
-             * their raw element lists, appends {@code value}, and stores the list under
-             * the union member; absorbed members lose their state, due entry and bucket
-             * trigger. Returns the union member string.
+             * Read-only candidate scan for a merging assigner seed: every due member of
+             * this key whose half-open range intersects the (growing) seed range, the
+             * resulting union bounds, and the first absorbed bucket's trigger. Audit fix:
+             * this runs before any mutation so the record path can judge lateness by the
+             * union's close time — judging by the seed alone dropped elements that an
+             * open window still absorbs (gap 10, member reaching past the watermark,
+             * element whose own seed window already reads as closed).
              *
              * <p>Mirrors the in-memory engine's merge: windows are half-open, so a member
              * ending exactly where the seed begins (an inactivity gap of exactly the
              * session gap) does not merge; open members of a key stay pairwise
-             * non-intersecting (the invariant this method upholds), which is why a member
+             * non-intersecting (the invariant the merge upholds), which is why a member
              * skipped as non-intersecting can never intersect the final union. The kept
              * trigger is the first absorbed member's instance — the trigger API has no
              * merge callback, so the absorbed triggers' state is dropped (same contract
@@ -1184,25 +1202,16 @@ import java.util.function.Function;
              * merging assigners are the session-shaped minority, and correctness is the
              * point — the incremental state shapes cannot be merged for non-associative
              * aggregations, which is why the raw element list is the merged state.
-             *
-             * <p>Failure ordering: every read and every serialization completes before the
-             * first mutation, so a poison element (or any serialization failure) leaves the
-             * absorbed buckets' state and due entries intact for the retry. Mutations then
-             * write the union bucket before retiring the absorbed ones — the worst case
-             * after a mid-mutation failure is a duplicate fire of a leftover bucket
-             * (at-least-once), never element loss.
              */
-            private String mergeIntoRawSession(String stateName,
-                                               String keyField,
-                                               RScoredSortedSet<String> due,
-                                               WindowAssigner.Window seed,
-                                               V value,
-                                               Map<String, WindowAssigner.Trigger<V>> bucketTriggers,
-                                               int partitionId) throws Exception {
+            private MergedSessionScan scanMergedSession(String keyField,
+                                                        RScoredSortedSet<String> due,
+                                                        WindowAssigner.Window seed,
+                                                        Map<String, WindowAssigner.Trigger<V>> bucketTriggers,
+                                                        int partitionId) {
                 long start = seed.getStart();
                 long end = seed.getEnd();
                 List<String> absorbed = new ArrayList<>();
-                WindowAssigner.Trigger<V> keptTrigger = null;
+                WindowAssigner.Trigger<?> keptTrigger = null;
                 for (String m : due) {
                     ParsedWindow pw = parseWindow(m);
                     if (!pw.keyField.equals(keyField)) {
@@ -1219,6 +1228,33 @@ import java.util.function.Function;
                     start = Math.min(start, pw.start);
                     end = Math.max(end, pw.end);
                 }
+                return new MergedSessionScan(start, end, absorbed, keptTrigger);
+            }
+
+            /**
+             * Audit P0-1: applies the candidate merge computed by
+             * {@link #scanMergedSession} — concatenates the absorbed members' raw
+             * element lists, appends {@code value}, and stores the list under the union
+             * member; absorbed members lose their state, due entry and bucket trigger.
+             * Returns the union member string.
+             *
+             * <p>Failure ordering: every read and every serialization completes before the
+             * first mutation, so a poison element (or any serialization failure) leaves the
+             * absorbed buckets' state and due entries intact for the retry. Mutations then
+             * write the union bucket before retiring the absorbed ones — the worst case
+             * after a mid-mutation failure is a duplicate fire of a leftover bucket
+             * (at-least-once), never element loss.
+             */
+            private String mergeIntoRawSession(String stateName,
+                                               String keyField,
+                                               RScoredSortedSet<String> due,
+                                               MergedSessionScan scan,
+                                               V value,
+                                               Map<String, WindowAssigner.Trigger<V>> bucketTriggers,
+                                               int partitionId) throws Exception {
+                long start = scan.start();
+                long end = scan.end();
+                List<String> absorbed = scan.absorbed();
                 String member = windowMember(keyField, start, end);
                 // Read and serialize everything BEFORE the first mutation: a serialization
                 // failure (a poison element, a broken mapper) must leave the absorbed
@@ -1273,7 +1309,9 @@ import java.util.function.Function;
                 // keep the first absorbed bucket's trigger under the union member so a
                 // stateful trigger's early-fire state survives the merge; the record path's
                 // computeIfAbsent reuses this instance instead of minting a fresh trigger
-                if (keptTrigger != null) {
+                if (scan.keptTrigger() != null) {
+                    @SuppressWarnings("unchecked")
+                    WindowAssigner.Trigger<V> keptTrigger = (WindowAssigner.Trigger<V>) scan.keptTrigger();
                     bucketTriggers.putIfAbsent(partitionId + D + member, keptTrigger);
                 }
                 return member;
@@ -1359,6 +1397,11 @@ import java.util.function.Function;
 
 
             private record ParsedWindow(String keyField, long start, long end) {
+            }
+
+            /** Read-only merge candidate computed by {@link #scanMergedSession}. */
+            private record MergedSessionScan(long start, long end, List<String> absorbed,
+                                             WindowAssigner.Trigger<?> keptTrigger) {
             }
         }
 

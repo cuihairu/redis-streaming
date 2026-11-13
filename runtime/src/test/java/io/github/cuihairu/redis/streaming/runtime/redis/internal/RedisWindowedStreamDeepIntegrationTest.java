@@ -525,6 +525,48 @@ class RedisWindowedStreamDeepIntegrationTest {
         }
     }
 
+    /**
+     * Audit fix: a merging assigner must judge lateness by the merged window's close
+     * time, not the seed's. With gap 10, the open member [8,25) is still open at
+     * watermark 15 while element 4's own seed [4,14) already reads as late — the
+     * element must join the union and fire inside it, not be dropped. (The open
+     * window here is [8,25) rather than a bare [0,18): every same-key record that
+     * advances the watermark past 10 merges into the open window itself, so a
+     * reachable open window is the union.)
+     */
+    @Test
+    void lateElementJoinsOpenMergedSession() throws Exception {
+        RedissonClient redis = client();
+        String uid = UUID.randomUUID().toString().substring(0, 8);
+        try {
+            List<Object> out = new CopyOnWriteArrayList<>();
+            RedisStreamExecutionEnvironment env =
+                    RedisStreamExecutionEnvironment.create(redis, cfg(uid, b -> {}));
+            DataStream<Long> tail = env.fromMqTopic("it-rti-t-" + uid, "g")
+                    .map(m -> m.getPayload())
+                    .keyBy(v -> "k")
+                    .window(SessionWindow.<Object>withGap(Duration.ofMillis(10)))
+                    .count();
+            RedisPipelineRunner<Object> runner = definitionOf(tail.addSink(out::add)).freeze().buildRunner();
+            try {
+                runner.handle(msg(8, "a"));    // seeds [8,18)
+                runner.handle(msg(15, "z"));   // merges into [8,25); watermark now 15
+                runner.handle(msg(4, "c"));    // seed [4,14) reads late at wm 15...
+                assertEquals("[\"\\\"a\\\"\",\"\\\"z\\\"\",\"\\\"c\\\"\"]",
+                        readMemberState(redis, uid, "e:s:k" + D + "4" + D + "25"),
+                        "the late-by-seed element must join the still-open union window");
+                runner.handle(msg(50, 999));   // driver: watermark 50 fires [4,25)
+            } finally {
+                runner.close();
+            }
+            assertEquals(List.of(3L), out,
+                    "the union window must fire with all three elements");
+        } finally {
+            redis.getKeys().deleteByPattern("it-rti-win:" + uid + "*");
+            redis.shutdown();
+        }
+    }
+
     /** Element Jackson cannot serialize (direct self-reference) — the merge failure probe. */
     static final class Poison {
         @SuppressWarnings("unused")
