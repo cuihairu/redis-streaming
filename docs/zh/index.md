@@ -37,7 +37,7 @@ features:
 ![Redis Streaming 架构图](/images/architecture-zh.svg)
 
 <script setup lang="ts">
-// 首次访问按浏览器语言选择文档语言（vitepress 无此能力，GitHub Pages 不支持 _redirects）
+// 与英文首页对称:双向记录手动语言选择、双向跟随 localStorage,否则英文用户点中文会被弹回
 // 优先级：localStorage 手动选择 > navigator.language > 保持当前 locale
 import { onBeforeMount } from 'vue'
 const KEY = 'redis-streaming-lang-auto-picked'
@@ -47,11 +47,11 @@ const ZH_PATH = BASE + 'zh/'
 onBeforeMount(() => {{
   if (typeof window === 'undefined') return
   const p = window.location.pathname
-  if (p !== ROOT_PATH && p !== ROOT_PATH.slice(0, -1)) return
+  if (p !== ZH_PATH && p !== ZH_PATH.slice(0, -1)) return
   const picked = localStorage.getItem(KEY)
   if (picked) {{ if (picked !== p) window.location.replace(picked); return }}
   const langs = (navigator.languages?.length ? navigator.languages : [navigator.language]).map(l => l.toLowerCase())
-  if (langs.some(l => l.startsWith('zh'))) window.location.replace(ZH_PATH)
+  if (!langs.some(l => l.startsWith('zh'))) window.location.replace(ROOT_PATH)
 }})
 if (typeof window !== 'undefined') {{
   window.addEventListener('click', (e) => {{

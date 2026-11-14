@@ -34,6 +34,34 @@ features:
     details: Auto-configuration and annotations for Spring Boot
 ---
 
+<script setup lang="ts">
+// First visit picks the docs language from the browser (vitepress has no such hook, GitHub Pages has no _redirects)
+// Priority: manual localStorage choice > navigator.language > keep the current locale
+import { onBeforeMount } from 'vue'
+const KEY = 'redis-streaming-lang-auto-picked'
+const BASE = '/redis-streaming/'
+const ROOT_PATH = BASE
+const ZH_PATH = BASE + 'zh/'
+onBeforeMount(() => {{
+  if (typeof window === 'undefined') return
+  const p = window.location.pathname
+  if (p !== ROOT_PATH && p !== ROOT_PATH.slice(0, -1)) return
+  const picked = localStorage.getItem(KEY)
+  if (picked) {{ if (picked !== p) window.location.replace(picked); return }}
+  const langs = (navigator.languages?.length ? navigator.languages : [navigator.language]).map(l => l.toLowerCase())
+  if (langs.some(l => l.startsWith('zh'))) window.location.replace(ZH_PATH)
+}})
+if (typeof window !== 'undefined') {{
+  window.addEventListener('click', (e) => {{
+    const a = (e.target as HTMLElement)?.closest?.('a') as HTMLAnchorElement | null
+    const href = a?.getAttribute('href') || ''
+    if (href.startsWith(ZH_PATH) || href.startsWith('zh/')) localStorage.setItem(KEY, ZH_PATH)
+    else if (href === ROOT_PATH || href === ROOT_PATH.slice(0, -1)) localStorage.setItem(KEY, ROOT_PATH)
+  }}, true)
+}}
+</script>
+
+
 ![Redis Streaming architecture diagram](/images/architecture-en.svg)
 
 ## English Documentation
