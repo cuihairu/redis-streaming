@@ -3,7 +3,7 @@
 基于 Redis 的分布式配置中心，提供配置版本化、变更通知、历史记录与历史修剪。
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/cuihairu/redis-streaming)
-[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/cuihairu/redis-streaming)
+[![Version](https://img.shields.io/badge/version-0.2.4-blue.svg)](https://github.com/cuihairu/redis-streaming)
 
 ## 核心特性
 
@@ -23,7 +23,7 @@
 
 ```gradle
 dependencies {
-    implementation 'io.github.cuihairu.redis-streaming:config:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:config:0.2.4'
 }
 ```
 
@@ -304,7 +304,7 @@ public class ConfigInfo {
 ## Spring Boot 集成
 
 ```gradle
-implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.0'
+implementation 'io.github.cuihairu.redis-streaming:spring-boot-starter:0.2.4'
 ```
 
 ```yaml
@@ -415,4 +415,4 @@ configService.addListener("app.config", "DEFAULT_GROUP",
 
 ---
 
-版本 0.2.0，最后更新 2026-10-04
+版本 0.2.4，最后更新 2026-11-15

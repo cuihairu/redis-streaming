@@ -58,7 +58,7 @@ subprojects {
 
     ext {
         springBootVersion = '3.2.0'
-        redisStreamingVersion = '0.2.0'
+        redisStreamingVersion = '0.2.4'
         lombokVersion = '1.18.34'
     }
 }

@@ -82,4 +82,4 @@ Online docs: https://cuihairu.github.io/redis-streaming/
 
 ## Versioning
 
-The version number is derived automatically from `v*` git tags by [axion-release](https://github.com/allegro/axion-release) (see `scmVersion` in the root `build.gradle`); it is not maintained by hand. The repository's current latest tag is **v0.2.3**.
+The version number is derived automatically from `v*` git tags by [axion-release](https://github.com/allegro/axion-release) (see `scmVersion` in the root `build.gradle`); it is not maintained by hand. The repository's current latest tag is **v0.2.4**.

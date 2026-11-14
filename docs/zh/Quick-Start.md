@@ -2,7 +2,7 @@
 
 本页覆盖构建、测试与示例运行；完整细节见根目录文档：
 - [QUICK_START.md](https://github.com/cuihairu/redis-streaming/blob/main/QUICK_START.md)、[RUNNING_EXAMPLES.md](https://github.com/cuihairu/redis-streaming/blob/main/RUNNING_EXAMPLES.md)、[TESTING.md](https://github.com/cuihairu/redis-streaming/blob/main/TESTING.md)
-- Spring Boot 入门：[Spring-Boot-Starter](/Spring-Boot-Starter) 与 [spring-boot-starter-guide](/zh/spring-boot-starter-guide)
+- Spring Boot 入门：[Spring-Boot-Starter](/zh/Spring-Boot-Starter) 与 [spring-boot-starter-guide](/zh/spring-boot-starter-guide)
 
 ## 1) 环境准备
 - Java 17+（构建脚本将 `options.release` 固定为 17）
@@ -47,7 +47,7 @@ docker compose up -d
 # 2) 运行某个示例（通过 -PmainClass 指定入口，默认入口是 registry.ServiceRegistryExample）
 ./gradlew :examples:run -PmainClass=io.github.cuihairu.redis.streaming.examples.mq.MessageQueueExample
 ```
-可用的示例入口见 [Examples](/Examples)。
+可用的示例入口见 [Examples](/zh/Examples)。
 
 ## 5) Spring Boot 集成（最小配置）
 Gradle 依赖（当前 0.2.4）：
@@ -81,4 +81,4 @@ redis-streaming:
 ## 6) 常见问题
 - 确认 Java 17：`java -version`
 - 集成测试失败/卡住：检查 Redis 是否已启动（`redis-cli PING` 应返回 PONG）
-- CI/CD 参考：[GitHub Actions](/GitHub-Actions)
+- CI/CD 参考：[GitHub Actions](/zh/GitHub-Actions)

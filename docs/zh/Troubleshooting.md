@@ -1,6 +1,6 @@
 # 故障排查
 
-本页汇总构建、测试与运行期的常见问题。默认值均取自源码，测试流程见 [Testing](/Testing) 与根目录 `TESTING.md`。
+本页汇总构建、测试与运行期的常见问题。默认值均取自源码，测试流程见 [Testing](/zh/Testing) 与根目录 `TESTING.md`。
 
 ## 构建
 
@@ -36,7 +36,7 @@ docker exec streaming-redis-test redis-cli ping   # 应返回 PONG
 
 ### CDC 集成测试「没跑」
 - 生命周期/并发用例跑在内嵌 H2 上，无需外部服务。
-- MySQL/PostgreSQL 连接器用例（`DatabasePollingCDCConnectorIntegrationTest` 等）依赖 `MYSQL_URL` / `POSTGRES_URL`，未设置时经 JUnit assumption 跳过（不是失败）。触发方式见 [Testing](/Testing)。
+- MySQL/PostgreSQL 连接器用例（`DatabasePollingCDCConnectorIntegrationTest` 等）依赖 `MYSQL_URL` / `POSTGRES_URL`，未设置时经 JUnit assumption 跳过（不是失败）。触发方式见 [Testing](/zh/Testing)。
 
 ## 运行期
 
@@ -70,5 +70,5 @@ npm run docs:dev
 
 ## 参考
 - 英文版：[Troubleshooting.md](/Troubleshooting)
-- 测试排障细节：根目录 `TESTING.md` 与 [Testing](/Testing)
-- CI 行为（健康检查等待、发布条件）：[GitHub Actions](/GitHub-Actions)
+- 测试排障细节：根目录 `TESTING.md` 与 [Testing](/zh/Testing)
+- CI 行为（健康检查等待、发布条件）：[GitHub Actions](/zh/GitHub-Actions)

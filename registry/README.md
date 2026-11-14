@@ -3,7 +3,7 @@
 基于 Redis 的分布式服务注册与发现模块，支持多协议健康检查与 metadata/metrics 过滤。
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/cuihairu/redis-streaming)
-[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/cuihairu/redis-streaming)
+[![Version](https://img.shields.io/badge/version-0.2.4-blue.svg)](https://github.com/cuihairu/redis-streaming)
 
 ## 核心特性
 
@@ -23,7 +23,7 @@
 
 ```gradle
 dependencies {
-    implementation 'io.github.cuihairu.redis-streaming:registry:0.2.0'
+    implementation 'io.github.cuihairu.redis-streaming:registry:0.2.4'
 }
 ```
 
@@ -330,4 +330,4 @@ docker-compose up -d
 
 ---
 
-版本 0.2.0，最后更新 2026-10-04
+版本 0.2.4，最后更新 2026-11-15

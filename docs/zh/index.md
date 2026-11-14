@@ -8,10 +8,10 @@ hero:
   actions:
     - theme: brand
       text: 快速开始
-      link: /Quick-Start
+      link: /zh/Quick-Start
     - theme: alt
       text: 架构设计
-      link: /Architecture
+      link: /zh/Architecture
 
 features:
   - icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><circle cx="12" cy="12" r="2.8"/><path d="M3 8c2.7 0 2.7 8 5.4 8S11.1 8 13.8 8 16.5 16 19.2 16h1.8"/><path d="M3 16c2.7 0 2.7-8 5.4-8"/></svg>'
@@ -81,7 +81,7 @@ if (typeof window !== 'undefined') {{
 - [Reliability](/zh/reliability) · [CEP](/zh/CEP)
 
 **集成层（Tier 5）**
-- [Metrics](/zh/Metrics) · [Spring Boot Starter](/Spring-Boot-Starter) · [Examples](/Examples)
+- [Metrics](/zh/Metrics) · [Spring Boot Starter](/zh/Spring-Boot-Starter) · [Examples](/zh/Examples)
 
 **设计与运维**
-- [架构总览](/Architecture) · [Exactly-Once 语义](/zh/exactly-once) · [故障排查](/zh/Troubleshooting) · [测试指南](/Testing)
+- [架构总览](/zh/Architecture) · [Exactly-Once 语义](/zh/exactly-once) · [故障排查](/zh/Troubleshooting) · [测试指南](/zh/Testing)
