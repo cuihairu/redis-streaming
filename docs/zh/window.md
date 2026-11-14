@@ -135,6 +135,7 @@ DataStream<Long> count();                                        // 窗口计数
 
 - **InMemory 引擎**（`runtime` 的 `InMemoryWindowedStream`）：批式处理，每个元素先按分配器落桶并调用 `trigger.onElement`，流结束时对每个非空桶做最后一次 `trigger.onEventTime(window.getEnd(), window)` 冲刷。`supportsWindowMerging()` 为 `true` 的分配器（会话窗口）会把相交桶合并成并集窗口再累积。`onProcessingTime` 不会被调用。
 - **Redis 引擎**（`runtime` 的 `RedisStreamBuilder`）：元素累加后咨询 `trigger.onElement`，水位线推进时对到期窗口调用 `trigger.onEventTime`；`FIRE` 表示部分发射（保留状态继续累积），`FIRE_AND_PURGE` / `PURGE` 结束该窗口。默认 `EventTimeTrigger`（`CONTINUE` / `FIRE_AND_PURGE`）与纯水位线关闭行为等价。`onProcessingTime` 同样没有接入（无 processing-time 窗口定时器，见 docs/watermark.md、todo.md B3）。
+- **Redis 引擎的 Session 合并**：合并型 assigner（`SessionWindow`，`supportsWindowMerging()`）与内存引擎一致——同 key 半开区间与种子相交的开放成员全部并入 union 窗口（`scanMergedSession` + `mergeIntoRawSession`，RedisKeyedStreamBuilder.java）。合并后的状态是 raw 元素列表（非结合聚合的增量 accumulator 形状不可合并），五种窗口 kind 各自的 raw emitter 从该列表计算 fire 结果。迟到按 **union 窗口的关闭时间**判定（种子 `[ts, ts+gap)` 可能已落后于水位线，而既有开放成员仍吸收该元素——元素并入 union，不丢弃）。内部窗口状态带 schema 戳（`__internal:window|2`，由 `stateSchemaMismatchPolicy` 把守）；恢复的升级前状态带清窗指引快速失败，而非裸 Jackson 报错。
 
 ## 配置项
 

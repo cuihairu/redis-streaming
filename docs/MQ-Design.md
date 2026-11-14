@@ -113,6 +113,8 @@ flowchart LR
 
 - After ACK, Lua atomically maintains `{keyPrefix}:commit:{t}:p:{i}` (Hash, field=group, value=max acknowledged stream id, MQ-11): only `HSET` when new id (ms-seq compare) > stored value, eliminates concurrent ack worker read-after-write regression; stored value unquoted then compared by ms-seq, non-stream-id legacy values overwritten (self-healing).
 - Frontier is currently observability/ops info (Admin group stats use `XINFO` last-delivered-id), not used for consumption start decisions.
+- Safe boundary (MQ-11, extended): the CAS advances only past ids that have **left the PEL**. The candidate is the batch's maximum acked id, but it commits only when the group's oldest pending id exceeds it (or the PEL is empty / the group does not exist, `NOGROUP`); an unreadable PEL skips the advance for that round — lagging is the safe direction (`oldestPendingId` + `isNoGroupError` in DeferredAcks.java:184/:199 and RedisMessageDispatchProcessor.java:458).
+- A batch whose `XACK` fails is **re-queued** (`record(topic, group, pid, id)`), so a later successful batch never advances the frontier past the failed ids; the failed ids are retried on the next checkpoint round.
 
 ## Large Payload Lifecycle (`impl.PayloadLifecycleManager`)
 

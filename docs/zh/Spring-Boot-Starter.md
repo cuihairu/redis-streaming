@@ -275,7 +275,7 @@ management:
 
 ## 后台与健康组件
 
-- `StreamRetentionHousekeeper`:按 `mq.trim-interval-sec` 周期执行 `XTRIM`(长度上限 `retention-max-len-per-partition`,可选 `retention-ms` 时长截断),同时清理 DLQ 与过期 commit frontier;`AutoCloseable`,上下文关闭时停止。
+- `StreamRetentionHousekeeper`:按 `mq.trim-interval-sec` 周期执行 `XTRIM`(长度上限 `retention-max-len-per-partition`,可选 `retention-ms` 时长截断),同时清理 DLQ 与过期 commit frontier;`AutoCloseable`,上下文关闭时停止。 frontier 裁剪点取活跃组的 `min(frontier_g, oldestPendingId_g)` 再求最小——frontier 单独看可能越过仍未确认的 id（ack 失败批次），越过 PEL 最小值裁剪会删掉永远无法投递的消息；任一活跃组 PEL 不可读（且非 `NOGROUP`）时本轮跳过该分区的 frontier 裁剪（StreamRetentionHousekeeper.java）。
 - `MqHealthIndicator`:调用 `MessageQueueAdmin.listAllTopics()`,成功为 `UP` 并带 `topics` 数量,异常为 `DOWN` 并携带原因。
 
 ## Redisson 集成与部署模式

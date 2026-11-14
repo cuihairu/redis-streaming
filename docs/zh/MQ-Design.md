@@ -113,6 +113,8 @@ flowchart LR
 
 - ACK 后以 Lua 原子维护 `{keyPrefix}:commit:{t}:p:{i}`（Hash，field=组，value=已确认的最大 stream id，MQ-11）：只有新 id 更大才 `HSET`，消除并发 ack worker 的读后写回退；存储值剥离引号后按 `ms-seq` 比较，非 stream id 的存量值会被覆盖（自愈）。
 - 位点目前是观测/运维信息（Admin 的组统计使用 `XINFO` 的 last-delivered-id），不参与消费起点决策。
+- 安全边界（MQ-11，扩展）：CAS 只能越过**已离开 PEL** 的 id。候选是本批最大已确认 id，但仅当该组最老的 pending id 超过它（或 PEL 为空 / 组不存在 `NOGROUP`）时才提交；PEL 不可读则本轮跳过推进——滞后是安全方向（DeferredAcks.java:184/:199 与 RedisMessageDispatchProcessor.java:458 的 `oldestPendingId` + `isNoGroupError`）。
+- `XACK` 失败的批次会**重新入队**（`record(topic, group, pid, id)`），后续成功批次不会把位点推进到失败 id 之后；失败 id 在下一轮 checkpoint 重试。
 
 ## 大 payload 生命周期（`impl.PayloadLifecycleManager`）
 

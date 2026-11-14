@@ -289,7 +289,7 @@ Scrape `/actuator/prometheus` for the `redis_streaming_*` meters above. Tags inc
 
 ## Background & Health Components
 
-- `StreamRetentionHousekeeper`: periodically runs `XTRIM` on the `mq.trim-interval-sec` schedule (length cap `retention-max-len-per-partition`, optional time-based trim via `retention-ms`), and cleans DLQs and expired commit frontiers along the way; `AutoCloseable`, stops when the context closes.
+- `StreamRetentionHousekeeper`: periodically runs `XTRIM` on the `mq.trim-interval-sec` schedule (length cap `retention-max-len-per-partition`, optional time-based trim via `retention-ms`), and cleans DLQs and expired commit frontiers along the way; `AutoCloseable`, stops when the context closes. The frontier trim point is `min` over active groups of `min(frontier_g, oldestPendingId_g)` — the frontier alone can sit above still-unacked ids (a failed ack batch), so trimming past the PEL minimum would delete messages that can never be delivered; when any active group's PEL is unreadable (and not `NOGROUP`), that partition's frontier trim is skipped for the round (StreamRetentionHousekeeper.java).
 - `MqHealthIndicator`: calls `MessageQueueAdmin.listAllTopics()`; success reports `UP` with a `topics` count, an exception reports `DOWN` with the cause.
 
 ## Redisson Integration & Deployment Modes

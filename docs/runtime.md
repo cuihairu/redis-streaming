@@ -125,7 +125,7 @@ Types and defaults taken one by one from `runtime/src/main/java/.../runtime/redi
 | `eventTimeTimerMaxSize(int)` | int | `100000` | the per-runner event-time timer queue cap; `0` unbounded; when full the record's processing fails (an `IllegalStateException` flows through `runner.handle` into MQ retry/dead-letter — visible and recoverable) rather than being dropped silently |
 | `watermarkOutOfOrderness(Duration)` | Duration | `ZERO` | watermark = max(event time) − this value; non-negative |
 | `watermarkIdleTimeout(Duration)` | Duration | `null` (off) | the idle-watermark flush: after the source stays silent for this long (or a generator calls `markIdle()`), the watermark flushes to `MAX_VALUE`, firing all due event-time timers and draining windows' due sets via the flush hooks; the next record opens a new watermark epoch; null/ZERO disables, negatives throw `IllegalArgumentException` |
-| `windowAllowedLateness(Duration)` | Duration | `ZERO` | window close time = windowEnd + this value |
+| `windowAllowedLateness(Duration)` | Duration | `ZERO` | window close time = windowEnd + this value; for merging assigners (sessions) lateness is judged by the merged union window's close time — an element whose own seed `[ts, ts+gap)` reads late still joins an open union that absorbs it (RedisKeyedStreamBuilder.java:337) |
 | `windowMaxFiresPerRecord(int)` | int | `256` | the maximum due windows a single record may trigger (≥1) |
 | `mdcEnabled(boolean)` | boolean | `false` | installs MDC per message (job/topic/group/consumer/id/key/partition) |
 | `mdcSampleRate(double)` | double | `1.0` | the MDC sampling rate, in [0,1] |
